@@ -1,0 +1,7 @@
+{
+  "name": "H.S",
+  "description": "A personal, AI-assisted wealth management system that tracks cashflow, accounts, assets, liabilities, investments, goals, and long-term plans. It provides advanced dashboards and automates monitoring, keeping all data private.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
