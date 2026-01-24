@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, ReactNode, useEffect } from 'react';
 import { mockFinancialData } from '../data/mockData';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment } from '../types';
@@ -30,6 +29,7 @@ interface DataContextType {
   updatePlatform: (platform: Account) => void;
   deletePlatform: (platformId: string) => void;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id'>) => void;
+  resetData: () => void;
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
@@ -38,8 +38,33 @@ interface DataProviderProps {
   children: ReactNode;
 }
 
+const LOCAL_STORAGE_KEY = 'HS_FINANCIAL_DATA';
+
 export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
-    const [data, setData] = useState<FinancialData>(mockFinancialData);
+    const [data, setData] = useState<FinancialData>(() => {
+        try {
+            const savedData = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                // Basic check to ensure data structure is somewhat valid
+                if (parsed.accounts && parsed.transactions) {
+                    return parsed;
+                }
+            }
+        } catch (error) {
+            console.error("Error reading from localStorage", error);
+        }
+        return mockFinancialData;
+    });
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+        } catch (error) {
+            console.error("Error writing to localStorage", error);
+        }
+    }, [data]);
+
 
     // Simulate live stock price updates
     useEffect(() => {
@@ -74,6 +99,17 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
         return () => clearInterval(interval);
     }, []);
+
+    const resetData = () => {
+        if (window.confirm("Are you sure you want to reset all data? This will restore the original demo data and cannot be undone.")) {
+            try {
+                window.localStorage.removeItem(LOCAL_STORAGE_KEY);
+                setData(mockFinancialData);
+            } catch (error) {
+                console.error("Error clearing localStorage", error);
+            }
+        }
+    };
 
     const updateAsset = (updatedAsset: Asset) => setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === updatedAsset.id ? updatedAsset : a) }));
     const addAsset = (newAsset: Asset) => setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
@@ -334,7 +370,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
 
     return (
-        <DataContext.Provider value={{ data, updateAsset, addAsset, deleteAsset, updateGoal, addGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addHolding, updateHolding, recordTrade, addWatchlistItem, deleteWatchlistItem, addPlatform, updatePlatform, deletePlatform, addZakatPayment }}>
+        <DataContext.Provider value={{ data, updateAsset, addAsset, deleteAsset, updateGoal, addGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addHolding, updateHolding, recordTrade, addWatchlistItem, deleteWatchlistItem, addPlatform, updatePlatform, deletePlatform, addZakatPayment, resetData }}>
         {children}
         </DataContext.Provider>
     );

@@ -1,4 +1,3 @@
-
 import React, { useState, useContext, useRef, useEffect } from 'react';
 import { Page } from '../types';
 import { NAVIGATION_ITEMS } from '../constants';
@@ -29,7 +28,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
   const [alerts, setAlerts] = useState(staticAlerts);
   
   const auth = useContext(AuthContext);
-  const { data } = useContext(DataContext)!;
+  const { data, resetData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
   const profileRef = useRef<HTMLDivElement>(null);
   const alertsRef = useRef<HTMLDivElement>(null);
@@ -144,6 +143,13 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
                         </div>
                     </label>
                     </div>
+                    <div className="border-t border-gray-100"></div>
+                     <button
+                        onClick={resetData}
+                        className="block w-full text-left px-4 py-2 text-sm text-yellow-700 hover:bg-yellow-100"
+                    >
+                        Reset Demo Data
+                    </button>
                     <div className="border-t border-gray-100"></div>
                     <button
                     onClick={auth?.logout}
