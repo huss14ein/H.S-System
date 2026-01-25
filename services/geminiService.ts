@@ -5,9 +5,10 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 // Helper function to get the AI client only when needed.
 // This prevents the app from crashing on startup if the API key is not set.
 function getAiClient() {
-    const API_KEY = process.env.API_KEY;
+    // FIX: Cast `import.meta` to `any` to access `env` without adding a new type definition file.
+    const API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY;
     if (!API_KEY) {
-        console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        console.warn("VITE_GEMINI_API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey: API_KEY });
