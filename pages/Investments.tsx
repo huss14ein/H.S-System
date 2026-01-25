@@ -1,15 +1,10 @@
 
-import React, { useMemo, useState, useCallback, useRef, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import Card from '../components/Card';
-import AllocationPieChart from '../components/charts/AllocationPieChart';
-import { getInvestmentAIAnalysis, getAIStockAnalysis } from '../services/geminiService';
-import { LightBulbIcon } from '../components/icons/LightBulbIcon';
-import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
+import { getAIStockAnalysis } from '../services/geminiService';
 import { InvestmentPortfolio, Holding, InvestmentTransaction, Account } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
-import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 import { EyeIcon } from '../components/icons/EyeIcon';
@@ -23,7 +18,6 @@ import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
-import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { MoonIcon } from '../components/icons/MoonIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
@@ -400,8 +394,9 @@ const Investments: React.FC = () => {
   const [isPlatformModalOpen, setIsPlatformModalOpen] = useState(false);
   const [platformToEdit, setPlatformToEdit] = useState<Account | null>(null);
   
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<Account | InvestmentPortfolio | null>(null);
+  // FIX: Added missing state for delete confirmation modal visibility.
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
 
@@ -426,8 +421,9 @@ const Investments: React.FC = () => {
     } else { // It's a platform
         deletePlatform(itemToDelete.id);
     }
-    setIsDeleteModalOpen(false);
     setItemToDelete(null);
+    // FIX: Close the modal after deletion.
+    setIsDeleteModalOpen(false);
   };
   
   const handleOpenPortfolioModal = (portfolio: InvestmentPortfolio | null, accountId: string | null) => {
@@ -482,7 +478,8 @@ const Investments: React.FC = () => {
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal isOpen={isPortfolioModalOpen} onClose={() => setIsPortfolioModalOpen(false)} onSave={handleSavePortfolio} portfolioToEdit={portfolioToEdit} accountId={currentAccountId} />
-      <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
+      {/* FIX: Use isDeleteModalOpen state and provide a consistent onClose handler. */}
+      <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
       <RecordTradeModal isOpen={isTradeModalOpen} onClose={() => setIsTradeModalOpen(false)} onSave={recordTrade} investmentAccounts={investmentAccounts} />
     </div>
   );

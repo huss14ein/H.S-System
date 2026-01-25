@@ -1,7 +1,7 @@
 
 import React, { useEffect, useContext, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Holding, PriceAlert } from '../types';
+import { PriceAlert } from '../types';
 
 const MarketSimulator: React.FC = () => {
     const context = useContext(DataContext);

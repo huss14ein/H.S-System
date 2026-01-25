@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Budget, Transaction, Account } from '../types';
+import { Transaction, Account } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { PencilIcon } from '../components/icons/PencilIcon';

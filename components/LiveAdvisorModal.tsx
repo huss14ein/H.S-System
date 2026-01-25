@@ -1,7 +1,7 @@
 
-import React, { useState, useRef, useEffect, useContext, useCallback } from 'react';
+import React, { useState, useRef, useContext, useCallback } from 'react';
 import Modal from './Modal';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob } from '@google/genai';
 import { DataContext } from '../context/DataContext';
 import { encode, decode, decodeAudioData } from '../utils/audioUtils';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
@@ -19,7 +19,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const [status, setStatus] = useState<Status>('Inactive');
     const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
     
-    const sessionRef = useRef<Promise<LiveSession> | null>(null);
+    const sessionRef = useRef<Promise<any> | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -137,27 +137,30 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                          if (message.serverContent) {
                             setTranscript(prev => prev.filter(item => item.source !== 'system'));
 
-                            if (message.serverContent.inputTranscription?.text) {
+                            const inputText = message.serverContent.inputTranscription?.text;
+                            if (inputText) {
                                 setTranscript(prev => {
                                     const last = prev[prev.length - 1];
                                     if (last?.source === 'user') {
-                                        return [...prev.slice(0, -1), { ...last, text: last.text + message.serverContent.inputTranscription!.text }];
+                                        return [...prev.slice(0, -1), { ...last, text: last.text + inputText }];
                                     }
-                                    return [...prev, { source: 'user', text: message.serverContent.inputTranscription!.text }];
+                                    return [...prev, { source: 'user', text: inputText }];
                                 });
                             }
-                             if (message.serverContent.outputTranscription?.text) {
+                            
+                            const outputText = message.serverContent.outputTranscription?.text;
+                             if (outputText) {
                                 setStatus('Speaking');
                                  setTranscript(prev => {
                                     const last = prev[prev.length - 1];
                                     if (last?.source === 'model') {
-                                        return [...prev.slice(0, -1), { ...last, text: last.text + message.serverContent.outputTranscription!.text }];
+                                        return [...prev.slice(0, -1), { ...last, text: last.text + outputText }];
                                     }
-                                    return [...prev, { source: 'model', text: message.serverContent.outputTranscription!.text }];
+                                    return [...prev, { source: 'model', text: outputText }];
                                 });
                             }
 
-                            const audioData = message.serverContent.modelTurn?.parts[0]?.inlineData.data;
+                            const audioData = message.serverContent.modelTurn?.parts?.[0]?.inlineData?.data;
                             if (audioData && outputAudioContextRef.current) {
                                 const ctx = outputAudioContextRef.current;
                                 const nextStartTime = Math.max(nextStartTimeRef.current, ctx.currentTime);
@@ -175,13 +178,14 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                             }
                          } else if (message.toolCall) {
                              setStatus('Thinking');
-                             const toolCallDescription = message.toolCall.functionCalls.map(fc => {
+                             const functionCalls = message.toolCall.functionCalls ?? [];
+                             const toolCallDescription = functionCalls.map(fc => {
                                  const args = JSON.stringify(fc.args);
                                  return `${fc.name}(${args !== '{}' ? args : ''})`;
                              }).join(', ');
                              setTranscript(prev => [...prev, { source: 'system', text: `Executing: ${toolCallDescription}` }]);
                              
-                             for (const fc of message.toolCall.functionCalls) {
+                             for (const fc of functionCalls) {
                                  const handler = functionHandlers[fc.name];
                                  if (handler) {
                                      const result = await handler(fc.args);

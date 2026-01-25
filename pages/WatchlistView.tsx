@@ -1,6 +1,7 @@
+
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { WatchlistItem, PriceAlert } from '../types';
+import { WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { getAIResearchNews } from '../services/geminiService';
@@ -35,7 +36,6 @@ const WatchlistItemRow: React.FC<{
     onOpenAlertModal: (item: WatchlistItem) => void,
     onOpenDeleteModal: (item: WatchlistItem) => void
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
-    // FIX: The `useFormatCurrency` hook must be invoked as a function to work correctly.
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number>();

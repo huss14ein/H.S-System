@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Card from '../components/Card';
@@ -88,11 +88,11 @@ const AnnualFinancialPlan: React.FC = () => {
     
     const totals = useMemo(() => {
         const income = processedPlanData.find(r => r.type === 'income');
-        const totalPlannedIncome = income?.monthly_planned.reduce((a, b) => a + b, 0) || 0;
-        const totalActualIncome = income?.monthly_actual.reduce((a, b) => a + b, 0) || 0;
+        const totalPlannedIncome = income?.monthly_planned.reduce((a: number, b: number) => a + b, 0) || 0;
+        const totalActualIncome = income?.monthly_actual.reduce((a: number, b: number) => a + b, 0) || 0;
         
-        const totalPlannedExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_planned.reduce((a,b) => a + b, 0), 0);
-        const totalActualExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_actual.reduce((a,b) => a + b, 0), 0);
+        const totalPlannedExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_planned.reduce((a: number,b: number) => a + b, 0), 0);
+        const totalActualExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_actual.reduce((a: number,b: number) => a + b, 0), 0);
 
         const projectedNet = totalPlannedIncome - totalPlannedExpenses;
         const actualNet = totalActualIncome - totalActualExpenses;
@@ -206,8 +206,8 @@ const AnnualFinancialPlan: React.FC = () => {
                         {/* Income */}
                         <tr className="bg-green-50"><td colSpan={14} className="p-2 font-bold text-green-800">Income</td></tr>
                         {processedPlanData.filter(r => r.type === 'income').map((row, rowIndex) => {
-                             const totalPlanned = row.monthly_planned.reduce((a, b) => a + b, 0);
-                             const totalActual = row.monthly_actual.reduce((a, b) => a + b, 0);
+                             const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
+                             const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
@@ -228,10 +228,10 @@ const AnnualFinancialPlan: React.FC = () => {
                         })}
                         {/* Expenses */}
                         <tr className="bg-red-50"><td colSpan={14} className="p-2 font-bold text-red-800">Expenses</td></tr>
-                        {processedPlanData.filter(r => r.type === 'expense').map((row, rowIndex) => {
+                        {processedPlanData.filter(r => r.type === 'expense').map((row) => {
                              const originalIndex = planData.findIndex(item => item.category === row.category && item.type === 'expense');
-                             const totalPlanned = row.monthly_planned.reduce((a, b) => a + b, 0);
-                             const totalActual = row.monthly_actual.reduce((a, b) => a + b, 0);
+                             const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
+                             const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
                              const isAffected = expenseStress.percent !== 0 && (expenseStress.category === 'All' || expenseStress.category === row.category);
                              return (
                                 <tr key={row.category}>
@@ -239,7 +239,7 @@ const AnnualFinancialPlan: React.FC = () => {
                                     {row.monthly_planned.map((plan, monthIndex) => (
                                         <td key={monthIndex} className="p-2 align-top">
                                             <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
-                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => setIsEditing({row: originalIndex + 1, col: monthIndex})}>
+                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => setIsEditing({row: originalIndex, col: monthIndex})}>
                                                 {formatCurrencyString(plan, { digits: 0 })}
                                             </div>
                                         </td>

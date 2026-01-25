@@ -26,7 +26,7 @@ const SpendingByCategoryChart: React.FC = () => {
         <ResponsiveContainer width="100%" height={300}>
             <PieChart>
                 <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} fill="#8884d8">
-                    {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    {chartData.map((_entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
                 <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} />
                 <Legend />

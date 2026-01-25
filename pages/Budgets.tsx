@@ -1,6 +1,5 @@
 
 import React, { useMemo, useState, useContext } from 'react';
-import Card from '../components/Card';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';

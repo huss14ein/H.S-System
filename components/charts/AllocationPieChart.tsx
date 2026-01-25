@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -41,7 +42,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
           dataKey="value"
           paddingAngle={3}
         >
-          {data.map((entry, index) => (
+          {data.map((_entry, index) => (
             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke={COLORS[index % COLORS.length]} />
           ))}
         </Pie>

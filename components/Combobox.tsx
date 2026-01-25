@@ -1,4 +1,5 @@
-import React, { useState, useMemo, Fragment } from 'react';
+
+import React, { useState, useMemo } from 'react';
 import { CheckIcon } from './icons/CheckIcon';
 import { ChevronUpDownIcon } from './icons/ChevronUpDownIcon';
 

@@ -71,6 +71,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<string> =>
                 }
             }
         });
+        // FIX: response.text is a property, not a method.
         return response.text || "[]";
     } catch (error) {
         console.error("Error fetching AI Feed insights:", error);
@@ -185,6 +186,7 @@ export const getAIFinancialPersona = async (
                 }
             }
         });
+        // FIX: response.text is a property, not a method.
         const result = response.text || "{}";
         setToCache(cacheKey, result);
         return result;
@@ -399,6 +401,7 @@ export const getAICategorySuggestion = async (description: string, categories: s
     try {
         const prompt = `You are an automated financial assistant. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        // FIX: response.text is a property, not a method. Also handle potential undefined result.
         return response.text?.trim() || "";
     } catch (error) { console.error(error); return ""; }
 };

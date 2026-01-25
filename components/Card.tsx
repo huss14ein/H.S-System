@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { InformationCircleIcon } from './icons/InformationCircleIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ArrowTrendingDownIcon } from './icons/ArrowTrendingDownIcon';
-import { useCurrency } from '../context/CurrencyContext';
 
 interface CardProps {
   title: string;
@@ -16,7 +15,6 @@ interface CardProps {
 }
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
-  const { currency } = useCurrency();
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number | null>(null);
 

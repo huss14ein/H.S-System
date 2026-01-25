@@ -56,7 +56,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
     const auth = useContext(AuthContext);
 
-    const fetchAllData = useCallback(async (userId: string) => {
+    const fetchAllData = useCallback(async (_userId: string) => {
         setLoading(true);
         try {
             const results = await Promise.all([
@@ -103,7 +103,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else { setData(initialData); setLoading(false); }
     }, [auth?.user, fetchAllData]);
     
-    const resetData = async () => { if (!auth?.user) return; setLoading(true); try { const { error } = await supabase.rpc('reset_demo_data'); if (error) { console.error("Error resetting demo data:", error); } await fetchAllData(auth.user.id); } catch (error) { console.error("Error during data reset process:", error); } finally { setLoading(false); } };
+    const resetData = async () => { if (!auth?.user) return; const userId = auth.user.id; setLoading(true); try { const { error } = await supabase.rpc('reset_demo_data'); if (error) { console.error("Error resetting demo data:", error); } await fetchAllData(userId); } catch (error) { console.error("Error during data reset process:", error); } finally { setLoading(false); } };
 
     // --- Generic CRUD ---
     const addItem = async (table: string, item: any, stateKey: keyof FinancialData, prepend = true) => { if (!auth?.user) return; const { data: newItem, error } = await supabase.from(table).insert({ ...item, user_id: auth.user.id }).select().single(); if (error) throw error; if (newItem) { setData(prev => ({ ...prev, [stateKey]: prepend ? [newItem, ...(prev[stateKey] as any[])] : [...(prev[stateKey] as any[]), newItem] })); } };
@@ -208,7 +208,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (error) {
             console.error("Failed to record trade:", error);
             // Optionally refetch all data as a fallback on error
-            await fetchAllData(auth.user.id);
+            await fetchAllData(auth.user.id!);
             throw error;
         }
     };

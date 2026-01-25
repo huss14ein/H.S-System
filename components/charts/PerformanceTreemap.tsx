@@ -2,16 +2,7 @@
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 
-interface TreemapProps {
-    data: {
-        name: string;
-        symbol: string;
-        currentValue: number;
-        gainLossPercent: number;
-    }[];
-}
-
-const CustomizedContent: React.FC<any> = ({ root, depth, x, y, width, height, index, colors, name, gainLossPercent }) => {
+const CustomizedContent: React.FC<any> = ({ _root, depth, x, y, width, height, index, colors, name, gainLossPercent }) => {
     // Determine text color based on background darkness
     const textColor = depth === 1 ? 'white' : 'black';
 

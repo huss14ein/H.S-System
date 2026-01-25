@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart } from 'recharts';
+// FIX: Imported the missing 'Line' component from recharts.
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line } from 'recharts';
 import Card from '../components/Card';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
