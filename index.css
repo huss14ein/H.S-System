@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-light font-sans text-dark;
+  }
+}
+
+@layer components {
+    @keyframes slideInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-slideInUp {
+      animation: slideInUp 0.5s ease-out forwards;
+    }
+    
+    /* Custom scrollbar for a more refined look */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9; /* slate-100 */
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1; /* slate-300 */
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8; /* slate-400 */
+    }
+
+    body {
+        background-color: #f8fafc;
+        background-image: radial-gradient(#dbeafe 1px, transparent 1px);
+        background-size: 2rem 2rem;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+    .animate-pulse-live {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    .hs-logo .logo-base {
+      transition: transform 0.3s ease-in-out;
+    }
+    .hs-logo:hover .logo-base {
+        transform: scale(1.05) rotate(-5deg);
+    }
+    .hs-logo .logo-h-cutout {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transform-origin: center;
+    }
+    .hs-logo:hover .logo-h-cutout {
+        transform: scale(0.95);
+        fill: #93c5fd;
+    }
+}

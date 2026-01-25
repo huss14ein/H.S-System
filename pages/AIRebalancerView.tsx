@@ -1,6 +1,6 @@
 
-import React, { useState, useMemo, useCallback } from 'react';
-import { mockFinancialData } from '../data/mockData';
+import React, { useState, useMemo, useCallback, useContext } from 'react';
+import { DataContext } from '../context/DataContext';
 import { getAIRebalancingPlan } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -9,26 +9,38 @@ import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
 const AIRebalancerView: React.FC = () => {
-    const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(mockFinancialData.investments[0].id);
+    const { data } = useContext(DataContext)!;
+    const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data.investments[0]?.id || '');
     const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
     const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
     const selectedPortfolio = useMemo(() => {
-        return mockFinancialData.investments.find(p => p.id === selectedPortfolioId) || mockFinancialData.investments[0];
-    }, [selectedPortfolioId]);
+        return data.investments.find(p => p.id === selectedPortfolioId) || data.investments[0];
+    }, [selectedPortfolioId, data.investments]);
 
     const handleGeneratePlan = useCallback(async () => {
+        if (!selectedPortfolio) return;
         setIsLoading(true);
         setRebalancingPlan('');
         const plan = await getAIRebalancingPlan(selectedPortfolio.holdings, riskProfile);
         setRebalancingPlan(plan);
         setIsLoading(false);
-    }, [selectedPortfolio.holdings, riskProfile]);
+    }, [selectedPortfolio, riskProfile]);
     
     const currentAllocation = useMemo(() => {
+         if (!selectedPortfolio) return [];
          return selectedPortfolio.holdings.map(h => ({ name: h.symbol, value: h.currentValue }));
     }, [selectedPortfolio]);
+
+    if (!data.investments || data.investments.length === 0) {
+        return (
+            <div className="mt-6 text-center bg-white p-8 rounded-lg shadow">
+                <h2 className="text-2xl font-bold text-dark">AI Portfolio Rebalancer</h2>
+                <p className="text-gray-500 mt-4">You don't have any investment portfolios to analyze. Please add one on the 'Platform' tab.</p>
+            </div>
+        );
+    }
 
     return (
         <div className="mt-6 space-y-6">
@@ -49,7 +61,7 @@ const AIRebalancerView: React.FC = () => {
                             onChange={(e) => setSelectedPortfolioId(e.target.value)}
                             className="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary shadow-sm"
                         >
-                            {mockFinancialData.investments.map(p => (
+                            {data.investments.map(p => (
                                 <option key={p.id} value={p.id}>{p.name}</option>
                             ))}
                         </select>

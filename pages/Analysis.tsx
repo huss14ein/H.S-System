@@ -1,30 +1,31 @@
 
-import React, { useMemo } from 'react';
-import { mockFinancialData } from '../data/mockData';
+import React, { useMemo, useContext } from 'react';
+import { DataContext } from '../context/DataContext';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 
 // Spending by Category Chart
-const SpendingByCategoryChart = () => {
+const SpendingByCategoryChart: React.FC = () => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const data = useMemo(() => {
+    const chartData = useMemo(() => {
         const spending = new Map<string, number>();
-        mockFinancialData.transactions
-            .filter(t => t.type === 'expense')
+        data.transactions
+            .filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
-                const currentSpend = spending.get(t.category) || 0;
-                spending.set(t.category, currentSpend + Math.abs(t.amount));
+                const currentSpend = spending.get(t.budgetCategory!) || 0;
+                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
-        return Array.from(spending, ([name, value]) => ({ name, value }));
-    }, []);
+        return Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+    }, [data.transactions]);
 
     const COLORS = ['#1e40af', '#3b82f6', '#93c5fd', '#60a5fa', '#bfdbfe'];
 
     return (
         <ResponsiveContainer width="100%" height={300}>
             <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} fill="#8884d8">
-                    {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} fill="#8884d8">
+                    {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
                 <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} />
                 <Legend />
@@ -34,11 +35,12 @@ const SpendingByCategoryChart = () => {
 };
 
 // Income vs Expense Trend
-const IncomeExpenseTrendChart = () => {
+const IncomeExpenseTrendChart: React.FC = () => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const data = useMemo(() => {
+    const chartData = useMemo(() => {
         const trends = new Map<string, { income: number, expenses: number }>();
-        mockFinancialData.transactions.forEach(t => {
+        data.transactions.forEach(t => {
             const month = new Date(t.date).toLocaleString('default', { month: 'short', year: '2-digit' });
             const current = trends.get(month) || { income: 0, expenses: 0 };
             if (t.type === 'income') {
@@ -48,12 +50,14 @@ const IncomeExpenseTrendChart = () => {
             }
             trends.set(month, current);
         });
-        return Array.from(trends, ([name, value]) => ({ name, ...value })).reverse();
-    }, []);
+        // Convert map to array and sort chronologically
+        return Array.from(trends, ([name, value]) => ({ name, date: new Date(name), ...value }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime());
+    }, [data.transactions]);
 
     return (
         <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={data}>
+            <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
                 <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
@@ -66,24 +70,36 @@ const IncomeExpenseTrendChart = () => {
     );
 }
 
-// Asset vs Liability Growth
-const AssetLiabilityChart = () => {
+// Asset vs Liability Composition
+const AssetLiabilityChart: React.FC = () => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-     const data = [
-        { name: '2022', assets: 2500000, liabilities: 1100000 },
-        { name: '2023', assets: 3200000, liabilities: 980000 },
-        { name: '2024', assets: 4000000, liabilities: 945000 },
-    ];
+     const chartData = useMemo(() => {
+        const totalInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const totalPhysicalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0);
+        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        
+        return [
+            { name: 'Investments', value: totalInvestments },
+            { name: 'Cash', value: totalCash },
+            { name: 'Physical Assets', value: totalPhysicalAssets },
+            { name: 'Liabilities', value: totalLiabilities },
+        ];
+    }, [data]);
+    
     return (
         <ResponsiveContainer width="100%" height={300}>
-             <BarChart data={data}>
+             <BarChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
                 <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
                 <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}/>
-                <Legend />
-                <Bar dataKey="assets" fill="#3b82f6" name="Assets" />
-                <Bar dataKey="liabilities" fill="#f87171" name="Liabilities" />
+                <Bar dataKey="value" name="Value">
+                    {chartData.map((entry) => (
+                        <Cell key={`cell-${entry.name}`} fill={entry.name === 'Liabilities' ? '#f87171' : '#3b82f6'} />
+                    ))}
+                </Bar>
             </BarChart>
         </ResponsiveContainer>
     );
@@ -97,15 +113,15 @@ const Analysis: React.FC = () => {
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4">Spending by Category</h3>
+                    <h3 className="text-lg font-semibold mb-4">Spending by Budget Category</h3>
                     <SpendingByCategoryChart />
                 </div>
                 <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4">Income vs. Expense Trend</h3>
+                    <h3 className="text-lg font-semibold mb-4">Monthly Income vs. Expense</h3>
                     <IncomeExpenseTrendChart />
                 </div>
                  <div className="bg-white p-6 rounded-lg shadow lg:col-span-2">
-                    <h3 className="text-lg font-semibold mb-4">Asset vs. Liability Growth</h3>
+                    <h3 className="text-lg font-semibold mb-4">Current Financial Position</h3>
                     <AssetLiabilityChart />
                 </div>
             </div>
