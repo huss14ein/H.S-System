@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useCurrency } from '../context/CurrencyContext';
 
@@ -34,8 +33,6 @@ export const useFormatCurrency = () => {
 
         const colorClass = value > 0 ? 'text-success' : value < 0 ? 'text-danger' : 'text-dark';
         
-        // FIX: Replaced JSX with React.createElement to avoid syntax errors in a .ts file.
-        // TypeScript does not parse JSX in .ts files by default, which caused the compiler to misinterpret the JSX tags.
         return React.createElement('span', { className: colorClass }, formattedString);
     };
 

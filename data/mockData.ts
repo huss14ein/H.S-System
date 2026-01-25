@@ -1,4 +1,3 @@
-
 import { FinancialData, Goal, InvestmentPortfolio, Account, Asset, Liability, InvestmentTransaction, Budget, WatchlistItem, Transaction } from '../types';
 
 // This function generates a rich, multi-year dataset based on the user's rules.
@@ -92,7 +91,6 @@ const generateRealisticData = (): FinancialData => {
 
   const settings = { riskProfile: 'Moderate' as const, budgetThreshold: 90, driftThreshold: 5, enableEmails: true, };
 
-  // FIX: Add missing 'simulatedPrices' property to satisfy the FinancialData type.
   return { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments: [], priceAlerts: [], simulatedPrices: {} };
 };
 

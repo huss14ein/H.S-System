@@ -1,4 +1,3 @@
-
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { WatchlistItem } from '../types';
@@ -38,7 +37,8 @@ const WatchlistItemRow: React.FC<{
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
-    const prevPriceRef = useRef<number>();
+    // FIX: Explicitly type useRef to include undefined since it's initialized without a value.
+    const prevPriceRef = useRef<number | undefined>();
 
     useEffect(() => {
         if (prevPriceRef.current !== undefined && priceInfo && priceInfo.price !== prevPriceRef.current) {
