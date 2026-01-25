@@ -137,9 +137,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePlatform = (platform: any) => updateItem('accounts', platform, 'accounts');
     const deletePlatform = (id: string) => deleteItem('accounts', id, 'accounts');
 
-    const addPortfolio = async (portfolio: any) => { await addItem('investment_portfolios', portfolio, 'investments', false); await fetchAllData(auth!.user!.id); };
-    const updatePortfolio = async (portfolio: any) => { await updateItem('investment_portfolios', portfolio, 'investments'); await fetchAllData(auth!.user!.id); };
-    const deletePortfolio = async (id: string) => { await deleteItem('investment_portfolios', id, 'investments'); await fetchAllData(auth!.user!.id); };
+    const addPortfolio = async (portfolio: any) => { if (!auth?.user) return; const { data: newItem, error } = await supabase.from('investment_portfolios').insert({ ...portfolio, user_id: auth.user.id }).select().single(); if (error) throw error; if (newItem) { setData(prev => ({ ...prev, investments: [...prev.investments, { ...newItem, holdings: [] }] })); } };
+    const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => { const { id, ...rest } = portfolio; const { data: updated, error } = await supabase.from('investment_portfolios').update(rest).eq('id', id).select().single(); if (error) throw error; if (updated) { setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === updated.id ? { ...p, ...updated } : p) })); } };
+    const deletePortfolio = (id: string) => deleteItem('investment_portfolios', id, 'investments');
     
     const updateHolding = async (holding: Holding) => {
         const { id, ...rest } = holding;
@@ -183,50 +183,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const recordTrade = async (trade: Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => {
         if (!auth?.user) return;
         try {
-            const portfolio = data.investments.find(p => p.accountId === trade.accountId);
-            if (!portfolio) throw new Error("Portfolio not found for this account.");
+            const { error: tradeError } = await supabase.rpc('record_trade', {
+                p_user_id: auth.user.id,
+                p_account_id: trade.accountId,
+                p_trade_type: trade.type,
+                p_symbol: trade.symbol,
+                p_quantity: trade.quantity,
+                p_price: trade.price,
+                p_date: trade.date
+            });
+            if (tradeError) throw tradeError;
 
-            const existingHolding = portfolio.holdings.find(h => h.symbol === trade.symbol);
+            // Locally add transaction to avoid full refetch
+            const newTransaction = { ...trade, id: `temp-${Date.now()}`, total: trade.quantity * trade.price };
+            setData(prev => ({ ...prev, investmentTransactions: [newTransaction as InvestmentTransaction, ...prev.investmentTransactions] }));
+            
+            // Refetch just investments to get updated holdings, which is more efficient than all data
+            const { data: investments, error: investmentsError } = await supabase.from('investment_portfolios').select('*, holdings(*)');
+            if (investmentsError) throw investmentsError;
 
-            if (trade.type === 'buy') {
-                const newHoldingData = existingHolding
-                    ? {
-                        ...existingHolding,
-                        quantity: existingHolding.quantity + trade.quantity,
-                        avgCost: ((existingHolding.avgCost * existingHolding.quantity) + (trade.price * trade.quantity)) / (existingHolding.quantity + trade.quantity),
-                      }
-                    : {
-                        symbol: trade.symbol,
-                        quantity: trade.quantity,
-                        avgCost: trade.price,
-                        currentValue: trade.quantity * trade.price, // Placeholder, will be updated by a market data feed
-                        realizedPnL: 0,
-                        portfolio_id: portfolio.id,
-                        user_id: auth.user.id,
-                        zakahClass: 'Zakatable' as const, // Default
-                      };
-                await supabase.from('holdings').upsert(newHoldingData);
-
-            } else { // Sell
-                if (!existingHolding || existingHolding.quantity < trade.quantity) throw new Error("Not enough shares to sell.");
-                
-                const realizedPnL = (trade.price - existingHolding.avgCost) * trade.quantity;
-                const newQuantity = existingHolding.quantity - trade.quantity;
-
-                if (newQuantity < 0.0001) { // Floating point comparison
-                    await supabase.from('holdings').delete().eq('id', existingHolding.id!);
-                } else {
-                    await supabase.from('holdings').upsert({
-                        ...existingHolding,
-                        quantity: newQuantity,
-                        realizedPnL: (existingHolding.realizedPnL || 0) + realizedPnL,
-                    });
-                }
+            if (investments) {
+                setData(prev => ({ ...prev, investments: investments.map((p: any) => ({ ...p, holdings: p.holdings || [] })) }));
             }
-            // Finally, record the transaction itself
-            await addItem('investment_transactions', { ...trade, total: trade.quantity * trade.price }, 'investmentTransactions');
-            await fetchAllData(auth.user.id); // Refetch all data to ensure consistency
-        } catch (error) { console.error("Failed to record trade:", error); throw error; }
+        } catch (error) {
+            console.error("Failed to record trade:", error);
+            // Optionally refetch all data as a fallback on error
+            await fetchAllData(auth.user.id);
+            throw error;
+        }
     };
 
     const addWatchlistItem = async (item: any) => { if (!auth?.user) return; const { data: newItem, error } = await supabase.from('watchlist').insert({ ...item, user_id: auth.user.id }).select().single(); if(error) throw error; if(newItem) setData(prev => ({ ...prev, watchlist: [...prev.watchlist, newItem]})); };

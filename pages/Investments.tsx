@@ -320,9 +320,8 @@ const PlatformCard: React.FC<{
                                  <div key={h.id} className="group rounded-md hover:bg-gray-100 border bg-white p-2">
                                     <div className="flex items-center text-sm">
                                         <div className="w-2/5 flex items-center gap-2">
-                                            <div className="font-medium text-gray-900 cursor-pointer" onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / h.totalCost) * 100 })}>{h.symbol}</div>
+                                            <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="font-medium text-gray-900 text-left bg-transparent border-none p-0 hover:underline">{h.symbol}</button>
                                              <button onClick={() => onEditHolding(h)} className="text-gray-300 group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"><PencilIcon className="h-3 w-3" /></button>
-                                             {/* FIX: Moved title attribute to a wrapping span to fix TypeScript error on SVG component. */}
                                              {h.zakahClass === 'Zakatable' && <span title="Zakatable Asset"><MoonIcon className="h-3 w-3 text-blue-400" /></span>}
                                         </div>
                                         <div className="w-1/5 text-right font-semibold text-dark">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>

@@ -188,6 +188,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
 const Goals: React.FC = () => {
     const { data, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
@@ -252,7 +253,7 @@ const Goals: React.FC = () => {
       
       <div className="bg-white p-6 rounded-lg shadow">
         <h3 className="text-lg font-semibold text-dark mb-2">Savings Allocation Strategy</h3>
-        <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{useFormatCurrency().formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
+        <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
             {data.goals.map(goal => (
                  <div key={goal.id} className="grid grid-cols-5 items-center gap-4">
