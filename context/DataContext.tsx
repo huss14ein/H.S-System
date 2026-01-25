@@ -208,7 +208,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (error) {
             console.error("Failed to record trade:", error);
             // Optionally refetch all data as a fallback on error
-            await fetchAllData(auth.user.id!);
+            if (auth?.user) {
+                await fetchAllData(auth.user.id);
+            }
             throw error;
         }
     };

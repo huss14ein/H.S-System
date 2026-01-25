@@ -2,7 +2,7 @@
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 
-const CustomizedContent: React.FC<any> = ({ _root, depth, x, y, width, height, index, colors, name, gainLossPercent }) => {
+const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, index, colors, name, gainLossPercent }) => {
     // Determine text color based on background darkness
     const textColor = depth === 1 ? 'white' : 'black';
 

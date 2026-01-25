@@ -38,7 +38,8 @@ const WatchlistItemRow: React.FC<{
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
     // FIX: Explicitly type useRef to include undefined since it's initialized without a value.
-    const prevPriceRef = useRef<number | undefined>();
+    // FIX: The useRef hook requires an initial value. Pass `undefined` to satisfy the requirement.
+    const prevPriceRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         if (prevPriceRef.current !== undefined && priceInfo && priceInfo.price !== prevPriceRef.current) {

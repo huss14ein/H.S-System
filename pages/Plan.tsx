@@ -211,7 +211,7 @@ const AnnualFinancialPlan: React.FC = () => {
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
-                                    {row.monthly_planned.map((plan, monthIndex) => {
+                                    {row.monthly_planned.map((plan: number, monthIndex: number) => {
                                         const isAffected = incomeShock.percent !== 0 && monthIndex >= incomeShock.startMonth - 1 && monthIndex < incomeShock.startMonth - 1 + incomeShock.duration;
                                         return (
                                             <td key={monthIndex} className="p-2 align-top">
@@ -236,7 +236,7 @@ const AnnualFinancialPlan: React.FC = () => {
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
-                                    {row.monthly_planned.map((plan, monthIndex) => (
+                                    {row.monthly_planned.map((plan: number, monthIndex: number) => (
                                         <td key={monthIndex} className="p-2 align-top">
                                             <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
                                             <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => setIsEditing({row: originalIndex, col: monthIndex})}>

@@ -140,8 +140,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                             const inputText = message.serverContent.inputTranscription?.text;
                             if (inputText) {
                                 setTranscript(prev => {
-                                    const last = prev[prev.length - 1];
-                                    if (last?.source === 'user') {
+                                    const last = prev.length > 0 ? prev[prev.length - 1] : undefined;
+                                    if (last && last.source === 'user') {
                                         return [...prev.slice(0, -1), { ...last, text: last.text + inputText }];
                                     }
                                     return [...prev, { source: 'user', text: inputText }];
@@ -152,8 +152,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                              if (outputText) {
                                 setStatus('Speaking');
                                  setTranscript(prev => {
-                                    const last = prev[prev.length - 1];
-                                    if (last?.source === 'model') {
+                                    const last = prev.length > 0 ? prev[prev.length - 1] : undefined;
+                                    if (last && last.source === 'model') {
                                         return [...prev.slice(0, -1), { ...last, text: last.text + outputText }];
                                     }
                                     return [...prev, { source: 'model', text: outputText }];
