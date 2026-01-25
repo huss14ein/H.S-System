@@ -17,69 +17,41 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const { currency } = useCurrency();
+  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+  const prevValueRef = useRef<number | null>(null);
+
   const isPositive = trend?.includes('+') || trend?.toLowerCase().includes('surplus') || trend?.toLowerCase().includes('under');
   const isNegative = trend?.includes('-') || trend?.toLowerCase().includes('deficit') || trend?.toLowerCase().includes('over');
   let trendColor = 'text-gray-500';
   if (isPositive) trendColor = 'text-success';
   if (isNegative) trendColor = 'text-danger';
 
-  const [displayValue, setDisplayValue] = useState<React.ReactNode>(value);
-  const prevValueRef = useRef<number | null>(null);
-
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.-]+/g,"")));
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,SAR$]+/g, "")));
     if (!isNumeric) {
-      setDisplayValue(value);
       return;
     }
-
-    const finalValue = typeof value === 'number' ? value : parseFloat(String(value).replace(/[^0-9.-]+/g,""));
-    const startValue = prevValueRef.current ?? 0;
     
-    if (finalValue !== startValue) {
-        prevValueRef.current = finalValue;
+    const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
+
+    if (prevValueRef.current !== null && Math.abs(numericValue - prevValueRef.current) > 0.001) {
+      setFlash(numericValue > prevValueRef.current ? 'up' : 'down');
+      const timer = setTimeout(() => setFlash(null), 1000);
+      return () => clearTimeout(timer);
     }
-
-    const duration = 1000;
-    const startTime = Date.now();
-
-    const updateValue = () => {
-        const elapsedTime = Date.now() - startTime;
-        if (elapsedTime >= duration) {
-            setDisplayValue(value);
-            return;
-        }
-
-        const progress = elapsedTime / duration;
-        const currentValue = startValue + (finalValue - startValue) * progress;
-        
-        const originalStr = String(value);
-        const isCurrency = originalStr.includes('SAR') || originalStr.includes('$');
-        const isPercent = originalStr.endsWith('%');
-
-        if (isCurrency) {
-            setDisplayValue(new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency: currency,
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-            }).format(currentValue));
-        } else if (isPercent) {
-             setDisplayValue(`${currentValue.toFixed(1)}%`);
-        } else {
-             setDisplayValue(currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-        }
-
-        requestAnimationFrame(updateValue);
-    };
-
-    if (Math.abs(finalValue - startValue) > 0.01) {
-      requestAnimationFrame(updateValue);
-    } else {
-      setDisplayValue(value);
+    
+    if (prevValueRef.current === null) {
+         prevValueRef.current = numericValue;
     }
+  }, [value]);
 
-  }, [value, currency]);
+  useEffect(() => {
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,SAR$]+/g, "")));
+     if(isNumeric) {
+        const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
+        prevValueRef.current = numericValue;
+     }
+  }, [value]);
   
   const indicatorClass = 
       indicatorColor === 'green' ? 'border-green-500' :
@@ -87,10 +59,11 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
       indicatorColor === 'red' ? 'border-red-500' :
       'border-transparent';
 
+  const flashClass = flash === 'up' ? 'flash-green' : flash === 'down' ? 'flash-red' : '';
 
   return (
     <div 
-      className={`bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 ease-in-out flex flex-col border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''}`}
+      className={`bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 ease-in-out flex flex-col border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
       onClick={onClick}
     >
       <div className="flex items-start justify-between">
@@ -106,7 +79,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
         )}
       </div>
       <div className="mt-2 flex-grow">
-        <p className={`text-3xl font-semibold break-words ${valueColor || 'text-dark'}`}>{displayValue}</p>
+        <p className={`text-3xl font-semibold break-words ${valueColor || 'text-dark'}`}>{value}</p>
         {trend && (
           <div className={`flex items-center text-sm mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-4 w-4 mr-1"/>}

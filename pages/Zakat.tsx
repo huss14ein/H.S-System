@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import Card from '../components/Card';
@@ -49,28 +50,22 @@ const Zakat: React.FC = () => {
     const { data, addZakatPayment } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
-    // Config States
     const [goldPrice, setGoldPrice] = useState(275);
-    const [assetConfig, setAssetConfig] = useState({ cash: true, tradingShares: true, investmentShares: false });
     const [otherDebts, setOtherDebts] = useState(0);
-
-    // UI States
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
     const nisab = useMemo(() => goldPrice * 85, [goldPrice]);
 
     const zakatableAssets = useMemo(() => {
-        const cash = assetConfig.cash ? data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0) : 0;
+        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
         
-        // For simplicity, let's assume 'port1' is for trading and 'port2' is for long-term investment
-        const tradingValue = data.investments.find(p => p.id === 'port1')?.holdings.reduce((sum, h) => sum + h.currentValue, 0) || 0;
-        const investmentValue = data.investments.find(p => p.id === 'port2')?.holdings.reduce((sum, h) => sum + h.currentValue, 0) || 0;
-
-        const investments = (assetConfig.tradingShares ? tradingValue : 0) + (assetConfig.investmentShares ? investmentValue : 0);
+        const investments = data.investments.flatMap(p => p.holdings)
+            .filter(h => h.zakahClass === 'Zakatable')
+            .reduce((sum, h) => sum + h.currentValue, 0);
 
         const total = cash + investments;
         return { cash, investments, total };
-    }, [assetConfig, data.accounts, data.investments]);
+    }, [data.accounts, data.investments]);
 
     const deductibleLiabilities = useMemo(() => {
         const shortTermDebts = data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
@@ -78,14 +73,9 @@ const Zakat: React.FC = () => {
         return { shortTermDebts, otherDebts, total };
     }, [otherDebts, data.accounts]);
     
-    const netZakatableWealth = useMemo(() => {
-        return Math.max(0, zakatableAssets.total - deductibleLiabilities.total);
-    }, [zakatableAssets, deductibleLiabilities]);
-
+    const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
-
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
-
     const totalPaid = useMemo(() => data.zakatPayments.reduce((sum, p) => sum + p.amount, 0), [data.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
 
@@ -110,13 +100,8 @@ const Zakat: React.FC = () => {
                 <div className="space-y-6">
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h3 className="font-semibold text-dark mb-4">Zakatable Assets</h3>
-                        <div className="space-y-3">
-                            {/* Toggles */}
-                            <div className="space-y-2 rounded-md p-3 bg-gray-50">
-                                <label className="flex items-center justify-between"><span className="text-sm">Include Cash</span><input type="checkbox" checked={assetConfig.cash} onChange={e => setAssetConfig(s=>({...s, cash: e.target.checked}))} className="h-4 w-4 rounded text-primary" /></label>
-                                <label className="flex items-center justify-between"><span className="text-sm">Include Trading Shares</span><input type="checkbox" checked={assetConfig.tradingShares} onChange={e => setAssetConfig(s=>({...s, tradingShares: e.target.checked}))} className="h-4 w-4 rounded text-primary" /></label>
-                                <label className="flex items-center justify-between"><span className="text-sm">Include Investment Shares</span><input type="checkbox" checked={assetConfig.investmentShares} onChange={e => setAssetConfig(s=>({...s, investmentShares: e.target.checked}))} className="h-4 w-4 rounded text-primary" /></label>
-                            </div>
+                         <div className="space-y-3">
+                            <p className="text-xs text-gray-500">Includes cash in checking/savings and investments marked as 'Zakatable'. You can change an asset's Zakat classification in the Investments tab.</p>
                             <div className="flex justify-between text-sm pt-2"><span className="text-gray-600">Cash</span><span>{formatCurrencyString(zakatableAssets.cash)}</span></div>
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Investments</span><span>{formatCurrencyString(zakatableAssets.investments)}</span></div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total)}</span></div>

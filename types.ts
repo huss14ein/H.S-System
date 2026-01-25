@@ -84,6 +84,7 @@ export type HoldingAssetClass =
   | 'Other';
 
 export interface Holding {
+  id?: string; // Added ID for database operations
   symbol: string;
   name?: string;
   quantity: number;
@@ -163,6 +164,7 @@ export interface FinancialData {
   settings: Settings;
   zakatPayments: ZakatPayment[];
   priceAlerts: PriceAlert[];
+  simulatedPrices: Record<string, { price: number; change: number; changePercent: number }>;
 }
 
 export interface KPISummary {

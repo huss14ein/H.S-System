@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -69,5 +70,39 @@
     .hs-logo:hover .logo-h-cutout {
         transform: scale(0.95);
         fill: #93c5fd;
+    }
+
+    @keyframes flash-green-glow {
+        0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(22, 163, 74, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+    }
+    .flash-green {
+        animation: flash-green-glow 1s ease-out;
+    }
+
+    @keyframes flash-red-glow {
+        0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+    }
+    .flash-red {
+        animation: flash-red-glow 1s ease-out;
+    }
+
+    @keyframes flash-green-bg {
+      from { background-color: rgba(22, 163, 74, 0.2); }
+      to { background-color: transparent; }
+    }
+    .flash-green-bg {
+        animation: flash-green-bg 1s ease-out;
+    }
+
+    @keyframes flash-red-bg {
+      from { background-color: rgba(220, 38, 38, 0.15); }
+      to { background-color: transparent; }
+    }
+    .flash-red-bg {
+        animation: flash-red-bg 1s ease-out;
     }
 }

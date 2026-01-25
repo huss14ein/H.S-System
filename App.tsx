@@ -1,24 +1,34 @@
-import React, { useState, useContext } from 'react';
+
+import React, { useState, useContext, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
 import { Page } from './types';
-import Investments from './pages/Investments';
-import Goals from './pages/Goals';
-import Assets from './pages/Assets';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import { AuthContext } from './context/AuthContext';
-import Zakat from './pages/Zakat';
-import Plan from './pages/Plan';
-import Liabilities from './pages/Liabilities';
-import Analysis from './pages/Analysis';
-import SystemHealth from './pages/SystemHealth';
 import { DataProvider } from './context/DataContext';
-import Summary from './pages/Summary';
-import TransactionsPage from './pages/TransactionsPage';
-import Forecast from './pages/Forecast';
-import Budgets from './pages/Budgets';
 import { CurrencyProvider } from './context/CurrencyContext';
+import MarketSimulator from './components/MarketSimulator';
+
+// --- Lazy Load Pages for Code Splitting ---
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Summary = lazy(() => import('./pages/Summary'));
+const Investments = lazy(() => import('./pages/Investments'));
+const Assets = lazy(() => import('./pages/Assets'));
+const Liabilities = lazy(() => import('./pages/Liabilities'));
+const Transactions = lazy(() => import('./pages/Transactions'));
+const Budgets = lazy(() => import('./pages/Budgets'));
+const Goals = lazy(() => import('./pages/Goals'));
+const Plan = lazy(() => import('./pages/Plan'));
+const Forecast = lazy(() => import('./pages/Forecast'));
+const Analysis = lazy(() => import('./pages/Analysis'));
+const Zakat = lazy(() => import('./pages/Zakat'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+
+const LoadingSpinner: React.FC = () => (
+    <div className="flex justify-center items-center h-96">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary"></div>
+    </div>
+);
 
 
 const App: React.FC = () => {
@@ -45,7 +55,7 @@ const App: React.FC = () => {
       case 'Liabilities':
         return <Liabilities />;
       case 'Transactions':
-        return <TransactionsPage />;
+        return <Transactions />;
       case 'Budgets':
         return <Budgets />;
       case 'Goals':
@@ -72,8 +82,11 @@ const App: React.FC = () => {
   return (
     <DataProvider>
       <CurrencyProvider>
+        <MarketSimulator />
         <Layout activePage={activePage} setActivePage={setActivePage}>
-          {renderPage()}
+          <Suspense fallback={<LoadingSpinner />}>
+            {renderPage()}
+          </Suspense>
         </Layout>
       </CurrencyProvider>
     </DataProvider>

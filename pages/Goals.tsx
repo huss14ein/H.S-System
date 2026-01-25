@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import ProgressBar from '../components/ProgressBar';
@@ -14,6 +15,7 @@ import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { PlusCircleIcon } from '../components/icons/PlusCircleIcon';
 import AIAdvisor from '../components/AIAdvisor';
+import { LinkIcon } from '../components/icons/LinkIcon';
 
 interface GoalModalProps {
     isOpen: boolean;
@@ -25,34 +27,38 @@ interface GoalModalProps {
 const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEdit }) => {
     const [name, setName] = useState('');
     const [targetAmount, setTargetAmount] = useState('');
-    const [currentAmount, setCurrentAmount] = useState('');
     const [deadline, setDeadline] = useState('');
 
     useEffect(() => {
         if (goalToEdit) {
             setName(goalToEdit.name);
             setTargetAmount(String(goalToEdit.targetAmount));
-            setCurrentAmount(String(goalToEdit.currentAmount));
             setDeadline(new Date(goalToEdit.deadline).toISOString().split('T')[0]);
         } else {
             setName('');
             setTargetAmount('');
-            setCurrentAmount('');
             setDeadline('');
         }
     }, [goalToEdit, isOpen]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const newGoal: Goal = {
-            id: goalToEdit ? goalToEdit.id : `goal${Date.now()}`,
+        const goalData = {
             name,
             targetAmount: parseFloat(targetAmount) || 0,
-            currentAmount: parseFloat(currentAmount) || 0,
             deadline,
-            savingsAllocationPercent: goalToEdit?.savingsAllocationPercent || 0,
         };
-        onSave(newGoal);
+
+        if (goalToEdit) {
+            onSave({ ...goalToEdit, ...goalData });
+        } else {
+            onSave({
+                id: `goal${Date.now()}`,
+                ...goalData,
+                currentAmount: 0, // New goals start with 0, progress is from linked assets.
+                savingsAllocationPercent: 0,
+            });
+        }
         onClose();
     };
 
@@ -61,7 +67,6 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             <form onSubmit={handleSubmit} className="space-y-4">
                 <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="number" placeholder="Current Amount" value={currentAmount} onChange={e => setCurrentAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Goal</button>
             </form>
@@ -77,6 +82,7 @@ const GoalStatus: React.FC<{ status: 'On Track' | 'Needs Attention' | 'At Risk' 
 }
 
 const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; }> = ({ goal, onEdit, onDelete, monthlySavings }) => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -88,28 +94,49 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         setIsLoading(false);
     }, [goal]);
     
+    const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
+        const linkedItems: { name: string, value: number }[] = [];
+        
+        data.assets.filter(a => a.goalId === goal.id).forEach(a => {
+            linkedItems.push({ name: a.name, value: a.value });
+        });
+
+        data.investments.forEach(p => {
+            p.holdings.filter(h => h.goalId === goal.id).forEach(h => {
+                linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: h.currentValue });
+            });
+        });
+
+        const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
+
+        return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
+    }, [data.assets, data.investments, goal.id]);
+
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution } = useMemo(() => {
+        const currentAmount = calculatedCurrentAmount;
         const deadline = new Date(goal.deadline);
         const now = new Date();
-        const goalStartDate = new Date(deadline.getFullYear() - 3, deadline.getMonth(), deadline.getDate());
-        const totalDuration = deadline.getTime() - goalStartDate.getTime();
-        const elapsedDuration = now.getTime() - goalStartDate.getTime();
         const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
-        const progressPercent = (goal.currentAmount / goal.targetAmount) * 100;
-        const timeElapsedPercent = totalDuration > 0 ? Math.min(100, (elapsedDuration / totalDuration) * 100) : 100;
-        const remainingAmount = goal.targetAmount - goal.currentAmount;
+        const progressPercent = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
+        const remainingAmount = Math.max(0, goal.targetAmount - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
         const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
-        if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) status = 'Needs Attention';
-        if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) status = 'At Risk';
-        if (monthsLeft <= 0 && progressPercent < 100) status = 'At Risk';
+        if (progressPercent >= 100) {
+            status = 'On Track';
+        } else if (monthsLeft <= 0) {
+            status = 'At Risk';
+        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
+            status = 'Needs Attention';
+        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
+            status = 'At Risk';
+        }
         
         const color = status === 'At Risk' ? 'bg-danger' : status === 'Needs Attention' ? 'bg-warning' : 'bg-primary';
 
         return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution };
-    }, [goal, monthlySavings]);
+    }, [goal, monthlySavings, calculatedCurrentAmount]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out">
@@ -120,14 +147,33 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 </div>
                 
                 <div className="mt-4">
-                    <div className="flex justify-between items-baseline mb-1"><span className="font-medium text-secondary">{formatCurrencyString(goal.currentAmount, { digits: 0 })}</span><span className="text-sm text-gray-500">of {formatCurrencyString(goal.targetAmount, { digits: 0 })}</span></div>
-                    <ProgressBar value={goal.currentAmount} max={goal.targetAmount} color={color} />
+                    <div className="flex justify-between items-baseline mb-1"><span className="font-medium text-secondary">{formatCurrencyString(calculatedCurrentAmount, { digits: 0 })}</span><span className="text-sm text-gray-500">of {formatCurrencyString(goal.targetAmount, { digits: 0 })}</span></div>
+                    <ProgressBar value={calculatedCurrentAmount} max={goal.targetAmount} color={color} />
                      <div className="flex justify-between items-baseline mt-1 text-sm text-gray-600"><span>{progressPercent.toFixed(1)}% Complete</span><span>{monthsLeft > 0 ? `${monthsLeft} months left` : 'Deadline passed'}</span></div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2 text-center bg-gray-50 border-t border-b p-3">
                     <div><p className="text-sm text-gray-500">Required Monthly</p><p className="font-bold text-lg text-primary">{formatCurrencyString(requiredMonthlyContribution, { digits: 0 })}</p></div>
                     <div><p className="text-sm text-gray-500">Projected Monthly</p><p className="font-bold text-lg text-dark">{formatCurrencyString(projectedMonthlyContribution, { digits: 0 })}</p></div>
+                </div>
+
+                 <div className="mt-4 border-t pt-4">
+                    <h4 className="font-semibold text-sm text-gray-700 mb-2 flex items-center">
+                        <LinkIcon className="h-4 w-4 mr-2 text-gray-400" />
+                        Linked Contributions
+                    </h4>
+                    {linkedAssets.length > 0 ? (
+                        <ul className="space-y-1 max-h-24 overflow-y-auto text-sm pr-2">
+                            {linkedAssets.map((asset, index) => (
+                                <li key={`${asset.name}-${index}`} className="flex justify-between items-center">
+                                    <span className="text-gray-600 truncate" title={asset.name}>{asset.name}</span>
+                                    <span className="font-medium text-dark flex-shrink-0 ml-2">{formatCurrencyString(asset.value, { digits: 0 })}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <p className="text-xs text-gray-500 text-center italic mt-2">No assets linked. Link them from the Assets or Investments pages.</p>
+                    )}
                 </div>
             </div>
             <div className="bg-indigo-50 p-4 rounded-lg">
@@ -146,19 +192,31 @@ const Goals: React.FC = () => {
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
     const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
-    
     const [allocations, setAllocations] = useState<Record<string, number>>({});
     
     useEffect(() => {
         const initialAllocations: Record<string, number> = {};
-        data.goals.forEach(g => {
-            initialAllocations[g.id] = g.savingsAllocationPercent || 0;
-        });
+        data.goals.forEach(g => { initialAllocations[g.id] = g.savingsAllocationPercent || 0; });
         setAllocations(initialAllocations);
     }, [data.goals]);
-    
-    const monthlySavings = 7500; // Mocked for now
 
+    const averageMonthlySavings = useMemo(() => {
+        const monthlyNet = new Map<string, number>();
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+        data.transactions.filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
+            const monthKey = t.date.slice(0, 7); // YYYY-MM
+            const currentNet = monthlyNet.get(monthKey) || 0;
+            monthlyNet.set(monthKey, currentNet + t.amount); // amount is positive for income, negative for expense
+        });
+        
+        if (monthlyNet.size === 0) return 7500; // Default if no recent transactions
+        
+        const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
+        return Math.max(0, totalNet / monthlyNet.size);
+    }, [data.transactions]);
+    
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
     
@@ -180,7 +238,6 @@ const Goals: React.FC = () => {
         setAllocations(prev => ({ ...prev, [goalId]: percent }));
     };
 
-    // FIX: Explicitly type the accumulator and current value in the reduce function to prevent type inference issues.
     const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => sum + p, 0), [allocations]);
     
     const handleSaveAllocations = () => {
@@ -195,7 +252,7 @@ const Goals: React.FC = () => {
       
       <div className="bg-white p-6 rounded-lg shadow">
         <h3 className="text-lg font-semibold text-dark mb-2">Savings Allocation Strategy</h3>
-        <p className="text-sm text-gray-500 mb-4">Allocate your monthly savings of <span className="font-bold text-dark">{useFormatCurrency().formatCurrencyString(monthlySavings)}</span> across your goals.</p>
+        <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{useFormatCurrency().formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
             {data.goals.map(goal => (
                  <div key={goal.id} className="grid grid-cols-5 items-center gap-4">
@@ -211,13 +268,22 @@ const Goals: React.FC = () => {
         </div>
       </div>
 
-      <AIAdvisor pageContext="goals" contextData={{ goals: data.goals, monthlySavings }}/>
+      <AIAdvisor pageContext="goals" contextData={{ goals: data.goals, monthlySavings: averageMonthlySavings }}/>
       
        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            {data.goals.map(goal => (<GoalCard key={goal.id} goal={goal} monthlySavings={monthlySavings} onEdit={() => handleOpenModal(goal)} onDelete={() => handleOpenDeleteModal(goal)} />))}
-        </div>
-        <GoalModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveGoal} goalToEdit={goalToEdit} />
-        <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={goalToDelete?.name || ''} />
+        {data.goals.map(goal => (
+            <GoalCard 
+                key={goal.id} 
+                goal={goal} 
+                onEdit={() => handleOpenModal(goal)}
+                onDelete={() => handleOpenDeleteModal(goal)}
+                monthlySavings={averageMonthlySavings}
+            />
+        ))}
+      </div>
+      
+      <GoalModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveGoal} goalToEdit={goalToEdit} />
+      <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={goalToDelete?.name || ''} />
     </div>
   );
 };

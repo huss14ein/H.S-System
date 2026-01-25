@@ -1,12 +1,12 @@
 
 import React, { useState, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIAnalysis, getInvestmentAIAnalysis, getAIHolisticPlan, getAITransactionAnalysis, getAIGoalStrategyAnalysis } from '../services/geminiService'; // Assuming these exist and are tailored
+import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights } from '../services/geminiService'; // Assuming these exist and are tailored
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
 
-type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals';
+type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
 
 interface AIAdvisorProps {
     pageContext: AIContext;
@@ -32,9 +32,10 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
         case 'investments':
             return getInvestmentAIAnalysis(data.investments.flatMap(p => p.holdings));
         case 'plan':
-             const monthlyIncome = 30000;
-             const monthlyExpenses = 20000;
-             return getAIHolisticPlan(data.goals, monthlyIncome, monthlyExpenses);
+             if (contextData?.totals && contextData?.scenarios) {
+                return getAIPlanAnalysis(contextData.totals, contextData.scenarios);
+             }
+             return Promise.resolve("Not enough data for plan analysis.");
         case 'cashflow':
             if (contextData?.transactions && contextData?.budgets) {
                 return getAITransactionAnalysis(contextData.transactions, contextData.budgets);
@@ -45,6 +46,11 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
                 return getAIGoalStrategyAnalysis(contextData.goals, contextData.monthlySavings);
             }
             return Promise.resolve("Not enough data for goal strategy analysis.");
+        case 'analysis':
+            if (contextData?.spendingData && contextData?.trendData && contextData?.compositionData) {
+                return getAIAnalysisPageInsights(contextData.spendingData, contextData.trendData, contextData.compositionData);
+            }
+            return Promise.resolve("Not enough data for a full analysis.");
         default:
             return Promise.resolve("AI analysis for this section is not configured yet.");
     }
@@ -86,7 +92,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
             {insight && !isLoading && (
                  <div 
                     className="prose prose-sm max-w-none text-gray-700 bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg"
-                    dangerouslySetInnerHTML={{ __html: insight.replace(/\n/g, '<br />') }} 
+                    dangerouslySetInnerHTML={{ __html: insight.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-4 mb-2">$1</h3>').replace(/\n/g, '<br />') }} 
                 />
             )}
 

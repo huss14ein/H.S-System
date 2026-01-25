@@ -4,6 +4,10 @@ import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Card from '../components/Card';
 import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
+import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
+import AIAdvisor from '../components/AIAdvisor';
+import SinkingFunds from './SinkingFunds';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -70,8 +74,10 @@ const AnnualFinancialPlan: React.FC = () => {
             const newRow = JSON.parse(JSON.stringify(row));
             if (row.type === 'income') {
                 for (let i = 0; i < incomeShock.duration; i++) {
-                    const monthIndex = (incomeShock.startMonth - 1 + i) % 12;
-                    newRow.monthly_planned[monthIndex] *= (1 + incomeShock.percent / 100);
+                    const monthIndex = (incomeShock.startMonth - 1 + i);
+                    if (monthIndex < 12) {
+                       newRow.monthly_planned[monthIndex] *= (1 + incomeShock.percent / 100);
+                    }
                 }
             } else if (row.type === 'expense' && (expenseStress.category === 'All' || row.category === expenseStress.category)) {
                  newRow.monthly_planned = newRow.monthly_planned.map((p: number) => p * (1 + expenseStress.percent / 100));
@@ -91,7 +97,7 @@ const AnnualFinancialPlan: React.FC = () => {
         const projectedNet = totalPlannedIncome - totalPlannedExpenses;
         const actualNet = totalActualIncome - totalActualExpenses;
 
-        return { totalPlannedIncome, totalActualExpenses, projectedNet, actualNet };
+        return { totalPlannedIncome, totalPlannedExpenses, projectedNet, actualNet };
     }, [processedPlanData]);
     
     const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
@@ -120,12 +126,16 @@ const AnnualFinancialPlan: React.FC = () => {
             <div className="text-center">
                 <h1 className="text-3xl font-bold text-dark">Annual Financial Plan</h1>
                 <p className="text-gray-500 mt-1">A detailed grid for planning and tracking your finances throughout the year.</p>
-                <div className="mt-2"><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="p-1 border rounded-md" /></div>
+                <div className="mt-2 flex items-center justify-center gap-2">
+                    <button onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon className="h-5 w-5"/></button>
+                    <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="p-1 border rounded-md w-24 text-center font-semibold" />
+                    <button onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
+                </div>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                  <Card title="Total Planned Income" value={formatCurrencyString(totals.totalPlannedIncome, {digits: 0})} />
-                 <Card title="Total Actual Expenses" value={formatCurrencyString(totals.totalActualExpenses, {digits: 0})} />
+                 <Card title="Total Planned Expenses" value={formatCurrencyString(totals.totalPlannedExpenses, {digits: 0})} />
                  <Card title="Projected Annual Savings" value={formatCurrencyString(totals.projectedNet, {digits: 0})} />
                  <Card title="Actual Net Savings (YTD)" value={formatCurrencyString(totals.actualNet, {digits: 0})} />
             </div>
@@ -177,6 +187,10 @@ const AnnualFinancialPlan: React.FC = () => {
                      </div>
                  </div>
             </div>
+
+             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress } }} />
+
+             <SinkingFunds />
             
             {/* Plan Grid */}
             <div className="bg-white shadow rounded-lg overflow-x-auto">
@@ -197,14 +211,17 @@ const AnnualFinancialPlan: React.FC = () => {
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
-                                    {row.monthly_planned.map((plan, monthIndex) => (
-                                        <td key={monthIndex} className="p-2 align-top">
-                                            <div className="text-gray-500">{formatCurrencyString(row.monthly_actual[monthIndex], { digits: 0 })}</div>
-                                            <div className="font-semibold cursor-pointer" onClick={() => setIsEditing({row: rowIndex, col: monthIndex})}>
-                                                {formatCurrencyString(plan, { digits: 0 })}
-                                            </div>
-                                        </td>
-                                    ))}
+                                    {row.monthly_planned.map((plan, monthIndex) => {
+                                        const isAffected = incomeShock.percent !== 0 && monthIndex >= incomeShock.startMonth - 1 && monthIndex < incomeShock.startMonth - 1 + incomeShock.duration;
+                                        return (
+                                            <td key={monthIndex} className="p-2 align-top">
+                                                <div className="text-gray-500">{formatCurrencyString(row.monthly_actual[monthIndex], { digits: 0 })}</div>
+                                                <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-blue-100' : ''}`} onClick={() => setIsEditing({row: rowIndex, col: monthIndex})}>
+                                                    {formatCurrencyString(plan, { digits: 0 })}
+                                                </div>
+                                            </td>
+                                        )
+                                    })}
                                     <td className="p-2 align-top font-bold"><div className="text-gray-500">{formatCurrencyString(totalActual, { digits: 0 })}</div><div>{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
                                 </tr>
                              )
@@ -215,13 +232,14 @@ const AnnualFinancialPlan: React.FC = () => {
                              const originalIndex = planData.findIndex(item => item.category === row.category && item.type === 'expense');
                              const totalPlanned = row.monthly_planned.reduce((a, b) => a + b, 0);
                              const totalActual = row.monthly_actual.reduce((a, b) => a + b, 0);
+                             const isAffected = expenseStress.percent !== 0 && (expenseStress.category === 'All' || expenseStress.category === row.category);
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
                                     {row.monthly_planned.map((plan, monthIndex) => (
                                         <td key={monthIndex} className="p-2 align-top">
                                             <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
-                                            <div className="font-semibold cursor-pointer" onClick={() => setIsEditing({row: originalIndex + 1, col: monthIndex})}>
+                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => setIsEditing({row: originalIndex + 1, col: monthIndex})}>
                                                 {formatCurrencyString(plan, { digits: 0 })}
                                             </div>
                                         </td>

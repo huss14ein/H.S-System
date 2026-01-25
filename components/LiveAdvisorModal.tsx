@@ -5,16 +5,17 @@ import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Type, FunctionDe
 import { DataContext } from '../context/DataContext';
 import { encode, decode, decodeAudioData } from '../utils/audioUtils';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
+import { SparklesIcon } from './icons/SparklesIcon';
 
 type Status = 'Inactive' | 'Connecting' | 'Listening' | 'Thinking' | 'Speaking' | 'Error';
 
 interface TranscriptItem {
-    source: 'user' | 'model';
+    source: 'user' | 'model' | 'system';
     text: string;
 }
 
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
-    const { data } = useContext(DataContext)!;
+    const { data, addWatchlistItem } = useContext(DataContext)!;
     const [status, setStatus] = useState<Status>('Inactive');
     const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
     
@@ -57,17 +58,30 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         const sortedTransactions = [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         return { transactions: sortedTransactions.slice(0, limit).map(t => ({ description: t.description, amount: t.amount })) };
     }, [data]);
+    
+    const handleAddWatchlistItem = useCallback(async ({ symbol, name }: { symbol: string, name: string }) => {
+        if (!symbol || !name) return { success: false, error: "Symbol and name are required." };
+        try {
+            await addWatchlistItem({ symbol, name });
+            return { success: true, message: `Successfully added ${name} to the watchlist.` };
+        } catch (e) {
+            console.error("Error adding to watchlist via AI:", e);
+            return { success: false, error: `Failed to add ${name} to watchlist.` };
+        }
+    }, [addWatchlistItem]);
 
     const functionDeclarations: FunctionDeclaration[] = [
         { name: 'getNetWorth', parameters: { type: Type.OBJECT, properties: {} } },
         { name: 'getBudgetStatus', parameters: { type: Type.OBJECT, properties: { category: { type: Type.STRING } }, required: ['category'] } },
         { name: 'getRecentTransactions', parameters: { type: Type.OBJECT, properties: { limit: { type: Type.NUMBER } }, required: ['limit'] } },
+        { name: 'addWatchlistItem', description: "Adds a stock to the user's watchlist.", parameters: { type: Type.OBJECT, properties: { symbol: { type: Type.STRING, description: "The stock ticker symbol, e.g., MSFT or 2222.SR" }, name: { type: Type.STRING, description: "The full name of the company, e.g., Microsoft Corp." } }, required: ['symbol', 'name'] } },
     ];
     
     const functionHandlers: Record<string, (args: any) => any> = {
         getNetWorth,
         getBudgetStatus,
         getRecentTransactions,
+        addWatchlistItem: handleAddWatchlistItem,
     };
 
     const startSession = async () => {
@@ -75,9 +89,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // FIX: Cast `import.meta` to `any` to access `env` without adding a new type definition file.
-        const API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY;
-        if (!API_KEY) {
+        if (!process.env.API_KEY) {
             setStatus('Error');
             console.error("API Key is not configured for Live Advisor.");
             alert("Live Advisor is unavailable: API Key not found.");
@@ -88,9 +100,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaStreamRef.current = stream;
 
-            const ai = new GoogleGenAI({ apiKey: API_KEY });
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             
-            // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without causing a TypeScript error.
             outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
             nextStartTimeRef.current = 0;
 
@@ -98,6 +109,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 model: 'gemini-2.5-flash-native-audio-preview-12-2025',
                 config: {
                     responseModalities: [Modality.AUDIO],
+                    systemInstruction: "You are 'HS', a friendly and highly capable AI financial assistant. You can answer questions about the user's finances by calling functions. You can also manage their watchlist by adding stocks when they ask. Be concise and helpful.",
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
                     tools: [{ functionDeclarations }],
@@ -105,7 +117,6 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 callbacks: {
                     onopen: () => {
                         setStatus('Listening');
-                        // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without causing a TypeScript error.
                         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
                         mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
                         scriptProcessorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
@@ -124,11 +135,13 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                     },
                     onmessage: async (message: LiveServerMessage) => {
                          if (message.serverContent) {
+                            setTranscript(prev => prev.filter(item => item.source !== 'system'));
+
                             if (message.serverContent.inputTranscription?.text) {
                                 setTranscript(prev => {
                                     const last = prev[prev.length - 1];
                                     if (last?.source === 'user') {
-                                        return [...prev.slice(0, -1), { source: 'user', text: last.text + message.serverContent.inputTranscription!.text }];
+                                        return [...prev.slice(0, -1), { ...last, text: last.text + message.serverContent.inputTranscription!.text }];
                                     }
                                     return [...prev, { source: 'user', text: message.serverContent.inputTranscription!.text }];
                                 });
@@ -138,7 +151,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                                  setTranscript(prev => {
                                     const last = prev[prev.length - 1];
                                     if (last?.source === 'model') {
-                                        return [...prev.slice(0, -1), { source: 'model', text: last.text + message.serverContent.outputTranscription!.text }];
+                                        return [...prev.slice(0, -1), { ...last, text: last.text + message.serverContent.outputTranscription!.text }];
                                     }
                                     return [...prev, { source: 'model', text: message.serverContent.outputTranscription!.text }];
                                 });
@@ -162,10 +175,16 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                             }
                          } else if (message.toolCall) {
                              setStatus('Thinking');
+                             const toolCallDescription = message.toolCall.functionCalls.map(fc => {
+                                 const args = JSON.stringify(fc.args);
+                                 return `${fc.name}(${args !== '{}' ? args : ''})`;
+                             }).join(', ');
+                             setTranscript(prev => [...prev, { source: 'system', text: `Executing: ${toolCallDescription}` }]);
+                             
                              for (const fc of message.toolCall.functionCalls) {
                                  const handler = functionHandlers[fc.name];
                                  if (handler) {
-                                     const result = handler(fc.args);
+                                     const result = await handler(fc.args);
                                      sessionRef.current?.then(session => session.sendToolResponse({
                                          functionResponses: { id: fc.id, name: fc.name, response: { result: JSON.stringify(result) } }
                                      }));
@@ -211,9 +230,15 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 <div className="flex-grow bg-gray-100 rounded-lg p-4 overflow-y-auto space-y-4">
                     {transcript.map((item, index) => (
                         <div key={index} className={`flex ${item.source === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-xs md:max-w-md p-3 rounded-lg ${item.source === 'user' ? 'bg-primary text-white' : 'bg-white'}`}>
-                                {item.text}
-                            </div>
+                           {item.source === 'system' ? (
+                                <div className="text-sm text-gray-500 italic flex items-center gap-2 p-2">
+                                    <SparklesIcon className="h-4 w-4 animate-pulse" /> {item.text}
+                                </div>
+                           ) : (
+                                <div className={`max-w-xs md:max-w-md p-3 rounded-lg ${item.source === 'user' ? 'bg-primary text-white' : 'bg-white shadow-sm'}`}>
+                                    {item.text}
+                                </div>
+                           )}
                         </div>
                     ))}
                     {transcript.length === 0 && <p className="text-center text-gray-500">Press Start to begin your session.</p>}

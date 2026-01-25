@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 
@@ -83,7 +84,6 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
                 height={200}
                 data={processedData}
                 dataKey="size"
-                // FIX: The 'ratio' prop is not valid for the Treemap component. Replaced with 'aspectRatio'.
                 aspectRatio={4 / 3}
                 stroke="#fff"
                 content={<CustomizedContent colors={processedData.map(d => getColor(d.gainLossPercent))} />}

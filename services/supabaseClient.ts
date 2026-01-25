@@ -1,9 +1,9 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// FIX: Cast `import.meta` to `any` to access `env` without adding a new type definition file.
+// FIX: Cast `import.meta` to `any` to resolve TypeScript error about missing 'env' property.
+// This is a workaround due to the constraint of not being able to add new type definition files (e.g., vite-env.d.ts).
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-// FIX: Cast `import.meta` to `any` to access `env` without adding a new type definition file.
 const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {

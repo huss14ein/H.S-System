@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -9,9 +8,9 @@ interface AllocationPieChartProps {
 const COLORS = ['#4f46e5', '#ec4899', '#f59e0b', '#10b981', '#6366f1'];
 
 const RADIAN = Math.PI / 180;
-// FIX: The original generic type was too strict for recharts' PieLabel prop.
-// Using `any` for the props makes the function signature compatible.
-const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+// Using `any` for the props makes the function signature compatible with recharts' PieLabel prop, which has a complex generic type.
+const renderCustomizedLabel = (props: any) => {
+  const { cx, cy, midAngle, innerRadius, outerRadius, percent } = props;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);

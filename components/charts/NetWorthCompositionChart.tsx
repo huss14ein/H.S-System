@@ -1,69 +1,90 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useContext } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { DataContext } from '../../context/DataContext';
 
 type TimePeriod = '1Y' | '3Y' | 'All';
 
-// This is a simplified mock data generator for demonstration.
-const generateHistoricalData = () => {
-    const data = [];
-    const now = new Date();
-    // Start values from 5 years ago
-    let cash = 150000;
-    let investments = 80000;
-    let property = 1800000;
-    let liabilities = -1100000;
-
-    for (let i = 60; i >= 0; i--) {
-        const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        
-        // Simulate monthly changes
-        cash += 3000 + (Math.random() - 0.4) * 2000; // Savings + volatility
-        investments *= (1 + (Math.random() * 0.03 - 0.005)); // Investment growth
-        property *= 1.003; // Property appreciation
-        if (liabilities < -500000) { // Pay down faster in recent years
-            liabilities += 4000 + (i/60 * 2000); // Pay down debt
-        }
-        
-        const netWorth = cash + investments + property + liabilities;
-        
-        data.push({
-            date: date.toISOString(),
-            name: date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-            "Net Worth": Math.round(netWorth),
-            "Cash": Math.round(cash),
-            "Investments": Math.round(investments),
-            "Property": Math.round(property),
-            "Liabilities": Math.round(liabilities)
-        });
-    }
-    return data;
-};
-
-const fullHistoricalData = generateHistoricalData();
 
 const NetWorthCompositionChart: React.FC<{title: string}> = ({title}) => {
+    const { data } = useContext(DataContext)!;
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
 
     const chartData = useMemo(() => {
+        const fullHistoricalData = [];
         const now = new Date();
-        const nowCopy1 = new Date(now);
-        const nowCopy2 = new Date(now);
 
+        // 1. Calculate historical monthly net cash flow from transactions
+        const monthlyNetFlows = new Map<string, number>();
+        data.transactions.forEach(t => {
+            const monthKey = t.date.slice(0, 7); // YYYY-MM
+            const currentFlow = monthlyNetFlows.get(monthKey) || 0;
+            monthlyNetFlows.set(monthKey, currentFlow + t.amount);
+        });
+        
+        // 2. Get current asset & liability values
+        const currentInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const currentCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const currentProperty = data.assets.filter(a => a.type === 'Property').reduce((sum, asset) => sum + asset.value, 0);
+        const currentLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
+        
+        let cash = currentCash;
+        let investments = currentInvestments;
+        let property = currentProperty;
+        let liabilities = currentLiabilities;
+
+        const monthsToGoBack = 60; // 5 years
+
+        // 3. Work backwards month by month
+        for (let i = 0; i <= monthsToGoBack; i++) {
+            const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const monthKey = date.toISOString().slice(0, 7);
+            
+            const netWorth = cash + investments + property + liabilities;
+            
+            fullHistoricalData.push({
+                date: date.toISOString(),
+                name: date.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+                "Net Worth": Math.round(netWorth),
+                "Cash": Math.round(cash),
+                "Investments": Math.round(investments),
+                "Property": Math.round(property),
+                "Liabilities": Math.round(liabilities)
+            });
+
+            // 4. "Un-apply" changes for the previous month
+            // Use actual net flow for cash, making it accurate
+            const netFlowThisMonth = monthlyNetFlows.get(monthKey) || 0;
+            cash -= netFlowThisMonth;
+
+            // Use simulation for investments and property
+            investments /= (1 + (0.07 / 12)); // Assume 7% annual growth
+            property /= 1.003; // Assume slow appreciation
+            if (liabilities < -500000) { // Simple mortgage paydown simulation
+                 liabilities += 4500;
+            }
+        }
+        
+        const finalData = fullHistoricalData.reverse();
+        
+        // 5. Filter based on selected time period
+        const nowFilter = new Date();
+        const nowCopy1 = new Date(nowFilter);
+        const nowCopy2 = new Date(nowFilter);
         switch (timePeriod) {
             case '1Y': {
                 const targetDate = new Date(nowCopy1.setFullYear(nowCopy1.getFullYear() - 1));
-                return fullHistoricalData.filter(d => new Date(d.date) >= targetDate);
+                return finalData.filter(d => new Date(d.date) >= targetDate);
             }
             case '3Y': {
                 const targetDate = new Date(nowCopy2.setFullYear(nowCopy2.getFullYear() - 3));
-                return fullHistoricalData.filter(d => new Date(d.date) >= targetDate);
+                return finalData.filter(d => new Date(d.date) >= targetDate);
             }
             case 'All':
             default:
-                return fullHistoricalData;
+                return finalData;
         }
-    }, [timePeriod]);
+    }, [data, timePeriod]);
 
     return (
         <div className="h-full flex flex-col">

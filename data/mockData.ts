@@ -92,7 +92,8 @@ const generateRealisticData = (): FinancialData => {
 
   const settings = { riskProfile: 'Moderate' as const, budgetThreshold: 90, driftThreshold: 5, enableEmails: true, };
 
-  return { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments: [], priceAlerts: [] };
+  // FIX: Add missing 'simulatedPrices' property to satisfy the FinancialData type.
+  return { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments: [], priceAlerts: [], simulatedPrices: {} };
 };
 
 export const mockFinancialData: FinancialData = generateRealisticData();

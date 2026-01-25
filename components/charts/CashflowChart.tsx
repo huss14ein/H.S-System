@@ -2,16 +2,11 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-const data = [
-  { name: 'Feb', income: 28000, expenses: 21000 },
-  { name: 'Mar', income: 28000, expenses: 23000 },
-  { name: 'Apr', income: 112000, expenses: 25000 }, // 3x salary bonus
-  { name: 'May', income: 30000, expenses: 22000 },
-  { name: 'Jun', income: 30000, expenses: 31000 },
-  { name: 'Jul', income: 30000, expenses: 10000 },
-];
+interface CashflowChartProps {
+    data: { name: string; income: number; expenses: number; }[];
+}
 
-const CashflowChart: React.FC = () => {
+const CashflowChart: React.FC<CashflowChartProps> = ({ data }) => {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>

@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useContext } from 'react';
+
+import React, { useState, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIFeedInsights } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -44,6 +45,10 @@ const AIFeed: React.FC = () => {
         }
         setIsLoading(false);
     }, [data]);
+
+    useEffect(() => {
+        handleGenerate();
+    }, [handleGenerate]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">

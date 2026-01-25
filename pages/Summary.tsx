@@ -10,7 +10,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import CumulativePLChart from '../components/charts/CumulativePLChart';
+import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 
 interface ReportCardItem {
@@ -75,11 +75,15 @@ const Summary: React.FC = () => {
         const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
         const monthlyExpenses = recentTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
         const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
+        const monthlyPnL = monthlyIncome - monthlyExpenses;
 
         const totalDebt = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
         const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
         const netWorth = totalAssets - totalDebt;
         const debtToAssetRatio = totalAssets > 0 ? totalDebt / totalAssets : 0;
+        
+        const netWorthPrevMonth = netWorth - monthlyPnL;
+        const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + acc.balance, 0);
         const coreExpenses = data.transactions.filter(t => t.expenseType === 'Core').reduce((sum, t) => sum + Math.abs(t.amount), 0) / 12; // Average monthly core
@@ -111,7 +115,7 @@ const Summary: React.FC = () => {
         }
 
         return { 
-            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle, efStatus, efTrend },
+            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle, efStatus, efTrend, netWorthTrend },
             investmentTreemapData
         };
     }, [data]);
@@ -137,7 +141,9 @@ const Summary: React.FC = () => {
                 <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg flex flex-col justify-center items-center text-center border-t-4 border-primary">
                     <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
                     <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetrics.netWorth, { digits: 0 })}</p>
-                    <p className="text-success font-semibold">+2.5% vs last month</p>
+                    <p className={`${financialMetrics.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
+                        {financialMetrics.netWorthTrend >= 0 ? '+' : ''}{financialMetrics.netWorthTrend.toFixed(1)}% vs last month
+                    </p>
                 </div>
 
                 <div className="lg:col-span-2 grid grid-cols-2 gap-6">
@@ -155,8 +161,8 @@ const Summary: React.FC = () => {
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="h-[450px]">
-                    <CumulativePLChart initialValue={financialMetrics.netWorth} />
+                <div className="h-[450px] bg-white rounded-lg shadow-lg">
+                    <NetWorthCompositionChart title="Historical Net Worth" />
                 </div>
                  <div className="bg-white p-6 rounded-lg shadow h-[450px]">
                     <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>

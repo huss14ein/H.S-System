@@ -3,6 +3,7 @@ import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import AIAdvisor from '../components/AIAdvisor';
 
 // Spending by Category Chart
 const SpendingByCategoryChart: React.FC = () => {
@@ -107,9 +108,51 @@ const AssetLiabilityChart: React.FC = () => {
 
 
 const Analysis: React.FC = () => {
+    const { data } = useContext(DataContext)!;
+
+    const contextData = useMemo(() => {
+        // Spending Data
+        const spending = new Map<string, number>();
+        data.transactions.filter(t => t.type === 'expense' && t.budgetCategory)
+            .forEach(t => {
+                const currentSpend = spending.get(t.budgetCategory!) || 0;
+                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+            });
+        const spendingData = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+
+        // Trend Data
+        const trends = new Map<string, { income: number, expenses: number }>();
+        data.transactions.forEach(t => {
+            const month = new Date(t.date).toLocaleString('default', { month: 'short', year: '2-digit' });
+            const current = trends.get(month) || { income: 0, expenses: 0 };
+            if (t.type === 'income') current.income += t.amount;
+            else current.expenses += Math.abs(t.amount);
+            trends.set(month, current);
+        });
+        const trendData = Array.from(trends, ([name, value]) => ({ name, date: new Date(name), ...value }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime())
+            .slice(-6); // Last 6 months
+
+        // Composition Data
+        const totalInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const totalPhysicalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0);
+        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const compositionData = [
+            { name: 'Investments', value: totalInvestments },
+            { name: 'Cash', value: totalCash },
+            { name: 'Physical Assets', value: totalPhysicalAssets },
+            { name: 'Liabilities', value: totalLiabilities },
+        ];
+        
+        return { spendingData, trendData, compositionData };
+    }, [data]);
+
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-dark">Financial Analysis</h1>
+            
+            <AIAdvisor pageContext="analysis" contextData={contextData} />
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-lg shadow">

@@ -14,7 +14,6 @@ interface HeaderProps {
 }
 
 // Mock static alerts data
-// FIX: Changed `id` from number to string to match the type of dynamically generated alert IDs.
 const staticAlerts = [
     { id: 'static-1', message: 'Your "Food" budget is at 95%.', type: 'warning' },
     { id: 'static-2', message: 'Goal "World Trip" is at risk of not meeting its deadline.', type: 'danger' },
@@ -129,8 +128,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
                 {isProfileOpen && (
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
                     <div className="px-4 py-2 text-sm text-gray-700">
-                    <p className="font-medium">{auth?.user?.name}</p>
-                    <p className="text-gray-500">{auth?.user?.email}</p>
+                    <p className="font-medium">{auth?.user?.email}</p>
+                    <p className="text-gray-500 text-xs">{auth?.user?.id}</p>
                     </div>
                     <div className="border-t border-gray-100"></div>
                     <div className="px-4 py-3">
