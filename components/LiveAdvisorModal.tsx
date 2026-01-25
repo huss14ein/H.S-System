@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useContext, useCallback } from 'react';
 import Modal from './Modal';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob } from '@google/genai';
@@ -73,12 +74,20 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         if (sessionRef.current) return;
         setStatus('Connecting');
         setTranscript([]);
+
+        const API_KEY = process.env.API_KEY;
+        if (!API_KEY) {
+            setStatus('Error');
+            console.error("API Key is not configured for Live Advisor.");
+            alert("Live Advisor is unavailable: API Key not found.");
+            return;
+        }
         
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaStreamRef.current = stream;
 
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
             
             // FIX: Cast window to `any` to allow access to `webkitAudioContext` for older browsers without causing a TypeScript error.
             outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });

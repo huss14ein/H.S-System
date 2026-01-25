@@ -48,9 +48,12 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
     const [category, setCategory] = useState(allCategories[0] || '');
+    const [subcategory, setSubcategory] = useState('');
     const [budgetCategory, setBudgetCategory] = useState(budgetCategories[0] || '');
     const [type, setType] = useState<'income' | 'expense'>('expense');
     const [accountId, setAccountId] = useState('');
+    const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
+    const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
 
 
@@ -60,30 +63,39 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
             setDescription(transactionToEdit.description);
             setAmount(String(Math.abs(transactionToEdit.amount)));
             setCategory(transactionToEdit.category);
+            setSubcategory(transactionToEdit.subcategory || '');
             setBudgetCategory(transactionToEdit.budgetCategory || '');
             setType(transactionToEdit.type);
             setAccountId(transactionToEdit.accountId);
+            setTransactionNature(transactionToEdit.transactionNature || 'Variable');
+            setExpenseType(transactionToEdit.expenseType || 'Core');
         } else {
             setDate(new Date().toISOString().split('T')[0]);
             setDescription('');
             setAmount('');
             setCategory(allCategories[0] || 'Groceries');
+            setSubcategory('');
             setBudgetCategory(budgetCategories[0] || 'Food and Groceries');
             setType('expense');
             setAccountId(accounts[0]?.id || '');
+            setTransactionNature('Variable');
+            setExpenseType('Core');
         }
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const transactionData = {
+        const transactionData: Omit<Transaction, 'id'> = {
             date,
             description,
             amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
             category,
+            subcategory: subcategory || undefined,
             budgetCategory: type === 'expense' ? budgetCategory : undefined,
             type,
             accountId,
+            transactionNature: type === 'expense' ? transactionNature : undefined,
+            expenseType: type === 'expense' ? expenseType : undefined,
         };
         
         if (transactionToEdit) {
@@ -101,14 +113,9 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
             const suggested = await getAICategorySuggestion(description, allCategories);
             if (suggested && allCategories.includes(suggested)) {
                 setCategory(suggested);
-                
-                // Attempt to map to a budget category
                 const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
-                if(matchingBudgetCategory) {
-                    setBudgetCategory(matchingBudgetCategory);
-                }
-
-            } else if (suggested) { // If AI suggests a new category
+                if(matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+            } else if (suggested) {
                 setCategory(suggested);
             }
         } catch (e) {
@@ -126,54 +133,59 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
                     <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
                 </div>
                 <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <div>
-                    <label htmlFor="account" className="block text-sm font-medium text-gray-700">Account</label>
-                    <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
-                    </select>
-                </div>
-                 <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700">Expense Category</label>
-                     <div className="relative">
-                        <input list="categories" id="category-input" value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md pr-10"/>
-                         <datalist id="categories">
-                            {allCategories.map(c => <option key={c} value={c} />)}
-                         </datalist>
-                         <button 
-                            type="button" 
-                            onClick={handleSuggestCategory} 
-                            disabled={!description || isSuggestingCategory}
-                            className="absolute inset-y-0 right-0 flex items-center pr-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Suggest Category with AI"
-                        >
-                            {isSuggestingCategory ? (
-                                <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                            ) : (
-                                <SparklesIcon className="h-5 w-5 text-primary hover:text-secondary" />
-                            )}
-                        </button>
-                    </div>
-                </div>
-                 {type === 'expense' && (
-                     <div>
-                        <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700">Map to Budget</label>
-                        <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                    </div>
-                 )}
+                <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                    <option value="" disabled>Select an Account</option>
+                    {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
+                </select>
                 <div className="flex space-x-4">
                     <label className="flex items-center"><input type="radio" value="expense" checked={type === 'expense'} onChange={() => setType('expense')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Expense</span></label>
                     <label className="flex items-center"><input type="radio" value="income" checked={type === 'income'} onChange={() => setType('income')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Income</span></label>
                 </div>
+                 {type === 'expense' && (
+                     <div className="space-y-4 border-t pt-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
+                                <div className="relative">
+                                    <input list="categories" id="category-input" value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md pr-10"/>
+                                    <datalist id="categories">{allCategories.map(c => <option key={c} value={c} />)}</datalist>
+                                    <button type="button" onClick={handleSuggestCategory} disabled={!description || isSuggestingCategory} className="absolute inset-y-0 right-0 flex items-center pr-3 disabled:opacity-50" title="Suggest Category with AI">
+                                        {isSuggestingCategory ? <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <SparklesIcon className="h-5 w-5 text-primary hover:text-secondary" />}
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700">Subcategory (Optional)</label>
+                                <input type="text" id="subcategory" value={subcategory} onChange={e => setSubcategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
+                            </div>
+                        </div>
+                        <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                            <option value="" disabled>Map to Budget</option>
+                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 gap-4">
+                            <select value={transactionNature} onChange={e => setTransactionNature(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
+                                <option value="Variable">Variable Nature</option>
+                                <option value="Fixed">Fixed Nature</option>
+                            </select>
+                            <select value={expenseType} onChange={e => setExpenseType(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
+                                <option value="Core">Core Expense</option>
+                                <option value="Discretionary">Discretionary Expense</option>
+                            </select>
+                        </div>
+                    </div>
+                 )}
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Transaction</button>
             </form>
         </Modal>
     );
 };
+
+const FilterButton: React.FC<{ label: string, value: string, current: string, onClick: (value: string) => void }> = ({ label, value, current, onClick }) => (
+    <button onClick={() => onClick(value)} className={`px-3 py-1 text-sm font-medium rounded-full transition-colors ${current === value ? 'bg-primary text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+        {label}
+    </button>
+);
 
 const TransactionsPage: React.FC = () => {
     const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
@@ -183,7 +195,12 @@ const TransactionsPage: React.FC = () => {
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Transaction | null>(null);
     
-    const [filters, setFilters] = useState({ accountId: 'all', month: new Date().toISOString().slice(0, 7) });
+    const [filters, setFilters] = useState({ 
+        accountId: 'all', 
+        month: new Date().toISOString().slice(0, 7),
+        nature: 'all' as 'all' | 'Fixed' | 'Variable',
+        expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
+    });
 
     const filteredTransactions = useMemo(() => {
         const [year, month] = filters.month.split('-').map(Number);
@@ -194,7 +211,9 @@ const TransactionsPage: React.FC = () => {
             const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
-            return isMonthMatch && isAccountMatch;
+            const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
+            const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch;
         });
     }, [data.transactions, filters]);
 
@@ -268,7 +287,7 @@ const TransactionsPage: React.FC = () => {
             
             <div>
                  <h2 className="text-2xl font-semibold text-dark mb-4">Transaction History</h2>
-                 <div className="bg-white p-4 rounded-lg shadow mb-4">
+                 <div className="bg-white p-4 rounded-lg shadow mb-4 space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="p-2 border border-gray-300 rounded-md"/>
                         <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="p-2 border border-gray-300 rounded-md">
@@ -276,33 +295,64 @@ const TransactionsPage: React.FC = () => {
                             {data.accounts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                     </div>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-2 bg-gray-50 rounded-lg">
+                            <label className="text-xs font-medium text-gray-500">Nature</label>
+                            <div className="flex items-center space-x-2 mt-1">
+                                <FilterButton label="All" value="all" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                                <FilterButton label="Fixed" value="Fixed" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                                <FilterButton label="Variable" value="Variable" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                            </div>
+                        </div>
+                         <div className="p-2 bg-gray-50 rounded-lg">
+                            <label className="text-xs font-medium text-gray-500">Type</label>
+                            <div className="flex items-center space-x-2 mt-1">
+                                <FilterButton label="All" value="all" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                                <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                                <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                            </div>
+                        </div>
+                    </div>
                  </div>
                  <div className="bg-white shadow rounded-lg overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                          <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
+                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                              {filteredTransactions.map((t) => (
                                 <tr key={t.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                                         <div>{new Date(t.date).toLocaleDateString()}</div>
                                         <div className="text-xs text-gray-500">{toHijri(t.date)}</div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{t.description}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{data.accounts.find(a => a.id === t.accountId)?.name}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{t.category}</td>
-                                    <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-semibold`}>
+                                    <td className="px-4 py-4 whitespace-nowrap">
+                                        <div className="text-sm font-medium text-gray-900">{t.description}</div>
+                                        <div className="text-xs text-gray-500">{data.accounts.find(a => a.id === t.accountId)?.name}</div>
+                                    </td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <div>{t.category}</div>
+                                        {t.subcategory && <div className="text-xs text-gray-400 font-medium">↳ {t.subcategory}</div>}
+                                    </td>
+                                     <td className="px-4 py-4 whitespace-nowrap text-xs">
+                                        {t.type === 'expense' && (
+                                            <div className="flex items-center gap-2">
+                                                {t.transactionNature && <span className={`px-2 py-0.5 rounded-full font-semibold ${t.transactionNature === 'Fixed' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>{t.transactionNature}</span>}
+                                                {t.expenseType && <span className={`px-2 py-0.5 rounded-full font-semibold ${t.expenseType === 'Core' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}`}>{t.expenseType}</span>}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-semibold`}>
                                         {formatCurrency(t.amount, { colorize: true })}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
+                                    <td className="px-4 py-4 whitespace-nowrap text-center text-sm">
                                         <button onClick={() => handleOpenTransactionModal(t)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
                                         <button onClick={() => setItemToDelete(t)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
                                     </td>

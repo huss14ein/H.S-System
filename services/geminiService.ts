@@ -2,18 +2,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData } from '../types';
 
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  console.warn("API_KEY environment variable not set. AI features will be disabled.");
+// Helper function to get the AI client only when needed.
+// This prevents the app from crashing on startup if the API key is not set.
+function getAiClient() {
+    const API_KEY = process.env.API_KEY;
+    if (!API_KEY) {
+        console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        return null;
+    }
+    return new GoogleGenAI({ apiKey: API_KEY });
 }
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
-
 export const getAIFeedInsights = async (data: FinancialData): Promise<string> => {
-    if (!API_KEY) {
-        return "[]";
-    }
+    const ai = getAiClient();
+    if (!ai) return "[]";
 
     try {
         const prompt = `
@@ -66,9 +68,8 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<string> =>
 
 
 export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
-  if (!API_KEY) {
-    return "AI features are disabled because the API key is not configured.";
-  }
+  const ai = getAiClient();
+  if (!ai) return "AI features are disabled because the API key is not configured.";
 
   try {
     const prompt = `
@@ -108,9 +109,8 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
 };
 
 export const getAITransactionAnalysis = async (transactions: Transaction[], budgets: Budget[]): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const spending = new Map<string, number>();
@@ -162,9 +162,8 @@ export const getAIFinancialPersona = async (
     emergencyFundMonths: number,
     investmentStyle: string
 ): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "{}";
 
     try {
         const prompt = `
@@ -219,15 +218,14 @@ export const getAIFinancialPersona = async (
 
     } catch (error) {
         console.error("Error fetching AI financial persona:", error);
-        return "An error occurred while generating the AI analysis.";
+        return "{}";
     }
 };
 
 
 export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
-  if (!API_KEY) {
-    return "AI features are disabled because the API key is not configured.";
-  }
+  const ai = getAiClient();
+  if (!ai) return "AI features are disabled because the API key is not configured.";
 
   try {
     const holdingsSummary = holdings.map(h => 
@@ -264,9 +262,8 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 };
 
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const holdingsSummary = holdings.map(h => 
@@ -309,9 +306,8 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 };
 
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const holdingsSummary = holdings.map(h => 
@@ -351,9 +347,8 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
 };
 
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const symbols = stocks.map(s => `${s.symbol} (${s.name})`).join(', ');
@@ -400,9 +395,8 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
 };
 
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         // Get the last 5 transactions
@@ -458,9 +452,8 @@ export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]):
 
 
 export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const remainingAmount = goal.targetAmount - goal.currentAmount;
@@ -502,9 +495,8 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
 };
 
 export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled.";
 
     try {
         const goalsSummary = goals.map(g => {
@@ -552,9 +544,8 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
 
 
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const totalValue = holdings.reduce((sum, h) => sum + h.currentValue, 0);
@@ -601,9 +592,8 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
 };
 
 export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const prompt = `
@@ -643,9 +633,8 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
 
 
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
-    if (!API_KEY) {
-        return "AI features are disabled because the API key is not configured.";
-    }
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled because the API key is not configured.";
 
     try {
         const goalsSummary = goals.map(g => 
@@ -697,9 +686,8 @@ export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses:
 };
 
 export const getAICategorySuggestion = async (description: string, categories: string[]): Promise<string> => {
-    if (!API_KEY) {
-        return "";
-    }
+    const ai = getAiClient();
+    if (!ai) return "";
     
     try {
          const prompt = `
