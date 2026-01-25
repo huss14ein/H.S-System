@@ -1,6 +1,5 @@
 
 import React, { useState, useMemo } from 'react';
-// FIX: Imported 'Cell' component from recharts to be used within the Bar chart.
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Bar, Cell } from 'recharts';
 
 type TimePeriod = '1M' | '3M' | '1Y' | 'All';

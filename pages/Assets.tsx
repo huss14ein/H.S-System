@@ -16,7 +16,6 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
     const [name, setName] = useState('');
-// Fix: Changed state type to AssetType to match the data model and prevent type errors.
     const [type, setType] = useState<AssetType>('Property');
     const [value, setValue] = useState('');
     const [purchasePrice, setPurchasePrice] = useState('');
@@ -61,10 +60,9 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Asset' : 'Add New Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select value={type} onChange={e => setType(e.target.value as any)} required className="w-full p-2 border border-gray-300 rounded-md">
+                <select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border border-gray-300 rounded-md">
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
-{/* Fix: Changed the value for 'Gold' to 'Gold and precious metals' to match the AssetType definition. */}
                     <option value="Gold and precious metals">Gold</option>
                     <option value="Other">Other</option>
                 </select>
@@ -91,7 +89,6 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
         switch (type) {
             case 'Property': return <HomeModernIcon className={`${iconClass} text-blue-500`} />;
             case 'Vehicle': return <TruckIcon className={`${iconClass} text-green-500`} />;
-{/* Fix: Changed case from 'Gold' to 'Gold and precious metals' to match AssetType and fix comparison error. */}
             case 'Gold and precious metals': return <GoldBarIcon className={`${iconClass} text-yellow-500`} />;
             default: return <QuestionMarkCircleIcon className={`${iconClass} text-gray-500`} />;
         }

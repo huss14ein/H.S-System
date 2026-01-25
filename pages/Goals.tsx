@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import ProgressBar from '../components/ProgressBar';
@@ -181,7 +180,8 @@ const Goals: React.FC = () => {
         setAllocations(prev => ({ ...prev, [goalId]: percent }));
     };
 
-    const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum, p) => sum + p, 0), [allocations]);
+    // FIX: Explicitly type the accumulator and current value in the reduce function to prevent type inference issues.
+    const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => sum + p, 0), [allocations]);
     
     const handleSaveAllocations = () => {
         const allocationArray = Object.entries(allocations).map(([id, savingsAllocationPercent]) => ({ id, savingsAllocationPercent }));

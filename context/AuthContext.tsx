@@ -1,17 +1,15 @@
 
-import React, { createContext, useState, ReactNode } from 'react';
-
-interface User {
-  name: string;
-  email: string;
-}
+import React, { createContext, useState, ReactNode, useEffect } from 'react';
+import { supabase } from '../services/supabaseClient';
+import type { Session, User } from '@supabase/supabase-js';
 
 interface AuthContextType {
   isAuthenticated: boolean;
   user: User | null;
-  login: (email: string, pass: string) => void;
-  logout: () => void;
-  signup: (name: string, email: string, pass: string) => void;
+  session: Session | null;
+  login: (email: string, pass: string) => Promise<any>;
+  logout: () => Promise<any>;
+  signup: (name: string, email: string, pass: string) => Promise<any>;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -21,31 +19,67 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const login = (email: string, pass: string) => {
-    // In a real app, you'd verify credentials against a backend
-    console.log(`Logging in with ${email} and ${pass}`);
-    setUser({ name: 'John Doe', email: email });
-    setIsAuthenticated(true);
+  useEffect(() => {
+    const getSession = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        setSession(session);
+        setUser(session?.user ?? null);
+        setLoading(false);
+    }
+    
+    getSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+      }
+    );
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
+
+  const login = async (email: string, pass: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) throw error;
   };
 
-  const logout = () => {
-    setIsAuthenticated(false);
-    setUser(null);
+  const logout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   };
 
-  const signup = (name: string, email: string, pass: string) => {
-    // In a real app, you'd register the user with a backend
-    console.log(`Signing up with ${name}, ${email}, and ${pass}`);
-    setUser({ name, email });
-    setIsAuthenticated(true);
+  const signup = async (name: string, email: string, pass: string) => {
+    const { error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+        options: {
+            data: {
+                full_name: name,
+            }
+        }
+    });
+    if (error) throw error;
+  };
+
+  const value = {
+    isAuthenticated: !!user,
+    user,
+    session,
+    login,
+    logout,
+    signup
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, login, logout, signup }}>
-      {children}
+    <AuthContext.Provider value={value}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 };
