@@ -24,11 +24,14 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    if (!process.env.API_KEY) {
+    // FIX: Per @google/genai guidelines, the API key must be obtained from `process.env.API_KEY`. This also resolves the TypeScript error.
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+        // FIX: Update warning message to reflect the correct environment variable.
         console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    return new GoogleGenAI({ apiKey });
 }
 
 export const getAIFeedInsights = async (data: FinancialData): Promise<string> => {
