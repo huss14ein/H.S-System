@@ -220,8 +220,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const newInvestments = prevData.investments.map(portfolio => ({
                 ...portfolio,
                 holdings: portfolio.holdings.map(holding => 
-                    updatesMap.has(holding.id!) 
-                    ? { ...holding, currentValue: updatesMap.get(holding.id!)! } 
+                    holding.id && updatesMap.has(holding.id) 
+                    ? { ...holding, currentValue: updatesMap.get(holding.id)! } 
                     : holding
                 )
             }));

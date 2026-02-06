@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIFinancialPersona } from '../services/geminiService';
@@ -124,7 +123,12 @@ const Summary: React.FC = () => {
         setIsLoading(true);
         const resultString = await getAIFinancialPersona(financialMetrics.savingsRate, financialMetrics.debtToAssetRatio, financialMetrics.emergencyFundMonths, financialMetrics.investmentStyle);
         try {
-            const parsedResult = JSON.parse(resultString);
+            let jsonToParse = resultString;
+            const jsonMatch = resultString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (jsonMatch && jsonMatch[1]) {
+                jsonToParse = jsonMatch[1];
+            }
+            const parsedResult = JSON.parse(jsonToParse);
             setAnalysis(parsedResult);
         } catch (error) {
             console.error("Failed to parse AI response:", error);

@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIFeedInsights } from '../services/geminiService';
@@ -36,12 +35,19 @@ const AIFeed: React.FC = () => {
         setIsLoading(true);
         setFeedItems([]);
         try {
-            const resultString = await getAIFeedInsights(data);
+            let resultString = await getAIFeedInsights(data);
+            
+            // Sanitize the string to extract JSON from a markdown code block if present
+            const jsonMatch = resultString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (jsonMatch && jsonMatch[1]) {
+                resultString = jsonMatch[1];
+            }
+
             const items = JSON.parse(resultString) as FeedItem[];
             setFeedItems(items);
         } catch (error) {
             console.error("AI Feed generation failed:", error);
-            setFeedItems([{ type: 'SAVINGS', title: 'Error', description: 'Could not generate AI insights at this time.', emoji: '😔' }]);
+            setFeedItems([{ type: 'SAVINGS', title: 'Analysis Error', description: 'Could not generate AI insights at this time.', emoji: '😔' }]);
         }
         setIsLoading(false);
     }, [data]);
