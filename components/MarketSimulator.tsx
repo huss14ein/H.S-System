@@ -1,4 +1,3 @@
-
 import React, { useEffect, useContext, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
@@ -68,9 +67,9 @@ const MarketSimulator: React.FC = () => {
             setSimulatedPrices(newPrices);
 
             allHoldings.forEach(holding => {
-                if (newPrices[holding.symbol]) {
+                if (holding.id && newPrices[holding.symbol]) {
                     holdingUpdates.push({
-                        id: holding.id!,
+                        id: holding.id,
                         currentValue: newPrices[holding.symbol].price * holding.quantity
                     });
                 }

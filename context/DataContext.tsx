@@ -4,7 +4,23 @@ import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert } from '../types';
 import { mockFinancialData } from '../data/mockData';
 
-const initialData: FinancialData = mockFinancialData;
+const emptyData: FinancialData = {
+    accounts: [],
+    assets: [],
+    liabilities: [],
+    goals: [],
+    transactions: [],
+    investments: [],
+    investmentTransactions: [],
+    budgets: [],
+    watchlist: [],
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true },
+    zakatPayments: [],
+    priceAlerts: [],
+};
+
+const initialData: FinancialData = emptyData;
+
 
 interface DataContextType {
   data: FinancialData;
