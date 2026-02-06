@@ -18,8 +18,9 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number>();
 
-  const isPositive = trend?.includes('+') || trend?.toLowerCase().includes('surplus') || trend?.toLowerCase().includes('under');
-  const isNegative = trend?.includes('-') || trend?.toLowerCase().includes('deficit') || trend?.toLowerCase().includes('over');
+  // FIX: Added optional chaining (?.) to prevent a runtime error if `trend` is undefined.
+  const isPositive = trend?.includes('+') || trend?.toLowerCase()?.includes('surplus') || trend?.toLowerCase()?.includes('under');
+  const isNegative = trend?.includes('-') || trend?.toLowerCase()?.includes('deficit') || trend?.toLowerCase()?.includes('over');
   let trendColor = 'text-gray-500';
   if (isPositive) trendColor = 'text-success';
   if (isNegative) trendColor = 'text-danger';

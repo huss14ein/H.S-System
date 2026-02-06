@@ -21,6 +21,7 @@ import { PlusIcon } from '../components/icons/PlusIcon';
 import { MoonIcon } from '../components/icons/MoonIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
+import { useMarketData } from '../context/MarketDataContext';
 
 type InvestmentSubPage = 'Overview' | 'Platform' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
 
@@ -261,12 +262,13 @@ const PlatformCard: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
     onEditHolding: (holding: Holding) => void;
+    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding } = props;
+    const { platform, portfolios, transactions, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
-    const { totalValue, totalGainLoss, roi } = useMemo(() => {
+    const { totalValue, totalGainLoss, roi, dailyPnL } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings);
         const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
         const totalInvested = transactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
@@ -274,8 +276,12 @@ const PlatformCard: React.FC<{
         const netCapital = totalInvested - totalWithdrawn;
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-        return { totalValue, totalGainLoss, roi };
-    }, [portfolios, transactions]);
+        const dailyPnL = allHoldings.reduce((sum, h) => {
+            const priceInfo = simulatedPrices[h.symbol];
+            return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
+        }, 0);
+        return { totalValue, totalGainLoss, roi, dailyPnL };
+    }, [portfolios, transactions, simulatedPrices]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
         const totalCost = h.avgCost * h.quantity;
@@ -294,8 +300,9 @@ const PlatformCard: React.FC<{
                     </div>
                     <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center text-sm text-primary hover:underline"><ArrowsRightLeftIcon className="h-4 w-4 mr-1"/>Transaction Log</button>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-x-2 text-center pt-3 border-t">
-                    <div><dt className="text-xs text-gray-500">Total Gain/Loss</dt><dd className={`font-semibold ${totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrencyString(totalGainLoss, { digits: 0 })}</dd></div>
+                <div className="mt-4 grid grid-cols-3 gap-x-2 text-center pt-3 border-t">
+                    <div><dt className="text-xs text-gray-500">Unrealized P/L</dt><dd className={`font-semibold ${totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrencyString(totalGainLoss, { digits: 0 })}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Daily P/L</dt><dd className={`font-semibold ${dailyPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrencyString(dailyPnL, { digits: 0 })}</dd></div>
                     <div><dt className="text-xs text-gray-500">Total ROI</dt><dd className={`font-semibold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>{roi.toFixed(2)}%</dd></div>
                 </div>
             </div>
@@ -309,16 +316,25 @@ const PlatformCard: React.FC<{
                             <div><button onClick={() => onEditPortfolio(portfolio)} className="text-gray-400 hover:text-primary p-1"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDeletePortfolio(portfolio)} className="text-gray-400 hover:text-red-500 p-1"><TrashIcon className="h-4 w-4"/></button></div>
                         </div>
                          <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                            <div className="flex items-center text-xs text-gray-500 font-medium px-2 py-1 bg-gray-100 rounded-t-md sticky top-0">
+                                <div className="flex-grow">Symbol</div>
+                                <div className="w-24 text-right">Mkt Value</div>
+                                <div className="w-28 text-right">Unrealized P/L</div>
+                                <div className="w-24 text-right">Daily P/L</div>
+                            </div>
                             {holdingsWithGains(portfolio.holdings).map(h => (
                                  <div key={h.id} className="group rounded-md hover:bg-gray-100 border bg-white p-2">
                                     <div className="flex items-center text-sm">
-                                        <div className="w-2/5 flex items-center gap-2">
-                                            <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="font-medium text-gray-900 text-left bg-transparent border-none p-0 hover:underline">{h.symbol}</button>
+                                        <div className="flex-grow flex items-center gap-2 truncate">
+                                            <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="font-medium text-gray-900 text-left bg-transparent border-none p-0 hover:underline truncate" title={h.name}>{h.symbol}</button>
                                              <button onClick={() => onEditHolding(h)} className="text-gray-300 group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"><PencilIcon className="h-3 w-3" /></button>
                                              {h.zakahClass === 'Zakatable' && <span title="Zakatable Asset"><MoonIcon className="h-3 w-3 text-blue-400" /></span>}
                                         </div>
-                                        <div className="w-1/5 text-right font-semibold text-dark">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>
-                                        <div className="w-2/5 text-right font-medium text-xs">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
+                                        <div className="w-24 text-right font-semibold text-dark tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>
+                                        <div className="w-28 text-right font-medium text-xs tabular-nums">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
+                                        <div className="w-24 text-right font-medium text-xs tabular-nums">
+                                            {formatCurrency(simulatedPrices[h.symbol]?.change * h.quantity || 0, { colorize: true, digits: 0 })}
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -345,6 +361,7 @@ const PlatformView: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
     onEditHolding: (holding: Holding) => void;
+    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { data } = useContext(DataContext)!;
 
@@ -382,6 +399,7 @@ const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, 
 
 const Investments: React.FC = () => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { simulatedPrices } = useMarketData();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
@@ -438,6 +456,7 @@ const Investments: React.FC = () => {
       case 'Overview': return <InvestmentOverview />;
       case 'Platform':
         return <PlatformView 
+            simulatedPrices={simulatedPrices}
             onAddPlatform={() => handleOpenPlatformModal()} 
             onEditPlatform={handleOpenPlatformModal} 
             onDeletePlatform={(p) => handleOpenDeleteModal(p)}

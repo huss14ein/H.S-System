@@ -39,7 +39,8 @@ const WatchlistItemRow: React.FC<{
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
-    const prevPriceRef = useRef<number>();
+    // FIX: Explicitly type the ref to hold a number or undefined to satisfy the type checker.
+    const prevPriceRef = useRef<number | undefined>();
 
     useEffect(() => {
         if (priceInfo) {

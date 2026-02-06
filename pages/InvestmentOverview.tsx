@@ -1,4 +1,3 @@
-
 import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import Card from '../components/Card';
@@ -6,17 +5,18 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { Holding } from '../types';
+import { useMarketData } from '../context/MarketDataContext';
 
 const InvestmentOverview: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { formatCurrencyString } = useFormatCurrency();
+    const { simulatedPrices } = useMarketData();
+    const { formatCurrencyString, formatCurrency } = useFormatCurrency();
 
-    const { totalValue, totalGainLoss, roi, allHoldingsWithGains, assetClassAllocation } = useMemo(() => {
+    const { totalValue, totalGainLoss, roi, allHoldingsWithGains, assetClassAllocation, totalDailyPnL } = useMemo(() => {
         const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings);
         
         const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
 
-        // A simplified ROI calculation based on all transactions. A more accurate one would be time-weighted.
         const totalInvested = data.investmentTransactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
         const totalWithdrawn = Math.abs(data.investmentTransactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
         const netCapital = totalInvested - totalWithdrawn;
@@ -37,15 +37,21 @@ const InvestmentOverview: React.FC = () => {
             allocation.set(assetClass, (allocation.get(assetClass) || 0) + h.currentValue);
         });
         const assetClassAllocation = Array.from(allocation, ([name, value]) => ({ name, value }));
+        
+        const totalDailyPnL = allHoldings.reduce((sum, h) => {
+            const priceInfo = simulatedPrices[h.symbol];
+            return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
+        }, 0);
 
-        return { totalValue, totalGainLoss, roi, allHoldingsWithGains, assetClassAllocation };
-    }, [data]);
+        return { totalValue, totalGainLoss, roi, allHoldingsWithGains, assetClassAllocation, totalDailyPnL };
+    }, [data, simulatedPrices]);
 
     return (
         <div className="space-y-6 mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card title="Total Investment Value" value={formatCurrencyString(totalValue)} />
-                <Card title="Total Unrealized Gain/Loss" value={formatCurrencyString(totalGainLoss)} />
+                <Card title="Total Unrealized P/L" value={formatCurrency(totalGainLoss, { colorize: true })} />
+                <Card title="Total Daily P/L" value={formatCurrency(totalDailyPnL, { colorize: true })} />
                 <Card title="Overall Portfolio ROI" value={`${roi.toFixed(2)}%`} />
             </div>
 
