@@ -24,9 +24,9 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use Vite's `import.meta.env` and a consistent, prefixed variable name.
-    // @ts-ignore
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    // FIX: Use process.env.API_KEY as required by @google/genai guidelines.
+    // The value is injected by the updated vite.config.ts define property.
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
         // FIX: Update warning message to reflect the correct environment variable.
         console.warn("VITE_GEMINI_API_KEY environment variable not set. AI features will be disabled.");

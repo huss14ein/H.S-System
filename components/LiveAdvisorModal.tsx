@@ -91,8 +91,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // @ts-ignore
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');
             console.error("API Key is not configured for Live Advisor.");
