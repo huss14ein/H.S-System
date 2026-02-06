@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData } from '../types';
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio } from '../types';
 
 // --- AI Request Cache ---
 // Simple in-memory cache to avoid redundant API calls for the same data.
@@ -36,6 +36,20 @@ function getAiClient() {
     return new GoogleGenAI({ apiKey });
 }
 
+const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
+    if (!investments || investments.length === 0) {
+        return 'N/A';
+    }
+    const firstPortfolio = investments[0];
+    if (!firstPortfolio.holdings || firstPortfolio.holdings.length === 0) {
+        return 'N/A';
+    }
+    // Create a copy before sorting to avoid mutating state
+    const sortedHoldings = [...firstPortfolio.holdings].sort((a, b) => b.currentValue - a.currentValue);
+    return sortedHoldings[0]?.symbol || 'N/A';
+};
+
+
 export const getAIFeedInsights = async (data: FinancialData): Promise<string> => {
     const ai = getAiClient();
     if (!ai) return "[]";
@@ -51,7 +65,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<string> =>
             - Recent Transactions: ${data.transactions.slice(0, 5).map(t => `${t.description}: ${t.amount}`).join(', ')}
             - Budget Performance: ${data.budgets.map(b => `${b.category} limit ${b.limit}`).join(', ')}
             - Goal Progress: ${data.goals.map(g => `${g.name} is at ${((g.currentAmount/g.targetAmount)*100).toFixed(0)}%`).join(', ')}
-            - Top Investment Holding: ${data.investments[0]?.holdings.sort((a,b) => b.currentValue - a.currentValue)[0]?.symbol}
+            - Top Investment Holding: ${getTopHoldingSymbol(data.investments)}
             Generate a JSON array of feed items based on the provided schema. Each item should have a 'type', 'title', 'description', and a relevant emoji.
         `;
 
