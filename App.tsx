@@ -1,4 +1,3 @@
-
 import React, { useState, useContext, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
 import { Page } from './types';
@@ -13,6 +12,7 @@ import MarketSimulator from './components/MarketSimulator';
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Summary = lazy(() => import('./pages/Summary'));
+const Platforms = lazy(() => import('./pages/Platforms'));
 const Investments = lazy(() => import('./pages/Investments'));
 const Assets = lazy(() => import('./pages/Assets'));
 const Liabilities = lazy(() => import('./pages/Liabilities'));
@@ -49,6 +49,8 @@ const App: React.FC = () => {
         return <Dashboard setActivePage={setActivePage} />;
       case 'Summary':
         return <Summary />;
+      case 'Platform':
+        return <Platforms setActivePage={setActivePage} />;
       case 'Investments':
         return <Investments />;
       case 'Assets':

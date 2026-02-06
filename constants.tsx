@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Page } from './types';
 import { HomeIcon } from './components/icons/HomeIcon';
@@ -14,10 +13,12 @@ import { ShieldCheckIcon } from './components/icons/ShieldCheckIcon';
 import { ServerStackIcon } from './components/icons/ServerStackIcon';
 import { AcademicCapIcon } from './components/icons/AcademicCapIcon';
 import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
+import { Squares2X2Icon } from './components/icons/Squares2X2Icon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
   { name: 'Summary', icon: UsersIcon },
+  { name: 'Platform', icon: Squares2X2Icon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
   { name: 'Assets', icon: BuildingLibraryIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },

@@ -2,13 +2,9 @@ import React, { createContext, useState, ReactNode, useEffect, useContext, useCa
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert } from '../types';
+import { mockFinancialData } from '../data/mockData';
 
-const initialData: FinancialData = {
-    accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
-    investments: [], investmentTransactions: [], budgets: [], watchlist: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: false },
-    zakatPayments: [], priceAlerts: []
-};
+const initialData: FinancialData = mockFinancialData;
 
 interface DataContextType {
   data: FinancialData;
@@ -77,18 +73,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             setData(prevData => ({
                 ...prevData,
-                accounts: checkError(accounts, 'accounts') || [],
-                assets: checkError(assets, 'assets') || [],
-                liabilities: checkError(liabilities, 'liabilities') || [],
-                goals: checkError(goals, 'goals') || [],
-                transactions: checkError(transactions, 'transactions') || [],
-                investments: (checkError(investments, 'investments') || []).map((p: InvestmentPortfolio) => ({...p, holdings: p.holdings || []})),
-                investmentTransactions: checkError(investmentTransactions, 'investmentTransactions') || [],
-                budgets: checkError(budgets, 'budgets') || [],
-                watchlist: checkError(watchlist, 'watchlist') || [],
+                accounts: checkError(accounts, 'accounts') || initialData.accounts,
+                assets: checkError(assets, 'assets') || initialData.assets,
+                liabilities: checkError(liabilities, 'liabilities') || initialData.liabilities,
+                goals: checkError(goals, 'goals') || initialData.goals,
+                transactions: checkError(transactions, 'transactions') || initialData.transactions,
+                investments: (checkError(investments, 'investments') || initialData.investments).map((p: InvestmentPortfolio) => ({...p, holdings: p.holdings || []})),
+                investmentTransactions: checkError(investmentTransactions, 'investmentTransactions') || initialData.investmentTransactions,
+                budgets: checkError(budgets, 'budgets') || initialData.budgets,
+                watchlist: checkError(watchlist, 'watchlist') || initialData.watchlist,
                 settings: checkError(settings, 'settings') || initialData.settings,
-                zakatPayments: checkError(zakatPayments, 'zakatPayments') || [],
-                priceAlerts: checkError(priceAlerts, 'priceAlerts') || [],
+                zakatPayments: checkError(zakatPayments, 'zakatPayments') || initialData.zakatPayments,
+                priceAlerts: checkError(priceAlerts, 'priceAlerts') || initialData.priceAlerts,
             }));
         } catch (error) { console.error("Error fetching data:", error); } 
         finally { setLoading(false); }
