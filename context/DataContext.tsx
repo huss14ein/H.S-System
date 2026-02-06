@@ -2,7 +2,6 @@ import React, { createContext, useState, ReactNode, useEffect, useContext, useCa
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert } from '../types';
-import { mockFinancialData } from '../data/mockData';
 
 const emptyData: FinancialData = {
     accounts: [],
