@@ -15,17 +15,18 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  const prevValueRef = useRef<number>();
+  // FIX: Correctly type useRef to allow for an initial undefined value, preventing potential type errors.
+  const prevValueRef = useRef<number | undefined>();
 
-  // FIX: Added optional chaining (?.) to all instances of `trend` to prevent a runtime error if the prop is undefined.
-  const isPositive = trend?.includes('+') || trend?.toLowerCase()?.includes('surplus') || trend?.toLowerCase()?.includes('under');
-  const isNegative = trend?.includes('-') || trend?.toLowerCase()?.includes('deficit') || trend?.toLowerCase()?.includes('over');
+  // FIX: Replaced unsafe string comparisons with a case-insensitive regex to fix runtime errors when trend is undefined.
+  const isPositive = trend?.includes('+') || (trend && /(surplus|under)/i.test(trend));
+  const isNegative = trend?.includes('-') || (trend && /(deficit|over)/i.test(trend));
   let trendColor = 'text-gray-500';
   if (isPositive) trendColor = 'text-success';
   if (isNegative) trendColor = 'text-danger';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, "")));
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.-]+/g, "")));
     if (!isNumeric) return;
     
     const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
