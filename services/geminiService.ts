@@ -25,11 +25,12 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Per @google/genai guidelines, API key must be obtained from process.env.API_KEY.
-    const apiKey = process.env.API_KEY;
+    // FIX: Use import.meta.env.VITE_GEMINI_API_KEY as this is the only
+    // method that works in a Vite client-side environment.
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
         // FIX: Updated warning message to reflect the correct environment variable.
-        console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        console.warn("VITE_GEMINI_API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
