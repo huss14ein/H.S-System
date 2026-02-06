@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData } from '../types';
 
@@ -24,11 +25,11 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use import.meta.env.VITE_GEMINI_API_KEY as this is the only
-    // method that works in this project's direct-to-browser importmap setup.
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    // FIX: Per @google/genai guidelines, API key must be obtained from process.env.API_KEY.
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("VITE_GEMINI_API_KEY environment variable not set. AI features will be disabled.");
+        // FIX: Updated warning message to reflect the correct environment variable.
+        console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey });

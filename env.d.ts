@@ -1,8 +1,7 @@
-// Fix: Add types for Vite's `import.meta.env` to resolve TypeScript errors and provide type safety for environment variables.
-/// <reference types="vite/client" />
+// FIX: The reference to "vite/client" was causing a resolution error. It has been removed.
+// The interfaces below provide the necessary types for import.meta.env.
 
 interface ImportMetaEnv {
-  readonly VITE_GEMINI_API_KEY: string;
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
 }

@@ -91,10 +91,11 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        // FIX: Per @google/genai guidelines, API key must be obtained from process.env.API_KEY.
+        const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');
-            console.error("API Key is not configured for Live Advisor.");
+            console.error("API_KEY is not configured for Live Advisor.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;
         }
