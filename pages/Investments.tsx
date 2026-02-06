@@ -259,7 +259,7 @@ const PlatformCard: React.FC<{
     onAddPortfolio: (accountId: string) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
-    onHoldingClick: (holding: any) => void;
+    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
     onEditHolding: (holding: Holding) => void;
 }> = (props) => {
     const { platform, portfolios, transactions, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding } = props;
@@ -343,7 +343,7 @@ const PlatformView: React.FC<{
     onAddPortfolio: (accountId: string) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
-    onHoldingClick: (holding: any) => void;
+    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
     onEditHolding: (holding: Holding) => void;
 }> = (props) => {
     const { data } = useContext(DataContext)!;
@@ -385,7 +385,7 @@ const Investments: React.FC = () => {
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
-  const [selectedHolding, setSelectedHolding] = useState(null);
+  const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; }) | null>(null);
   
   const [isHoldingEditModalOpen, setIsHoldingEditModalOpen] = useState(false);
   const [holdingToEdit, setHoldingToEdit] = useState<Holding | null>(null);
@@ -404,7 +404,7 @@ const Investments: React.FC = () => {
 
   const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
   
-  const handleHoldingClick = (holding: any) => { setSelectedHolding(holding); setIsHoldingModalOpen(true); };
+  const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; })) => { setSelectedHolding(holding); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
   const handleSaveHolding = (holding: Holding) => { updateHolding(holding); };
   
