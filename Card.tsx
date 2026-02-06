@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { InformationCircleIcon } from './icons/InformationCircleIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
@@ -15,11 +16,10 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  // FIX: Correctly type useRef to allow for an initial undefined value, preventing potential type errors.
-  // FIX: Added 'undefined' as the initial value for useRef to resolve the "Expected 1 arguments, but got 0" error.
+  // FIX: Explicitly pass undefined to useRef to satisfy stricter type environments.
   const prevValueRef = useRef<number | undefined>(undefined);
 
-  // FIX: Replaced unsafe string comparisons with a case-insensitive regex to fix runtime errors when trend is undefined.
+  // FIX: Replaced unsafe toLowerCase().includes() with a case-insensitive regex to fix runtime error when trend is undefined.
   const isPositive = trend?.includes('+') || (trend && /(surplus|under)/i.test(trend));
   const isNegative = trend?.includes('-') || (trend && /(deficit|over)/i.test(trend));
   let trendColor = 'text-gray-500';
@@ -27,7 +27,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   if (isNegative) trendColor = 'text-danger';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.-]+/g, "")));
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, "")));
     if (!isNumeric) return;
     
     const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));

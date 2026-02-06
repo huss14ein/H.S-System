@@ -10,21 +10,11 @@ interface LoginPageProps {
 const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const auth = useContext(AuthContext);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      await auth?.login(email, password);
-      // On success, the AuthContext onAuthStateChange listener will handle the app state change.
-    } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred.');
-      setLoading(false);
-    }
+    auth?.login(email, password);
   };
 
   return (
@@ -35,9 +25,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
         </div>
         <h2 className="text-center text-3xl font-bold text-dark mb-2">Welcome Back</h2>
         <p className="text-center text-gray-500 mb-6">Log in to your H.S account.</p>
-        
-        {error && <p className="mb-4 text-center text-sm text-red-600 bg-red-100 p-3 rounded-md">{error}</p>}
-
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email Address</label>
@@ -63,10 +50,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
           </div>
           <button
             type="submit"
-            disabled={loading}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:bg-gray-400"
+            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
           >
-            {loading ? 'Logging In...' : 'Log In'}
+            Log In
           </button>
         </form>
         <p className="mt-6 text-center text-sm text-gray-600">

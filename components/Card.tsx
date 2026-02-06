@@ -17,8 +17,6 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  // FIX: Correctly type useRef to allow for an initial undefined value, preventing potential type errors.
-  // FIX: Added 'undefined' as the initial value for useRef to resolve the "Expected 1 arguments, but got 0" error.
   const prevValueRef = useRef<number | undefined>(undefined);
 
   // FIX: Replaced unsafe toLowerCase().includes() with a case-insensitive regex to fix runtime error when trend is undefined.
@@ -29,7 +27,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   if (isNegative) trendColor = 'text-danger';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.-]+/g, "")));
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, "")));
     if (!isNumeric) return;
     
     const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));

@@ -40,7 +40,7 @@ const WatchlistItemRow: React.FC<{
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
-    // FIX: Initialized useRef with `undefined` to fix "Expected 1 arguments, but got 0" error.
+    // FIX: Explicitly pass undefined to useRef to satisfy stricter type environments that may not handle no-argument calls gracefully.
     const prevPriceRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
