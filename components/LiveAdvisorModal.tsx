@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useContext, useCallback } from 'react';
 import Modal from './Modal';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob } from '@google/genai';
@@ -193,13 +192,15 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                              setTranscript(prev => [...prev, { source: 'system', text: `Executing: ${toolCallDescription}` }]);
                              
                              for (const fc of functionCalls) {
-                                 const handler = functionHandlers[fc.name];
-                                 if (handler) {
-                                     const result = await handler(fc.args);
-                                     sessionRef.current?.then(session => session.sendToolResponse({
-                                         functionResponses: { id: fc.id, name: fc.name, response: { result: JSON.stringify(result) } }
-                                     }));
-                                 }
+                                if (fc && fc.name) {
+                                    const handler = functionHandlers[fc.name];
+                                    if (handler) {
+                                        const result = await handler(fc.args);
+                                        sessionRef.current?.then(session => session.sendToolResponse({
+                                            functionResponses: { id: fc.id, name: fc.name, response: { result: JSON.stringify(result) } }
+                                        }));
+                                    }
+                                }
                              }
                          }
                     },

@@ -360,7 +360,8 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are a portfolio analyst providing educational content. A user has a "${riskProfile}" profile. Generate a rebalancing plan analysis in markdown. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
+        const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
+        const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { console.error(error); return "An error occurred."; }
