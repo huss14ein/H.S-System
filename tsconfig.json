@@ -31,7 +31,6 @@
     "utils",
     "App.tsx",
     "constants.tsx",
-    "env.d.ts",
     "index.tsx",
     "types.ts"
   ],

@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../services/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthContextType {
@@ -24,36 +24,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+      // If Supabase isn't configured, don't attempt to fetch a session.
+      // This prevents network errors and ensures the login page is shown.
+      if (!isSupabaseConfigured) {
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+            console.error("Error fetching auth session:", error.message);
+            setSession(null);
+            setUser(null);
+        } else {
+            setSession(session);
+            setUser(session?.user ?? null);
+        }
+      } catch (e) {
+        console.error("A critical error occurred while initializing authentication:", e);
+        setSession(null);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
     };
 
     getInitialSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-    });
+    if (isSupabaseConfigured) {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+          setSession(session);
+          setUser(session?.user ?? null);
+        });
 
-    return () => {
-      subscription?.unsubscribe();
-    };
+        return () => {
+          subscription?.unsubscribe();
+        };
+    }
   }, []);
 
 
   const login = async (email: string, pass: string) => {
+     if (!isSupabaseConfigured) {
+        throw new Error("Application is not configured to connect to the authentication server.");
+     }
      const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
      if (error) throw error;
   };
 
   const logout = async () => {
+    if (!isSupabaseConfigured) return; // Fail silently on logout if not configured
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };
 
   const signup = async (name: string, email: string, pass: string) => {
+     if (!isSupabaseConfigured) {
+        throw new Error("Application is not configured to connect to the authentication server.");
+     }
      const { data, error } = await supabase.auth.signUp({
         email: email,
         password: pass,

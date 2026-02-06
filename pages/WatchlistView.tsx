@@ -1,4 +1,5 @@
 
+
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { WatchlistItem } from '../types';
@@ -39,8 +40,8 @@ const WatchlistItemRow: React.FC<{
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
-    // FIX: Explicitly type the ref to hold a number or undefined to satisfy the type checker.
-    const prevPriceRef = useRef<number | undefined>();
+    // FIX: Explicitly pass undefined to useRef to satisfy stricter type environments that may not handle no-argument calls gracefully.
+    const prevPriceRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         if (priceInfo) {
