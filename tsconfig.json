@@ -21,6 +21,19 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["."],
+  "include": [
+    "components",
+    "context",
+    "data",
+    "hooks",
+    "pages",
+    "services",
+    "utils",
+    "App.tsx",
+    "constants.tsx",
+    "env.d.ts",
+    "index.tsx",
+    "types.ts"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
