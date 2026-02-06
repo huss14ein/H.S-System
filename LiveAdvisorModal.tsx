@@ -91,7 +91,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // FIX: Use process.env.API_KEY as per guidelines.
+        // FIX: Use process.env.API_KEY as per guidelines. This resolves the whitescreen crash
+        // caused by import.meta.env being unavailable in non-Vite environments.
         const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');

@@ -1,5 +1,3 @@
-
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio } from '../types';
 
@@ -26,10 +24,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use process.env.API_KEY as per guidelines.
+    // FIX: Use process.env.API_KEY as per guidelines. This resolves the whitescreen crash
+    // caused by import.meta.env being unavailable in non-Vite environments.
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        // FIX: Updated warning message to reflect the correct environment variable.
         console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }

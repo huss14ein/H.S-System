@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { InformationCircleIcon } from './icons/InformationCircleIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
@@ -19,9 +17,9 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number>();
 
-  // FIX: Replace toLowerCase().includes() with a case-insensitive regex to work around a potential environment issue.
-  const isPositive = trend?.includes('+') || (trend && /(surplus|under)/i.test(trend));
-  const isNegative = trend?.includes('-') || (trend && /(deficit|over)/i.test(trend));
+  // FIX: Added optional chaining (?.) to all instances of `trend` to prevent a runtime error if the prop is undefined.
+  const isPositive = trend?.includes('+') || trend?.toLowerCase()?.includes('surplus') || trend?.toLowerCase()?.includes('under');
+  const isNegative = trend?.includes('-') || trend?.toLowerCase()?.includes('deficit') || trend?.toLowerCase()?.includes('over');
   let trendColor = 'text-gray-500';
   if (isPositive) trendColor = 'text-success';
   if (isNegative) trendColor = 'text-danger';
