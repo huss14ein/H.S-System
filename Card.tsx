@@ -16,7 +16,8 @@ interface CardProps {
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   // FIX: Correctly type useRef to allow for an initial undefined value, preventing potential type errors.
-  const prevValueRef = useRef<number | undefined>();
+  // FIX: Added 'undefined' as the initial value for useRef to resolve the "Expected 1 arguments, but got 0" error.
+  const prevValueRef = useRef<number | undefined>(undefined);
 
   // FIX: Replaced unsafe string comparisons with a case-insensitive regex to fix runtime errors when trend is undefined.
   const isPositive = trend?.includes('+') || (trend && /(surplus|under)/i.test(trend));
