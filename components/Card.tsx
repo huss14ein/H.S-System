@@ -16,7 +16,7 @@ interface CardProps {
 
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
-  const prevValueRef = useRef<number | null>(null);
+  const prevValueRef = useRef<number>();
 
   const isPositive = trend?.includes('+') || trend?.toLowerCase().includes('surplus') || trend?.toLowerCase().includes('under');
   const isNegative = trend?.includes('-') || trend?.toLowerCase().includes('deficit') || trend?.toLowerCase().includes('over');
@@ -25,30 +25,18 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   if (isNegative) trendColor = 'text-danger';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,SAR$]+/g, "")));
-    if (!isNumeric) {
-      return;
-    }
+    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, "")));
+    if (!isNumeric) return;
     
     const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
 
-    if (prevValueRef.current !== null && Math.abs(numericValue - prevValueRef.current) > 0.001) {
+    if (prevValueRef.current !== undefined && Math.abs(numericValue - prevValueRef.current) > 0.001) {
       setFlash(numericValue > prevValueRef.current ? 'up' : 'down');
       const timer = setTimeout(() => setFlash(null), 1000);
       return () => clearTimeout(timer);
     }
     
-    if (prevValueRef.current === null) {
-         prevValueRef.current = numericValue;
-    }
-  }, [value]);
-
-  useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,SAR$]+/g, "")));
-     if(isNumeric) {
-        const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
-        prevValueRef.current = numericValue;
-     }
+    prevValueRef.current = numericValue;
   }, [value]);
   
   const indicatorClass = 

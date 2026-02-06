@@ -6,6 +6,7 @@ import { DataContext } from '../context/DataContext';
 import { encode, decode, decodeAudioData } from '../utils/audioUtils';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
+import { HeadsetIcon } from './icons/HeadsetIcon';
 
 type Status = 'Inactive' | 'Connecting' | 'Listening' | 'Thinking' | 'Speaking' | 'Error';
 
@@ -18,6 +19,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const { data, addWatchlistItem } = useContext(DataContext)!;
     const [status, setStatus] = useState<Status>('Inactive');
     const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+    const [view, setView] = useState<'welcome' | 'chat'>('welcome');
     
     const sessionRef = useRef<Promise<any> | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -31,6 +33,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     const handleClose = () => {
         stopSession();
+        setView('welcome');
         onClose();
     };
 
@@ -140,9 +143,11 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                             const inputText = message.serverContent.inputTranscription?.text;
                             if (inputText) {
                                 setTranscript(prev => {
-                                    const last = prev.length > 0 ? prev[prev.length - 1] : undefined;
-                                    if (last && last.source === 'user') {
-                                        return [...prev.slice(0, -1), { ...last, text: last.text + inputText }];
+                                    if (prev.length > 0) {
+                                        const last = prev[prev.length - 1];
+                                        if (last && last.source === 'user') {
+                                            return [...prev.slice(0, -1), { ...last, text: last.text + inputText }];
+                                        }
                                     }
                                     return [...prev, { source: 'user', text: inputText }];
                                 });
@@ -152,9 +157,11 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                              if (outputText) {
                                 setStatus('Speaking');
                                  setTranscript(prev => {
-                                    const last = prev.length > 0 ? prev[prev.length - 1] : undefined;
-                                    if (last && last.source === 'model') {
-                                        return [...prev.slice(0, -1), { ...last, text: last.text + outputText }];
+                                    if (prev.length > 0) {
+                                        const last = prev[prev.length - 1];
+                                        if (last && last.source === 'model') {
+                                            return [...prev.slice(0, -1), { ...last, text: last.text + outputText }];
+                                        }
                                     }
                                     return [...prev, { source: 'model', text: outputText }];
                                 });
@@ -230,38 +237,55 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Live AI Advisor">
-            <div className="flex flex-col h-[60vh]">
-                <div className="flex-grow bg-gray-100 rounded-lg p-4 overflow-y-auto space-y-4">
-                    {transcript.map((item, index) => (
-                        <div key={index} className={`flex ${item.source === 'user' ? 'justify-end' : 'justify-start'}`}>
-                           {item.source === 'system' ? (
-                                <div className="text-sm text-gray-500 italic flex items-center gap-2 p-2">
-                                    <SparklesIcon className="h-4 w-4 animate-pulse" /> {item.text}
-                                </div>
-                           ) : (
-                                <div className={`max-w-xs md:max-w-md p-3 rounded-lg ${item.source === 'user' ? 'bg-primary text-white' : 'bg-white shadow-sm'}`}>
-                                    {item.text}
-                                </div>
-                           )}
-                        </div>
-                    ))}
-                    {transcript.length === 0 && <p className="text-center text-gray-500">Press Start to begin your session.</p>}
-                </div>
-                <div className="flex-shrink-0 pt-4 text-center">
-                    <p className="text-sm text-gray-500 font-medium mb-2">Status: {status}</p>
+            {view === 'welcome' ? (
+                <div className="text-center p-4">
+                    <HeadsetIcon className="h-16 w-16 mx-auto text-primary opacity-50 mb-4" />
+                    <h3 className="text-lg font-semibold text-dark">Speak with your AI Assistant</h3>
+                    <p className="text-sm text-gray-600 mt-2 max-w-sm mx-auto">
+                        Get real-time answers about your accounts, budgets, and investments. 
+                        Your conversation is private and will not be saved.
+                    </p>
                     <button 
-                        onClick={status === 'Inactive' || status === 'Error' ? startSession : stopSession}
-                        className={`px-6 py-3 rounded-full text-white font-semibold transition-colors ${status === 'Inactive' || status === 'Error' ? 'bg-primary hover:bg-secondary' : 'bg-red-600 hover:bg-red-700'}`}
+                        onClick={() => setView('chat')}
+                        className="mt-6 px-6 py-3 bg-primary text-white font-semibold rounded-full hover:bg-secondary transition-colors"
                     >
-                       {status === 'Inactive' || status === 'Error' ? 'Start Session' : 'Stop Session'}
+                        Activate Live Session
                     </button>
-                    {(status === 'Listening' || status === 'Speaking') && 
-                        <div className="flex items-center justify-center space-x-2 mt-3 text-gray-600">
-                           <MicrophoneIcon className="h-5 w-5 animate-pulse-live"/> <span>Live</span>
-                        </div>
-                    }
                 </div>
-            </div>
+            ) : (
+                <div className="flex flex-col h-[60vh]">
+                    <div className="flex-grow bg-gray-100 rounded-lg p-4 overflow-y-auto space-y-4">
+                        {transcript.map((item, index) => (
+                            <div key={index} className={`flex ${item.source === 'user' ? 'justify-end' : 'justify-start'}`}>
+                               {item.source === 'system' ? (
+                                    <div className="text-sm text-gray-500 italic flex items-center gap-2 p-2">
+                                        <SparklesIcon className="h-4 w-4 animate-pulse" /> {item.text}
+                                    </div>
+                               ) : (
+                                    <div className={`max-w-xs md:max-w-md p-3 rounded-lg ${item.source === 'user' ? 'bg-primary text-white' : 'bg-white shadow-sm'}`}>
+                                        {item.text}
+                                    </div>
+                               )}
+                            </div>
+                        ))}
+                        {transcript.length === 0 && <p className="text-center text-gray-500">Press Start to begin your session.</p>}
+                    </div>
+                    <div className="flex-shrink-0 pt-4 text-center">
+                        <p className="text-sm text-gray-500 font-medium mb-2">Status: {status}</p>
+                        <button 
+                            onClick={status === 'Inactive' || status === 'Error' ? startSession : stopSession}
+                            className={`px-6 py-3 rounded-full text-white font-semibold transition-colors ${status === 'Inactive' || status === 'Error' ? 'bg-primary hover:bg-secondary' : 'bg-red-600 hover:bg-red-700'}`}
+                        >
+                           {status === 'Inactive' || status === 'Error' ? 'Start Session' : 'Stop Session'}
+                        </button>
+                        {(status === 'Listening' || status === 'Speaking') && 
+                            <div className="flex items-center justify-center space-x-2 mt-3 text-gray-600">
+                               <MicrophoneIcon className="h-5 w-5 animate-pulse-live"/> <span>Live</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            )}
         </Modal>
     );
 };

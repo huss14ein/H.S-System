@@ -8,7 +8,7 @@ const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
     investments: [], investmentTransactions: [], budgets: [], watchlist: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: false },
-    zakatPayments: [], priceAlerts: [], simulatedPrices: {}
+    zakatPayments: [], priceAlerts: []
 };
 
 interface DataContextType {
@@ -45,7 +45,6 @@ interface DataContextType {
   addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
-  setSimulatedPrices: (prices: Record<string, { price: number; change: number; changePercent: number }>) => void;
   resetData: () => Promise<void>;
 }
 
@@ -175,10 +174,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return { ...prevData, investments: newInvestments };
         });
     };
-
-    const setSimulatedPrices = (prices: Record<string, { price: number; change: number; changePercent: number }>) => {
-        setData(prev => ({ ...prev, simulatedPrices: prices }));
-    };
     
     const recordTrade = async (trade: Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => {
         if (!auth?.user) return;
@@ -224,7 +219,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePriceAlert = (alert: any) => updateItem('price_alerts', alert, 'priceAlerts');
     const deletePriceAlert = (id: string) => deleteItem('price_alerts', id, 'priceAlerts');
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, setSimulatedPrices, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, resetData };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, resetData };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

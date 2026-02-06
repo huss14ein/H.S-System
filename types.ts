@@ -164,7 +164,6 @@ export interface FinancialData {
   settings: Settings;
   zakatPayments: ZakatPayment[];
   priceAlerts: PriceAlert[];
-  simulatedPrices: Record<string, { price: number; change: number; changePercent: number }>;
 }
 
 export interface KPISummary {

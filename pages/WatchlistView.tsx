@@ -1,3 +1,4 @@
+
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { WatchlistItem } from '../types';
@@ -12,6 +13,7 @@ import { BellAlertIcon } from '../components/icons/BellAlertIcon';
 import { BellIcon } from '../components/icons/BellIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
+import { useMarketData } from '../context/MarketDataContext';
 
 const AddWatchlistItemModal: React.FC<{ isOpen: boolean, onClose: () => void, onAdd: (item: WatchlistItem) => void }> = ({ isOpen, onClose, onAdd }) => {
     const [symbol, setSymbol] = useState('');
@@ -37,21 +39,19 @@ const WatchlistItemRow: React.FC<{
 }> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
-    // FIX: Explicitly type useRef to include undefined since it's initialized without a value.
-    // FIX: The useRef hook requires an initial value. Pass `undefined` to satisfy the requirement.
-    const prevPriceRef = useRef<number | undefined>(undefined);
-
-    useEffect(() => {
-        if (prevPriceRef.current !== undefined && priceInfo && priceInfo.price !== prevPriceRef.current) {
-            setFlashClass(priceInfo.price > prevPriceRef.current ? 'flash-green-bg' : 'flash-red-bg');
-            const timer = setTimeout(() => setFlashClass(''), 1000);
-            return () => clearTimeout(timer);
-        }
-    }, [priceInfo?.price]);
+    const prevPriceRef = useRef<number>();
 
     useEffect(() => {
         if (priceInfo) {
-            prevPriceRef.current = priceInfo.price;
+            if (prevPriceRef.current !== undefined && priceInfo.price !== prevPriceRef.current) {
+                setFlashClass(priceInfo.price > prevPriceRef.current ? 'flash-green-bg' : 'flash-red-bg');
+                const timer = setTimeout(() => setFlashClass(''), 1000);
+                
+                prevPriceRef.current = priceInfo.price;
+                return () => clearTimeout(timer);
+            } else {
+                 prevPriceRef.current = priceInfo.price;
+            }
         }
     }, [priceInfo]);
 
@@ -85,6 +85,7 @@ const WatchlistItemRow: React.FC<{
 
 const WatchlistView: React.FC = () => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, updatePriceAlert, deletePriceAlert } = useContext(DataContext)!;
+    const { simulatedPrices } = useMarketData();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
@@ -96,7 +97,7 @@ const WatchlistView: React.FC = () => {
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => { if (itemToDelete) { deleteWatchlistItem(itemToDelete.symbol); setIsDeleteModalOpen(false); setItemToDelete(null); } };
     const handleGetNews = useCallback(async () => { if (data.watchlist.length === 0) { setAiResearch("Your watchlist is empty."); return; } setIsNewsLoading(true); const news = await getAIResearchNews(data.watchlist); setAiResearch(news); setIsNewsLoading(false); }, [data.watchlist]);
-    const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: data.simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
+    const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
     const handleSaveAlert = (symbol: string, targetPrice: number) => { const existing = data.priceAlerts.find(a => a.symbol === symbol); if (existing) { updatePriceAlert({ ...existing, targetPrice, status: 'active' }); } else { addPriceAlert({ symbol, targetPrice }); } };
     const handleDeleteAlert = (symbol: string) => { const existing = data.priceAlerts.find(a => a.symbol === symbol); if (existing) deletePriceAlert(existing.id); };
 
@@ -108,7 +109,7 @@ const WatchlistView: React.FC = () => {
                     <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">30-Day Trend</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
-                            const priceInfo = data.simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
+                            const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
                             const hasAlert = data.priceAlerts.some(a => a.symbol === item.symbol && a.status === 'active');
                             return (
                                <WatchlistItemRow

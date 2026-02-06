@@ -2,17 +2,24 @@
 import React, { useEffect, useContext, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
+import { MarketDataContext } from '../context/MarketDataContext';
 
 const MarketSimulator: React.FC = () => {
-    const context = useContext(DataContext);
-    const contextRef = useRef(context);
-    contextRef.current = context;
+    const dataContext = useContext(DataContext);
+    const marketContext = useContext(MarketDataContext);
+
+    const contextRef = useRef({ dataContext, marketContext });
+    contextRef.current = { dataContext, marketContext };
 
     const previousPricesRef = useRef<Record<string, number>>({});
 
     useEffect(() => {
         const interval = setInterval(() => {
-            const { data, batchUpdateHoldingValues, updatePriceAlert, setSimulatedPrices } = contextRef.current!;
+            const { dataContext, marketContext } = contextRef.current;
+            if (!dataContext || !marketContext) return;
+
+            const { data, batchUpdateHoldingValues, updatePriceAlert } = dataContext;
+            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices } = marketContext;
             if (!data) return;
 
             const allHoldings = data.investments.flatMap(p => p.holdings);
@@ -42,7 +49,7 @@ const MarketSimulator: React.FC = () => {
             };
 
             uniqueSymbols.forEach(symbol => {
-                const oldPrice = data.simulatedPrices[symbol]?.price || getInitialPrice(symbol);
+                const oldPrice = currentSimulatedPrices[symbol]?.price || getInitialPrice(symbol);
                 const changePercentRaw = (Math.random() - 0.495) * 0.03; // More volatility
                 const newPrice = Math.max(oldPrice * (1 + changePercentRaw), 0.01);
                 const change = newPrice - oldPrice;
