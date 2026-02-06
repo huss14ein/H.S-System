@@ -1,4 +1,3 @@
-
 import React, { useMemo, useContext, useState } from 'react';
 import Card from '../components/Card';
 import { Transaction, Page, Budget, Account } from '../types';
@@ -153,11 +152,13 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 };
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
-    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions } = useMemo(() => {
+    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
+        if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
+
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -219,6 +220,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
 
         const uncategorizedTransactions = data.transactions.filter(t => t.type === 'expense' && !t.budgetCategory);
+        
+        const recentTransactions = [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
         return {
             kpiSummary: {
@@ -228,12 +231,21 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             monthlyBudgets,
             investmentTreemapData,
             monthlyCashflowData,
-            uncategorizedTransactions
+            uncategorizedTransactions,
+            recentTransactions
         };
     }, [data]);
     
-    const getTrendString = (trend: number) => trend.toFixed(1) + '%';
+    const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary"></div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-dark">Dashboard</h1>
@@ -254,10 +266,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             )}
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth)} trend={`${kpiSummary.netWorthTrend >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} />
-                <Card title="This Month's P&L" value={formatCurrencyString(kpiSummary.monthlyPnL)} trend={kpiSummary.monthlyPnL >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} />
-                <Card title="Budget Variance" value={formatCurrencyString(kpiSummary.budgetVariance)} trend={kpiSummary.budgetVariance >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} />
-                <Card title="Total Investment ROI" value={`${(kpiSummary.roi * 100).toFixed(1)}%`} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} />
+                <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} />
+                <Card title="This Month's P&L" value={formatCurrencyString(kpiSummary.monthlyPnL || 0)} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} />
+                <Card title="Budget Variance" value={formatCurrencyString(kpiSummary.budgetVariance || 0)} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} />
+                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} />
             </div>
 
             <AIFeed />
@@ -286,7 +298,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Transactions')} />
-                <RecentTransactions transactions={data.transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())} onClick={() => setActivePage('Transactions')} />
+                <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
             
             <TransactionReviewModal 
