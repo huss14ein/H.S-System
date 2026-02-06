@@ -1,12 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-// FIX: Switched from import.meta.env to process.env to resolve TypeScript error and for broader environment compatibility.
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-// FIX: Switched from import.meta.env to process.env to resolve TypeScript error and for broader environment compatibility.
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+// FIX: Switched to Vite's `import.meta.env` for client-side environment variables.
+// @ts-ignore
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+// @ts-ignore
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error("Supabase URL and Anon Key must be provided as environment variables.");
+  throw new Error("Supabase URL and Anon Key must be provided as VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.");
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
