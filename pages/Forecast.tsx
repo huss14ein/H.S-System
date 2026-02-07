@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line } from 'recharts';
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line, ReferenceLine } from 'recharts';
 import Card from '../components/Card';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { FlagIcon } from '../components/icons/FlagIcon';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -34,6 +35,8 @@ const Forecast: React.FC = () => {
 
     const [forecastData, setForecastData] = useState<any[]>([]);
     const [summary, setSummary] = useState<{ projectedNetWorth: number, projectedInvestments: number } | null>(null);
+    const [goalProjections, setGoalProjections] = useState<{ name: string; years: number; months: number; met: boolean }[]>([]);
+
 
     React.useEffect(() => {
         setMonthlySavings(averageMonthlySavings);
@@ -51,11 +54,14 @@ const Forecast: React.FC = () => {
         setIsLoading(true);
         setSummary(null);
         setForecastData([]);
+        setGoalProjections([]);
 
         setTimeout(() => { // Simulate async calculation
             let currentNetWorth = initialValues.netWorth;
             let currentInvestmentValue = initialValues.investmentValue;
             let currentMonthlySavings = monthlySavings;
+            
+            const goalsWithProjections = data.goals.map(g => ({ ...g, metMonth: null as number | null }));
 
             const results = [];
             const currentDate = new Date();
@@ -63,22 +69,24 @@ const Forecast: React.FC = () => {
             for (let i = 0; i < horizon * 12; i++) {
                 const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
                 
-                // At the start of each year, increase savings goal by income growth rate
                 if (monthDate.getMonth() === 0 && i > 0) {
                     currentMonthlySavings *= (1 + incomeGrowth / 100);
                 }
 
-                // Add monthly savings to investments
                 currentInvestmentValue += currentMonthlySavings;
-                
-                // Grow investments
                 currentInvestmentValue *= (1 + investmentGrowth / 100 / 12);
                 
-                // Recalculate Net Worth
-                // Simplified: assumes non-investment assets/liabilities are static.
-                // Change in net worth is driven by savings and investment growth.
-                currentNetWorth += currentMonthlySavings + (currentInvestmentValue - (currentInvestmentValue / (1 + investmentGrowth / 100 / 12)));
+                const investmentGain = (currentInvestmentValue * (investmentGrowth / 100 / 12));
+                currentNetWorth += currentMonthlySavings + investmentGain;
 
+                goalsWithProjections.forEach(goal => {
+                    if (goal.metMonth === null) {
+                        const netWorthNeededForGoal = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
+                        if (currentNetWorth >= netWorthNeededForGoal) {
+                            goal.metMonth = i + 1;
+                        }
+                    }
+                });
 
                 results.push({
                     name: monthDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
@@ -95,9 +103,30 @@ const Forecast: React.FC = () => {
                     projectedInvestments: finalEntry["Investment Value"],
                 });
             }
+            
+            setGoalProjections(goalsWithProjections.map(g => {
+                const met = g.metMonth !== null;
+                return {
+                    name: g.name,
+                    met: met,
+                    years: met ? Math.floor(g.metMonth! / 12) : 0,
+                    months: met ? g.metMonth! % 12 : 0,
+                }
+            }));
+
             setIsLoading(false);
         }, 500);
-    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues]);
+    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data.goals]);
+
+    const goalReferenceLines = useMemo(() => {
+        return data.goals.map(goal => {
+            const yValue = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
+            return {
+                y: yValue,
+                label: goal.name
+            };
+        });
+    }, [data.goals, initialValues.netWorth]);
 
     return (
         <div className="space-y-6">
@@ -141,6 +170,27 @@ const Forecast: React.FC = () => {
                             <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} />
                         </div>
                     )}
+                    
+                    {goalProjections.length > 0 && !isLoading && (
+                        <div className="bg-white p-6 rounded-lg shadow">
+                            <h3 className="text-lg font-semibold text-dark mb-4">Goal Projections</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {goalProjections.map(proj => (
+                                    <div key={proj.name} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
+                                        <FlagIcon className={`h-6 w-6 flex-shrink-0 ${proj.met ? 'text-green-500' : 'text-gray-400'}`} />
+                                        <div>
+                                            <p className="font-semibold text-dark">{proj.name}</p>
+                                            {proj.met ? (
+                                                <p className="text-sm text-green-700">Projected to be met in <span className="font-bold">{proj.years} years</span> and <span className="font-bold">{proj.months} months</span>.</p>
+                                            ) : (
+                                                <p className="text-sm text-gray-500">Not met within {horizon} years at current rate.</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {forecastData.length > 0 && !isLoading ? (
                         <div className="bg-white p-6 rounded-lg shadow h-[600px]">
@@ -155,6 +205,11 @@ const Forecast: React.FC = () => {
                                     <defs>
                                         <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/><stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1}/></linearGradient>
                                     </defs>
+                                    {goalReferenceLines.map(line => (
+                                         <ReferenceLine key={line.label} y={line.y} stroke="#e11d48" strokeDasharray="4 4" >
+                                             <Legend payload={[{ value: line.label, type: 'line', color: '#e11d48' }]} />
+                                         </ReferenceLine>
+                                    ))}
                                     <Area type="monotone" dataKey="Investment Value" stackId="1" stroke="#8b5cf6" fill="url(#colorInvest)" name="Total Investments" />
                                     <Line type="monotone" dataKey="Net Worth" stroke="#1e3a8a" strokeWidth={3} name="Net Worth" dot={false} />
                                 </ComposedChart>

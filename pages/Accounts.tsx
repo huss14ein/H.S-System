@@ -19,20 +19,23 @@ const AccountModal: React.FC<{
 }> = ({ isOpen, onClose, onSave, accountToEdit }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<Account['type']>('Checking');
+    const [owner, setOwner] = useState('');
 
     useEffect(() => {
         if (accountToEdit) {
             setName(accountToEdit.name);
             setType(accountToEdit.type);
+            setOwner(accountToEdit.owner || '');
         } else {
             setName('');
             setType('Checking');
+            setOwner('');
         }
     }, [accountToEdit, isOpen]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const accountData = { name, type };
+        const accountData = { name, type, owner: owner || undefined };
 
         if (accountToEdit) {
             onSave({ ...accountToEdit, ...accountData });
@@ -51,6 +54,7 @@ const AccountModal: React.FC<{
                     <option value="Savings">Savings</option>
                     <option value="Credit">Credit Card</option>
                 </select>
+                <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Account</button>
             </form>
         </Modal>
@@ -81,7 +85,10 @@ const AccountCardComponent: React.FC<{
                     <div className="flex items-center space-x-3">
                         {getAccountIcon(account.type)}
                         <div>
-                            <h3 className="font-bold text-dark text-lg">{account.name}</h3>
+                            <div className="flex items-center gap-2">
+                                <h3 className="font-bold text-dark text-lg">{account.name}</h3>
+                                {account.owner && <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{account.owner}</span>}
+                            </div>
                             <p className="text-sm text-gray-500">{account.type}</p>
                         </div>
                     </div>

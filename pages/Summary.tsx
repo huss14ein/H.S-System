@@ -88,7 +88,7 @@ const Summary: React.FC = () => {
         const coreExpenses = data.transactions.filter(t => t.expenseType === 'Core').reduce((sum, t) => sum + Math.abs(t.amount), 0) / 12; // Average monthly core
         const emergencyFundMonths = coreExpenses > 0 ? cash / coreExpenses : savingsRate >= 0 ? 99 : 0;
 
-        const allHoldings = data.investments.flatMap(p => p.holdings);
+        const allHoldings = data.investments.flatMap(p => p.holdings || []);
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
              const gainLoss = h.currentValue - totalCost;

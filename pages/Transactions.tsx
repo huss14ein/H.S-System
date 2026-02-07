@@ -331,7 +331,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         </div>
                                     </div>
                                     <div className="flex items-center space-x-4">
-                                        <p className={`font-bold text-lg ${transaction.type === 'income' ? 'text-success' : 'text-danger'}`}>{formatCurrency(transaction.amount)}</p>
+                                        <p className="font-bold text-lg">{formatCurrency(transaction.amount, { colorize: true })}</p>
                                         <button onClick={() => handleOpenTransactionModal(transaction)} className="text-gray-400 hover:text-primary"><PencilIcon className="h-5 w-5"/></button>
                                         <button onClick={() => setItemToDelete(transaction)} className="text-gray-400 hover:text-danger"><TrashIcon className="h-5 w-5"/></button>
                                     </div>

@@ -429,8 +429,8 @@ const PlatformCard: React.FC<{
                     <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center text-sm text-primary hover:underline"><ArrowsRightLeftIcon className="h-4 w-4 mr-1"/>Transaction Log</button>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-x-2 text-center pt-3 border-t">
-                    <div><dt className="text-xs text-gray-500">Unrealized P/L</dt><dd className={`font-semibold ${totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrencyString(totalGainLoss, { digits: 0 })}</dd></div>
-                    <div><dt className="text-xs text-gray-500">Daily P/L</dt><dd className={`font-semibold ${dailyPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrencyString(dailyPnL, { digits: 0 })}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Unrealized P/L</dt><dd className="font-semibold">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd></div>
+                    <div><dt className="text-xs text-gray-500">Daily P/L</dt><dd className="font-semibold">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd></div>
                     <div><dt className="text-xs text-gray-500">Total ROI</dt><dd className={`font-semibold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>{roi.toFixed(2)}%</dd></div>
                 </div>
             </div>

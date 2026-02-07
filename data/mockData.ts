@@ -23,7 +23,6 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         { id: 'asset1', name: 'Primary Residence', type: 'Property', value: 2500000, purchasePrice: 1800000 },
         { id: 'asset2', name: 'Rental Apartment', type: 'Property', value: 850000, purchasePrice: 700000, isRental: true, monthlyRent: 4000 },
         { id: 'asset3', name: 'Toyota Camry 2023', type: 'Vehicle', value: 110000, purchasePrice: 135000 },
-        { id: 'asset4', name: 'Gold Bullion (100g)', type: 'Gold and precious metals', value: 27500, purchasePrice: 22000 },
     ],
     liabilities: [
         { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -1250000, status: 'Active' },
@@ -49,18 +48,19 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         name: 'Tadawul Portfolio',
         accountId: 'acc4',
         holdings: [
-          { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35.50, currentValue: withVariation(35.50 * 100), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80.20, currentValue: withVariation(80.20 * 50), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h3', symbol: 'REITF.SR', name: 'AlJazira REIT', quantity: 200, avgCost: 18.00, currentValue: withVariation(18.00 * 200), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'REIT' },
+          { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35.50, currentValue: withVariation(35.50 * 100), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock', dividendDistribution: 'Reinvest', dividendYield: 4.5 },
+          { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80.20, currentValue: withVariation(80.20 * 50), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock', dividendDistribution: 'Payout', dividendYield: 3.2 },
+          { id: 'h3', symbol: 'REITF.SR', name: 'AlJazira REIT', quantity: 200, avgCost: 18.00, currentValue: withVariation(18.00 * 200), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'REIT', dividendDistribution: 'Payout' },
         ]
       },
       {
         id: 'p2',
         name: 'International Stocks',
         accountId: 'acc5',
+        owner: 'Spouse',
         holdings: [
-          { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00, currentValue: withVariation(300.00 * 10), zakahClass: 'Zakatable', realizedPnL: 150, assetClass: 'Stock' },
-          { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00, currentValue: withVariation(400.00 * 5), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF' },
+          { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00 * 3.75, currentValue: withVariation(300.00 * 10 * 3.75), zakahClass: 'Zakatable', realizedPnL: 150 * 3.75, assetClass: 'Stock', dividendDistribution: 'Payout', dividendYield: 0.8 },
+          { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00 * 3.75, currentValue: withVariation(400.00 * 5 * 3.75), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF', dividendDistribution: 'Reinvest' },
         ]
       },
       {
@@ -68,17 +68,18 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         name: 'US Growth Portfolio',
         accountId: 'acc4',
         holdings: [
-          { id: 'h6', symbol: 'NVDA', name: 'NVIDIA Corp', quantity: 5, avgCost: 120.00, currentValue: withVariation(120.00 * 5), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h7', symbol: 'TSLA', name: 'Tesla, Inc.', quantity: 10, avgCost: 180.00, currentValue: withVariation(180.00 * 10), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h6', symbol: 'NVDA', name: 'NVIDIA Corp', quantity: 5, avgCost: 120.00 * 3.75, currentValue: withVariation(120.00 * 5 * 3.75), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h7', symbol: 'TSLA', name: 'Tesla, Inc.', quantity: 10, avgCost: 180.00 * 3.75, currentValue: withVariation(180.00 * 10 * 3.75), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
         ]
       }
     ],
     investmentTransactions: [
         { id: 'it1', accountId: 'acc4', date: lastMonth, type: 'buy', symbol: '2222.SR', quantity: 100, price: 35.50, total: 3550 },
-        { id: 'it2', accountId: 'acc5', date: lastMonth, type: 'buy', symbol: 'MSFT', quantity: 10, price: 300.00, total: 3000 },
+        { id: 'it2', accountId: 'acc5', date: lastMonth, type: 'buy', symbol: 'MSFT', quantity: 10, price: 300.00 * 3.75, total: 3000 * 3.75 },
         { id: 'it3', accountId: 'acc4', date: twoMonthsAgo, type: 'buy', symbol: '1120.SR', quantity: 50, price: 80.20, total: 4010 },
-        { id: 'it4', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'NVDA', quantity: 5, price: 120.00, total: 600 },
-        { id: 'it5', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'TSLA', quantity: 10, price: 180.00, total: 1800 },
+        { id: 'it4', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'NVDA', quantity: 5, price: 120.00 * 3.75, total: 600 * 3.75 },
+        { id: 'it5', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'TSLA', quantity: 10, price: 180.00 * 3.75, total: 1800 * 3.75 },
+        { id: 'it6', accountId: 'acc5', date: threeMonthsAgo, type: 'dividend', symbol: 'MSFT', quantity: 0, price: 0, total: 25.50 },
     ],
     budgets: [
         { id: 'b1', category: 'Food', limit: 3000, month: today.getMonth() + 1, year: today.getFullYear() },

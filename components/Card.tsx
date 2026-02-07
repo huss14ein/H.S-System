@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { InformationCircleIcon } from './icons/InformationCircleIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
@@ -27,7 +25,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   if (isNegative) trendColor = 'text-danger';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, "")));
+    const isNumeric = typeof value === 'number' || (typeof value === 'string' && !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, ""))));
     if (!isNumeric) return;
     
     const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
@@ -53,6 +51,9 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
     <div 
       className={`bg-gradient-to-br from-white to-slate-50 p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 ease-in-out flex flex-col border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
       onClick={onClick}
+      style={{
+        backgroundImage: 'radial-gradient(circle at top right, rgba(239, 246, 255, 0.5) 0%, transparent 50%)',
+      }}
     >
       <div className="flex items-start justify-between">
         <h3 className="text-sm font-medium text-gray-500">{title}</h3>
@@ -67,7 +68,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
         ))}
       </div>
       <div className="mt-2 flex-grow">
-        <p className={`text-3xl font-bold break-words ${valueColor || 'text-dark'}`}>{value}</p>
+        <p className={`text-3xl font-extrabold break-words ${valueColor || 'text-dark'}`}>{value}</p>
         {trend && (
           <div className={`flex items-center text-sm mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-4 w-4 mr-1"/>}

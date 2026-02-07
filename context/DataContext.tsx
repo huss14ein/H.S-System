@@ -25,9 +25,10 @@ interface DataContextType {
   addLiability: (liability: Omit<Liability, 'id' | 'user_id'>) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
-  addBudget: (budget: Budget) => Promise<void>;
+  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>) => Promise<void>;
   updateBudget: (budget: Budget) => Promise<void>;
-  deleteBudget: (category: string) => Promise<void>;
+  deleteBudget: (category: string, month: number, year: number) => Promise<void>;
+  copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
   addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>) => Promise<void>;
   updateTransaction: (transaction: Transaction) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
@@ -52,6 +53,7 @@ interface DataContextType {
   addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
+  batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
@@ -259,7 +261,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Omit<Liability, 'id'>) => {
+    const addLiability = async (liability: Omit<Liability, 'id' | 'user_id'>) => {
       if(!supabase) return;
       const db = supabase;
       const { data: newLiability, error } = await db.from('liabilities').insert(withUser(liability)).select().single();
@@ -282,7 +284,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Budgets ---
-    const addBudget = async (budget: Budget) => {
+    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
       const db = supabase;
       const { data: newBudget, error } = await db.from('budgets').insert(withUser(budget)).select().single();
@@ -292,16 +294,41 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateBudget = async (budget: Budget) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
-      const { error } = await db.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category });
+      const { error } = await db.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category, month: budget.month, year: budget.year });
       if(error) console.error(error);
-      else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => b.category === budget.category ? budget : b) }));
+      else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => (b.category === budget.category && b.month === budget.month && b.year === budget.year) ? budget : b) }));
     };
-    const deleteBudget = async (category: string) => {
+    const deleteBudget = async (category: string, month: number, year: number) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
-      const { error } = await db.from('budgets').delete().match({ user_id: auth.user.id, category });
+      const { error } = await db.from('budgets').delete().match({ user_id: auth.user.id, category, month, year });
       if(error) console.error(error);
-      else setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.category !== category) }));
+      else setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => !(b.category === category && b.month === month && b.year === year)) }));
+    };
+    const copyBudgetsFromPreviousMonth = async (targetYear: number, targetMonth: number) => {
+        if (!supabase || !auth?.user) return;
+        const sourceDate = new Date(targetYear, targetMonth - 2, 1);
+        const sourceYear = sourceDate.getFullYear();
+        const sourceMonth = sourceDate.getMonth() + 1;
+
+        const { data: sourceBudgets, error } = await supabase.from('budgets').select('*').match({ user_id: auth.user.id, year: sourceYear, month: sourceMonth });
+        if (error) { console.error("Error fetching source budgets:", error); alert("Could not fetch last month's budgets."); return; }
+        if (!sourceBudgets || sourceBudgets.length === 0) { alert("No budgets found for the previous month to copy."); return; }
+
+        const existingTargetCategories = new Set(data.budgets.filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
+        
+        const budgetsToInsert = sourceBudgets
+            .filter(b => !existingTargetCategories.has(b.category))
+            .map(({ id, user_id, ...rest }) => ({ ...rest, month: targetMonth, year: targetYear }));
+
+        if (budgetsToInsert.length === 0) { alert("All budgets from last month already exist for the selected month."); return; }
+
+        const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert.map(b => withUser(b))).select();
+        if (insertError) { console.error("Error copying budgets:", insertError); alert("Failed to copy budgets."); }
+        else {
+            setData(prev => ({ ...prev, budgets: [...prev.budgets, ...insertedData] }));
+            alert(`${insertedData.length} budget(s) copied successfully.`);
+        }
     };
     
     // --- Transactions ---
@@ -521,6 +548,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (error) console.error(error);
         else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.filter(h => h.id !== holdingId) }));
     };
+    const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
+        if (!supabase || !auth?.user) return;
+        const upsertData = updates.map(u => ({ id: u.id, currentValue: u.currentValue, user_id: auth.user!.id }));
+        const { error } = await supabase.from('commodity_holdings').upsert(upsertData, { onConflict: 'id' });
+        if (error) {
+            console.error("Error batch updating commodity values:", error);
+            return;
+        }
+        setData(prevData => {
+            const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
+            return {
+                ...prevData,
+                commodityHoldings: prevData.commodityHoldings.map(h => 
+                    updatesMap.has(h.id) ? { ...h, currentValue: updatesMap.get(h.id)! } : h
+                )
+            };
+        });
+    };
 
 
     // --- Watchlist, Alerts, Zakat, Settings ---
@@ -572,7 +617,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, updateSettings, resetData, loadDemoData };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

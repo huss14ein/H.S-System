@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio } from '../types';
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding } from '../types';
 
 // --- AI Request Cache ---
 // Simple in-memory cache to avoid redundant API calls for the same data.
@@ -419,4 +419,48 @@ export const getAICategorySuggestion = async (description: string, categories: s
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text?.trim() || "";
     } catch (error) { console.error(error); return ""; }
+};
+
+export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> => {
+    const ai = getAiClient();
+    if (!ai || commodities.length === 0) return [];
+
+    try {
+        const commodityList = commodities.map(c => `${c.name} (${c.symbol})`).join(', ');
+        const prompt = `
+            Provide the current market prices in Saudi Riyal (SAR) for the following commodities: ${commodityList}.
+            For Gold (XAU_GRAM) and Silver (XAG_GRAM), provide the price per gram in SAR. For Bitcoin (BTC_USD), provide the price per BTC in SAR. For any others, provide the price per unit in SAR.
+            Return the result as a JSON array based on the provided schema.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-3-pro-preview",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            symbol: { type: Type.STRING, description: "The commodity symbol, e.g., XAU_GRAM" },
+                            price: { type: Type.NUMBER, description: "The current market price in SAR." }
+                        },
+                        required: ["symbol", "price"]
+                    }
+                },
+                tools: [{ googleSearch: {} }],
+            }
+        });
+
+        const resultString = response.text;
+        if (!resultString) return [];
+        
+        const prices = JSON.parse(resultString);
+        return prices;
+
+    } catch (error) {
+        console.error("Error fetching AI commodity prices:", error);
+        return [];
+    }
 };

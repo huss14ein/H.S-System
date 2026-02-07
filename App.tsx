@@ -15,6 +15,7 @@ const Summary = lazy(() => import('./pages/Summary'));
 const Accounts = lazy(() => import('./pages/Accounts'));
 const Investments = lazy(() => import('./pages/Investments'));
 const Assets = lazy(() => import('./pages/Assets'));
+const Commodities = lazy(() => import('./pages/Commodities'));
 const Liabilities = lazy(() => import('./pages/Liabilities'));
 const Transactions = lazy(() => import('./pages/Transactions'));
 const Budgets = lazy(() => import('./pages/Budgets'));
@@ -23,7 +24,6 @@ const Plan = lazy(() => import('./pages/Plan'));
 const Forecast = lazy(() => import('./pages/Forecast'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const Zakat = lazy(() => import('./pages/Zakat'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 
@@ -60,6 +60,7 @@ const App: React.FC = () => {
       case 'Accounts': return <Accounts />;
       case 'Investments': return <Investments {...actionProps} />;
       case 'Assets': return <Assets {...actionProps} />;
+      case 'Metals & Crypto': return <Commodities />;
       case 'Liabilities': return <Liabilities />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets />;
@@ -68,7 +69,6 @@ const App: React.FC = () => {
       case 'Forecast': return <Forecast />;
       case 'Analysis': return <Analysis />;
       case 'Zakat': return <Zakat />;
-      case 'Commodities': return <Commodities />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       default: return <Dashboard setActivePage={setActivePage} />;

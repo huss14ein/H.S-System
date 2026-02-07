@@ -1,5 +1,3 @@
-
-
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Asset, Goal, AssetType } from '../types';
@@ -22,6 +20,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     const [purchasePrice, setPurchasePrice] = useState('');
     const [isRental, setIsRental] = useState(false);
     const [monthlyRent, setMonthlyRent] = useState('');
+    const [owner, setOwner] = useState('');
 
     React.useEffect(() => {
         if (assetToEdit) {
@@ -31,6 +30,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setPurchasePrice(assetToEdit.purchasePrice?.toString() || '');
             setIsRental(assetToEdit.isRental || false);
             setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
+            setOwner(assetToEdit.owner || '');
         } else {
             setName('');
             setType('Property');
@@ -38,6 +38,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setPurchasePrice('');
             setIsRental(false);
             setMonthlyRent('');
+            setOwner('');
         }
     }, [assetToEdit, isOpen]);
 
@@ -52,6 +53,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             isRental: type === 'Property' ? isRental : undefined,
             monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
             goalId: assetToEdit?.goalId,
+            owner: owner || undefined,
         };
         onSave(newAsset);
         onClose();
@@ -64,11 +66,12 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                 <select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border border-gray-300 rounded-md">
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
-                    <option value="Gold and precious metals">Gold</option>
+                    <option value="Gold and precious metals">Gold & Precious Metals</option>
                     <option value="Other">Other</option>
                 </select>
                 <input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md"/>
+                <input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
 
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
@@ -84,7 +87,6 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
 
 const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    
     const getAssetIcon = (type: Asset['type']) => {
         const iconClass = "h-8 w-8";
         switch (type) {
@@ -94,65 +96,28 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
             default: return <QuestionMarkCircleIcon className={`${iconClass} text-gray-500`} />;
         }
     };
-
     const unrealizedGain = asset.purchasePrice ? asset.value - asset.purchasePrice : null;
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
-
     return (
         <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
             <div>
                 <div className="flex justify-between items-start">
-                    <div className="flex items-center space-x-3">
-                        {getAssetIcon(asset.type)}
-                        <div>
-                            <h3 className="font-bold text-dark text-lg">{asset.name}</h3>
-                            <p className="text-sm text-gray-500">{asset.type}</p>
-                        </div>
-                    </div>
-                    <div className="flex space-x-1">
-                        <button onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                        <button onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
-                    </div>
+                    <div className="flex items-center space-x-3">{getAssetIcon(asset.type)}<div><h3 className="font-bold text-dark text-lg">{asset.name}</h3><p className="text-sm text-gray-500">{asset.type}</p></div></div>
+                    <div className="flex space-x-1"><button onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
                 </div>
+                {asset.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
                 <div className="mt-4 space-y-3">
-                     <div>
-                        <dt className="text-xs text-gray-500">Current Value</dt>
-                        <dd className="font-semibold text-dark text-xl">{formatCurrencyString(asset.value)}</dd>
-                    </div>
+                     <div><dt className="text-xs text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-xl">{formatCurrencyString(asset.value)}</dd></div>
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <dt className="text-gray-500">Purchase Price</dt>
-                            <dd className="font-medium text-gray-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : 'N/A'}</dd>
-                        </div>
-                        <div>
-                            <dt className="text-gray-500">Unrealized G/L</dt>
-                            <dd className="font-semibold">
-                                {unrealizedGain !== null ? formatCurrency(unrealizedGain, { colorize: true }) : 'N/A'}
-                            </dd>
-                        </div>
+                        <div><dt className="text-gray-500">Purchase Price</dt><dd className="font-medium text-gray-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : 'N/A'}</dd></div>
+                        <div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? formatCurrency(unrealizedGain, { colorize: true }) : 'N/A'}</dd></div>
                     </div>
-                    {asset.isRental && asset.monthlyRent && (
-                         <div>
-                            <dt className="text-gray-500">Monthly Rent</dt>
-                            <dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd>
-                        </div>
-                    )}
+                    {asset.isRental && asset.monthlyRent && (<div><dt className="text-gray-500">Monthly Rent</dt><dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>)}
                 </div>
             </div>
              <div className="border-t mt-4 pt-4 flex items-center justify-between">
-                {linkedGoal ? (
-                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        <LinkIcon className="h-4 w-4 mr-1.5" />
-                        Linked to: {linkedGoal.name}
-                    </span>
-                ) : <span className="text-xs text-gray-400">Not linked to a goal</span>}
-                
-                <select
-                    value={asset.goalId || 'none'}
-                    onChange={(e) => onLinkGoal(asset.id, e.target.value)}
-                    className="text-xs border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary py-1 pl-2 pr-7"
-                    aria-label={`Link ${asset.name} to a goal`}
-                >
+                {linkedGoal ? (<span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />Linked to: {linkedGoal.name}</span>) : <span className="text-xs text-gray-400">Not linked to a goal</span>}
+                <select value={asset.goalId || 'none'} onChange={(e) => onLinkGoal(asset.id, e.target.value)} className="text-xs border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary py-1 pl-2 pr-7" aria-label={`Link ${asset.name} to a goal`}>
                     <option value="none">Link to Goal...</option>
                     {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
@@ -161,92 +126,65 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
     );
 };
 
-interface AssetsProps {
-  pageAction?: string | null;
-  clearPageAction?: () => void;
-}
+interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, addAsset, updateAsset, deleteAsset } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    
+    const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
     const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
-            handleOpenModal();
+            handleOpenAssetModal();
             clearPageAction?.();
         }
     }, [pageAction, clearPageAction]);
 
     const { totalAssetValue, totalRentalIncome } = useMemo(() => {
-        const totalAssetValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
+        const totalPhysicalAssetValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
         const totalRentalIncome = data.assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + a.monthlyRent!, 0);
-        return { totalAssetValue, totalRentalIncome };
+        return { totalAssetValue: totalPhysicalAssetValue, totalRentalIncome };
     }, [data.assets]);
 
-    const handleOpenModal = (asset: Asset | null = null) => {
-        setAssetToEdit(asset);
-        setIsModalOpen(true);
-    };
-
-    const handleSaveAsset = (asset: Asset) => {
-        if (data.assets.some(a => a.id === asset.id)) {
-            updateAsset(asset);
-        } else {
-            addAsset(asset);
-        }
-    };
-    
-    const handleOpenDeleteModal = (asset: Asset) => {
-        setAssetToDelete(asset);
-        setIsDeleteModalOpen(true);
-    };
-    
-    const handleConfirmDelete = () => {
-        if(assetToDelete) {
-            deleteAsset(assetToDelete.id);
-            setIsDeleteModalOpen(false);
-            setAssetToDelete(null);
-        }
-    };
-
-    const handleLinkGoal = (assetId: string, goalId: string) => {
-        const asset = data.assets.find(a => a.id === assetId);
-        if (asset) {
-            updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId });
-        }
-    };
+    const handleOpenAssetModal = (asset: Asset | null = null) => { setAssetToEdit(asset); setIsAssetModalOpen(true); };
+    const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleOpenAssetDeleteModal = (asset: Asset) => { setAssetToDelete(asset); };
+    const handleConfirmAssetDelete = () => { if(assetToDelete) { deleteAsset(assetToDelete.id); setAssetToDelete(null); } };
+    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold text-dark">Assets</h1>
-                <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add New Asset</button>
+            <div className="flex flex-wrap justify-between items-center gap-4">
+                <h1 className="text-3xl font-bold text-dark">Physical Assets</h1>
+                <button onClick={() => handleOpenAssetModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Physical Asset</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <Card title="Total Physical Asset Value" value={formatCurrencyString(totalAssetValue)} />
-                 <Card title="Total Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} tooltip="Gross rental income before expenses." />
+                <Card title="Total Physical Asset Value" value={formatCurrencyString(totalAssetValue)} />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {data.assets.map(asset => (
-                    <AssetCardComponent 
-                        key={asset.id}
-                        asset={asset}
-                        onEdit={handleOpenModal}
-                        onDelete={handleOpenDeleteModal}
-                        onLinkGoal={handleLinkGoal}
-                        goals={data.goals}
-                    />
-                ))}
-            </div>
-
-            <AssetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
-            <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={assetToDelete?.name || ''} />
+            <section>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {data.assets.map(asset => (
+                        <AssetCardComponent 
+                            key={asset.id} 
+                            asset={asset} 
+                            onEdit={handleOpenAssetModal} 
+                            onDelete={handleOpenAssetDeleteModal}
+                            onLinkGoal={handleLinkGoal}
+                            goals={data.goals}
+                        />
+                    ))}
+                     {data.assets.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center">No physical assets added yet.</p>}
+                </div>
+            </section>
+            
+            <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
+            <DeleteConfirmationModal isOpen={!!assetToDelete} onClose={() => setAssetToDelete(null)} onConfirm={handleConfirmAssetDelete} itemName={assetToDelete?.name || ''} />
         </div>
     );
 };

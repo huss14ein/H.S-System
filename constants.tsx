@@ -13,8 +13,8 @@ import { ShieldCheckIcon } from './components/icons/ShieldCheckIcon';
 import { ServerStackIcon } from './components/icons/ServerStackIcon';
 import { AcademicCapIcon } from './components/icons/AcademicCapIcon';
 import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
-import { CubeIcon } from './components/icons/CubeIcon';
 import { BellIcon } from './components/icons/BellIcon';
+import { GoldBarIcon } from './components/icons/GoldBarIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
@@ -22,7 +22,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
   { name: 'Assets', icon: BuildingLibraryIcon },
-  { name: 'Commodities', icon: CubeIcon },
+  { name: 'Metals & Crypto', icon: GoldBarIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Transactions', icon: CreditCardIcon },
   { name: 'Budgets', icon: PiggyBankIcon },

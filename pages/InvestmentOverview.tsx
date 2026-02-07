@@ -13,7 +13,7 @@ const InvestmentOverview: React.FC = () => {
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
 
     const { totalValue, totalGainLoss, roi, allHoldingsWithGains, assetClassAllocation, totalDailyPnL } = useMemo(() => {
-        const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings);
+        const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings || []);
         
         const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
 
@@ -52,7 +52,7 @@ const InvestmentOverview: React.FC = () => {
                 <Card title="Total Investment Value" value={formatCurrencyString(totalValue)} />
                 <Card title="Total Unrealized P/L" value={formatCurrency(totalGainLoss, { colorize: true })} />
                 <Card title="Total Daily P/L" value={formatCurrency(totalDailyPnL, { colorize: true })} />
-                <Card title="Overall Portfolio ROI" value={`${roi.toFixed(2)}%`} />
+                <Card title="Overall Portfolio ROI" value={`${roi.toFixed(2)}%`} valueColor={roi >= 0 ? 'text-success' : 'text-danger'} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

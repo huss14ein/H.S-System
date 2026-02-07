@@ -1,7 +1,10 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Commodities' | 'Notifications' | 'System & APIs Health';
+
+
+
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Metals & Crypto' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health';
 
 export interface Goal {
   id: string;
@@ -19,6 +22,7 @@ export interface Account {
   name: string;
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
+  owner?: string;
   platformDetails?: {
     features: string[];
     assetTypes: string[];
@@ -50,6 +54,7 @@ export interface Asset {
   isRental?: boolean;
   monthlyRent?: number;
   goalId?: string;
+  owner?: string;
 }
 
 export interface Liability {
@@ -58,8 +63,9 @@ export interface Liability {
   name: string;
   type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan';
   amount: number;
-  status?: 'Active' | 'Paid';
+  status: 'Active' | 'Paid';
   goalId?: string;
+  owner?: string;
 }
 
 export interface Transaction {
@@ -106,6 +112,8 @@ export interface Holding {
   percentage?: number;
   zakahClass: 'Zakatable' | 'Non-Zakatable';
   realizedPnL: number;
+  dividendDistribution?: 'Reinvest' | 'Payout';
+  dividendYield?: number;
 }
 
 export interface InvestmentPortfolio {
@@ -148,6 +156,7 @@ export interface CommodityHolding {
   currentValue: number;
   symbol: string; // e.g., GOLD_GRAM, BTC_USD
   zakahClass: 'Zakatable' | 'Non-Zakatable';
+  owner?: string;
 }
 
 export interface WatchlistItem {

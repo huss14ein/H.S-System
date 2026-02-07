@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -8,6 +7,10 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AIAdvisor from '../components/AIAdvisor';
 import SinkingFunds from './SinkingFunds';
+import { PlusIcon } from '../components/icons/PlusIcon';
+import Modal from '../components/Modal';
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -19,6 +22,51 @@ interface PlanRow {
     monthly_actual: number[];
 }
 
+interface LifeEvent {
+    id: string;
+    name: string;
+    month: number;
+    amount: number;
+    type: 'income' | 'expense';
+}
+
+const EventModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (event: Omit<LifeEvent, 'id'>) => void;
+}> = ({ isOpen, onClose, onSave }) => {
+    const [name, setName] = useState('');
+    const [month, setMonth] = useState(1);
+    const [amount, setAmount] = useState('');
+    const [type, setType] = useState<'income' | 'expense'>('expense');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave({ name, month, amount: parseFloat(amount), type });
+        onClose();
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Add Major Life Event">
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md" />
+                <div className="grid grid-cols-2 gap-4">
+                    <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border rounded-md" />
+                    <select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full p-2 border rounded-md">
+                        {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                    </select>
+                </div>
+                <select value={type} onChange={e => setType(e.target.value as any)} className="w-full p-2 border rounded-md">
+                    <option value="expense">One-time Expense</option>
+                    <option value="income">One-time Income</option>
+                </select>
+                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg">Save Event</button>
+            </form>
+        </Modal>
+    );
+};
+
+
 const AnnualFinancialPlan: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
@@ -27,6 +75,8 @@ const AnnualFinancialPlan: React.FC = () => {
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
     const [expenseStress, setExpenseStress] = useState({ category: 'All', percent: 0 });
+    const [events, setEvents] = useState<LifeEvent[]>([]);
+    const [isEventModalOpen, setIsEventModalOpen] = useState(false);
 
     const [planData, setPlanData] = useState<PlanRow[]>([]);
     const [isEditing, setIsEditing] = useState<{ row: number; col: number } | null>(null);
@@ -70,21 +120,42 @@ const AnnualFinancialPlan: React.FC = () => {
     }, [data.budgets, data.transactions, year]);
     
     const processedPlanData = useMemo(() => {
-        return planData.map(row => {
-            const newRow = JSON.parse(JSON.stringify(row));
-            if (row.type === 'income') {
-                for (let i = 0; i < incomeShock.duration; i++) {
-                    const monthIndex = (incomeShock.startMonth - 1 + i);
-                    if (monthIndex < 12) {
-                       newRow.monthly_planned[monthIndex] *= (1 + incomeShock.percent / 100);
-                    }
+        let baseData = JSON.parse(JSON.stringify(planData));
+
+        // Apply scenarios
+        let incomeRow = baseData.find((r: PlanRow) => r.type === 'income');
+        if (incomeRow) {
+            for (let i = 0; i < incomeShock.duration; i++) {
+                const monthIndex = (incomeShock.startMonth - 1 + i);
+                if (monthIndex < 12) {
+                   incomeRow.monthly_planned[monthIndex] *= (1 + incomeShock.percent / 100);
                 }
-            } else if (row.type === 'expense' && (expenseStress.category === 'All' || row.category === expenseStress.category)) {
-                 newRow.monthly_planned = newRow.monthly_planned.map((p: number) => p * (1 + expenseStress.percent / 100));
             }
-            return newRow;
+        }
+        baseData.forEach((row: PlanRow) => {
+            if (row.type === 'expense' && (expenseStress.category === 'All' || row.category === expenseStress.category)) {
+                row.monthly_planned = row.monthly_planned.map((p: number) => p * (1 + expenseStress.percent / 100));
+            }
         });
-    }, [planData, incomeShock, expenseStress]);
+
+        // Apply events
+        let eventsRow = baseData.find((r: PlanRow) => r.category === 'Major Events');
+        if (events.some(e => e.type === 'expense') && !eventsRow) {
+            eventsRow = { type: 'expense', category: 'Major Events', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) };
+            baseData.push(eventsRow);
+        }
+
+        events.forEach(event => {
+            const monthIndex = event.month - 1;
+            if (event.type === 'income' && incomeRow) {
+                incomeRow.monthly_planned[monthIndex] += event.amount;
+            } else if (event.type === 'expense' && eventsRow) {
+                eventsRow.monthly_planned[monthIndex] += event.amount;
+            }
+        });
+        
+        return baseData;
+    }, [planData, incomeShock, expenseStress, events]);
     
     const totals = useMemo(() => {
         const income = processedPlanData.find(r => r.type === 'income');
@@ -100,12 +171,24 @@ const AnnualFinancialPlan: React.FC = () => {
         return { totalPlannedIncome, totalPlannedExpenses, projectedNet, actualNet };
     }, [processedPlanData]);
     
+     const planChartData = useMemo(() => {
+        return MONTHS.map((month, index) => {
+            const income = processedPlanData.find(r => r.type === 'income')?.monthly_planned[index] || 0;
+            const expenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.monthly_planned[index], 0);
+            return { name: month, Income: income, Expenses: expenses, "Net Savings": income - expenses };
+        });
+    }, [processedPlanData]);
+
     const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
         const newData = [...planData];
         newData[rowIndex].monthly_planned[monthIndex] = newValue;
         setPlanData(newData);
         setIsEditing(null);
     }
+    
+    const handleSaveEvent = (event: Omit<LifeEvent, 'id'>) => {
+        setEvents(prev => [...prev, { ...event, id: `evt-${Date.now()}` }]);
+    };
     
     const renderCell = (value: number, limit: number) => {
         const percentage = limit > 0 ? (value / limit) * 100 : 0;
@@ -133,47 +216,40 @@ const AnnualFinancialPlan: React.FC = () => {
                 </div>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                 <Card title="Total Planned Income" value={formatCurrencyString(totals.totalPlannedIncome, {digits: 0})} />
-                 <Card title="Total Planned Expenses" value={formatCurrencyString(totals.totalPlannedExpenses, {digits: 0})} />
-                 <Card title="Projected Annual Savings" value={formatCurrencyString(totals.projectedNet, {digits: 0})} />
-                 <Card title="Actual Net Savings (YTD)" value={formatCurrencyString(totals.actualNet, {digits: 0})} />
+             <div className="bg-white p-6 rounded-lg shadow h-[400px]">
+                <h3 className="text-lg font-semibold text-dark mb-4">Annual Plan Overview</h3>
+                <ResponsiveContainer width="100%" height="90%">
+                    <ComposedChart data={planChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis tickFormatter={(val) => new Intl.NumberFormat('en-US', { notation: 'compact' }).format(val)} />
+                        <Tooltip formatter={(val: number) => formatCurrencyString(val, { digits: 0 })} />
+                        <Legend />
+                        <Bar dataKey="Expenses" fill="#f43f5e" name="Planned Expenses" />
+                        <Line type="monotone" dataKey="Income" stroke="#10b981" strokeWidth={2} name="Planned Income" />
+                        <Line type="monotone" dataKey="Net Savings" stroke="#3b82f6" strokeWidth={2} name="Projected Net Savings" />
+                    </ComposedChart>
+                </ResponsiveContainer>
             </div>
-
+            
             {/* Scenario Controls */}
             <div className="bg-white p-4 rounded-lg shadow">
-                 <h3 className="text-lg font-semibold text-dark mb-2">What-If Scenarios</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                 <h3 className="text-lg font-semibold text-dark mb-2">Scenario Planning Tools</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
                      {/* Income Shock */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">
-                            Income Shock
-                             <div className="relative group ml-2">
-                                <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-                                <div className="absolute bottom-full mb-2 w-64 bg-gray-800 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none left-1/2 -translate-x-1/2 z-10">
-                                    Simulate a sudden change in your income (e.g., a bonus or a pay cut). Use a positive percentage for an increase and a negative percentage for a decrease. This helps you understand your financial resilience.
-                                </div>
-                            </div>
-                        </label>
+                        <label className="font-medium text-sm flex items-center">Income Shock</label>
                         <div className="flex items-center space-x-2">
                            <input type="number" value={incomeShock.percent} onChange={e => setIncomeShock(s => ({...s, percent: parseInt(e.target.value) || 0}))} className="w-20 p-1 border rounded-md" />
                            <span className="text-sm">% for</span>
                             <input type="number" value={incomeShock.duration} onChange={e => setIncomeShock(s => ({...s, duration: parseInt(e.target.value) || 1}))} min="1" className="w-16 p-1 border rounded-md" />
-                           <span className="text-sm">months, starting month</span>
+                           <span className="text-sm">mo. starting</span>
                            <input type="number" value={incomeShock.startMonth} onChange={e => setIncomeShock(s => ({...s, startMonth: parseInt(e.target.value) || 1}))} min="1" max="12" className="w-16 p-1 border rounded-md" />
                         </div>
                      </div>
                       {/* Expense Stress */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">
-                            Expense Stress Test
-                            <div className="relative group ml-2">
-                                <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-                                <div className="absolute bottom-full mb-2 w-64 bg-gray-800 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none left-1/2 -translate-x-1/2 z-10">
-                                    Model an increase in spending for a category or across the board (e.g., due to inflation). This helps identify budget vulnerabilities and its impact on your savings goals.
-                                </div>
-                            </div>
-                        </label>
+                        <label className="font-medium text-sm flex items-center">Expense Stress Test</label>
                         <div className="flex items-center space-x-2">
                            <span className="text-sm">Increase</span>
                            <select value={expenseStress.category} onChange={e => setExpenseStress(s => ({...s, category: e.target.value}))} className="p-1 border rounded-md text-sm">
@@ -184,6 +260,14 @@ const AnnualFinancialPlan: React.FC = () => {
                            <input type="number" value={expenseStress.percent} onChange={e => setExpenseStress(s => ({...s, percent: parseInt(e.target.value) || 0}))} className="w-20 p-1 border rounded-md" />
                            <span className="text-sm">%</span>
                         </div>
+                     </div>
+                      {/* Major Events */}
+                     <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
+                        <label className="font-medium text-sm flex items-center">Major Life Events</label>
+                        <div className="text-xs space-y-1">
+                            {events.map(e => <div key={e.id} className="flex justify-between"><span>{e.name} ({MONTHS[e.month-1]})</span><span>{formatCurrencyString(e.amount)}</span></div>)}
+                        </div>
+                        <button onClick={() => setIsEventModalOpen(true)} className="flex items-center text-sm text-primary hover:underline mt-1"><PlusIcon className="h-4 w-4 mr-1"/>Add Event</button>
                      </div>
                  </div>
             </div>
@@ -239,7 +323,7 @@ const AnnualFinancialPlan: React.FC = () => {
                                     {row.monthly_planned.map((plan: number, monthIndex: number) => (
                                         <td key={monthIndex} className="p-2 align-top">
                                             <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
-                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => setIsEditing({row: originalIndex, col: monthIndex})}>
+                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => originalIndex > -1 && setIsEditing({row: originalIndex, col: monthIndex})}>
                                                 {formatCurrencyString(plan, { digits: 0 })}
                                             </div>
                                         </td>
@@ -252,6 +336,8 @@ const AnnualFinancialPlan: React.FC = () => {
                 </table>
             </div>
             
+            <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} onSave={handleSaveEvent} />
+
             {isEditing && (
                 <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50" onClick={() => setIsEditing(null)}>
                     <div className="bg-white p-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>

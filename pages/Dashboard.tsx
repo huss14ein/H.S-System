@@ -157,7 +157,7 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
-    const { formatCurrencyString } = useFormatCurrency();
+    const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
@@ -190,7 +190,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
         
         // Investment data
-        const allHoldings = data.investments.flatMap(p => p.holdings);
+        const allHoldings = data.investments.flatMap(p => p.holdings || []);
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
              const gainLoss = h.currentValue - totalCost;
@@ -271,9 +271,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="This Month's P&L" value={formatCurrencyString(kpiSummary.monthlyPnL || 0)} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="Budget Variance" value={formatCurrencyString(kpiSummary.budgetVariance || 0)} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
             </div>
 
             <AIFeed />

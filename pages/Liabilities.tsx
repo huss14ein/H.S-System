@@ -31,11 +31,14 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        // FIX: Property 'status' is missing in type '{ id: string; name: string; type: "Mortgage" | "Loan" | "Credit Card" | "Personal Loan"; amount: number; }' but required in type 'Liability'.
         const newLiability: Liability = {
             id: liabilityToEdit ? liabilityToEdit.id : `liab${Date.now()}`,
             name,
             type,
             amount: -Math.abs(parseFloat(amount) || 0),
+            status: liabilityToEdit ? liabilityToEdit.status : 'Active',
+            goalId: liabilityToEdit?.goalId,
         };
         onSave(newLiability);
         onClose();
@@ -100,10 +103,11 @@ const Liabilities: React.FC = () => {
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [liabilityToDelete, setLiabilityToDelete] = useState<Liability | null>(null);
 
-    const allLiabilities = useMemo(() => {
+    const allLiabilities: Liability[] = useMemo(() => {
         const creditCardDebts = data.accounts
             .filter(a => a.type === 'Credit' && a.balance < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance }));
+            // FIX: Add 'status' to credit card debts to match Liability type, assuming they are always 'Active'.
+            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance, status: 'Active' as const }));
         return [...data.liabilities, ...creditCardDebts];
     }, [data.liabilities, data.accounts]);
     
