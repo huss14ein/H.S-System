@@ -1,6 +1,3 @@
-
-
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio } from '../types';
 
@@ -27,11 +24,11 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Changed from import.meta.env.VITE_API_KEY to process.env.API_KEY to align with guidelines and fix environment variable access.
-    const apiKey = process.env.API_KEY;
+    // FIX: Use Vite's `import.meta.env` for client-side environment variables.
+    const apiKey = import.meta.env.VITE_API_KEY;
     if (!apiKey) {
-        // FIX: Updated warning message to reflect use of process.env.API_KEY.
-        console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        // FIX: Updated warning message to reflect use of import.meta.env.
+        console.warn("VITE_API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
@@ -107,9 +104,9 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
 
   try {
     const prompt = `
-      You are a helpful personal finance assistant. Based on the following financial summary (all values in SAR), provide a brief, insightful, and encouraging analysis in HTML.
+      You are a helpful personal finance assistant. Based on the following financial summary (all values in SAR), provide a brief, insightful, and encouraging analysis in Markdown format.
       Explain trends in net worth, investment returns, and asset allocation.
-      Start with a general overview, then provide two bullet points using <strong> for the title:
+      Start with a general overview, then provide two bullet points using ** for the title:
       - **Positive Trends:** Mention 1-2 positive aspects.
       - **Areas to Watch:** Gently point out 1-2 areas for improvement.
       Financial Summary:
@@ -117,7 +114,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
       - Monthly Income: ${summary.monthlyIncome.toLocaleString()}
       - Monthly Expenses: ${summary.monthlyExpenses.toLocaleString()}
       - Total Investment ROI: ${(summary.roi * 100).toFixed(1)}%
-      Provide the HTML analysis now.
+      Provide the Markdown analysis now.
     `;
     
     const response = await ai.models.generateContent({
@@ -146,11 +143,11 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
     try {
         const budgetSummary = budgets.map(b => `- **${b.category}**: Limit ${b.limit.toLocaleString()} SAR`).join('\n');
         const prompt = `
-            You are a helpful budget analyst. Based on the following monthly spending summary, provide a brief, insightful analysis in HTML.
+            You are a helpful budget analyst. Based on the following monthly spending summary, provide a brief, insightful analysis in Markdown.
             Highlight the top spending category, budget adherence, and one practical suggestion.
             Monthly Budget Summary:
             ${budgetSummary}
-            Provide the HTML analysis now.
+            Provide the Markdown analysis now.
         `;
 
         const response = await ai.models.generateContent({
@@ -224,7 +221,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
         const { totalPlannedIncome, totalPlannedExpenses, projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
-            You are a financial planning analyst. Based on the user's annual plan and active 'what-if' scenarios, provide a brief, insightful analysis in HTML.
+            You are a financial planning analyst. Based on the user's annual plan and active 'what-if' scenarios, provide a brief, insightful analysis in Markdown.
             
             Annual Plan Summary:
             - Planned Income: ${totalPlannedIncome.toLocaleString()} SAR
@@ -240,7 +237,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
             2.  Explain the impact of the active scenarios on their projected savings.
             3.  Provide one strategic suggestion to improve their plan's resilience.
             
-            Provide the HTML analysis now.
+            Provide the Markdown analysis now.
         `;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
@@ -266,7 +263,7 @@ export const getAIAnalysisPageInsights = async (
     
     try {
         const prompt = `
-            You are a senior financial analyst providing a holistic overview based on three key charts. Analyze the following data and provide a concise, insightful summary in HTML format.
+            You are a senior financial analyst providing a holistic overview based on three key charts. Analyze the following data and provide a concise, insightful summary in Markdown format.
 
             1.  **Spending by Budget Category (YTD):**
                 ${spendingData.slice(0, 5).map(d => `- ${d.name}: ${d.value.toLocaleString()} SAR`).join('\n')}
@@ -277,12 +274,12 @@ export const getAIAnalysisPageInsights = async (
             3.  **Current Financial Position (Assets vs. Liabilities):**
                 ${compositionData.map(d => `- ${d.name}: ${d.value.toLocaleString()} SAR`).join('\n')}
 
-            Your analysis should have three sections using <h3> tags:
+            Your analysis should have three sections using '###' headers:
             - ### Spending Habits: Comment on the top spending categories. Is spending concentrated?
             - ### Cash Flow Dynamics: Analyze the income vs. expense trend. Is the user saving money consistently?
             - ### Balance Sheet Health: Interpret the asset vs. liability composition. Is the user building wealth effectively?
             
-            Provide the HTML analysis now.
+            Provide the Markdown analysis now.
         `;
 
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });

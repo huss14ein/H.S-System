@@ -1,5 +1,3 @@
-
-
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { WatchlistItem } from '../types';
@@ -15,6 +13,7 @@ import { BellIcon } from '../components/icons/BellIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { useMarketData } from '../context/MarketDataContext';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const AddWatchlistItemModal: React.FC<{ isOpen: boolean, onClose: () => void, onAdd: (item: WatchlistItem) => void }> = ({ isOpen, onClose, onAdd }) => {
     const [symbol, setSymbol] = useState('');
@@ -131,7 +130,7 @@ const WatchlistView: React.FC = () => {
             <div className="lg:col-span-1 bg-green-50 p-4 rounded-lg border border-green-200 h-full">
                 <div className="flex items-center justify-between"><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>AI Research</h4><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
                 {isNewsLoading && <div className="text-center p-4 text-sm text-gray-500">Fetching latest market info...</div>}
-                {aiResearch && !isNewsLoading && (<div className="mt-2 prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: aiResearch.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-3 mb-1">$1</h3>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }} />)}
+                {aiResearch && !isNewsLoading && (<div className="mt-2"><SafeMarkdownRenderer content={aiResearch} /></div>)}
                 {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for fictional AI-generated news on your watchlist items.</div>)}
             </div>
 

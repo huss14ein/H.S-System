@@ -1,9 +1,9 @@
-
 import React, { useState, useContext, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAITradeAnalysis } from '../services/geminiService';
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const formatCurrency = (value: number) => `SAR ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -78,10 +78,7 @@ const TradeAdvicesView: React.FC = () => {
                     {isLoading ? (
                         <div className="text-center p-8 text-gray-500">Generating educational feedback...</div>
                     ) : aiAnalysis ? (
-                        <div
-                            className="prose prose-sm max-w-none text-gray-700"
-                            dangerouslySetInnerHTML={{ __html: aiAnalysis.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-4 mb-2">$1</h3>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }}
-                        />
+                        <SafeMarkdownRenderer content={aiAnalysis} />
                     ) : (
                         <div className="text-center p-8 text-gray-500">
                             Click "Analyze Trades" to get AI-powered educational insights on your recent investment activity.

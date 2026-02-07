@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
 
 type ServiceStatus = 'Operational' | 'Degraded Performance' | 'Partial Outage';
 
@@ -70,6 +71,16 @@ const SystemHealth: React.FC = () => {
         <div className="text-center">
              <h1 className="text-3xl font-bold text-dark">System & APIs Health</h1>
              <p className="text-gray-500 mt-1">Live status of the Wealth Ultra platform and its connected services.</p>
+        </div>
+        
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 p-4 rounded-r-lg max-w-4xl mx-auto">
+            <div className="flex">
+                <div className="py-1"><InformationCircleIcon className="h-6 w-6 text-yellow-500 mr-3"/></div>
+                <div>
+                    <p className="font-bold">Demonstration Only</p>
+                    <p className="text-sm">This page simulates system health for illustrative purposes. The statuses shown are randomized and do not reflect the real-time operational state of the services.</p>
+                </div>
+            </div>
         </div>
       
         <div className="bg-white shadow rounded-lg overflow-hidden">

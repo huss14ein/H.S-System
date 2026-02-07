@@ -1,12 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
 const createSupabaseClient = () => {
-    // Use non-VITE prefixed variables, aligning with how the Gemini API_KEY is provided.
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+    // FIX: Use Vite's `import.meta.env` for client-side environment variables.
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      console.error("SUPABASE_URL and SUPABASE_ANON_KEY are not configured. Supabase client will not be initialized.");
+      console.error("VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not configured. Supabase client will not be initialized.");
       return null;
     }
 

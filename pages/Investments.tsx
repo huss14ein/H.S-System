@@ -22,6 +22,7 @@ import { MoonIcon } from '../components/icons/MoonIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 type InvestmentSubPage = 'Overview' | 'Platform' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
 
@@ -143,7 +144,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                     </div>
                     {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating fictional analysis...</div>}
                     {aiAnalysis && !isLoading && (
-                        <div className="mt-2 prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: aiAnalysis.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-3 mb-1">$1</h3>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }} />
+                        <div className="mt-2">
+                           <SafeMarkdownRenderer content={aiAnalysis} />
+                        </div>
                     )}
                 </div>
             </div>

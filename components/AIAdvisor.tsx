@@ -1,10 +1,10 @@
-
 import React, { useState, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights } from '../services/geminiService'; // Assuming these exist and are tailored
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
+import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 
 type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
 
@@ -90,10 +90,9 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
             {isLoading && <div className="text-center p-4 text-gray-500">Generating personalized insights...</div>}
             
             {insight && !isLoading && (
-                 <div 
-                    className="prose prose-sm max-w-none text-gray-700 bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg"
-                    dangerouslySetInnerHTML={{ __html: insight.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-4 mb-2">$1</h3>').replace(/\n/g, '<br />') }} 
-                />
+                 <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg">
+                    <SafeMarkdownRenderer content={insight} />
+                </div>
             )}
 
             {!insight && !isLoading && (

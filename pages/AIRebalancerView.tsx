@@ -1,10 +1,10 @@
-
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIRebalancingPlan } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
@@ -113,10 +113,7 @@ const AIRebalancerView: React.FC = () => {
                         </div>
                     )}
                     {rebalancingPlan && !isLoading && (
-                        <div 
-                            className="prose prose-sm max-w-none text-gray-700" 
-                            dangerouslySetInnerHTML={{ __html: rebalancingPlan.replace(/### (.*)/g, '<h3 class="font-semibold text-base mt-4 mb-2">$1</h3>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }} 
-                        />
+                        <SafeMarkdownRenderer content={rebalancingPlan} />
                     )}
                     {!rebalancingPlan && !isLoading && (
                          <div className="flex justify-center items-center h-full min-h-[400px] text-center text-gray-500">

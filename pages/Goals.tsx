@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import ProgressBar from '../components/ProgressBar';
@@ -16,6 +15,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { PlusCircleIcon } from '../components/icons/PlusCircleIcon';
 import AIAdvisor from '../components/AIAdvisor';
 import { LinkIcon } from '../components/icons/LinkIcon';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 interface GoalModalProps {
     isOpen: boolean;
@@ -179,7 +179,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             <div className="bg-indigo-50 p-4 rounded-lg">
                 <div className="flex items-center justify-between"><h4 className="font-semibold text-indigo-800">AI Savings Plan</h4><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
-                {aiPlan && !isLoading && <div className="mt-2 prose prose-sm max-w-none text-gray-600">{aiPlan.split('\n').map((p, i) => <p key={i}>{p}</p>)}</div>}
+                {aiPlan && !isLoading && <div className="mt-2"><SafeMarkdownRenderer content={aiPlan} /></div>}
             </div>
              <div className="border-t mt-2 pt-2 flex justify-end space-x-2"><button onClick={onEdit} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={onDelete} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
         </div>
