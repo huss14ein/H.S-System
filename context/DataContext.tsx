@@ -163,7 +163,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
                 db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
                 db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
-                db.from('settings').insert([{ ...initialData.settings, user_id: userId }]),
+                db.from('settings').insert([{ ...(mock.settings || initialData.settings), user_id: userId }]),
             ]);
 
             // Accounts

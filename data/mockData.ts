@@ -1,7 +1,7 @@
 import { FinancialData } from '../types';
 
 // Note: IDs are for relational mapping during the seeding process only. They are not the final DB IDs.
-export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' | 'priceAlerts'> => {
+export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlerts'> => {
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
   const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 15).toISOString().split('T')[0];
@@ -123,5 +123,12 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         notes: 'Re-evaluate position in 3 months.'
       }
     ],
+    settings: {
+        riskProfile: 'Moderate',
+        budgetThreshold: 90,
+        driftThreshold: 5,
+        enableEmails: true,
+        goldPrice: 281,
+    },
   };
 };
