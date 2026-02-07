@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext, useEffect } from 'react';
+import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIFeedInsights } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -30,12 +30,17 @@ const AIFeed: React.FC = () => {
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
+    const dataRef = useRef(data);
+
+    useEffect(() => {
+        dataRef.current = data;
+    }, [data]);
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setFeedItems([]);
         try {
-            let resultString = await getAIFeedInsights(data);
+            let resultString = await getAIFeedInsights(dataRef.current);
             
             // Sanitize the string to extract JSON from a markdown code block if present
             const jsonMatch = resultString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -50,11 +55,7 @@ const AIFeed: React.FC = () => {
             setFeedItems([{ type: 'SAVINGS', title: 'Analysis Error', description: 'Could not generate AI insights at this time.', emoji: '😔' }]);
         }
         setIsLoading(false);
-    }, [data]);
-
-    useEffect(() => {
-        handleGenerate();
-    }, [handleGenerate]);
+    }, []);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">

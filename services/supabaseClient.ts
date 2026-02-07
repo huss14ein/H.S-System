@@ -1,10 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const createSupabaseClient = () => {
+    // Use process.env to align with the environment's variable injection method, fixing a runtime error.
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error("Supabase URL and Anon Key must be provided as SUPABASE_URL and SUPABASE_ANON_KEY environment variables.");
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error("VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not configured. Supabase client will not be initialized.");
+      return null;
+    }
+
+    return createClient(supabaseUrl, supabaseAnonKey);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createSupabaseClient();

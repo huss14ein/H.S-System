@@ -1,8 +1,10 @@
 
+
 export type Page = 'Dashboard' | 'Summary' | 'Platform' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'System & APIs Health';
 
 export interface Goal {
   id: string;
+  user_id?: string;
   name: string;
   targetAmount: number;
   currentAmount: number;
@@ -12,6 +14,7 @@ export interface Goal {
 
 export interface Account {
   id:string;
+  user_id?: string;
   name: string;
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
@@ -38,6 +41,7 @@ export type AssetType =
 
 export interface Asset {
   id: string;
+  user_id?: string;
   name: string;
   type: AssetType;
   value: number;
@@ -49,6 +53,7 @@ export interface Asset {
 
 export interface Liability {
   id: string;
+  user_id?: string;
   name: string;
   type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan';
   amount: number;
@@ -56,6 +61,7 @@ export interface Liability {
 
 export interface Transaction {
   id: string;
+  user_id?: string;
   date: string;
   description: string;
   amount: number;
@@ -84,7 +90,9 @@ export type HoldingAssetClass =
   | 'Other';
 
 export interface Holding {
-  id?: string; // Added ID for database operations
+  id: string; 
+  user_id?: string;
+  portfolio_id?: string;
   symbol: string;
   name?: string;
   quantity: number;
@@ -99,6 +107,7 @@ export interface Holding {
 
 export interface InvestmentPortfolio {
   id: string;
+  user_id?: string;
   name: string;
   accountId: string;
   holdings: Holding[];
@@ -107,6 +116,7 @@ export interface InvestmentPortfolio {
 
 export interface InvestmentTransaction {
   id: string;
+  user_id?: string;
   accountId: string;
   date: string;
   type: 'buy' | 'sell';
@@ -117,11 +127,13 @@ export interface InvestmentTransaction {
 }
 
 export interface Budget {
+  user_id?: string;
   category: string;
   limit: number;
 }
 
 export interface WatchlistItem {
+    user_id?: string;
     symbol: string;
     name: string;
 }
@@ -129,6 +141,7 @@ export interface WatchlistItem {
 export type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
 export interface Settings {
+    user_id?: string;
     riskProfile: RiskProfile;
     budgetThreshold: number; // e.g., 90%
     driftThreshold: number; // e.g., 5%
@@ -137,6 +150,7 @@ export interface Settings {
 
 export interface ZakatPayment {
     id: string;
+    user_id?: string;
     date: string;
     amount: number;
     notes?: string;
@@ -144,6 +158,7 @@ export interface ZakatPayment {
 
 export interface PriceAlert {
   id: string;
+  user_id?: string;
   symbol: string;
   targetPrice: number;
   status: 'active' | 'triggered';

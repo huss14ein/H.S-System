@@ -13,14 +13,15 @@ const MarketSimulator: React.FC = () => {
     const previousPricesRef = useRef<Record<string, number>>({});
 
     useEffect(() => {
-        const interval = setInterval(() => {
+        let intervalId: number | null = null;
+
+        const runSimulationTick = () => {
             const { dataContext, marketContext } = contextRef.current;
-            if (!dataContext || !marketContext) return;
+            if (!dataContext || !marketContext || !dataContext.data) return;
 
             const { data, batchUpdateHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices } = marketContext;
-            if (!data) return;
-
+            
             const allHoldings = data.investments.flatMap(p => p.holdings);
             const allWatchlistItems = data.watchlist;
             
@@ -33,6 +34,9 @@ const MarketSimulator: React.FC = () => {
 
             const newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             const holdingUpdates: { id: string, currentValue: number }[] = [];
+            
+            // E2: Optimize price alert checking by using a Map for O(1) lookups
+            const activeAlertsBySymbol = new Map(data.priceAlerts.filter(a => a.status === 'active').map(a => [a.symbol, a]));
             const triggeredAlerts: PriceAlert[] = [];
             const previousPrices = previousPricesRef.current;
 
@@ -57,8 +61,7 @@ const MarketSimulator: React.FC = () => {
                 newPrices[symbol] = { price: newPrice, change, changePercent };
                 previousPrices[symbol] = newPrice;
 
-                // Check for price alerts
-                const relevantAlert = data.priceAlerts.find(a => a.symbol === symbol && a.status === 'active');
+                const relevantAlert = activeAlertsBySymbol.get(symbol);
                 if (relevantAlert && ((newPrice >= relevantAlert.targetPrice && oldPrice < relevantAlert.targetPrice) || (newPrice <= relevantAlert.targetPrice && oldPrice > relevantAlert.targetPrice))) {
                      triggeredAlerts.push({ ...relevantAlert, status: 'triggered' });
                 }
@@ -82,10 +85,37 @@ const MarketSimulator: React.FC = () => {
             if (triggeredAlerts.length > 0) {
                 triggeredAlerts.forEach(alert => updatePriceAlert(alert));
             }
+        };
 
-        }, 3000);
+        const startSimulator = () => {
+            if (intervalId === null) {
+                runSimulationTick(); // Run once immediately
+                intervalId = window.setInterval(runSimulationTick, 3000);
+            }
+        };
 
-        return () => clearInterval(interval);
+        const stopSimulator = () => {
+            if (intervalId !== null) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                stopSimulator();
+            } else {
+                startSimulator();
+            }
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        startSimulator();
+
+        return () => {
+            stopSimulator();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
     }, []);
 
     return null;

@@ -91,10 +91,11 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // FIX: Use process.env.API_KEY as per guidelines.
+        // FIX: Changed from import.meta.env.VITE_API_KEY to process.env.API_KEY to align with guidelines and fix environment variable access.
         const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');
+            // FIX: Updated error messages to reflect use of process.env.API_KEY.
             console.error("API_KEY is not configured for Live Advisor.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;

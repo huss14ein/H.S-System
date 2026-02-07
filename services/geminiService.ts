@@ -1,5 +1,6 @@
 
 
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio } from '../types';
 
@@ -26,10 +27,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use process.env.API_KEY as per guidelines.
+    // FIX: Changed from import.meta.env.VITE_API_KEY to process.env.API_KEY to align with guidelines and fix environment variable access.
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        // FIX: Updated warning message to reflect the correct environment variable.
+        // FIX: Updated warning message to reflect use of process.env.API_KEY.
         console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
