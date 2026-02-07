@@ -145,21 +145,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             // Non-relational data
             await Promise.all([
-                db.from('assets').insert(mock.assets.map(a => ({ ...a, id: undefined, user_id: userId }))),
-                db.from('liabilities').insert(mock.liabilities.map(l => ({ ...l, id: undefined, user_id: userId }))),
+                db.from('assets').insert(mock.assets.map(({ id, ...a }) => ({ ...a, user_id: userId }))),
+                db.from('liabilities').insert(mock.liabilities.map(({ id, ...l }) => ({ ...l, user_id: userId }))),
                 db.from('budgets').insert(mock.budgets.map(b => ({ ...b, user_id: userId }))),
                 db.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
-                db.from('goals').insert(mock.goals.map(g => ({ ...g, id: undefined, user_id: userId }))),
+                db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
             ]);
 
             // Accounts
-            const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(a => ({...a, id: undefined, user_id: userId}))).select();
+            const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(({ id, ...a }) => ({...a, user_id: userId}))).select();
             if (accError || !newAccounts) throw accError || new Error("Failed to create accounts");
             
             const accountIdMap = new Map(mock.accounts.map((mockAcc, i) => [mockAcc.id, newAccounts[i].id]));
             
             // Transactions
-            await db.from('transactions').insert(mock.transactions.map(t => ({ ...t, id: undefined, user_id: userId, accountId: accountIdMap.get(t.accountId)! })));
+            await db.from('transactions').insert(mock.transactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
 
             // Portfolios
             const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, accountId: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
@@ -168,9 +168,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
             
             // Holdings and Investment Transactions
-            const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(h => ({...h, id: undefined, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
+            const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(({ id, ...h }) => ({...h, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
             await db.from('holdings').insert(holdingsToInsert);
-            await db.from('investment_transactions').insert(mock.investmentTransactions.map(t => ({ ...t, id: undefined, user_id: userId, accountId: accountIdMap.get(t.accountId)! })));
+            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
 
             alert("Demo data loaded successfully!");
         } catch(error) {
