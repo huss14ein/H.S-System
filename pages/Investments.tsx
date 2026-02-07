@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useCallback, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal } from '../types';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, PlannedTrade } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -24,12 +24,17 @@ import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { LinkIcon } from '../components/icons/LinkIcon';
+import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
+const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
+
+
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
+    { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
     { name: 'Trade Advices', icon: BookOpenIcon },
@@ -38,10 +43,19 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (trade: any) => void;
+    onSave: (trade: any, executedPlanId?: string) => void;
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios }) => {
+    initialData?: Partial<{
+        tradeType: 'buy' | 'sell';
+        symbol: string;
+        name: string;
+        quantity: number;
+        amount: number;
+        price: number;
+        executedPlanId: string;
+    }> | null;
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
     const [type, setType] = useState<'buy' | 'sell'>('buy');
@@ -50,6 +64,8 @@ const RecordTradeModal: React.FC<{
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [holdingName, setHoldingName] = useState('');
+    const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
+    const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
     
@@ -61,18 +77,34 @@ const RecordTradeModal: React.FC<{
         return false;
     }, [type, portfolioId, symbol, portfolios]);
     
+    const resetForm = () => {
+        setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
+        setDate(new Date().toISOString().split('T')[0]);
+        setHoldingName('');
+        setExecutedPlanId(undefined);
+        setAmountToInvest(null);
+        setAccountId(investmentAccounts[0]?.id || '');
+    };
+
     useEffect(() => {
         if (isOpen) {
-            const firstAccount = investmentAccounts[0];
-            setAccountId(firstAccount?.id || '');
-        } else {
-            // Reset form on close
-            setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
-            setDate(new Date().toISOString().split('T')[0]);
-            setHoldingName('');
+            if (initialData) {
+                setType(initialData.tradeType || 'buy');
+                setSymbol(initialData.symbol || '');
+                setHoldingName(initialData.name || '');
+                setQuantity(initialData.quantity ? String(initialData.quantity) : '');
+                setAmountToInvest(initialData.amount || null);
+                setExecutedPlanId(initialData.executedPlanId);
+                if (initialData.amount && !initialData.quantity && !initialData.price) {
+                    setPrice('');
+                    setQuantity('');
+                }
+            } else {
+                resetForm();
+            }
         }
-    }, [isOpen, investmentAccounts]);
-    
+    }, [isOpen, initialData, investmentAccounts]);
+
     useEffect(() => {
         if (portfoliosForAccount.length > 0) {
             setPortfolioId(portfoliosForAccount[0].id);
@@ -80,6 +112,16 @@ const RecordTradeModal: React.FC<{
             setPortfolioId('');
         }
     }, [portfoliosForAccount]);
+    
+    useEffect(() => {
+        if (amountToInvest && price && type === 'buy') {
+            const numPrice = parseFloat(price);
+            if(numPrice > 0) {
+                const calcQty = amountToInvest / numPrice;
+                setQuantity(calcQty.toFixed(8).replace(/\.?0+$/, ""));
+            }
+        }
+    }, [amountToInvest, price, type]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -91,7 +133,7 @@ const RecordTradeModal: React.FC<{
                 quantity: parseFloat(quantity) || 0,
                 price: parseFloat(price) || 0,
                 date,
-            });
+            }, executedPlanId);
             onClose();
         } catch (error) {
             alert(`Error recording trade: ${error instanceof Error ? error.message : String(error)}`);
@@ -101,6 +143,7 @@ const RecordTradeModal: React.FC<{
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
             <form onSubmit={handleSubmit} className="space-y-4">
+                 {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} SAR</span></div>}
                  <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label htmlFor="account-id" className="block text-sm font-medium text-gray-700">Platform</label>
@@ -150,6 +193,8 @@ const RecordTradeModal: React.FC<{
         </Modal>
     );
 };
+
+// ... other modals ...
 
 // #region Portfolio View Components
 const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holding: (Holding & { gainLoss: number, gainLossPercent: number }) | null }> = ({ isOpen, onClose, holding }) => {
@@ -402,8 +447,9 @@ const PlatformCard: React.FC<{
                          <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
                             <div className="flex items-center text-xs text-gray-500 font-medium px-2 py-1 bg-gray-100 rounded-t-md sticky top-0">
                                 <div className="flex-grow">Symbol</div>
+                                <div className="w-24 text-left">Zakat Class</div>
                                 <div className="w-24 text-right">Mkt Value</div>
-                                <div className="w-28 text-right">Unrealized P/L</div>
+                                <div className="w-24 text-right">Unrealized P/L</div>
                                 <div className="w-24 text-right">Daily P/L</div>
                             </div>
                             {holdingsWithGains(portfolio.holdings).map(h => (
@@ -412,11 +458,15 @@ const PlatformCard: React.FC<{
                                         <div className="flex-grow flex items-center gap-2 truncate">
                                             <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="font-medium text-gray-900 text-left bg-transparent border-none p-0 hover:underline truncate" title={h.name}>{h.symbol}</button>
                                              <button onClick={() => onEditHolding(h)} className="text-gray-300 group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"><PencilIcon className="h-3 w-3" /></button>
-                                             {h.zakahClass === 'Zakatable' && <span title="Zakatable Asset"><MoonIcon className="h-3 w-3 text-blue-400" /></span>}
                                              {h.goalId && <span title={`Linked to: ${getGoalName(h.goalId)}`}><LinkIcon className="h-3 w-3 text-green-500" /></span>}
                                         </div>
+                                        <div className="w-24 text-left">
+                                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>
+                                                {h.zakahClass}
+                                            </span>
+                                        </div>
                                         <div className="w-24 text-right font-semibold text-dark tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>
-                                        <div className="w-28 text-right font-medium text-xs tabular-nums">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
+                                        <div className="w-24 text-right font-medium text-xs tabular-nums">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
                                         <div className="w-24 text-right font-medium text-xs tabular-nums">
                                             {formatCurrency(simulatedPrices[h.symbol]?.change * h.quantity || 0, { colorize: true, digits: 0 })}
                                         </div>
@@ -505,15 +555,22 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
+  const [tradeInitialData, setTradeInitialData] = useState<any>(null);
 
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
   useEffect(() => {
-    if (pageAction === 'open-trade-modal') {
-      setIsTradeModalOpen(true);
-      clearPageAction?.();
+    if (pageAction?.startsWith('open-trade-modal')) {
+        if (pageAction.includes(':with-amount:')) {
+            const amount = pageAction.split(':with-amount:')[1];
+            setTradeInitialData({ amount: parseFloat(amount) });
+        } else {
+            setTradeInitialData(null);
+        }
+        setIsTradeModalOpen(true);
+        clearPageAction?.();
     }
   }, [pageAction, clearPageAction]);
 
@@ -547,6 +604,23 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
       if(portfolio.id) updatePortfolio(portfolio);
       else addPortfolio(portfolio);
   };
+  
+  const handleExecutePlan = (plan: PlannedTrade) => {
+      setTradeInitialData({
+          tradeType: plan.tradeType,
+          symbol: plan.symbol,
+          name: plan.name,
+          quantity: plan.quantity,
+          amount: plan.amount,
+          executedPlanId: plan.id,
+      });
+      setIsTradeModalOpen(true);
+  };
+
+  const handleCloseTradeModal = () => {
+      setIsTradeModalOpen(false);
+      setTradeInitialData(null);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -563,6 +637,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onHoldingClick={handleHoldingClick}
             onEditHolding={handleOpenHoldingEditModal}
         />;
+      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={handleExecutePlan} />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
       case 'Trade Advices': return <TradeAdvicesView />;
@@ -588,8 +663,10 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
           ))}
         </nav>
       </div>
-
-      {renderContent()}
+      
+      <Suspense fallback={<div className="text-center p-8">Loading...</div>}>
+        {renderContent()}
+      </Suspense>
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => setIsHoldingModalOpen(false)} holding={selectedHolding} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
@@ -603,7 +680,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
         investmentAccounts={investmentAccounts}
       />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-      <RecordTradeModal isOpen={isTradeModalOpen} onClose={() => setIsTradeModalOpen(false)} onSave={recordTrade} investmentAccounts={investmentAccounts} portfolios={data.investments} />
+      <RecordTradeModal 
+        isOpen={isTradeModalOpen} 
+        onClose={handleCloseTradeModal} 
+        onSave={recordTrade} 
+        investmentAccounts={investmentAccounts} 
+        portfolios={data.investments}
+        initialData={tradeInitialData}
+      />
     </div>
   );
 };

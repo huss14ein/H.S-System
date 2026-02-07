@@ -1,4 +1,3 @@
-// FIX: Import `useMemo` from `react`.
 import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { Page } from '../types';
 import { NAVIGATION_ITEMS } from '../constants';

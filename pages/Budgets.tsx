@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
@@ -31,8 +30,6 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        // FIX: Construct a full Budget object to satisfy the onSave prop type.
-        // The original implementation was missing id, month, and year.
         if (budgetToEdit) {
             onSave({
                 ...budgetToEdit,

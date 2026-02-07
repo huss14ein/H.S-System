@@ -90,8 +90,8 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         { id: 'b7', category: 'Savings & Investments', limit: 5000, month: today.getMonth() + 1, year: today.getFullYear() },
     ],
     commodityHoldings: [
-      { id: 'ch1', name: 'Gold', quantity: 100, unit: 'gram', purchaseValue: 22000, currentValue: withVariation(27500), symbol: 'XAU_GRAM' },
-      { id: 'ch2', name: 'Bitcoin', quantity: 0.05, unit: 'BTC', purchaseValue: 12000, currentValue: withVariation(13000), symbol: 'BTC_USD' }
+      { id: 'ch1', name: 'Gold', quantity: 100, unit: 'gram', purchaseValue: 22000, currentValue: withVariation(27500), symbol: 'XAU_GRAM', zakahClass: 'Zakatable' },
+      { id: 'ch2', name: 'Bitcoin', quantity: 0.05, unit: 'BTC', purchaseValue: 12000, currentValue: withVariation(13000), symbol: 'BTC_USD', zakahClass: 'Zakatable' }
     ],
     watchlist: [
         { symbol: '7010.SR', name: 'STC' },

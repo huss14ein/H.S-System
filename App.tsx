@@ -58,7 +58,6 @@ const App: React.FC = () => {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
       case 'Summary': return <Summary />;
       case 'Accounts': return <Accounts />;
-      // FIX: Removed unused `triggerPageAction` prop from the `Investments` component as it is not defined in its props interface.
       case 'Investments': return <Investments {...actionProps} />;
       case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities />;

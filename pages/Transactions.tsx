@@ -78,7 +78,10 @@ const TransactionModal: React.FC<{
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const transactionData = buildTransactionData();
-        if (transactionToEdit) {
+        
+        if (type === 'expense' && budgetCategory === 'Savings & Investments') {
+            onSaveAndTrade(transactionData);
+        } else if (transactionToEdit) {
             onSave({ ...transactionData, id: transactionToEdit.id });
         } else {
             onSave(transactionData);
@@ -86,13 +89,6 @@ const TransactionModal: React.FC<{
         onClose();
     };
     
-    const handleSaveAndTrade = (e: React.FormEvent) => {
-        e.preventDefault();
-        const transactionData = buildTransactionData();
-        onSaveAndTrade(transactionData);
-        onClose();
-    }
-
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
@@ -111,6 +107,8 @@ const TransactionModal: React.FC<{
             setIsSuggestingCategory(false);
         }
     };
+    
+    const isInvestmentTransfer = type === 'expense' && budgetCategory === 'Savings & Investments';
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={transactionToEdit ? 'Edit Transaction' : 'Add Transaction'}>
@@ -162,14 +160,9 @@ const TransactionModal: React.FC<{
                         </div>
                     </div>
                  )}
-                <div className="flex flex-col space-y-2">
-                    <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Transaction</button>
-                    {type === 'expense' && budgetCategory === 'Savings & Investments' && (
-                        <button type="button" onClick={handleSaveAndTrade} className="w-full px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700">
-                            Save & Record Trade
-                        </button>
-                    )}
-                </div>
+                <button type="submit" className={`w-full px-4 py-2 text-white rounded-lg transition-colors ${isInvestmentTransfer ? 'bg-secondary hover:bg-violet-700' : 'bg-primary hover:bg-secondary'}`}>
+                    {isInvestmentTransfer ? 'Save & Record Trade' : 'Save Transaction'}
+                </button>
             </form>
         </Modal>
     );

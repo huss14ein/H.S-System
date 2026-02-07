@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import Card from '../components/Card';
 import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
@@ -8,9 +7,11 @@ import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Modal from '../components/Modal';
 import { ZakatPayment } from '../types';
+import ProgressBar from '../components/ProgressBar';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 
 
-const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id'>) => void }> = ({ isOpen, onClose, onSave }) => {
+const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [notes, setNotes] = useState('');
@@ -47,14 +48,18 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 
 
 const Zakat: React.FC = () => {
-    const { data, addZakatPayment } = useContext(DataContext)!;
+    const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
-    const [goldPrice, setGoldPrice] = useState(275);
+    const [localGoldPrice, setLocalGoldPrice] = useState(String(data.settings.goldPrice || 275));
     const [otherDebts, setOtherDebts] = useState(0);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    
+    useEffect(() => {
+        setLocalGoldPrice(String(data.settings.goldPrice || 275));
+    }, [data.settings.goldPrice]);
 
-    const nisab = useMemo(() => goldPrice * 85, [goldPrice]);
+    const nisab = useMemo(() => (data.settings.goldPrice || 275) * 85, [data.settings.goldPrice]);
 
     const zakatableAssets = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
@@ -62,10 +67,14 @@ const Zakat: React.FC = () => {
         const investments = data.investments.flatMap(p => p.holdings)
             .filter(h => h.zakahClass === 'Zakatable')
             .reduce((sum, h) => sum + h.currentValue, 0);
+            
+        const commodities = data.commodityHoldings
+            .filter(c => c.zakahClass === 'Zakatable')
+            .reduce((sum, c) => sum + c.currentValue, 0);
 
-        const total = cash + investments;
-        return { cash, investments, total };
-    }, [data.accounts, data.investments]);
+        const total = cash + investments + commodities;
+        return { cash, investments, commodities, total };
+    }, [data.accounts, data.investments, data.commodityHoldings]);
 
     const deductibleLiabilities = useMemo(() => {
         const shortTermDebts = data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
@@ -101,10 +110,22 @@ const Zakat: React.FC = () => {
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h3 className="font-semibold text-dark mb-4">Zakatable Assets</h3>
                          <div className="space-y-3">
-                            <p className="text-xs text-gray-500">Includes cash in checking/savings and investments marked as 'Zakatable'. You can change an asset's Zakat classification in the Investments tab.</p>
-                            <div className="flex justify-between text-sm pt-2"><span className="text-gray-600">Cash</span><span>{formatCurrencyString(zakatableAssets.cash)}</span></div>
-                            <div className="flex justify-between text-sm"><span className="text-gray-600">Investments</span><span>{formatCurrencyString(zakatableAssets.investments)}</span></div>
+                            <div className="flex justify-between text-sm pt-2">
+                               <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Cash</span>
+                               <span>{formatCurrencyString(zakatableAssets.cash)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Investments</span>
+                                <span>{formatCurrencyString(zakatableAssets.investments)}</span>
+                            </div>
+                             <div className="flex justify-between text-sm">
+                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Commodities</span>
+                                <span>{formatCurrencyString(zakatableAssets.commodities)}</span>
+                            </div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total)}</span></div>
+                             <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded-md mt-2">
+                                <p>Includes cash, 'Zakatable' investments, and 'Zakatable' commodities. You can change an asset's Zakat classification on the 'Investments' and 'Commodities' pages.</p>
+                            </div>
                         </div>
                     </div>
                      <div className="bg-white p-6 rounded-lg shadow">
@@ -125,7 +146,7 @@ const Zakat: React.FC = () => {
                     <h3 className="font-semibold text-dark mb-4">Calculation</h3>
                      <div>
                         <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700">Price of Gold (per gram)</label>
-                        <input type="number" id="gold-price" value={goldPrice} onChange={(e) => setGoldPrice(parseFloat(e.target.value) || 0)} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => updateSettings({ goldPrice: parseFloat(localGoldPrice) || 275 })} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab)}</span></div>
                     <hr/>
@@ -140,25 +161,40 @@ const Zakat: React.FC = () => {
                 
                  {/* Column 3: Payment Ledger */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
-                    <div className="flex justify-between items-center">
-                        <h3 className="font-semibold text-dark">Payments Ledger</h3>
+                     <div className="flex justify-between items-center">
+                        <h3 className="font-semibold text-dark">Payment Progress & Ledger</h3>
                         <button onClick={() => setIsPaymentModalOpen(true)} className="px-3 py-1 bg-primary text-white rounded-md hover:bg-secondary text-sm">Record Payment</button>
                     </div>
-                    <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+
+                    <div className="space-y-3 border-b pb-4">
+                        <div>
+                            <div className="flex justify-between items-baseline text-sm mb-1">
+                                <span className="font-medium">Paid</span>
+                                <span>{formatCurrencyString(totalPaid, {digits: 0})} / {formatCurrencyString(zakatDue, {digits: 0})}</span>
+                            </div>
+                            <ProgressBar value={totalPaid} max={zakatDue > 0 ? zakatDue : 1} />
+                        </div>
+                        <Card 
+                            title="Outstanding Zakat" 
+                            value={formatCurrencyString(outstandingZakat)}
+                            valueColor={outstandingZakat > 0 ? "text-danger" : "text-success"}
+                        />
+                    </div>
+                    
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                         {data.zakatPayments.map(p => (
-                             <div key={p.id} className="flex justify-between items-center text-sm p-2 bg-gray-50 rounded-md">
-                                <div>
-                                    <p className="font-medium">{new Date(p.date).toLocaleDateString()}</p>
-                                    <p className="text-xs text-gray-500">{p.notes}</p>
+                             <div key={p.id} className="flex justify-between items-center text-sm p-3 bg-gray-50 rounded-lg border">
+                                <div className="flex items-center gap-3">
+                                    <BanknotesIcon className="h-6 w-6 text-green-500 flex-shrink-0" />
+                                    <div>
+                                        <p className="font-semibold text-dark">{formatCurrencyString(p.amount)}</p>
+                                        <p className="text-xs text-gray-500">{new Date(p.date).toLocaleDateString()}</p>
+                                    </div>
                                 </div>
-                                <p className="font-semibold">{formatCurrencyString(p.amount)}</p>
+                                {p.notes && <p className="text-xs text-gray-600 italic text-right truncate" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
                         {data.zakatPayments.length === 0 && <p className="text-sm text-center text-gray-500 py-4">No payments recorded yet.</p>}
-                    </div>
-                    <div className="border-t pt-4 space-y-2">
-                        <div className="flex justify-between text-sm"><span className="text-gray-600">Total Paid</span><span className="font-medium text-dark">{formatCurrencyString(totalPaid)}</span></div>
-                        <div className="flex justify-between font-bold p-2 bg-blue-50 rounded-md"><span className="text-blue-800">Outstanding Zakat</span><span className="text-blue-900">{formatCurrencyString(outstandingZakat)}</span></div>
                     </div>
                 </div>
             </div>

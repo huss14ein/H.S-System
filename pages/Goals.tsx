@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import ProgressBar from '../components/ProgressBar';
 import { getGoalAIPlan } from '../services/geminiService';
 import { Goal } from '../types';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
@@ -16,6 +15,33 @@ import { PlusCircleIcon } from '../components/icons/PlusCircleIcon';
 import AIAdvisor from '../components/AIAdvisor';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import ProgressBar from '../components/ProgressBar';
+
+// A more visual progress bar specific for goals
+const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
+    const [width, setWidth] = useState(0);
+
+    useEffect(() => {
+        // Animate the bar on load
+        const timer = setTimeout(() => setWidth(progress), 100);
+        return () => clearTimeout(timer);
+    }, [progress]);
+
+    return (
+        <div className="relative h-5 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+                className={`absolute top-0 left-0 h-full rounded-full ${colorClass} transition-all duration-1000 ease-out`}
+                style={{ width: `${Math.min(width, 100)}%` }}
+            ></div>
+            <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-xs font-bold text-white" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.5)' }}>
+                    {progress.toFixed(1)}% Complete
+                </span>
+            </div>
+        </div>
+    );
+};
+
 
 interface GoalModalProps {
     isOpen: boolean;
@@ -112,7 +138,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
     }, [data.assets, data.investments, goal.id]);
 
-    const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution } = useMemo(() => {
+    const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
         const currentAmount = calculatedCurrentAmount;
         const deadline = new Date(goal.deadline);
         const now = new Date();
@@ -133,55 +159,98 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             status = 'At Risk';
         }
         
-        const color = status === 'At Risk' ? 'bg-danger' : status === 'Needs Attention' ? 'bg-warning' : 'bg-primary';
+        const color = status === 'At Risk' ? 'bg-danger' : status === 'Needs Attention' ? 'bg-warning' : 'bg-success';
+        const borderColor = status === 'At Risk' ? 'border-danger' : status === 'Needs Attention' ? 'border-warning' : 'border-success';
 
-        return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution };
+        return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };
     }, [goal, monthlySavings, calculatedCurrentAmount]);
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out">
+        <div className={`bg-white p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border-t-4 ${borderColor}`}>
+            {/* Header */}
             <div>
                 <div className="flex justify-between items-start">
-                    <h3 className="text-xl font-semibold text-dark">{goal.name}</h3>
-                    <GoalStatus status={status} />
-                </div>
-                
-                <div className="mt-4">
-                    <div className="flex justify-between items-baseline mb-1"><span className="font-medium text-secondary">{formatCurrencyString(calculatedCurrentAmount, { digits: 0 })}</span><span className="text-sm text-gray-500">of {formatCurrencyString(goal.targetAmount, { digits: 0 })}</span></div>
-                    <ProgressBar value={calculatedCurrentAmount} max={goal.targetAmount} color={color} />
-                     <div className="flex justify-between items-baseline mt-1 text-sm text-gray-600"><span>{progressPercent.toFixed(1)}% Complete</span><span>{monthsLeft > 0 ? `${monthsLeft} months left` : 'Deadline passed'}</span></div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-2 text-center bg-gray-50 border-t border-b p-3">
-                    <div><p className="text-sm text-gray-500">Required Monthly</p><p className="font-bold text-lg text-primary">{formatCurrencyString(requiredMonthlyContribution, { digits: 0 })}</p></div>
-                    <div><p className="text-sm text-gray-500">Projected Monthly</p><p className="font-bold text-lg text-dark">{formatCurrencyString(projectedMonthlyContribution, { digits: 0 })}</p></div>
-                </div>
-
-                 <div className="mt-4 border-t pt-4">
-                    <h4 className="font-semibold text-sm text-gray-700 mb-2 flex items-center">
-                        <LinkIcon className="h-4 w-4 mr-2 text-gray-400" />
-                        Linked Contributions
-                    </h4>
-                    {linkedAssets.length > 0 ? (
-                        <ul className="space-y-1 max-h-24 overflow-y-auto text-sm pr-2">
-                            {linkedAssets.map((asset, index) => (
-                                <li key={`${asset.name}-${index}`} className="flex justify-between items-center">
-                                    <span className="text-gray-600 truncate" title={asset.name}>{asset.name}</span>
-                                    <span className="font-medium text-dark flex-shrink-0 ml-2">{formatCurrencyString(asset.value, { digits: 0 })}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    ) : (
-                        <p className="text-xs text-gray-500 text-center italic mt-2">No assets linked. Link them from the Assets or Investments pages.</p>
-                    )}
+                    <div>
+                        <h3 className="text-xl font-semibold text-dark">{goal.name}</h3>
+                        <p className="text-sm text-gray-500">
+                            Target: <span className="font-medium text-dark">{formatCurrencyString(goal.targetAmount)}</span> by {new Date(goal.deadline).toLocaleDateString()}
+                        </p>
+                    </div>
+                     <div className="flex-shrink-0 flex items-center -mt-2 -mr-2">
+                        <button onClick={onEdit} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
+                        <button onClick={onDelete} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                    </div>
                 </div>
             </div>
+
+            {/* Progress Section */}
+            <div className="space-y-2">
+                <GoalProgressBar progress={progressPercent} colorClass={color} />
+                 <div className="flex justify-between items-baseline text-sm">
+                    <div>
+                        <span className="text-gray-500">Saved: </span>
+                        <span className="font-semibold text-dark">{formatCurrencyString(calculatedCurrentAmount)}</span>
+                    </div>
+                    <div>
+                        <span className="text-gray-500">Remaining: </span>
+                        <span className="font-semibold text-dark">{formatCurrencyString(Math.max(0, goal.targetAmount - calculatedCurrentAmount))}</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Status and Contributions */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center bg-gray-50 p-4 rounded-lg">
+                <div className="text-center md:text-left">
+                    <p className="text-sm text-gray-600 mb-2">Status ({monthsLeft} months left)</p>
+                    <GoalStatus status={status} />
+                </div>
+                <div className="space-y-2">
+                    <div>
+                        <div className="flex justify-between items-center text-xs mb-0.5">
+                            <span className="font-medium text-gray-600">Projected Monthly</span>
+                            <span className="font-bold">{formatCurrencyString(projectedMonthlyContribution, { digits: 0 })}</span>
+                        </div>
+                        <div className="h-2 w-full bg-gray-200 rounded-full">
+                            <div className="bg-blue-400 h-2 rounded-full" style={{ width: `${Math.min((projectedMonthlyContribution / Math.max(requiredMonthlyContribution, 1)) * 100, 100)}%` }}></div>
+                        </div>
+                    </div>
+                     <div>
+                        <div className="flex justify-between items-center text-xs mb-0.5">
+                            <span className="font-medium text-gray-600">Required Monthly</span>
+                            <span className="font-bold">{formatCurrencyString(requiredMonthlyContribution, { digits: 0 })}</span>
+                        </div>
+                         <div className="h-2 w-full bg-gray-200 rounded-full">
+                            <div className="bg-primary h-2 rounded-full" style={{ width: '100%' }}></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Linked Contributions */}
+            <div className="border-t pt-4">
+                <h4 className="font-semibold text-sm text-gray-700 mb-2 flex items-center">
+                    <LinkIcon className="h-4 w-4 mr-2 text-gray-400" />
+                    Linked Contributions
+                </h4>
+                {linkedAssets.length > 0 ? (
+                    <ul className="space-y-1 max-h-24 overflow-y-auto text-sm pr-2">
+                        {linkedAssets.map((asset, index) => (
+                            <li key={`${asset.name}-${index}`} className="flex justify-between items-center">
+                                <span className="text-gray-600 truncate" title={asset.name}>{asset.name}</span>
+                                <span className="font-medium text-dark flex-shrink-0 ml-2">{formatCurrencyString(asset.value, { digits: 0 })}</span>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="text-xs text-gray-500 text-center italic mt-2">No assets linked. Link them from the Assets or Investments pages.</p>
+                )}
+            </div>
+            
             <div className="bg-indigo-50 p-4 rounded-lg">
                 <div className="flex items-center justify-between"><h4 className="font-semibold text-indigo-800">AI Savings Plan</h4><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
                 {aiPlan && !isLoading && <div className="mt-2"><SafeMarkdownRenderer content={aiPlan} /></div>}
             </div>
-             <div className="border-t mt-2 pt-2 flex justify-end space-x-2"><button onClick={onEdit} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={onDelete} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
         </div>
     );
 };

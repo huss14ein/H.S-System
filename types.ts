@@ -1,5 +1,6 @@
 
 
+
 export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Commodities' | 'Notifications' | 'System & APIs Health';
 
 export interface Goal {
@@ -146,6 +147,7 @@ export interface CommodityHolding {
   purchaseValue: number;
   currentValue: number;
   symbol: string; // e.g., GOLD_GRAM, BTC_USD
+  zakahClass: 'Zakatable' | 'Non-Zakatable';
 }
 
 export interface WatchlistItem {
@@ -162,6 +164,7 @@ export interface Settings {
     budgetThreshold: number; // e.g., 90%
     driftThreshold: number; // e.g., 5%
     enableEmails: boolean;
+    goldPrice: number;
 }
 
 export interface ZakatPayment {

@@ -1,14 +1,14 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings } from '../types';
 import { getMockData } from '../data/mockData';
 
 // Define an empty state for when data is loading or for new users
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true },
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
     zakatPayments: [], priceAlerts: [], plannedTrades: []
 };
 
@@ -49,6 +49,10 @@ interface DataContextType {
   addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
   deletePlannedTrade: (planId: string) => Promise<void>;
+  addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
+  updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
+  deleteCommodityHolding: (holdingId: string) => Promise<void>;
+  updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
 }
@@ -159,6 +163,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
                 db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
                 db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
+                db.from('settings').insert([{ ...initialData.settings, user_id: userId }]),
             ]);
 
             // Accounts
@@ -497,8 +502,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.filter(p => p.id !== planId) })); }
     };
 
+    // --- Commodities ---
+    const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
+        if (!supabase) return;
+        const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(holding)).select().single();
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, newHolding] }));
+    };
+    const updateCommodityHolding = async (holding: CommodityHolding) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('commodity_holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
+    };
+    const deleteCommodityHolding = async (holdingId: string) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('commodity_holdings').delete().match({ id: holdingId, user_id: auth.user.id });
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.filter(h => h.id !== holdingId) }));
+    };
 
-    // --- Watchlist, Alerts, Zakat ---
+
+    // --- Watchlist, Alerts, Zakat, Settings ---
     const addWatchlistItem = async (item: WatchlistItem) => {
         if(!supabase) return;
         const db = supabase;
@@ -536,8 +561,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: newPayment } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
         if(newPayment) setData(prev => ({ ...prev, zakatPayments: [newPayment, ...prev.zakatPayments] }));
     };
+    const updateSettings = async (settingsUpdate: Partial<Settings>) => {
+        if (!supabase || !auth?.user) return;
+        const updatedSettings = { ...data.settings, ...settingsUpdate, user_id: auth.user.id };
+        const { error } = await supabase.from('settings').upsert([updatedSettings], { onConflict: 'user_id' });
+        if (error) {
+            console.error("Error updating settings:", error);
+        } else {
+            setData(prev => ({ ...prev, settings: updatedSettings }));
+        }
+    };
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, resetData, loadDemoData };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, updateSettings, resetData, loadDemoData };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
