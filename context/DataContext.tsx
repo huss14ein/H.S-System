@@ -15,14 +15,14 @@ const initialData: FinancialData = {
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
-  addAsset: (asset: Omit<Asset, 'user_id'>) => Promise<void>;
+  addAsset: (asset: Asset) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (assetId: string) => Promise<void>;
-  addGoal: (goal: Omit<Goal, 'user_id'>) => Promise<void>;
+  addGoal: (goal: Goal) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
   updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
-  addLiability: (liability: Omit<Liability, 'user_id'>) => Promise<void>;
+  addLiability: (liability: Liability) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
   addBudget: (budget: Omit<Budget, 'id' | 'user_id'>) => Promise<void>;
@@ -207,12 +207,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Assets ---
-    const addAsset = async (asset: Omit<Asset, 'user_id'>) => {
+    const addAsset = async (asset: Asset) => {
         if(!supabase) return;
         const db = supabase;
-        const { id, ...assetData } = asset as Asset;
-        const { data: newAsset, error } = await db.from('assets').insert(withUser(assetData)).select().single();
-        if (error) console.error("Error adding asset:", error);
+        const { id, user_id, ...insertData } = asset;
+        const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
+        if (error) { console.error("Error adding asset:", error); throw error; }
         else setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
@@ -231,12 +231,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Goals ---
-    const addGoal = async (goal: Omit<Goal, 'user_id'>) => {
+    const addGoal = async (goal: Goal) => {
         if(!supabase) return;
         const db = supabase;
-        const { id, ...goalData } = goal as Goal;
-        const { data: newGoal, error } = await db.from('goals').insert(withUser(goalData)).select().single();
-        if (error) console.error("Error adding goal:", error);
+        const { id, user_id, ...insertData } = goal;
+        const { data: newGoal, error } = await db.from('goals').insert(withUser(insertData)).select().single();
+        if (error) { console.error("Error adding goal:", error); throw error; }
         else setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
     };
     const updateGoal = async (goal: Goal) => {
@@ -263,12 +263,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Omit<Liability, 'user_id'>) => {
+    const addLiability = async (liability: Liability) => {
       if(!supabase) return;
       const db = supabase;
-      const { id, ...liabilityData } = liability as Liability;
-      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(liabilityData)).select().single();
-      if (error) console.error("Error adding liability:", error);
+      const { id, user_id, ...insertData } = liability;
+      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(insertData)).select().single();
+      if (error) { console.error("Error adding liability:", error); throw error; }
       else setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
     };
     const updateLiability = async (liability: Liability) => {
@@ -358,7 +358,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Accounts / Platforms ---
-    const addPlatform = async (platform: Omit<Account, 'id' | 'balance'>) => {
+    const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => {
         if(!supabase) return;
         const db = supabase;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
