@@ -39,7 +39,7 @@ interface DataContextType {
   deletePortfolio: (portfolioId: string) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => Promise<void>;
+  recordTrade: (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
@@ -175,7 +175,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert("Demo data loaded successfully!");
         } catch(error) {
             console.error("Error loading demo data:", error);
-            alert(`Failed to load demo data: ${error instanceof Error ? error.message : "Unknown error"}. Cleaning up...`);
+            let errorMessage = "Unknown error";
+            if (error instanceof Error) {
+                errorMessage = error.message;
+            } else if (error && typeof error === 'object' && 'message' in error) {
+                // Handle Supabase PostgrestError which is not an instance of Error
+                errorMessage = String((error as any).message);
+            }
+            alert(`Failed to load demo data: ${errorMessage}. Cleaning up...`);
             await _internalResetData();
         } finally {
             await fetchData(); // Refetch all data to update UI
@@ -351,12 +358,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(error) console.error(error);
         else setData(prev => ({ ...prev, investments: prev.investments.filter(p => p.id !== portfolioId) }));
     };
+    const addHolding = async (holding: Omit<Holding, 'id' | 'user_id'>) => {
+        if (!supabase) return;
+        const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(holding)).select().single();
+        if (error) { console.error("Error adding holding:", error); throw error; }
+        setData(prev => ({
+            ...prev,
+            investments: prev.investments.map(p =>
+                p.id === newHolding.portfolio_id
+                    ? { ...p, holdings: [...p.holdings, newHolding] }
+                    : p
+            )
+        }));
+    };
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) { console.error(error); throw error; }
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
+    };
+    const deleteHolding = async (holdingId: string) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('holdings').delete().match({ id: holdingId, user_id: auth.user.id });
+        if (error) { console.error("Error deleting holding:", error); throw error; }
+        setData(prev => ({
+            ...prev,
+            investments: prev.investments.map(p => ({
+                ...p,
+                holdings: p.holdings.filter(h => h.id !== holdingId)
+            }))
+        }));
     };
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
       setData(prevData => {
@@ -370,13 +402,65 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             };
         });
     };
-    const recordTrade = async (trade: Omit<InvestmentTransaction, 'id' | 'total'>) => {
-        if(!supabase) return;
-        const db = supabase;
-        const tradeTotal = trade.quantity * trade.price;
-        await db.from('investment_transactions').insert(withUser({ ...trade, total: tradeTotal }));
-        await fetchData(); // Refetch to update holdings correctly after a trade
+    const recordTrade = async (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => {
+        if (!supabase || !auth?.user) return;
+
+        const { portfolioId, name, ...tradeData } = trade;
+
+        // 1. Log the transaction to the database
+        const tradeTotal = tradeData.quantity * tradeData.price;
+        const { data: newTransaction, error: txError } = await supabase.from('investment_transactions').insert(withUser({ ...tradeData, total: tradeTotal })).select().single();
+        if (txError) { console.error("Error recording transaction:", txError); throw txError; }
+        setData(prev => ({ ...prev, investmentTransactions: [newTransaction, ...prev.investmentTransactions] }));
+
+        // 2. Find portfolio and holding from state
+        const portfolio = data.investments.find(p => p.id === portfolioId);
+        if (!portfolio) throw new Error("Portfolio not found");
+        const existingHolding = portfolio.holdings.find(h => h.symbol === tradeData.symbol);
+
+        // 3. Process trade logic
+        try {
+            if (tradeData.type === 'buy') {
+                if (existingHolding) {
+                    const newTotalValue = (existingHolding.avgCost * existingHolding.quantity) + (tradeData.price * tradeData.quantity);
+                    const newQuantity = existingHolding.quantity + tradeData.quantity;
+                    const newAvgCost = newTotalValue / newQuantity;
+                    await updateHolding({ ...existingHolding, quantity: newQuantity, avgCost: newAvgCost });
+                } else {
+                    const newHoldingData = {
+                        portfolio_id: portfolioId,
+                        symbol: tradeData.symbol,
+                        name: name || tradeData.symbol,
+                        quantity: tradeData.quantity,
+                        avgCost: tradeData.price,
+                        currentValue: tradeData.price * tradeData.quantity,
+                        zakahClass: 'Zakatable' as const,
+                        realizedPnL: 0,
+                    };
+                    await addHolding(newHoldingData);
+                }
+            } else { // 'sell'
+                if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
+                if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
+
+                const newQuantity = existingHolding.quantity - tradeData.quantity;
+                const realizedGain = (tradeData.price - existingHolding.avgCost) * tradeData.quantity;
+                const newRealizedPnL = existingHolding.realizedPnL + realizedGain;
+
+                if (newQuantity > 0.00001) { // Use a small epsilon for floating point comparison
+                    await updateHolding({ ...existingHolding, quantity: newQuantity, realizedPnL: newRealizedPnL });
+                } else {
+                    await deleteHolding(existingHolding.id);
+                }
+            }
+        } catch (error) {
+            // If holding update fails, we should ideally roll back the transaction log,
+            // but for now we'll just log error and refetch to ensure consistency.
+            console.error("Error updating holdings after trade:", error);
+            await fetchData();
+        }
     };
+
 
     // --- Watchlist, Alerts, Zakat ---
     const addWatchlistItem = async (item: WatchlistItem) => {

@@ -12,9 +12,10 @@ interface LayoutProps {
   children: React.ReactNode;
   activePage: Page;
   setActivePage: (page: Page) => void;
+  triggerPageAction: (page: Page, action: string) => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage }) => {
+const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, triggerPageAction }) => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
 
@@ -42,7 +43,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage }) 
         </div>
       </main>
       
-      <QuickActionsSidebar setActivePage={setActivePage} />
+      <QuickActionsSidebar onAction={triggerPageAction} />
       <CommandPalette 
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}

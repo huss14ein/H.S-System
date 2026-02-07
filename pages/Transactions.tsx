@@ -1,5 +1,6 @@
 
-import React, { useMemo, useState, useContext } from 'react';
+
+import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Transaction, Account } from '../types';
 import Card from '../components/Card';
@@ -158,7 +159,12 @@ const FilterButton: React.FC<{ label: string, value: string, current: string, on
     </button>
 );
 
-const Transactions: React.FC = () => {
+interface TransactionsProps {
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+}
+
+const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
 
@@ -172,6 +178,13 @@ const Transactions: React.FC = () => {
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
     });
+
+    useEffect(() => {
+        if (pageAction === 'open-transaction-modal') {
+            handleOpenTransactionModal();
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
 
     const filteredTransactions = useMemo(() => {
         const [year, month] = filters.month.split('-').map(Number);

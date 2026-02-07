@@ -6,20 +6,20 @@ import { BuildingLibraryIcon } from './icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 
 interface QuickActionsSidebarProps {
-    setActivePage: (page: Page) => void;
+    onAction: (page: Page, action: string) => void;
 }
 
-const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ setActivePage }) => {
+const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ onAction }) => {
     const [isOpen, setIsOpen] = useState(false);
 
     const actions = [
-        { name: 'Add Transaction', icon: CreditCardIcon, page: 'Transactions' as Page },
-        { name: 'Add Asset', icon: BuildingLibraryIcon, page: 'Assets' as Page },
-        { name: 'Log a Trade', icon: ArrowTrendingUpIcon, page: 'Investments' as Page },
+        { name: 'Add Transaction', icon: CreditCardIcon, page: 'Transactions' as Page, action: 'open-transaction-modal' },
+        { name: 'Add Asset', icon: BuildingLibraryIcon, page: 'Assets' as Page, action: 'open-asset-modal' },
+        { name: 'Log a Trade', icon: ArrowTrendingUpIcon, page: 'Investments' as Page, action: 'open-trade-modal' },
     ];
 
-    const handleActionClick = (page: Page) => {
-        setActivePage(page);
+    const handleActionClick = (page: Page, action: string) => {
+        onAction(page, action);
         setIsOpen(false);
     };
 
@@ -29,7 +29,7 @@ const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ setActivePage
                 {actions.map((action, index) => (
                     <button
                         key={action.name}
-                        onClick={() => handleActionClick(action.page)}
+                        onClick={() => handleActionClick(action.page, action.action)}
                         className="group relative flex items-center justify-center w-14 h-14 bg-white rounded-full shadow-lg hover:bg-primary transition-colors"
                         style={{ transitionDelay: `${index * 30}ms` }}
                     >

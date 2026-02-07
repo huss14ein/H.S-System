@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Account, Page } from '../types';
+import { Account, Page, InvestmentPortfolio } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -11,6 +11,8 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
+import { PortfolioModal } from './Investments'; // Re-using the modal for consistency
+import { PlusIcon } from '../components/icons/PlusIcon';
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -59,21 +61,25 @@ const AccountModal: React.FC<{
     );
 };
 
-const AccountCardComponent: React.FC<{ account: Account, onEdit: (acc: Account) => void, onDelete: (acc: Account) => void, onNavigate?: () => void }> = ({ account, onEdit, onDelete, onNavigate }) => {
+const AccountCardComponent: React.FC<{
+    account: Account;
+    portfolios: InvestmentPortfolio[];
+    onEditAccount: (acc: Account) => void;
+    onDeleteAccount: (acc: Account) => void;
+    onAddPortfolio: (accountId: string) => void;
+    onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
+    onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
+}> = (props) => {
+    const { account, portfolios, onEditAccount, onDeleteAccount, onAddPortfolio, onEditPortfolio, onDeletePortfolio } = props;
     const { formatCurrencyString } = useFormatCurrency();
     
     const getAccountIcon = (type: Account['type']) => {
         const iconClass = "h-8 w-8";
         switch (type) {
-            case 'Checking':
-            case 'Savings':
-                return <BanknotesIcon className={`${iconClass} text-green-500`} />;
-            case 'Credit':
-                return <CreditCardIcon className={`${iconClass} text-red-500`} />;
-            case 'Investment':
-                return <ArrowTrendingUpIcon className={`${iconClass} text-blue-500`} />;
-            default:
-                return <BuildingLibraryIcon className={`${iconClass} text-gray-500`} />;
+            case 'Checking': case 'Savings': return <BanknotesIcon className={`${iconClass} text-green-500`} />;
+            case 'Credit': return <CreditCardIcon className={`${iconClass} text-red-500`} />;
+            case 'Investment': return <ArrowTrendingUpIcon className={`${iconClass} text-blue-500`} />;
+            default: return <BuildingLibraryIcon className={`${iconClass} text-gray-500`} />;
         }
     };
     
@@ -89,8 +95,8 @@ const AccountCardComponent: React.FC<{ account: Account, onEdit: (acc: Account) 
                         </div>
                     </div>
                     <div className="flex space-x-1">
-                        <button onClick={() => onEdit(account)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                        <button onClick={() => onDelete(account)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                        <button onClick={() => onEditAccount(account)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
+                        <button onClick={() => onDeleteAccount(account)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
                     </div>
                 </div>
                 <div className="mt-4 text-right">
@@ -98,9 +104,21 @@ const AccountCardComponent: React.FC<{ account: Account, onEdit: (acc: Account) 
                     <p className={`text-2xl font-semibold ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
                 </div>
             </div>
-            {account.type === 'Investment' && onNavigate && (
-                <div className="border-t mt-4 pt-4">
-                    <button onClick={onNavigate} className="text-sm font-medium text-primary hover:underline">Manage Portfolio →</button>
+            {account.type === 'Investment' && (
+                <div className="border-t mt-4 pt-4 space-y-2">
+                    <h4 className="font-semibold text-sm text-gray-600 mb-2">Portfolios</h4>
+                    {portfolios.map(p => (
+                        <div key={p.id} className="flex justify-between items-center text-sm p-2 bg-gray-50 rounded-md">
+                            <span className="font-medium text-gray-800">{p.name}</span>
+                            <div>
+                                <button onClick={() => onEditPortfolio(p)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
+                                <button onClick={() => onDeletePortfolio(p)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                            </div>
+                        </div>
+                    ))}
+                    <button onClick={() => onAddPortfolio(account.id)} className="w-full mt-2 text-sm flex items-center justify-center gap-2 text-primary hover:bg-primary-50 p-2 rounded-lg border-2 border-dashed">
+                        <PlusIcon className="h-5 w-5"/> Add Portfolio
+                    </button>
                 </div>
             )}
         </div>
@@ -108,55 +126,60 @@ const AccountCardComponent: React.FC<{ account: Account, onEdit: (acc: Account) 
 };
 
 const Platforms: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
+    const { data, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+    // State for Account Modals
+    const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
-    const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
 
+    // State for Portfolio Modals
+    const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
+    const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio | null>(null);
+    const [currentAccountId, setCurrentAccountId] = useState<string | null>(null);
+    
+    // State for Delete Confirmation Modal (handles both)
+    const [itemToDelete, setItemToDelete] = useState<Account | InvestmentPortfolio | null>(null);
+    
     const { cashAccounts, creditAccounts, investmentPlatforms, totalCash, totalCredit } = useMemo(() => {
-        const cashAccounts = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
-        const creditAccounts = data.accounts.filter(a => a.type === 'Credit');
-        const investmentPlatforms = data.accounts.filter(a => a.type === 'Investment');
+        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
+        const credit = data.accounts.filter(a => a.type === 'Credit');
+        const investments = data.accounts.filter(a => a.type === 'Investment').map(acc => ({
+            ...acc,
+            portfolios: data.investments.filter(p => p.accountId === acc.id)
+        }));
 
-        const totalCash = cashAccounts.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalCredit = creditAccounts.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalCash = cash.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalCredit = credit.reduce((sum, acc) => sum + acc.balance, 0);
 
-        return { cashAccounts, creditAccounts, investmentPlatforms, totalCash, totalCredit };
-    }, [data.accounts]);
-
-    const handleOpenModal = (account: Account | null = null) => {
-        setAccountToEdit(account);
-        setIsModalOpen(true);
-    };
-
-    const handleSaveAccount = (account: Omit<Account, 'id' | 'balance'> | Account) => {
-        if ('id' in account) {
-            updatePlatform(account);
-        } else {
-            addPlatform(account);
-        }
-    };
+        return { cashAccounts: cash, creditAccounts: credit, investmentPlatforms: investments, totalCash, totalCredit };
+    }, [data.accounts, data.investments]);
     
-    const handleOpenDeleteModal = (account: Account) => {
-        setAccountToDelete(account);
-        setIsDeleteModalOpen(true);
-    };
+    // --- Account Handlers ---
+    const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
+    const handleSaveAccount = (account: Omit<Account, 'id' | 'balance'> | Account) => { if ('id' in account) updatePlatform(account); else addPlatform(account); };
     
+    // --- Portfolio Handlers ---
+    const handleOpenPortfolioModal = (portfolio: InvestmentPortfolio | null, accountId: string | null) => { setPortfolioToEdit(portfolio); setCurrentAccountId(accountId); setIsPortfolioModalOpen(true); };
+    const handleSavePortfolio = (portfolio: any) => { if (portfolio.id) updatePortfolio(portfolio); else addPortfolio(portfolio); };
+
+    // --- Delete Handler (for both) ---
+    const handleOpenDeleteModal = (item: Account | InvestmentPortfolio) => setItemToDelete(item);
     const handleConfirmDelete = () => {
-        if(accountToDelete) {
-            deletePlatform(accountToDelete.id);
-            setIsDeleteModalOpen(false);
-            setAccountToDelete(null);
+        if (!itemToDelete) return;
+        if ('accountId' in itemToDelete) { // It's a portfolio
+            deletePortfolio(itemToDelete.id);
+        } else { // It's an account
+            deletePlatform(itemToDelete.id);
         }
+        setItemToDelete(null);
     };
     
     return (
         <div className="space-y-8">
             <div className="flex justify-between items-center">
                 <h1 className="text-3xl font-bold text-dark">Platforms & Accounts</h1>
-                <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add New Account</button>
+                <button onClick={() => handleOpenAccountModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add New Account</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -167,26 +190,27 @@ const Platforms: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Cash Accounts</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {cashAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} onEdit={handleOpenModal} onDelete={handleOpenDeleteModal} />)}
+                    {cashAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} portfolios={[]} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onAddPortfolio={()=>{}} onEditPortfolio={()=>{}} onDeletePortfolio={()=>{}} />)}
                 </div>
             </section>
 
              <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Credit Cards</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {creditAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} onEdit={handleOpenModal} onDelete={handleOpenDeleteModal} />)}
+                    {creditAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} portfolios={[]} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onAddPortfolio={()=>{}} onEditPortfolio={()=>{}} onDeletePortfolio={()=>{}} />)}
                 </div>
             </section>
 
              <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Investment Platforms</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {investmentPlatforms.map(acc => <AccountCardComponent key={acc.id} account={acc} onEdit={handleOpenModal} onDelete={handleOpenDeleteModal} onNavigate={() => setActivePage('Investments')} />)}
+                    {investmentPlatforms.map(acc => <AccountCardComponent key={acc.id} account={acc} portfolios={acc.portfolios} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onAddPortfolio={(accountId) => handleOpenPortfolioModal(null, accountId)} onEditPortfolio={(p) => handleOpenPortfolioModal(p, p.accountId)} onDeletePortfolio={handleOpenDeleteModal} />)}
                 </div>
             </section>
 
-            <AccountModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
-            <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={accountToDelete?.name || ''} />
+            <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
+            <PortfolioModal isOpen={isPortfolioModalOpen} onClose={() => setIsPortfolioModalOpen(false)} onSave={handleSavePortfolio} portfolioToEdit={portfolioToEdit} accountId={currentAccountId} investmentAccounts={data.accounts.filter(a => a.type === 'Investment')} />
+            <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </div>
     );
 };

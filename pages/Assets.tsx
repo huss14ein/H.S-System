@@ -1,5 +1,6 @@
 
-import React, { useState, useMemo, useContext } from 'react';
+
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Asset, Goal, AssetType } from '../types';
 import Card from '../components/Card';
@@ -160,14 +161,25 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
     );
 };
 
+interface AssetsProps {
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+}
 
-const Assets: React.FC = () => {
+const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, addAsset, updateAsset, deleteAsset } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
     const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
+
+    useEffect(() => {
+        if (pageAction === 'open-asset-modal') {
+            handleOpenModal();
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
 
     const { totalAssetValue, totalRentalIncome } = useMemo(() => {
         const totalAssetValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);

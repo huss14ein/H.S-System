@@ -6,6 +6,7 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
   const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 15).toISOString().split('T')[0];
   const twoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 10).toISOString().split('T')[0];
+  const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 5).toISOString().split('T')[0];
 
   return {
     accounts: [
@@ -58,12 +59,23 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
           { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00, currentValue: 3100, zakahClass: 'Zakatable', realizedPnL: 150, assetClass: 'Stock' },
           { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00, currentValue: 2150, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF' },
         ]
+      },
+      {
+        id: 'p3',
+        name: 'US Growth Portfolio',
+        accountId: 'acc4',
+        holdings: [
+          { id: 'h6', symbol: 'NVDA', name: 'NVIDIA Corp', quantity: 5, avgCost: 120.00, currentValue: 650, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h7', symbol: 'TSLA', name: 'Tesla, Inc.', quantity: 10, avgCost: 180.00, currentValue: 1750, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+        ]
       }
     ],
     investmentTransactions: [
         { id: 'it1', accountId: 'acc4', date: lastMonth, type: 'buy', symbol: '2222.SR', quantity: 100, price: 35.50, total: 3550 },
         { id: 'it2', accountId: 'acc5', date: lastMonth, type: 'buy', symbol: 'MSFT', quantity: 10, price: 300.00, total: 3000 },
         { id: 'it3', accountId: 'acc4', date: twoMonthsAgo, type: 'buy', symbol: '1120.SR', quantity: 50, price: 80.20, total: 4010 },
+        { id: 'it4', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'NVDA', quantity: 5, price: 120.00, total: 600 },
+        { id: 'it5', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'TSLA', quantity: 10, price: 180.00, total: 1800 },
     ],
     budgets: [
         { category: 'Food', limit: 3000 },

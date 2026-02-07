@@ -37,22 +37,56 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (trade: Omit<InvestmentTransaction, 'id' | 'total'>) => void;
+    onSave: (trade: any) => void;
     investmentAccounts: Account[];
-}> = ({ isOpen, onClose, onSave, investmentAccounts }) => {
-    const [accountId, setAccountId] = useState(investmentAccounts[0]?.id || '');
+    portfolios: InvestmentPortfolio[];
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios }) => {
+    const [accountId, setAccountId] = useState('');
+    const [portfolioId, setPortfolioId] = useState('');
     const [type, setType] = useState<'buy' | 'sell'>('buy');
     const [symbol, setSymbol] = useState('');
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [holdingName, setHoldingName] = useState('');
+
+    const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
+    
+    const isNewHolding = useMemo(() => {
+        if (type === 'buy' && portfolioId && symbol) {
+            const portfolio = portfolios.find(p => p.id === portfolioId);
+            return !portfolio?.holdings.some(h => h.symbol.toLowerCase() === symbol.toLowerCase().trim());
+        }
+        return false;
+    }, [type, portfolioId, symbol, portfolios]);
+    
+    useEffect(() => {
+        if (isOpen) {
+            const firstAccount = investmentAccounts[0];
+            setAccountId(firstAccount?.id || '');
+        } else {
+            // Reset form on close
+            setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
+            setDate(new Date().toISOString().split('T')[0]);
+            setHoldingName('');
+        }
+    }, [isOpen, investmentAccounts]);
+    
+    useEffect(() => {
+        if (portfoliosForAccount.length > 0) {
+            setPortfolioId(portfoliosForAccount[0].id);
+        } else {
+            setPortfolioId('');
+        }
+    }, [portfoliosForAccount]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             await onSave({
-                accountId, type,
+                accountId, portfolioId, type,
                 symbol: symbol.toUpperCase().trim(),
+                name: isNewHolding ? holdingName : undefined,
                 quantity: parseFloat(quantity) || 0,
                 price: parseFloat(price) || 0,
                 date,
@@ -62,23 +96,25 @@ const RecordTradeModal: React.FC<{
             alert(`Error recording trade: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    
-    useEffect(() => {
-        if (isOpen) {
-            setAccountId(investmentAccounts[0]?.id || '');
-            setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
-            setDate(new Date().toISOString().split('T')[0]);
-        }
-    }, [isOpen, investmentAccounts]);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label htmlFor="account-id" className="block text-sm font-medium text-gray-700">Platform / Account</label>
-                    <select id="account-id" value={accountId} onChange={e => setAccountId(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
-                        {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                    </select>
+                 <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label htmlFor="account-id" className="block text-sm font-medium text-gray-700">Platform</label>
+                        <select id="account-id" value={accountId} onChange={e => setAccountId(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                            <option value="" disabled>Select Platform</option>
+                            {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
+                        <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
+                             <option value="" disabled>Select Portfolio</option>
+                            {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                    </div>
                 </div>
                 <div className="flex space-x-4">
                     <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
@@ -88,6 +124,12 @@ const RecordTradeModal: React.FC<{
                     <label htmlFor="symbol" className="block text-sm font-medium text-gray-700">Symbol</label>
                     <input type="text" id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                 </div>
+                {isNewHolding && (
+                    <div>
+                        <label htmlFor="holdingName" className="block text-sm font-medium text-gray-700">Company Name</label>
+                        <input type="text" id="holdingName" value={holdingName} onChange={e => setHoldingName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., Saudi Aramco"/>
+                    </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                      <div>
                         <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">Quantity</label>
@@ -102,7 +144,7 @@ const RecordTradeModal: React.FC<{
                     <label htmlFor="date" className="block text-sm font-medium text-gray-700">Transaction Date</label>
                     <input type="date" id="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Record Trade</button>
+                <button type="submit" disabled={!portfolioId} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Record Trade</button>
             </form>
         </Modal>
     );
@@ -200,32 +242,67 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
 };
 
 
-const PortfolioModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (p: any) => void, portfolioToEdit: InvestmentPortfolio | null, accountId: string | null }> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId }) => {
+export const PortfolioModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (p: any) => void;
+    portfolioToEdit: InvestmentPortfolio | null;
+    accountId: string | null;
+    investmentAccounts: Account[];
+}> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId, investmentAccounts }) => {
     const [name, setName] = useState('');
-    useEffect(() => { if (isOpen) setName(portfolioToEdit?.name || ''); }, [portfolioToEdit, isOpen]);
+    const [selectedAccountId, setSelectedAccountId] = useState('');
+
+    useEffect(() => {
+        if (isOpen) {
+            setName(portfolioToEdit?.name || '');
+            setSelectedAccountId(accountId || investmentAccounts[0]?.id || '');
+        }
+    }, [portfolioToEdit, isOpen, accountId, investmentAccounts]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (portfolioToEdit) {
             onSave({ ...portfolioToEdit, name });
         } else {
-            onSave({ name, accountId });
+            if (!selectedAccountId) {
+                alert("Please select an account for the new portfolio.");
+                return;
+            }
+            onSave({ name, accountId: selectedAccountId });
         }
         onClose();
-    }
+    };
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={portfolioToEdit ? 'Edit Portfolio' : 'Add New Portfolio'}>
             <form onSubmit={handleSubmit} className="space-y-4">
+                {!portfolioToEdit && investmentAccounts.length > 0 && (
+                    <div>
+                        <label htmlFor="portfolio-account-id" className="block text-sm font-medium text-gray-700">Platform / Account</label>
+                        <select 
+                            id="portfolio-account-id" 
+                            value={selectedAccountId} 
+                            onChange={e => setSelectedAccountId(e.target.value)} 
+                            required 
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary"
+                        >
+                            {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                        </select>
+                    </div>
+                )}
+                {!portfolioToEdit && investmentAccounts.length === 0 && (
+                    <p className="text-sm text-center text-red-600 bg-red-50 p-3 rounded-md">You must have at least one investment account to create a portfolio. Please add one from the 'Accounts' page.</p>
+                )}
                 <div>
                     <label htmlFor="portfolio-name" className="block text-sm font-medium text-gray-700">Portfolio Name</label>
                     <input type="text" id="portfolio-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/>
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Portfolio</button>
+                <button type="submit" disabled={!portfolioToEdit && investmentAccounts.length === 0} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Save Portfolio</button>
             </form>
         </Modal>
-    )
-}
+    );
+};
 
 // #endregion
 
@@ -400,7 +477,12 @@ const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, 
 };
 // #endregion
 
-const Investments: React.FC = () => {
+interface InvestmentsProps {
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+}
+
+const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
@@ -422,6 +504,13 @@ const Investments: React.FC = () => {
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
+
+  useEffect(() => {
+    if (pageAction === 'open-trade-modal') {
+      setIsTradeModalOpen(true);
+      clearPageAction?.();
+    }
+  }, [pageAction, clearPageAction]);
 
   const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
   
@@ -478,9 +567,12 @@ const Investments: React.FC = () => {
 
   return (
     <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center flex-wrap gap-4">
              <h1 className="text-3xl font-bold text-dark">Investments</h1>
-             <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
+             <div className="flex items-center space-x-2">
+                <button onClick={() => handleOpenPortfolioModal(null, null)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center"><PlusIcon className="h-4 w-4 mr-2" />Add Portfolio</button>
+                <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
+             </div>
         </div>
       
       <div className="border-b border-gray-200">
@@ -496,9 +588,16 @@ const Investments: React.FC = () => {
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => setIsHoldingModalOpen(false)} holding={selectedHolding} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
-      <PortfolioModal isOpen={isPortfolioModalOpen} onClose={() => setIsPortfolioModalOpen(false)} onSave={handleSavePortfolio} portfolioToEdit={portfolioToEdit} accountId={currentAccountId} />
+      <PortfolioModal 
+        isOpen={isPortfolioModalOpen} 
+        onClose={() => setIsPortfolioModalOpen(false)} 
+        onSave={handleSavePortfolio} 
+        portfolioToEdit={portfolioToEdit} 
+        accountId={currentAccountId}
+        investmentAccounts={investmentAccounts}
+      />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-      <RecordTradeModal isOpen={isTradeModalOpen} onClose={() => setIsTradeModalOpen(false)} onSave={recordTrade} investmentAccounts={investmentAccounts} />
+      <RecordTradeModal isOpen={isTradeModalOpen} onClose={() => setIsTradeModalOpen(false)} onSave={recordTrade} investmentAccounts={investmentAccounts} portfolios={data.investments} />
     </div>
   );
 };

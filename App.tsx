@@ -34,6 +34,7 @@ const LoadingSpinner: React.FC = () => (
 
 const App: React.FC = () => {
   const [activePage, setActivePage] = useState<Page>('Dashboard');
+  const [pageAction, setPageAction] = useState<string | null>(null);
   const [isLoginView, setIsLoginView] = useState(true);
   const auth = useContext(AuthContext);
 
@@ -43,38 +44,30 @@ const App: React.FC = () => {
 
   const { isAuthenticated } = auth;
 
+  const triggerPageAction = (page: Page, action: string) => {
+    setActivePage(page);
+    setPageAction(action);
+  };
+  const clearPageAction = () => setPageAction(null);
+
   const renderPage = () => {
+    const actionProps = { pageAction, clearPageAction };
     switch (activePage) {
-      case 'Dashboard':
-        return <Dashboard setActivePage={setActivePage} />;
-      case 'Summary':
-        return <Summary />;
-      case 'Platform':
-        return <Platforms setActivePage={setActivePage} />;
-      case 'Investments':
-        return <Investments />;
-      case 'Assets':
-        return <Assets />;
-      case 'Liabilities':
-        return <Liabilities />;
-      case 'Transactions':
-        return <Transactions />;
-      case 'Budgets':
-        return <Budgets />;
-      case 'Goals':
-        return <Goals />;
-      case 'Plan':
-        return <Plan />;
-      case 'Forecast':
-        return <Forecast />;
-      case 'Analysis':
-        return <Analysis />;
-      case 'Zakat':
-        return <Zakat />;
-      case 'System & APIs Health':
-        return <SystemHealth />;
-      default:
-        return <Dashboard setActivePage={setActivePage} />;
+      case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
+      case 'Summary': return <Summary />;
+      case 'Platform': return <Platforms setActivePage={setActivePage} />;
+      case 'Investments': return <Investments {...actionProps} />;
+      case 'Assets': return <Assets {...actionProps} />;
+      case 'Liabilities': return <Liabilities />;
+      case 'Transactions': return <Transactions {...actionProps} />;
+      case 'Budgets': return <Budgets />;
+      case 'Goals': return <Goals />;
+      case 'Plan': return <Plan />;
+      case 'Forecast': return <Forecast />;
+      case 'Analysis': return <Analysis />;
+      case 'Zakat': return <Zakat />;
+      case 'System & APIs Health': return <SystemHealth />;
+      default: return <Dashboard setActivePage={setActivePage} />;
     }
   };
   
@@ -87,7 +80,7 @@ const App: React.FC = () => {
       <CurrencyProvider>
         <MarketDataProvider>
           <MarketSimulator />
-          <Layout activePage={activePage} setActivePage={setActivePage}>
+          <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
             <Suspense fallback={<LoadingSpinner />}>
               {renderPage()}
             </Suspense>
