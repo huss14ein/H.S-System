@@ -19,30 +19,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // I2: Gracefully handle missing Supabase configuration to prevent crashes.
-        if (!supabase) {
+        setLoading(true);
+
+        // All Supabase logic is now conditional on the client being available.
+        if (supabase) {
+            const getSession = async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                setSession(session);
+                setUser(session?.user ?? null);
+                setLoading(false);
+            };
+
+            getSession();
+
+            const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+                setSession(session);
+                setUser(session?.user ?? null);
+            });
+
+            return () => {
+                subscription?.unsubscribe();
+            };
+        } else {
+            // I2: Gracefully handle missing Supabase configuration to prevent crashes.
             console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             setLoading(false);
-            return;
         }
-
-        const getSession = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            setSession(session);
-            setUser(session?.user ?? null);
-            setLoading(false);
-        };
-
-        getSession();
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            setUser(session?.user ?? null);
-        });
-
-        return () => {
-            subscription?.unsubscribe();
-        };
     }, []);
     
     const noOpPromise = async (message: string) => {
