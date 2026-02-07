@@ -14,6 +14,49 @@ interface TranscriptItem {
     text: string;
 }
 
+const audioProcessorString = `
+class AudioProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.bufferSize = 4096;
+    this._buffer = new Float32Array(this.bufferSize);
+    this._bytesWritten = 0;
+  }
+
+  process(inputs) {
+    const input = inputs[0];
+    const channel = input[0];
+
+    if (channel) {
+      // It's possible to receive a block larger than our buffer size.
+      // We process the data in chunks of our buffer size.
+      let data = new Float32Array(channel);
+      let dataLeft = data.length;
+      let dataIndex = 0;
+
+      while (dataLeft > 0) {
+        const spaceLeft = this.bufferSize - this._bytesWritten;
+        const toWrite = Math.min(dataLeft, spaceLeft);
+        
+        this._buffer.set(data.subarray(dataIndex, dataIndex + toWrite), this._bytesWritten);
+        this._bytesWritten += toWrite;
+        dataIndex += toWrite;
+        dataLeft -= toWrite;
+
+        if (this._bytesWritten === this.bufferSize) {
+          this.port.postMessage(this._buffer);
+          this._bytesWritten = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+
+registerProcessor('audio-processor', AudioProcessor);
+`;
+
+
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem } = useContext(DataContext)!;
     const [status, setStatus] = useState<Status>('Inactive');
@@ -23,7 +66,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const sessionRef = useRef<Promise<any> | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+    const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -118,14 +161,20 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                     tools: [{ functionDeclarations }],
                 },
                 callbacks: {
-                    onopen: () => {
+                    onopen: async () => {
                         setStatus('Listening');
                         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                        mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
-                        scriptProcessorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
                         
-                        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                        const blob = new Blob([audioProcessorString], { type: 'application/javascript' });
+                        const blobUrl = URL.createObjectURL(blob);
+                        await audioContextRef.current.audioWorklet.addModule(blobUrl);
+
+                        mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
+                        const workletNode = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+                        audioWorkletNodeRef.current = workletNode;
+                        
+                        workletNode.port.onmessage = (event) => {
+                            const inputData = event.data; // This is a Float32Array
                             const pcmBlob: Blob = {
                                 data: encode(new Uint8Array(new Int16Array(inputData.map(x => x * 32768)).buffer)),
                                 mimeType: 'audio/pcm;rate=16000',
@@ -133,8 +182,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                             sessionRef.current?.then((session) => session.sendRealtimeInput({ media: pcmBlob }));
                         };
                         
-                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(audioContextRef.current.destination);
+                        mediaStreamSourceRef.current.connect(workletNode);
+                        workletNode.connect(audioContextRef.current.destination);
                     },
                     onmessage: async (message: LiveServerMessage) => {
                          if (message.serverContent) {
@@ -226,7 +275,9 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         sessionRef.current = null;
         
         mediaStreamSourceRef.current?.disconnect();
-        scriptProcessorRef.current?.disconnect();
+        audioWorkletNodeRef.current?.disconnect();
+        audioWorkletNodeRef.current = null;
+        
         audioContextRef.current?.close();
         
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());

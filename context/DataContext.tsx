@@ -116,14 +116,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
 
-    const resetData = async () => {
-      if (!supabase || !auth?.user) return;
-      if (window.confirm("Are you sure you want to permanently delete all your financial data? This action cannot be undone.")) {
+    const _internalResetData = async () => {
+        if (!supabase || !auth?.user) return;
         setLoading(true);
         const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings'];
         await Promise.all(tables.map(table => supabase.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);
+    };
+
+    const resetData = async () => {
+      if (window.confirm("Are you sure you want to permanently delete all your financial data? This action cannot be undone.")) {
+        await _internalResetData();
         alert("Your data has been cleared.");
       }
     };
@@ -168,8 +172,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert("Demo data loaded successfully!");
         } catch(error) {
             console.error("Error loading demo data:", error);
-            alert(`Failed to load demo data: ${error instanceof Error ? error.message : "Unknown error"}`);
-            await resetData(); // Clean up partial data on failure
+            alert(`Failed to load demo data: ${error instanceof Error ? error.message : "Unknown error"}. Cleaning up...`);
+            await _internalResetData();
         } finally {
             await fetchData(); // Refetch all data to update UI
         }
@@ -184,14 +188,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('assets').update(asset).eq('id', asset.id);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('assets').update(asset).match({ id: asset.id, user_id: auth.user.id });
         if (error) console.error(error);
         else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === asset.id ? asset : a) }));
     };
     const deleteAsset = async (assetId: string) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('assets').delete().eq('id', assetId);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('assets').delete().match({ id: assetId, user_id: auth.user.id });
         if (error) console.error(error);
         else setData(prev => ({ ...prev, assets: prev.assets.filter(a => a.id !== assetId) }));
     };
@@ -204,20 +208,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
     };
     const updateGoal = async (goal: Goal) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('goals').update(goal).eq('id', goal.id);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('goals').update(goal).match({ id: goal.id, user_id: auth.user.id });
       if (error) console.error(error);
       else setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
     };
     const deleteGoal = async (goalId: string) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('goals').delete().eq('id', goalId);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('goals').delete().match({ id: goalId, user_id: auth.user.id });
       if (error) console.error(error);
       else setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
     };
     const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('goals').upsert(allocations);
+      if(!supabase || !auth?.user) return;
+      const upsertData = allocations.map(a => ({ ...a, user_id: auth.user!.id }));
+      const { error } = await supabase.from('goals').upsert(upsertData);
       if(error) console.error(error);
       else setData(prev => ({ ...prev, goals: prev.goals.map(g => { const newAlloc = allocations.find(a => a.id === g.id); return newAlloc ? { ...g, ...newAlloc } : g; }) }));
     };
@@ -230,14 +235,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       else setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
     };
     const updateLiability = async (liability: Liability) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('liabilities').update(liability).eq('id', liability.id);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('liabilities').update(liability).match({ id: liability.id, user_id: auth.user.id });
       if(error) console.error(error);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
     };
     const deleteLiability = async (liabilityId: string) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('liabilities').delete().eq('id', liabilityId);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('liabilities').delete().match({ id: liabilityId, user_id: auth.user.id });
       if(error) console.error(error);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.filter(l => l.id !== liabilityId) }));
     };
@@ -250,14 +255,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       else setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
     };
     const updateBudget = async (budget: Budget) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('budgets').update(budget).eq('category', budget.category);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category });
       if(error) console.error(error);
       else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => b.category === budget.category ? budget : b) }));
     };
     const deleteBudget = async (category: string) => {
-      if(!supabase) return;
-      const { error } = await supabase.from('budgets').delete().eq('category', category);
+      if(!supabase || !auth?.user) return;
+      const { error } = await supabase.from('budgets').delete().match({ user_id: auth.user.id, category });
       if(error) console.error(error);
       else setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.category !== category) }));
     };
@@ -270,14 +275,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
     };
     const updateTransaction = async (transaction: Transaction) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('transactions').update(transaction).eq('id', transaction.id);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('transactions').update(transaction).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? transaction : t) }));
     };
     const deleteTransaction = async (transactionId: string) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('transactions').delete().eq('id', transactionId);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
     };
@@ -290,14 +295,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
     };
     const updatePlatform = async (platform: Account) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('accounts').update(platform).eq('id', platform.id);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('accounts').update(platform).match({ id: platform.id, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? platform : a) }));
     };
     const deletePlatform = async (platformId: string) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('accounts').delete().eq('id', platformId);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('accounts').delete().match({ id: platformId, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== platformId) }));
     };
@@ -310,20 +315,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('investment_portfolios').update(portfolio).eq('id', portfolio.id);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('investment_portfolios').update(portfolio).match({ id: portfolio.id, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
     };
     const deletePortfolio = async (portfolioId: string) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('investment_portfolios').delete().eq('id', portfolioId);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('investment_portfolios').delete().match({ id: portfolioId, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, investments: prev.investments.filter(p => p.id !== portfolioId) }));
     };
     const updateHolding = async (holding: Holding) => {
-        if(!supabase) return;
-        const { error } = await supabase.from('holdings').update(holding).eq('id', holding.id);
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
         if(error) console.error(error);
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
     };
@@ -353,8 +358,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
     };
     const deleteWatchlistItem = async (symbol: string) => {
-        if(!supabase) return;
-        await supabase.from('watchlist').delete().eq('symbol', symbol);
+        if(!supabase || !auth?.user) return;
+        await supabase.from('watchlist').delete().match({ user_id: auth.user.id, symbol });
         setData(prev => ({ ...prev, watchlist: prev.watchlist.filter(i => i.symbol !== symbol) }));
     };
     const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
@@ -364,13 +369,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, created] }));
     };
     const updatePriceAlert = async (alert: PriceAlert) => {
-        if(!supabase) return;
-        await supabase.from('price_alerts').update(alert).eq('id', alert.id);
+        if(!supabase || !auth?.user) return;
+        await supabase.from('price_alerts').update(alert).match({ id: alert.id, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.map(a => a.id === alert.id ? alert : a) }));
     };
     const deletePriceAlert = async (alertId: string) => {
-        if(!supabase) return;
-        await supabase.from('price_alerts').delete().eq('id', alertId);
+        if(!supabase || !auth?.user) return;
+        await supabase.from('price_alerts').delete().match({ id: alertId, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
     };
     const addZakatPayment = async (payment: Omit<ZakatPayment, 'id'>) => {

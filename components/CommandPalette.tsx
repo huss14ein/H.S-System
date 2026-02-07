@@ -28,12 +28,18 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
         );
     }, [query, commands]);
     
+    // Effect to reset state when the palette is closed
     useEffect(() => {
         if (!isOpen) {
             setQuery('');
             setSelectedIndex(0);
         }
     }, [isOpen]);
+
+    // Effect to reset selection when the query changes
+    useEffect(() => {
+        setSelectedIndex(0);
+    }, [query]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -43,10 +49,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                 setIsOpen(false);
             } else if (event.key === 'ArrowDown') {
                 event.preventDefault();
-                setSelectedIndex(prev => (prev + 1) % filteredCommands.length);
+                if (filteredCommands.length > 0) {
+                    setSelectedIndex(prev => (prev + 1) % filteredCommands.length);
+                }
             } else if (event.key === 'ArrowUp') {
                 event.preventDefault();
-                setSelectedIndex(prev => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+                if (filteredCommands.length > 0) {
+                    setSelectedIndex(prev => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+                }
             } else if (event.key === 'Enter') {
                 event.preventDefault();
                 if (filteredCommands[selectedIndex]) {

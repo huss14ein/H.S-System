@@ -35,8 +35,13 @@ const MarketSimulator: React.FC = () => {
             const newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             const holdingUpdates: { id: string, currentValue: number }[] = [];
             
-            // E2: Optimize price alert checking by using a Map for O(1) lookups
-            const activeAlertsBySymbol = new Map(data.priceAlerts.filter(a => a.status === 'active').map(a => [a.symbol, a]));
+            const activeAlertsBySymbol = new Map<string, PriceAlert[]>();
+            data.priceAlerts.filter(a => a.status === 'active').forEach(alert => {
+                if (!activeAlertsBySymbol.has(alert.symbol)) {
+                    activeAlertsBySymbol.set(alert.symbol, []);
+                }
+                activeAlertsBySymbol.get(alert.symbol)!.push(alert);
+            });
             const triggeredAlerts: PriceAlert[] = [];
             const previousPrices = previousPricesRef.current;
 
@@ -61,9 +66,14 @@ const MarketSimulator: React.FC = () => {
                 newPrices[symbol] = { price: newPrice, change, changePercent };
                 previousPrices[symbol] = newPrice;
 
-                const relevantAlert = activeAlertsBySymbol.get(symbol);
-                if (relevantAlert && ((newPrice >= relevantAlert.targetPrice && oldPrice < relevantAlert.targetPrice) || (newPrice <= relevantAlert.targetPrice && oldPrice > relevantAlert.targetPrice))) {
-                     triggeredAlerts.push({ ...relevantAlert, status: 'triggered' });
+                const relevantAlerts = activeAlertsBySymbol.get(symbol);
+                if (relevantAlerts) {
+                    relevantAlerts.forEach(relevantAlert => {
+                        const hasTriggered = (newPrice >= relevantAlert.targetPrice && oldPrice < relevantAlert.targetPrice) || (newPrice <= relevantAlert.targetPrice && oldPrice > relevantAlert.targetPrice);
+                        if (hasTriggered) {
+                            triggeredAlerts.push({ ...relevantAlert, status: 'triggered' });
+                        }
+                    });
                 }
             });
             
@@ -83,7 +93,9 @@ const MarketSimulator: React.FC = () => {
             }
             
             if (triggeredAlerts.length > 0) {
-                triggeredAlerts.forEach(alert => updatePriceAlert(alert));
+                // Ensure we only trigger each alert once per simulation run
+                const uniqueTriggered = Array.from(new Map(triggeredAlerts.map(a => [a.id, a])).values());
+                uniqueTriggered.forEach(alert => updatePriceAlert(alert));
             }
         };
 

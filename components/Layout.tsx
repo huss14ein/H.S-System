@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import Header from './Header';
 import { Page } from '../types';
@@ -40,9 +41,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage }) 
             {children}
         </div>
       </main>
-      <footer className="text-center text-xs text-gray-400 p-4 border-t bg-slate-50">
-          Market data and system health are simulated for demonstration purposes only. This is not financial advice.
-      </footer>
+      
       <QuickActionsSidebar setActivePage={setActivePage} />
       <CommandPalette 
         isOpen={isCommandPaletteOpen}
