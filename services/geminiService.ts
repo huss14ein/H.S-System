@@ -24,9 +24,9 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    const apiKey = import.meta.env.VITE_API_KEY;
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("VITE_API_KEY environment variable not set. AI features will be disabled.");
+        console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey });

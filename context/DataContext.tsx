@@ -15,14 +15,14 @@ const initialData: FinancialData = {
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
-  addAsset: (asset: Omit<Asset, 'id' | 'user_id'>) => Promise<void>;
+  addAsset: (asset: Omit<Asset, 'user_id'>) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (assetId: string) => Promise<void>;
-  addGoal: (goal: Omit<Goal, 'id'|'user_id'>) => Promise<void>;
+  addGoal: (goal: Omit<Goal, 'user_id'>) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
   updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
-  addLiability: (liability: Omit<Liability, 'id' | 'user_id'>) => Promise<void>;
+  addLiability: (liability: Omit<Liability, 'user_id'>) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
   addBudget: (budget: Omit<Budget, 'id' | 'user_id'>) => Promise<void>;
@@ -207,48 +207,50 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Assets ---
-    const addAsset = async (asset: Omit<Asset, 'id'>) => {
+    const addAsset = async (asset: Omit<Asset, 'user_id'>) => {
         if(!supabase) return;
         const db = supabase;
-        const { data: newAsset, error } = await db.from('assets').insert(withUser(asset)).select().single();
-        if (error) console.error(error);
+        const { id, ...assetData } = asset as Asset;
+        const { data: newAsset, error } = await db.from('assets').insert(withUser(assetData)).select().single();
+        if (error) console.error("Error adding asset:", error);
         else setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('assets').update(asset).match({ id: asset.id, user_id: auth.user.id });
-        if (error) console.error(error);
+        if (error) console.error("Error updating asset:", error);
         else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === asset.id ? asset : a) }));
     };
     const deleteAsset = async (assetId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('assets').delete().match({ id: assetId, user_id: auth.user.id });
-        if (error) console.error(error);
+        if (error) console.error("Error deleting asset:", error);
         else setData(prev => ({ ...prev, assets: prev.assets.filter(a => a.id !== assetId) }));
     };
 
     // --- Goals ---
-    const addGoal = async (goal: Omit<Goal, 'id'>) => {
+    const addGoal = async (goal: Omit<Goal, 'user_id'>) => {
         if(!supabase) return;
         const db = supabase;
-        const { data: newGoal, error } = await db.from('goals').insert(withUser(goal)).select().single();
-        if (error) console.error(error);
+        const { id, ...goalData } = goal as Goal;
+        const { data: newGoal, error } = await db.from('goals').insert(withUser(goalData)).select().single();
+        if (error) console.error("Error adding goal:", error);
         else setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
     };
     const updateGoal = async (goal: Goal) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('goals').update(goal).match({ id: goal.id, user_id: auth.user.id });
-      if (error) console.error(error);
+      if (error) console.error("Error updating goal:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
     };
     const deleteGoal = async (goalId: string) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('goals').delete().match({ id: goalId, user_id: auth.user.id });
-      if (error) console.error(error);
+      if (error) console.error("Error deleting goal:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
     };
     const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
@@ -256,30 +258,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const db = supabase;
       const upsertData = allocations.map(a => ({ ...a, user_id: auth.user!.id }));
       const { error } = await db.from('goals').upsert(upsertData);
-      if(error) console.error(error);
+      if(error) console.error("Error updating goal allocations:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.map(g => { const newAlloc = allocations.find(a => a.id === g.id); return newAlloc ? { ...g, ...newAlloc } : g; }) }));
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Omit<Liability, 'id' | 'user_id'>) => {
+    const addLiability = async (liability: Omit<Liability, 'user_id'>) => {
       if(!supabase) return;
       const db = supabase;
-      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(liability)).select().single();
-      if (error) console.error(error);
+      const { id, ...liabilityData } = liability as Liability;
+      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(liabilityData)).select().single();
+      if (error) console.error("Error adding liability:", error);
       else setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
     };
     const updateLiability = async (liability: Liability) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('liabilities').update(liability).match({ id: liability.id, user_id: auth.user.id });
-      if(error) console.error(error);
+      if(error) console.error("Error updating liability:", error);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
     };
     const deleteLiability = async (liabilityId: string) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('liabilities').delete().match({ id: liabilityId, user_id: auth.user.id });
-      if(error) console.error(error);
+      if(error) console.error("Error deleting liability:", error);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.filter(l => l.id !== liabilityId) }));
     };
 
@@ -288,21 +291,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if(!supabase) return;
       const db = supabase;
       const { data: newBudget, error } = await db.from('budgets').insert(withUser(budget)).select().single();
-      if(error) console.error(error);
+      if(error) console.error("Error adding budget:", error);
       else setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
     };
     const updateBudget = async (budget: Budget) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category, month: budget.month, year: budget.year });
-      if(error) console.error(error);
+      if(error) console.error("Error updating budget:", error);
       else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => (b.category === budget.category && b.month === budget.month && b.year === budget.year) ? budget : b) }));
     };
     const deleteBudget = async (category: string, month: number, year: number) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
       const { error } = await db.from('budgets').delete().match({ user_id: auth.user.id, category, month, year });
-      if(error) console.error(error);
+      if(error) console.error("Error deleting budget:", error);
       else setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => !(b.category === category && b.month === month && b.year === year)) }));
     };
     const copyBudgetsFromPreviousMonth = async (targetYear: number, targetMonth: number) => {
@@ -336,21 +339,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const db = supabase;
         const { data: newTx, error } = await db.from('transactions').insert(withUser(transaction)).select().single();
-        if(error) console.error(error);
+        if(error) console.error("Error adding transaction:", error);
         else setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('transactions').update(transaction).match({ id: transaction.id, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error updating transaction:", error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? transaction : t) }));
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error deleting transaction:", error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
     };
 
@@ -359,21 +362,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const db = supabase;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
-        if(error) console.error(error);
+        if(error) console.error("Error adding platform:", error);
         else setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
     };
     const updatePlatform = async (platform: Account) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('accounts').update(platform).match({ id: platform.id, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error updating platform:", error);
         else setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? platform : a) }));
     };
     const deletePlatform = async (platformId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('accounts').delete().match({ id: platformId, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error deleting platform:", error);
         else setData(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== platformId) }));
     };
     
@@ -382,21 +385,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const db = supabase;
         const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
-        if(error) console.error(error);
+        if(error) console.error("Error adding portfolio:", error);
         else setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('investment_portfolios').update(portfolio).match({ id: portfolio.id, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error updating portfolio:", error);
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
     };
     const deletePortfolio = async (portfolioId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('investment_portfolios').delete().match({ id: portfolioId, user_id: auth.user.id });
-        if(error) console.error(error);
+        if(error) console.error("Error deleting portfolio:", error);
         else setData(prev => ({ ...prev, investments: prev.investments.filter(p => p.id !== portfolioId) }));
     };
     const addHolding = async (holding: Omit<Holding, 'id' | 'user_id'>) => {
