@@ -1,4 +1,4 @@
-import React, { useState, useContext, useMemo, useEffect } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PlannedTrade } from '../types';
 import Modal from '../components/Modal';

@@ -18,7 +18,6 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { PlusIcon } from '../components/icons/PlusIcon';
-import { MoonIcon } from '../components/icons/MoonIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
