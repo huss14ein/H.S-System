@@ -1,6 +1,16 @@
-import React, { createContext, useState, ReactNode } from 'react';
-import { mockFinancialData } from '../data/mockData';
+import React, { createContext, useState, ReactNode, useEffect, useContext } from 'react';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert } from '../types';
+import { getMockData } from '../data/mockData';
+
+// Define an empty state for when data is loading or for new users
+const initialData: FinancialData = {
+    accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
+    investments: [], investmentTransactions: [], budgets: [], watchlist: [],
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true },
+    zakatPayments: [], priceAlerts: []
+};
 
 interface DataContextType {
   data: FinancialData;
@@ -37,64 +47,288 @@ interface DataContextType {
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
   resetData: () => Promise<void>;
+  loadDemoData: () => Promise<void>;
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [data, setData] = useState<FinancialData>(mockFinancialData);
-    const [loading] = useState(false);
+    const [data, setData] = useState<FinancialData>(initialData);
+    const [loading, setLoading] = useState(true);
+    const auth = useContext(AuthContext);
 
-    const resetData = async () => setData(mockFinancialData);
+    const fetchData = async () => {
+        if (!auth?.user || !supabase) {
+            setLoading(false);
+            return;
+        }
+        setLoading(true);
+        try {
+            const [
+                accounts, assets, liabilities, goals, transactions, investments,
+                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts
+            ] = await Promise.all([
+                supabase.from('accounts').select('*'),
+                supabase.from('assets').select('*'),
+                supabase.from('liabilities').select('*'),
+                supabase.from('goals').select('*'),
+                supabase.from('transactions').select('*'),
+                supabase.from('investment_portfolios').select('*, holdings(*)'),
+                supabase.from('investment_transactions').select('*'),
+                supabase.from('budgets').select('*'),
+                supabase.from('watchlist').select('*'),
+                supabase.from('settings').select('*').single(),
+                supabase.from('zakat_payments').select('*'),
+                supabase.from('price_alerts').select('*')
+            ]);
+
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts };
+            Object.entries(allFetches).forEach(([key, value]) => {
+              if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
+            });
+
+            setData({
+                accounts: accounts.data || [],
+                assets: assets.data || [],
+                liabilities: liabilities.data || [],
+                goals: goals.data || [],
+                transactions: transactions.data || [],
+                investments: (investments.data as any) || [],
+                investmentTransactions: investmentTransactions.data || [],
+                budgets: budgets.data || [],
+                watchlist: watchlist.data || [],
+                settings: settings.data || initialData.settings,
+                zakatPayments: zakatPayments.data || [],
+                priceAlerts: priceAlerts.data || []
+            });
+        } catch (error) {
+            console.error("Error fetching financial data:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+
+    useEffect(() => {
+        fetchData();
+    }, [auth?.user]);
+    
+    // Helper to add user_id to any object
+    const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
+
+    const resetData = async () => {
+      if (!supabase || !auth?.user) return;
+      if (window.confirm("Are you sure you want to permanently delete all your financial data? This action cannot be undone.")) {
+        setLoading(true);
+        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings'];
+        await Promise.all(tables.map(table => supabase.from(table).delete().eq('user_id', auth.user!.id)));
+        setData(initialData);
+        setLoading(false);
+        alert("Your data has been cleared.");
+      }
+    };
+    
+    const loadDemoData = async () => {
+        if (!supabase || !auth?.user) return;
+        setLoading(true);
+
+        const mock = getMockData();
+        const userId = auth.user.id;
+        
+        try {
+            // Non-relational data
+            await Promise.all([
+                supabase.from('assets').insert(mock.assets.map(a => ({ ...a, id: undefined, user_id: userId }))),
+                supabase.from('liabilities').insert(mock.liabilities.map(l => ({ ...l, id: undefined, user_id: userId }))),
+                supabase.from('budgets').insert(mock.budgets.map(b => ({ ...b, user_id: userId }))),
+                supabase.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
+                supabase.from('goals').insert(mock.goals.map(g => ({ ...g, id: undefined, user_id: userId }))),
+            ]);
+
+            // Accounts
+            const { data: newAccounts, error: accError } = await supabase.from('accounts').insert(mock.accounts.map(a => ({...a, id: undefined, user_id: userId}))).select();
+            if (accError || !newAccounts) throw accError || new Error("Failed to create accounts");
+            
+            const accountIdMap = new Map(mock.accounts.map((mockAcc, i) => [mockAcc.id, newAccounts[i].id]));
+            
+            // Transactions
+            await supabase.from('transactions').insert(mock.transactions.map(t => ({ ...t, id: undefined, user_id: userId, accountId: accountIdMap.get(t.accountId)! })));
+
+            // Portfolios
+            const { data: newPortfolios, error: portError } = await supabase.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, accountId: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
+            if (portError || !newPortfolios) throw portError || new Error("Failed to create portfolios");
+
+            const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
+            
+            // Holdings and Investment Transactions
+            const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(h => ({...h, id: undefined, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
+            await supabase.from('holdings').insert(holdingsToInsert);
+            await supabase.from('investment_transactions').insert(mock.investmentTransactions.map(t => ({ ...t, id: undefined, user_id: userId, accountId: accountIdMap.get(t.accountId)! })));
+
+            alert("Demo data loaded successfully!");
+        } catch(error) {
+            console.error("Error loading demo data:", error);
+            alert(`Failed to load demo data: ${error instanceof Error ? error.message : "Unknown error"}`);
+            await resetData(); // Clean up partial data on failure
+        } finally {
+            await fetchData(); // Refetch all data to update UI
+        }
+    };
+
 
     // --- Assets ---
-    const addAsset = async (asset: Omit<Asset, 'id'>) => setData(prev => ({ ...prev, assets: [...prev.assets, { ...asset, id: `asset_${Date.now()}` }] }));
-    const updateAsset = async (asset: Asset) => setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === asset.id ? asset : a) }));
-    const deleteAsset = async (assetId: string) => setData(prev => ({ ...prev, assets: prev.assets.filter(a => a.id !== assetId) }));
+    const addAsset = async (asset: Omit<Asset, 'id'>) => {
+        if(!supabase) return;
+        const { data: newAsset, error } = await supabase.from('assets').insert(withUser(asset)).select().single();
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
+    };
+    const updateAsset = async (asset: Asset) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('assets').update(asset).eq('id', asset.id);
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === asset.id ? asset : a) }));
+    };
+    const deleteAsset = async (assetId: string) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('assets').delete().eq('id', assetId);
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, assets: prev.assets.filter(a => a.id !== assetId) }));
+    };
 
     // --- Goals ---
-    const addGoal = async (goal: Omit<Goal, 'id'>) => setData(prev => ({ ...prev, goals: [...prev.goals, { ...goal, id: `goal_${Date.now()}` }] }));
-    const updateGoal = async (goal: Goal) => setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
-    const deleteGoal = async (goalId: string) => setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
+    const addGoal = async (goal: Omit<Goal, 'id'>) => {
+        if(!supabase) return;
+        const { data: newGoal, error } = await supabase.from('goals').insert(withUser(goal)).select().single();
+        if (error) console.error(error);
+        else setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
+    };
+    const updateGoal = async (goal: Goal) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('goals').update(goal).eq('id', goal.id);
+      if (error) console.error(error);
+      else setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
+    };
+    const deleteGoal = async (goalId: string) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('goals').delete().eq('id', goalId);
+      if (error) console.error(error);
+      else setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
+    };
     const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
-        setData(prev => ({ ...prev, goals: prev.goals.map(g => { const newAlloc = allocations.find(a => a.id === g.id); return newAlloc ? { ...g, ...newAlloc } : g; }) }));
+      if(!supabase) return;
+      const { error } = await supabase.from('goals').upsert(allocations);
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, goals: prev.goals.map(g => { const newAlloc = allocations.find(a => a.id === g.id); return newAlloc ? { ...g, ...newAlloc } : g; }) }));
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Omit<Liability, 'id'>) => setData(prev => ({ ...prev, liabilities: [...prev.liabilities, { ...liability, id: `liab_${Date.now()}` }] }));
-    const updateLiability = async (liability: Liability) => setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
-    const deleteLiability = async (liabilityId: string) => setData(prev => ({ ...prev, liabilities: prev.liabilities.filter(l => l.id !== liabilityId) }));
+    const addLiability = async (liability: Omit<Liability, 'id'>) => {
+      if(!supabase) return;
+      const { data: newLiability, error } = await supabase.from('liabilities').insert(withUser(liability)).select().single();
+      if (error) console.error(error);
+      else setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
+    };
+    const updateLiability = async (liability: Liability) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('liabilities').update(liability).eq('id', liability.id);
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
+    };
+    const deleteLiability = async (liabilityId: string) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('liabilities').delete().eq('id', liabilityId);
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, liabilities: prev.liabilities.filter(l => l.id !== liabilityId) }));
+    };
 
     // --- Budgets ---
-    const addBudget = async (budget: Budget) => setData(prev => ({ ...prev, budgets: [...prev.budgets, budget] }));
-    const updateBudget = async (budget: Budget) => setData(prev => ({ ...prev, budgets: prev.budgets.map(b => b.category === budget.category ? budget : b) }));
-    const deleteBudget = async (category: string) => setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.category !== category) }));
-
+    const addBudget = async (budget: Budget) => {
+      if(!supabase) return;
+      const { data: newBudget, error } = await supabase.from('budgets').insert(withUser(budget)).select().single();
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
+    };
+    const updateBudget = async (budget: Budget) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('budgets').update(budget).eq('category', budget.category);
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => b.category === budget.category ? budget : b) }));
+    };
+    const deleteBudget = async (category: string) => {
+      if(!supabase) return;
+      const { error } = await supabase.from('budgets').delete().eq('category', category);
+      if(error) console.error(error);
+      else setData(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.category !== category) }));
+    };
+    
     // --- Transactions ---
-    const addTransaction = async (transaction: Omit<Transaction, 'id'>) => setData(prev => ({ ...prev, transactions: [{ ...transaction, id: `txn_${Date.now()}` }, ...prev.transactions] }));
-    const updateTransaction = async (transaction: Transaction) => setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? transaction : t) }));
-    const deleteTransaction = async (transactionId: string) => setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+    const addTransaction = async (transaction: Omit<Transaction, 'id'>) => {
+        if(!supabase) return;
+        const { data: newTx, error } = await supabase.from('transactions').insert(withUser(transaction)).select().single();
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
+    };
+    const updateTransaction = async (transaction: Transaction) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('transactions').update(transaction).eq('id', transaction.id);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? transaction : t) }));
+    };
+    const deleteTransaction = async (transactionId: string) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('transactions').delete().eq('id', transactionId);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+    };
 
     // --- Accounts / Platforms ---
-    const addPlatform = async (platform: Omit<Account, 'id' | 'balance'>) => setData(prev => ({ ...prev, accounts: [...prev.accounts, { ...platform, id: `acc_${Date.now()}`, balance: 0 }] }));
-    const updatePlatform = async (platform: Account) => setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? platform : a) }));
-    const deletePlatform = async (platformId: string) => setData(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== platformId) }));
-
+    const addPlatform = async (platform: Omit<Account, 'id' | 'balance'>) => {
+        if(!supabase) return;
+        const { data: newPlatform, error } = await supabase.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
+    };
+    const updatePlatform = async (platform: Account) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('accounts').update(platform).eq('id', platform.id);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? platform : a) }));
+    };
+    const deletePlatform = async (platformId: string) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('accounts').delete().eq('id', platformId);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== platformId) }));
+    };
+    
     // --- Investments ---
-    const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'holdings'>) => setData(prev => ({ ...prev, investments: [...prev.investments, { ...portfolio, id: `port_${Date.now()}`, holdings: [] }] }));
-    const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
-    const deletePortfolio = async (portfolioId: string) => setData(prev => ({ ...prev, investments: prev.investments.filter(p => p.id !== portfolioId) }));
+    const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'holdings'>) => {
+        if(!supabase) return;
+        const { data: newPortfolio, error } = await supabase.from('investment_portfolios').insert(withUser(portfolio)).select().single();
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
+    };
+    const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('investment_portfolios').update(portfolio).eq('id', portfolio.id);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
+    };
+    const deletePortfolio = async (portfolioId: string) => {
+        if(!supabase) return;
+        const { error } = await supabase.from('investment_portfolios').delete().eq('id', portfolioId);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, investments: prev.investments.filter(p => p.id !== portfolioId) }));
+    };
     const updateHolding = async (holding: Holding) => {
-        setData(prev => ({
-            ...prev,
-            investments: prev.investments.map(p => ({
-                ...p,
-                holdings: p.holdings.map(h => h.id === holding.id ? holding : h)
-            }))
-        }));
+        if(!supabase) return;
+        const { error } = await supabase.from('holdings').update(holding).eq('id', holding.id);
+        if(error) console.error(error);
+        else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
     };
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
-        setData(prevData => {
+      setData(prevData => {
             const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
             return {
                 ...prevData,
@@ -106,45 +340,46 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
     };
     const recordTrade = async (trade: Omit<InvestmentTransaction, 'id' | 'total'>) => {
-        setData(prev => {
-            const newState = JSON.parse(JSON.stringify(prev)); // Deep copy
-            newState.investmentTransactions.unshift({ ...trade, id: `itxn_${Date.now()}`, total: trade.quantity * trade.price });
-            
-            const portfolio = newState.investments.find((p: InvestmentPortfolio) => p.accountId === trade.accountId);
-            if (!portfolio) return prev;
-
-            const holdingIndex = portfolio.holdings.findIndex((h: Holding) => h.symbol === trade.symbol);
-            if (trade.type === 'buy') {
-                if (holdingIndex > -1) {
-                    const h = portfolio.holdings[holdingIndex];
-                    h.avgCost = ((h.avgCost * h.quantity) + (trade.price * trade.quantity)) / (h.quantity + trade.quantity);
-                    h.quantity += trade.quantity;
-                } else {
-                    portfolio.holdings.push({ id: `h_${Date.now()}`, symbol: trade.symbol, name: trade.symbol, quantity: trade.quantity, avgCost: trade.price, currentValue: trade.price * trade.quantity, zakahClass: 'Zakatable', realizedPnL: 0 });
-                }
-            } else { // sell
-                if (holdingIndex > -1) {
-                    const h = portfolio.holdings[holdingIndex];
-                    h.realizedPnL += (trade.price - h.avgCost) * trade.quantity;
-                    h.quantity -= trade.quantity;
-                    if (h.quantity <= 0.00001) portfolio.holdings.splice(holdingIndex, 1);
-                }
-            }
-            return newState;
-        });
+        if(!supabase) return;
+        const tradeTotal = trade.quantity * trade.price;
+        await supabase.from('investment_transactions').insert(withUser({ ...trade, total: tradeTotal }));
+        await fetchData(); // Refetch to update holdings correctly after a trade
     };
 
-    // --- Watchlist & Alerts ---
-    const addWatchlistItem = async (item: WatchlistItem) => setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
-    const deleteWatchlistItem = async (symbol: string) => setData(prev => ({ ...prev, watchlist: prev.watchlist.filter(i => i.symbol !== symbol) }));
-    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, { ...alert, id: `alert_${Date.now()}`, status: 'active', createdAt: new Date().toISOString() }] }));
-    const updatePriceAlert = async (alert: PriceAlert) => setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.map(a => a.id === alert.id ? alert : a) }));
-    const deletePriceAlert = async (alertId: string) => setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
+    // --- Watchlist, Alerts, Zakat ---
+    const addWatchlistItem = async (item: WatchlistItem) => {
+        if(!supabase) return;
+        await supabase.from('watchlist').insert(withUser(item));
+        setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
+    };
+    const deleteWatchlistItem = async (symbol: string) => {
+        if(!supabase) return;
+        await supabase.from('watchlist').delete().eq('symbol', symbol);
+        setData(prev => ({ ...prev, watchlist: prev.watchlist.filter(i => i.symbol !== symbol) }));
+    };
+    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
+        if(!supabase) return;
+        const newAlert = { ...alert, status: 'active' as const, createdAt: new Date().toISOString() };
+        const { data: created } = await supabase.from('price_alerts').insert(withUser(newAlert)).select().single();
+        if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, created] }));
+    };
+    const updatePriceAlert = async (alert: PriceAlert) => {
+        if(!supabase) return;
+        await supabase.from('price_alerts').update(alert).eq('id', alert.id);
+        setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.map(a => a.id === alert.id ? alert : a) }));
+    };
+    const deletePriceAlert = async (alertId: string) => {
+        if(!supabase) return;
+        await supabase.from('price_alerts').delete().eq('id', alertId);
+        setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
+    };
+    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id'>) => {
+        if(!supabase) return;
+        const { data: newPayment } = await supabase.from('zakat_payments').insert(withUser(payment)).select().single();
+        if(newPayment) setData(prev => ({ ...prev, zakatPayments: [newPayment, ...prev.zakatPayments] }));
+    };
 
-    // --- Zakat ---
-    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id'>) => setData(prev => ({ ...prev, zakatPayments: [{ ...payment, id: `zakat_${Date.now()}` }, ...prev.zakatPayments] }));
-
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, resetData };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, resetData, loadDemoData };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

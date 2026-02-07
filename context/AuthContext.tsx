@@ -20,23 +20,29 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     useEffect(() => {
         setLoading(true);
-        // FIX: Use an early return to ensure TypeScript correctly narrows the type of `supabase`
-        // and prevents TS18047 build error.
-        if (!supabase) {
+
+        const supabaseClient = supabase;
+        if (supabaseClient) {
+            const fetchSession = async () => {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                setSession(session);
+                setUser(session?.user ?? null);
+                setLoading(false);
+            };
+            fetchSession();
+
+            const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+                setSession(session);
+                setUser(session?.user ?? null);
+            });
+    
+            return () => {
+                subscription?.unsubscribe();
+            };
+        } else {
             console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             setLoading(false);
-            return;
         }
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            setUser(session?.user ?? null);
-            setLoading(false);
-        });
-
-        return () => {
-            subscription?.unsubscribe();
-        };
     }, []);
     
     const noOpPromise = async (message: string) => {

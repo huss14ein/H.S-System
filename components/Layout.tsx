@@ -33,13 +33,16 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage }) 
 
 
   return (
-    <div className="min-h-screen bg-slate-50 text-gray-800">
+    <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
       <Header activePage={activePage} setActivePage={setActivePage} />
-      <main className="p-4 sm:p-6 lg:p-8">
+      <main className="p-4 sm:p-6 lg:p-8 flex-grow">
         <div className="animate-fadeIn">
             {children}
         </div>
       </main>
+      <footer className="text-center text-xs text-gray-400 p-4 border-t bg-slate-50">
+          Market data and system health are simulated for demonstration purposes only. This is not financial advice.
+      </footer>
       <QuickActionsSidebar setActivePage={setActivePage} />
       <CommandPalette 
         isOpen={isCommandPaletteOpen}

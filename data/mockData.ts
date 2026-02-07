@@ -1,98 +1,82 @@
-import { FinancialData, Goal, InvestmentPortfolio, Account, Asset, Liability, InvestmentTransaction, Budget, WatchlistItem, Transaction } from '../types';
+import { FinancialData } from '../types';
 
-// This function generates a rich, multi-year dataset based on the user's rules.
-const generateRealisticData = (): FinancialData => {
-  let accounts: Account[] = [
-    { id: 'acc1', name: 'Al Rajhi - Checking', type: 'Checking', balance: 75000 },
-    { id: 'acc2', name: 'SNB - Savings', type: 'Savings', balance: 250000 },
-    { id: 'acc3', name: 'Al Rajhi Capital', type: 'Investment', balance: 152150, platformDetails: { features: ['Tadawul & Global Trading', 'Sharia-compliant Funds', 'Sukuk Access', '24/7 Support'], assetTypes: ['Stocks', 'ETFs', 'Mutual Funds', 'Sukuk'], fees: 'SAR 0 commission on Tadawul trades.' }},
-    { id: 'acc4', name: 'SABB Credit Card', type: 'Credit', balance: -5000 },
-    { id: 'acc5', name: 'Riyad Capital (Robo)', type: 'Investment', balance: 52500, platformDetails: { features: ['Automated Robo-Advisor', 'Fractional Shares', 'Goal-based Investing', 'Simple UI'], assetTypes: ['ETFs', 'Mutual Funds', 'REITs'], fees: '0.25% annual advisory fee. No trading commissions.' }},
-  ];
-  let assets: Asset[] = [
-    { id: 'asset1', name: 'Riyadh Villa', type: 'Property', value: 1500000, purchasePrice: 1200000, goalId: 'goal1' },
-    { id: 'asset2', name: 'Family SUV', type: 'Vehicle', value: 100000, purchasePrice: 150000 },
-    { id: 'asset3', name: 'Jeddah Apartment', type: 'Property', value: 750000, purchasePrice: 650000, goalId: 'goal3', isRental: true, monthlyRent: 5000 },
-    { id: 'asset4', name: 'Gold Bullion', type: 'Gold and precious metals', value: 50000 },
-  ];
-  let liabilities: Liability[] = [
-    { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -900000 },
-    { id: 'liab2', name: 'Car Loan (Murabaha)', type: 'Loan', amount: -45000 },
-  ];
-  let goals: Goal[] = [
-    { id: 'goal1', name: 'House Purchase', targetAmount: 800000, currentAmount: 650000, deadline: '2025-12-31', savingsAllocationPercent: 60 },
-    { id: 'goal2', name: 'New Car', targetAmount: 150000, currentAmount: 75000, deadline: '2026-06-30', savingsAllocationPercent: 30 },
-    { id: 'goal3', name: 'World Trip', targetAmount: 100000, currentAmount: 25000, deadline: '2027-01-01', savingsAllocationPercent: 10 },
-  ];
-  let investments: InvestmentPortfolio[] = [
-    { id: 'port1', name: 'Tadawul Portfolio', accountId: 'acc3', owner: 'John Doe', holdings: [ { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35, currentValue: 3600, assetClass: 'Stock', zakahClass: 'Zakatable', realizedPnL: 1200 }, { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80, currentValue: 4500, assetClass: 'Stock', zakahClass: 'Zakatable', realizedPnL: -300 }, { id: 'h3', symbol: 'SABIC.SUK', name: 'SABIC Sukuk 2028', quantity: 80, avgCost: 100, currentValue: 8100, assetClass: 'Sukuk', zakahClass: 'Zakatable', realizedPnL: 2500 }, { id: 'h4', symbol: 'ETF.SA', name: 'Falcom Saudi Equity ETF', quantity: 200, avgCost: 450, currentValue: 108000, assetClass: 'ETF', zakahClass: 'Non-Zakatable', realizedPnL: 5000 } ] },
-    { id: 'port2', name: 'Global Investments', accountId: 'acc5', owner: 'Family Trust', holdings: [ { id: 'h5', symbol: 'JAREIT.SR', name: 'Jadwa REIT Saudi', quantity: 150, avgCost: 9, currentValue: 1500, assetClass: 'REIT', zakahClass: 'Non-Zakatable', realizedPnL: 4500 }, { id: 'h6', symbol: 'BTC', name: 'Bitcoin', quantity: 0.05, avgCost: 200000, currentValue: 12500, assetClass: 'Cryptocurrency', zakahClass: 'Zakatable', realizedPnL: 200 }, { id: 'h7', symbol: 'VTI', name: 'Vanguard Total Stock Market ETF', quantity: 120, avgCost: 200, currentValue: 38500, goalId: 'goal2', assetClass: 'ETF', zakahClass: 'Non-Zakatable', realizedPnL: 600 } ] },
-  ];
-  let investmentTransactions: InvestmentTransaction[] = [
-    { id: 'itxn1', accountId: 'acc3', date: '2022-01-15', type: 'buy', symbol: 'ETF.SA', quantity: 100, price: 400, total: 40000 },
-    { id: 'itxn2', accountId: 'acc3', date: '2022-05-20', type: 'buy', symbol: '2222.SR', quantity: 100, price: 35, total: 3500 },
-  ];
-  let budgets: Budget[] = [
-    { category: 'Housing', limit: 3500 },
-    { category: 'Transportation', limit: 1200 },
-    { category: 'Food and Groceries', limit: 2500 },
-    { category: 'Healthcare', limit: 800 },
-    { category: 'Work and Residency-Related Expenses', limit: 500 },
-    { category: 'Education', limit: 5000 },
-    { category: 'Personal Care', limit: 500 },
-    { category: 'Clothing', limit: 800 },
-    { category: 'Entertainment and Leisure', limit: 1000 },
-    { category: 'Travel and Vacation', limit: 1500 },
-    { category: 'Communication', limit: 400 },
-    { category: 'Savings and Investments', limit: 7500 },
-    { category: 'Charity and Religious Contributions', limit: 500 },
-    { category: 'Household and Miscellaneous', limit: 700 },
-  ];
-  let watchlist: WatchlistItem[] = [
-      { symbol: 'MSFT', name: 'Microsoft Corp.' }, { symbol: 'NVDA', name: 'NVIDIA Corporation' }, { symbol: 'ACWA.SR', name: 'ACWA Power' },
-  ];
-  let transactions: Transaction[] = [];
+// Note: IDs are for relational mapping during the seeding process only. They are not the final DB IDs.
+export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' | 'priceAlerts'> => {
+  const today = new Date();
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 15).toISOString().split('T')[0];
+  const twoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 10).toISOString().split('T')[0];
 
-  const startDate = new Date('2024-08-01');
-  const endDate = new Date();
-  let currentDate = new Date(startDate);
-  let txnIdCounter = 100;
-
-  while (currentDate <= endDate) {
-    const month = currentDate.getMonth();
-    const day = currentDate.getDate();
-
-    if (day === 1) {
-        transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Salary', amount: 30000, category: 'Salary', budgetCategory: 'Income', type: 'income', transactionNature: 'Fixed' });
-        if (month === 0) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Tickets Allowance', amount: 12000, category: 'Allowance', budgetCategory: 'Income', type: 'income', transactionNature: 'Variable' });
-        if (month === 3) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Annual Bonus', amount: 90000, category: 'Bonus', budgetCategory: 'Income', type: 'income', transactionNature: 'Variable' });
-        if (month % 2 === 0) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Rental Income - Jeddah Apt', amount: 5000, category: 'Rental Income', budgetCategory: 'Income', type: 'income', transactionNature: 'Fixed' });
-    }
-    if (day === 2) {
-        if (month === 0 || month === 6) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Rent (Biannual)', amount: -18000, category: 'Rent', budgetCategory: 'Housing', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' });
-        if (month === 5) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Dependents Fees', amount: -2000, category: 'Iqama Fees', budgetCategory: 'Work and Residency-Related Expenses', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' });
-        if (month === 5 || month === 10) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc4', date: currentDate.toISOString().split('T')[0], description: 'Vacation Trip', amount: -8000, category: 'Travel', budgetCategory: 'Travel and Vacation', type: 'expense', transactionNature: 'Variable', expenseType: 'Discretionary' });
-        if (month === 7) transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Tuition Fees', amount: -5500, category: 'School Fees', budgetCategory: 'Education', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' });
-        transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'STC Bill', amount: -(250 + Math.random() * 50), category: 'Internet Bill', budgetCategory: 'Communication', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' });
-        transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc2', date: currentDate.toISOString().split('T')[0], description: 'Investment Contribution', amount: -5000, category: 'Brokerage Deposit', budgetCategory: 'Savings and Investments', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' });
-    }
-    if ([5, 12, 19, 26].includes(day)) {
-        transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Lulu Groceries', amount: -(500 + Math.random() * 100), category: 'Groceries', subcategory: 'Lulu', budgetCategory: 'Food and Groceries', type: 'expense', transactionNature: 'Variable', expenseType: 'Core' });
-        transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc1', date: currentDate.toISOString().split('T')[0], description: 'Gasoline', amount: -(150 + Math.random() * 50), category: 'Fuel', budgetCategory: 'Transportation', type: 'expense', transactionNature: 'Variable', expenseType: 'Core' });
-    }
-    if ([10, 24].includes(day)) {
-       transactions.push({ id: `txn${txnIdCounter++}`, accountId: 'acc4', date: currentDate.toISOString().split('T')[0], description: 'Dinner Out', amount: -(250 + Math.random() * 100), category: 'Restaurants', subcategory: 'Cheesecake Factory', budgetCategory: 'Food and Groceries', type: 'expense', transactionNature: 'Variable', expenseType: 'Discretionary' });
-    }
-    
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-  
-  transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-  const settings = { riskProfile: 'Moderate' as const, budgetThreshold: 90, driftThreshold: 5, enableEmails: true, };
-
-  // FIX: The `simulatedPrices` property does not exist on the `FinancialData` type and was removed.
-  return { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments: [], priceAlerts: [] };
+  return {
+    accounts: [
+        { id: 'acc1', name: 'Al Rajhi (Current)', type: 'Checking', balance: 25430.50 },
+        { id: 'acc2', name: 'SNB (Savings)', type: 'Savings', balance: 152000 },
+        { id: 'acc3', name: 'SABB Credit Card', type: 'Credit', balance: -4580.75 },
+        { id: 'acc4', name: 'Derayah Financial', type: 'Investment', balance: 0 },
+        { id: 'acc5', name: 'SNB Capital', type: 'Investment', balance: 0 },
+    ],
+    assets: [
+        { id: 'asset1', name: 'Primary Residence', type: 'Property', value: 2500000, purchasePrice: 1800000 },
+        { id: 'asset2', name: 'Rental Apartment', type: 'Property', value: 850000, purchasePrice: 700000, isRental: true, monthlyRent: 4000 },
+        { id: 'asset3', name: 'Toyota Camry 2023', type: 'Vehicle', value: 110000, purchasePrice: 135000 },
+        { id: 'asset4', name: 'Gold Bullion (100g)', type: 'Gold and precious metals', value: 27500, purchasePrice: 22000 },
+    ],
+    liabilities: [
+        { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -1250000 },
+        { id: 'liab2', name: 'Car Loan', type: 'Loan', amount: -65000 },
+    ],
+    goals: [
+        { id: 'goal1', name: 'World Trip', targetAmount: 75000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 2, 5, 1).toISOString(), savingsAllocationPercent: 30 },
+        { id: 'goal2', name: 'Rental Property Downpayment', targetAmount: 300000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 3, 11, 1).toISOString(), savingsAllocationPercent: 70 },
+    ],
+    transactions: [
+        { id: 't1', date: firstDayOfMonth, description: 'Monthly Salary', amount: 30000, category: 'Salary', accountId: 'acc1', type: 'income' },
+        { id: 't2', date: new Date(new Date().setDate(2)).toISOString().split('T')[0], description: 'Hyper Panda Groceries', amount: -1250.75, category: 'Groceries', budgetCategory: 'Food', accountId: 'acc3', type: 'expense', transactionNature: 'Variable', expenseType: 'Core' },
+        { id: 't3', date: new Date(new Date().setDate(3)).toISOString().split('T')[0], description: 'Mortgage Payment', amount: -7500, category: 'Mortgage', budgetCategory: 'Housing', accountId: 'acc1', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' },
+        { id: 't4', date: new Date(new Date().setDate(5)).toISOString().split('T')[0], description: 'Jarir Bookstore', amount: -350, category: 'Shopping', budgetCategory: 'Shopping', accountId: 'acc3', type: 'expense', transactionNature: 'Variable', expenseType: 'Discretionary' },
+        { id: 't5', date: lastMonth, description: 'STC Bill', amount: -450, category: 'Utilities', budgetCategory: 'Utilities', accountId: 'acc3', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' },
+        { id: 't6', date: lastMonth, description: 'Investment Transfer', amount: -5000, category: 'Transfers', budgetCategory: 'Savings & Investments', accountId: 'acc1', type: 'expense' },
+        { id: 't7', date: twoMonthsAgo, description: 'Monthly Salary', amount: 30000, category: 'Salary', accountId: 'acc1', type: 'income' },
+        { id: 't8', date: twoMonthsAgo, description: 'Car Loan Payment', amount: -1800, category: 'Car Loan', budgetCategory: 'Transportation', accountId: 'acc1', type: 'expense', transactionNature: 'Fixed', expenseType: 'Core' },
+    ],
+    investments: [
+      {
+        id: 'p1',
+        name: 'Tadawul Portfolio',
+        accountId: 'acc4',
+        holdings: [
+          { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35.50, currentValue: 3450, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80.20, currentValue: 4100, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h3', symbol: 'REITF.SR', name: 'AlJazira REIT', quantity: 200, avgCost: 18.00, currentValue: 3700, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'REIT' },
+        ]
+      },
+      {
+        id: 'p2',
+        name: 'International Stocks',
+        accountId: 'acc5',
+        holdings: [
+          { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00, currentValue: 3100, zakahClass: 'Zakatable', realizedPnL: 150, assetClass: 'Stock' },
+          { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00, currentValue: 2150, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF' },
+        ]
+      }
+    ],
+    investmentTransactions: [
+        { id: 'it1', accountId: 'acc4', date: lastMonth, type: 'buy', symbol: '2222.SR', quantity: 100, price: 35.50, total: 3550 },
+        { id: 'it2', accountId: 'acc5', date: lastMonth, type: 'buy', symbol: 'MSFT', quantity: 10, price: 300.00, total: 3000 },
+        { id: 'it3', accountId: 'acc4', date: twoMonthsAgo, type: 'buy', symbol: '1120.SR', quantity: 50, price: 80.20, total: 4010 },
+    ],
+    budgets: [
+        { category: 'Food', limit: 3000 },
+        { category: 'Housing', limit: 8000 },
+        { category: 'Transportation', limit: 1500 },
+        { category: 'Utilities', limit: 1000 },
+        { category: 'Shopping', limit: 2000 },
+        { category: 'Entertainment', limit: 1000 },
+        { category: 'Savings & Investments', limit: 5000 },
+    ],
+    watchlist: [
+        { symbol: '7010.SR', name: 'STC' },
+        { symbol: 'AAPL', name: 'Apple Inc.' },
+    ],
+  };
 };
-
-export const mockFinancialData: FinancialData = generateRealisticData();

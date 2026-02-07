@@ -24,10 +24,8 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use Vite's `import.meta.env` for client-side environment variables.
     const apiKey = import.meta.env.VITE_API_KEY;
     if (!apiKey) {
-        // FIX: Updated warning message to reflect use of import.meta.env.
         console.warn("VITE_API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
@@ -105,6 +103,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
   try {
     const prompt = `
       You are a helpful personal finance assistant. Based on the following financial summary (all values in SAR), provide a brief, insightful, and encouraging analysis in Markdown format.
+      Your response must be in Markdown format only and contain no HTML tags.
       Explain trends in net worth, investment returns, and asset allocation.
       Start with a general overview, then provide two bullet points using ** for the title:
       - **Positive Trends:** Mention 1-2 positive aspects.
@@ -144,6 +143,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
         const budgetSummary = budgets.map(b => `- **${b.category}**: Limit ${b.limit.toLocaleString()} SAR`).join('\n');
         const prompt = `
             You are a helpful budget analyst. Based on the following monthly spending summary, provide a brief, insightful analysis in Markdown.
+            Your response must be in Markdown format only and contain no HTML tags.
             Highlight the top spending category, budget adherence, and one practical suggestion.
             Monthly Budget Summary:
             ${budgetSummary}
@@ -222,7 +222,8 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
             You are a financial planning analyst. Based on the user's annual plan and active 'what-if' scenarios, provide a brief, insightful analysis in Markdown.
-            
+            Your response must be in Markdown format only and contain no HTML tags.
+
             Annual Plan Summary:
             - Planned Income: ${totalPlannedIncome.toLocaleString()} SAR
             - Planned Expenses: ${totalPlannedExpenses.toLocaleString()} SAR
@@ -264,6 +265,7 @@ export const getAIAnalysisPageInsights = async (
     try {
         const prompt = `
             You are a senior financial analyst providing a holistic overview based on three key charts. Analyze the following data and provide a concise, insightful summary in Markdown format.
+            Your response must be in Markdown format only and contain no HTML tags.
 
             1.  **Spending by Budget Category (YTD):**
                 ${spendingData.slice(0, 5).map(d => `- ${d.name}: ${d.value.toLocaleString()} SAR`).join('\n')}
@@ -300,7 +302,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
-    const prompt = `You are an expert investment analyst. Based on these holdings, provide a brief analysis on diversification and concentration risk. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+    const prompt = `You are an expert investment analyst. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Do not give financial advice, and do not include any HTML tags. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
     const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
     const result = response.text || "Could not retrieve analysis.";
     setToCache(cacheKey, result);
@@ -312,7 +314,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
+        const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -322,7 +324,7 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+        const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -332,7 +334,7 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), generate a realistic but fictional summary of market news and dividend announcements in markdown.`;
+        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), generate a realistic but fictional summary of market news and dividend announcements in markdown. Do not use any HTML tags in your response.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text || "Could not retrieve news.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -342,7 +344,7 @@ export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]):
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Sections: Trading Pattern Analysis, Potential Portfolio Impact, Key Concept for Research. Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
+        const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. Sections: Trading Pattern Analysis, Potential Portfolio Impact, Key Concept for Research. Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -355,7 +357,7 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}. Generate a simple, encouraging, actionable plan.`;
+        const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}. Generate a simple, encouraging, actionable plan in Markdown format. Your response must not contain any HTML tags.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not generate plan.";
         setToCache(cacheKey, result);
@@ -367,7 +369,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Total Monthly Savings: ${monthlySavings}. Goals: ${goals.length} goals. Provide a holistic analysis in markdown.`;
+        const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Total Monthly Savings: ${monthlySavings}. Goals: ${goals.length} goals. Provide a holistic analysis in markdown. Do not use any HTML tags in your response.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -378,7 +380,7 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
     if (!ai) return "AI features are disabled.";
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
-        const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
+        const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Your response must not contain any HTML. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { console.error(error); return "An error occurred."; }
@@ -391,7 +393,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a creative financial content generator. For the stock ${holding.name} (${holding.symbol}), generate a brief, fictional but realistic analyst report in markdown. Sections: Fictional Analyst Rating, Fictional Recent News. Do not use real-time data or give financial advice.`;
+        const prompt = `You are a creative financial content generator. For the stock ${holding.name} (${holding.symbol}), generate a brief, fictional but realistic analyst report in markdown. Your response must not contain any HTML tags. Sections: Fictional Analyst Rating, Fictional Recent News. Do not use real-time data or give financial advice.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
@@ -403,7 +405,7 @@ export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses:
     const ai = getAiClient();
     if (!ai) return "AI features are disabled.";
     try {
-        const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
+        const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
         const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not generate plan.";
     } catch (error) { console.error(error); return "An error occurred."; }
