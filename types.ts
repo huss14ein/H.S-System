@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Metals & Crypto' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health';
 
 export interface Goal {
   id: string;
@@ -35,7 +35,6 @@ export type AssetType =
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
-  | 'Gold and precious metals'
   | 'Jewelry'
   | 'Artworks and collectibles'
   | 'Islamic finance instruments' // Murabaha, etc.

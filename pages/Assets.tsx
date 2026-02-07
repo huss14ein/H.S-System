@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Asset, Goal, AssetType } from '../types';
+import { Asset, Goal, AssetType, CommodityHolding } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -12,7 +12,12 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { BitcoinIcon } from '../components/icons/BitcoinIcon';
+import { CubeIcon } from '../components/icons/CubeIcon';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { getAICommodityPrices } from '../services/geminiService';
 
+// --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<AssetType>('Property');
@@ -32,13 +37,8 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
             setOwner(assetToEdit.owner || '');
         } else {
-            setName('');
-            setType('Property');
-            setValue('');
-            setPurchasePrice('');
-            setIsRental(false);
-            setMonthlyRent('');
-            setOwner('');
+            setName(''); setType('Property'); setValue(''); setPurchasePrice('');
+            setIsRental(false); setMonthlyRent(''); setOwner('');
         }
     }, [assetToEdit, isOpen]);
 
@@ -46,37 +46,31 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         e.preventDefault();
         const newAsset: Asset = {
             id: assetToEdit ? assetToEdit.id : `asset${Date.now()}`,
-            name,
-            type,
-            value: parseFloat(value) || 0,
+            name, type, value: parseFloat(value) || 0,
             purchasePrice: parseFloat(purchasePrice) || undefined,
             isRental: type === 'Property' ? isRental : undefined,
             monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
-            goalId: assetToEdit?.goalId,
-            owner: owner || undefined,
+            goalId: assetToEdit?.goalId, owner: owner || undefined,
         };
-        onSave(newAsset);
-        onClose();
+        onSave(newAsset); onClose();
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Asset' : 'Add New Asset'}>
+        <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border border-gray-300 rounded-md">
+                <input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md"/>
+                <select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border rounded-md">
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
-                    <option value="Gold and precious metals">Gold & Precious Metals</option>
                     <option value="Other">Other</option>
                 </select>
-                <input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
-
+                <input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border rounded-md"/>
+                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="w-full p-2 border rounded-md"/>
+                <input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border rounded-md" />
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
-                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md"/>}
+                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="w-full p-2 border rounded-md"/>}
                     </div>
                 )}
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Asset</button>
@@ -84,15 +78,13 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         </Modal>
     );
 };
-
-const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
+const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset | CommodityHolding) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
         const iconClass = "h-8 w-8";
         switch (type) {
             case 'Property': return <HomeModernIcon className={`${iconClass} text-blue-500`} />;
             case 'Vehicle': return <TruckIcon className={`${iconClass} text-green-500`} />;
-            case 'Gold and precious metals': return <GoldBarIcon className={`${iconClass} text-yellow-500`} />;
             default: return <QuestionMarkCircleIcon className={`${iconClass} text-gray-500`} />;
         }
     };
@@ -125,16 +117,114 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
         </div>
     );
 };
+// --- End Physical Asset Components ---
+
+// --- Commodity Components ---
+const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => void; holdingToEdit: CommodityHolding | null; }> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
+    const [name, setName] = useState<CommodityHolding['name']>('Gold');
+    const [quantity, setQuantity] = useState('');
+    const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
+    const [purchaseValue, setPurchaseValue] = useState('');
+    const [currentValue, setCurrentValue] = useState('');
+    const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
+    const [owner, setOwner] = useState('');
+    
+    useEffect(() => {
+        if (holdingToEdit) {
+            setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
+            setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
+            setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || '');
+        } else {
+            setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
+        }
+    }, [holdingToEdit, isOpen]);
+
+    useEffect(() => {
+        if (name === 'Gold' || name === 'Silver') setUnit('gram');
+        else if (name === 'Bitcoin') setUnit('BTC');
+        else setUnit('unit');
+    }, [name]);
+
+    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit']) => {
+        if (name === 'Gold') return unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE';
+        if (name === 'Silver') return unit === 'gram' ? 'XAG_GRAM' : 'XAG_OUNCE';
+        if (name === 'Bitcoin') return 'BTC_USD';
+        return 'OTHER';
+    }
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const holdingData = {
+            name, quantity: parseFloat(quantity) || 0, unit,
+            purchaseValue: parseFloat(purchaseValue) || 0,
+            currentValue: parseFloat(currentValue) || 0,
+            symbol: getSymbol(name, unit), zakahClass, owner: owner || undefined,
+        };
+        if (holdingToEdit) onSave({ ...holdingToEdit, ...holdingData });
+        else onSave(holdingData);
+        onClose();
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={holdingToEdit ? 'Edit Commodity' : 'Add Commodity'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <select value={name} onChange={e => setName(e.target.value as any)} className="w-full p-2 border rounded-md"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
+                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Owner</label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save</button>
+            </form>
+        </Modal>
+    );
+};
+const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; }> = ({ holding, onEdit, onDelete }) => {
+    const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+    const unrealizedGain = holding.currentValue - holding.purchaseValue;
+    const getIcon = (type: CommodityHolding['name']) => {
+        const iconClass = "h-10 w-10";
+        switch (type) {
+            case 'Gold': return <GoldBarIcon className={`${iconClass} text-yellow-500`} />;
+            case 'Silver': return <GoldBarIcon className={`${iconClass} text-gray-400`} />;
+            case 'Bitcoin': return <BitcoinIcon className={`${iconClass} text-orange-500`} />;
+            default: return <CubeIcon className={`${iconClass} text-gray-500`} />;
+        }
+    };
+    return (
+        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
+            <div>
+                <div className="flex justify-between items-start">
+                    <div className="flex items-center space-x-4">
+                        {getIcon(holding.name)}
+                        <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}</p></div>
+                    </div>
+                    <div className="flex space-x-1"><button onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
+                </div>
+                {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
+                <div className="mt-4 space-y-3">
+                    <div><dt className="text-sm text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
+                    <div className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">Purchase Value</dt><dd className="font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
+                </div>
+            </div>
+            <div className="border-t mt-4 pt-4"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>{holding.zakahClass}</span></div>
+        </div>
+    );
+};
+// --- End Commodity Components ---
 
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, addAsset, updateAsset, deleteAsset } = useContext(DataContext)!;
+    const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
+    // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
-    const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null);
+    const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
+    const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
+    const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
+    const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -143,48 +233,78 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         }
     }, [pageAction, clearPageAction]);
 
-    const { totalAssetValue, totalRentalIncome } = useMemo(() => {
-        const totalPhysicalAssetValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalRentalIncome = data.assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + a.monthlyRent!, 0);
-        return { totalAssetValue: totalPhysicalAssetValue, totalRentalIncome };
-    }, [data.assets]);
+    const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
+        const physicalValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
+        const commodityValue = data.commodityHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+        const rentalIncome = data.assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + a.monthlyRent!, 0);
+        return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
+    }, [data.assets, data.commodityHoldings]);
 
+    // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null) => { setAssetToEdit(asset); setIsAssetModalOpen(true); };
     const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
-    const handleOpenAssetDeleteModal = (asset: Asset) => { setAssetToDelete(asset); };
-    const handleConfirmAssetDelete = () => { if(assetToDelete) { deleteAsset(assetToDelete.id); setAssetToDelete(null); } };
     const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
+    
+    // Commodity Handlers
+    const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
+    const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => { 'id' in holding ? updateCommodityHolding(holding) : addCommodityHolding(holding); };
+
+    // Generic Delete Handlers
+    const handleOpenDeleteModal = (item: Asset | CommodityHolding) => { setItemToDelete(item); };
+    const handleConfirmDelete = () => { if(itemToDelete) { ('unit' in itemToDelete ? deleteCommodityHolding(itemToDelete.id) : deleteAsset(itemToDelete.id)); setItemToDelete(null); } };
+    
+    const handleUpdatePrices = async () => {
+        if (data.commodityHoldings.length === 0) return;
+        setIsUpdatingPrices(true);
+        try {
+            const prices = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            if (prices.length > 0) {
+                const updates = data.commodityHoldings.map(h => { const p = prices.find(p => p.symbol === h.symbol); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
+                if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
+            }
+        } catch (error) { console.error("Failed to update prices:", error); } 
+        finally { setIsUpdatingPrices(false); }
+    };
 
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Physical Assets</h1>
-                <button onClick={() => handleOpenAssetModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Physical Asset</button>
+                <h1 className="text-3xl font-bold text-dark">Assets</h1>
+                <div className="flex gap-2">
+                    <button onClick={() => handleOpenAssetModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Physical Asset</button>
+                    <button onClick={() => handleOpenCommodityModal()} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm">Add Commodity</button>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card title="Total Physical Asset Value" value={formatCurrencyString(totalAssetValue)} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} />
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} />
             </div>
 
-            <section>
+            <section className="bg-white p-6 rounded-lg shadow">
+                <h2 className="text-xl font-semibold text-dark mb-4">Physical Assets</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {data.assets.map(asset => (
-                        <AssetCardComponent 
-                            key={asset.id} 
-                            asset={asset} 
-                            onEdit={handleOpenAssetModal} 
-                            onDelete={handleOpenAssetDeleteModal}
-                            onLinkGoal={handleLinkGoal}
-                            goals={data.goals}
-                        />
-                    ))}
-                     {data.assets.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center">No physical assets added yet.</p>}
+                    {data.assets.map(asset => (<AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />))}
+                    {data.assets.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No physical assets added yet.</p>}
+                </div>
+            </section>
+            
+            <section className="bg-white p-6 rounded-lg shadow">
+                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                    <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
+                    <button onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-2" />{isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}</button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {data.commodityHoldings.map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
+                    {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </section>
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
-            <DeleteConfirmationModal isOpen={!!assetToDelete} onClose={() => setAssetToDelete(null)} onConfirm={handleConfirmAssetDelete} itemName={assetToDelete?.name || ''} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
+            <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </div>
     );
 };

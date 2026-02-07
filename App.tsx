@@ -15,7 +15,6 @@ const Summary = lazy(() => import('./pages/Summary'));
 const Accounts = lazy(() => import('./pages/Accounts'));
 const Investments = lazy(() => import('./pages/Investments'));
 const Assets = lazy(() => import('./pages/Assets'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 const Liabilities = lazy(() => import('./pages/Liabilities'));
 const Transactions = lazy(() => import('./pages/Transactions'));
 const Budgets = lazy(() => import('./pages/Budgets'));
@@ -60,7 +59,6 @@ const App: React.FC = () => {
       case 'Accounts': return <Accounts />;
       case 'Investments': return <Investments {...actionProps} />;
       case 'Assets': return <Assets {...actionProps} />;
-      case 'Metals & Crypto': return <Commodities />;
       case 'Liabilities': return <Liabilities />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets />;
