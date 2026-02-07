@@ -26,21 +26,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return;
         }
-        
-        const fetchSession = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            setSession(session);
-            setUser(session?.user ?? null);
-            setLoading(false);
-        };
-        fetchSession();
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            setUser(session?.user ?? null);
+    
+        let mounted = true;
+    
+        // Fetch the initial session
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (mounted) {
+                setSession(session);
+                setUser(session?.user ?? null);
+                setLoading(false);
+            }
         });
-
+    
+        // Set up the auth state listener
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (mounted) {
+                setSession(session);
+                setUser(session?.user ?? null);
+            }
+        });
+    
         return () => {
+            mounted = false;
             subscription?.unsubscribe();
         };
     }, []);

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useContext, useCallback } from 'react';
 import Modal from './Modal';
-import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob as GenaiBlob } from '@google/genai';
 import { DataContext } from '../context/DataContext';
 import { encode, decode, decodeAudioData } from '../utils/audioUtils';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
@@ -175,8 +175,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                         
                         workletNode.port.onmessage = (event) => {
                             const inputData = event.data; // This is a Float32Array
-                            const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(x => x * 32768)).buffer)),
+                            const pcmBlob: GenaiBlob = {
+                                data: encode(new Uint8Array(new Int16Array(inputData.map((x: number) => x * 32768)).buffer)),
                                 mimeType: 'audio/pcm;rate=16000',
                             };
                             sessionRef.current?.then((session) => session.sendRealtimeInput({ media: pcmBlob }));
