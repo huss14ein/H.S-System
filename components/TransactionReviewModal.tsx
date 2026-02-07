@@ -5,6 +5,7 @@ import { DataContext } from '../context/DataContext';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import Combobox from './Combobox';
 
 interface TransactionReviewModalProps {
     isOpen: boolean;
@@ -89,15 +90,12 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
                         Budget Category
                     </label>
                     <div className="mt-1 flex items-center space-x-2">
-                        <select
-                            id="category-select"
-                            value={selectedCategory}
-                            onChange={e => setSelectedCategory(e.target.value)}
-                            className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
-                        >
-                            <option value="" disabled>-- Select a category --</option>
-                            {budgetCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                        </select>
+                        <Combobox
+                            items={budgetCategories}
+                            selectedItem={selectedCategory}
+                            onSelectItem={setSelectedCategory}
+                            placeholder="Select a category..."
+                        />
                         <button 
                             type="button" 
                             onClick={handleSuggest} 

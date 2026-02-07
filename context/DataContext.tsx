@@ -1,15 +1,15 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade } from '../types';
 import { getMockData } from '../data/mockData';
 
 // Define an empty state for when data is loading or for new users
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
-    investments: [], investmentTransactions: [], budgets: [], watchlist: [],
+    investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true },
-    zakatPayments: [], priceAlerts: []
+    zakatPayments: [], priceAlerts: [], plannedTrades: []
 };
 
 interface DataContextType {
@@ -39,13 +39,16 @@ interface DataContextType {
   deletePortfolio: (portfolioId: string) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => Promise<void>;
+  recordTrade: (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>, executedPlanId?: string) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
   addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
+  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
+  updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
+  deletePlannedTrade: (planId: string) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
 }
@@ -67,7 +70,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             const [
                 accounts, assets, liabilities, goals, transactions, investments,
-                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts
+                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades
             ] = await Promise.all([
                 db.from('accounts').select('*'),
                 db.from('assets').select('*'),
@@ -80,10 +83,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('watchlist').select('*'),
                 db.from('settings').select('*').single(),
                 db.from('zakat_payments').select('*'),
-                db.from('price_alerts').select('*')
+                db.from('price_alerts').select('*'),
+                db.from('commodity_holdings').select('*'),
+                db.from('planned_trades').select('*')
             ]);
 
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts };
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades };
             Object.entries(allFetches).forEach(([key, value]) => {
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
@@ -97,10 +102,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 investments: (investments.data as any) || [],
                 investmentTransactions: investmentTransactions.data || [],
                 budgets: budgets.data || [],
+                commodityHoldings: commodityHoldings.data || [],
                 watchlist: watchlist.data || [],
                 settings: settings.data || initialData.settings,
                 zakatPayments: zakatPayments.data || [],
-                priceAlerts: priceAlerts.data || []
+                priceAlerts: priceAlerts.data || [],
+                plannedTrades: plannedTrades.data || []
             });
         } catch (error) {
             console.error("Error fetching financial data:", error);
@@ -121,7 +128,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
-        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings'];
+        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades'];
         await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);
@@ -150,6 +157,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('budgets').insert(mock.budgets.map(b => ({ ...b, user_id: userId }))),
                 db.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
+                db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
+                db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
             ]);
 
             // Accounts
@@ -402,7 +411,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             };
         });
     };
-    const recordTrade = async (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>) => {
+    const recordTrade = async (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>, executedPlanId?: string) => {
         if (!supabase || !auth?.user) return;
 
         const { portfolioId, name, ...tradeData } = trade;
@@ -454,11 +463,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
         } catch (error) {
-            // If holding update fails, we should ideally roll back the transaction log,
-            // but for now we'll just log error and refetch to ensure consistency.
             console.error("Error updating holdings after trade:", error);
             await fetchData();
+            throw error; // Re-throw to inform caller of failure
         }
+        
+        // 4. If trade came from a plan, update the plan's status
+        if (executedPlanId) {
+            const plan = data.plannedTrades.find(p => p.id === executedPlanId);
+            if (plan) {
+                await updatePlannedTrade({ ...plan, status: 'Executed' });
+            }
+        }
+    };
+
+    // --- Planned Trades ---
+    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => {
+        if(!supabase) return;
+        const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
+        if (error) { console.error(error); }
+        else { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
+    };
+    const updatePlannedTrade = async (plan: PlannedTrade) => {
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('planned_trades').update(plan).match({ id: plan.id, user_id: auth.user.id });
+        if (error) { console.error(error); }
+        else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) })); }
+    };
+    const deletePlannedTrade = async (planId: string) => {
+        if(!supabase || !auth?.user) return;
+        const { error } = await supabase.from('planned_trades').delete().match({ id: planId, user_id: auth.user.id });
+        if (error) { console.error(error); }
+        else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.filter(p => p.id !== planId) })); }
     };
 
 
@@ -501,7 +537,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(newPayment) setData(prev => ({ ...prev, zakatPayments: [newPayment, ...prev.zakatPayments] }));
     };
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, resetData, loadDemoData };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, resetData, loadDemoData };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

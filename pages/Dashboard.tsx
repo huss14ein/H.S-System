@@ -12,6 +12,10 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import TransactionReviewModal from '../components/TransactionReviewModal';
+import { ScaleIcon } from '../components/icons/ScaleIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
+import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -29,7 +33,7 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
                             <p className="font-medium text-dark">{acc.name}</p>
                             <p className="text-xs text-gray-500">{acc.type}</p>
                         </div>
-                        <p className={`font-semibold ${acc.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(acc.balance)}</p>
+                        <p className={`font-semibold ${acc.balance >= 0 ? 'text-success' : 'text-danger'}`}>{formatCurrencyString(acc.balance)}</p>
                     </li>
                 ))}
             </ul>
@@ -266,10 +270,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             )}
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} />
-                <Card title="This Month's P&L" value={formatCurrencyString(kpiSummary.monthlyPnL || 0)} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} />
-                <Card title="Budget Variance" value={formatCurrencyString(kpiSummary.budgetVariance || 0)} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} />
-                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} />
+                <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="This Month's P&L" value={formatCurrencyString(kpiSummary.monthlyPnL || 0)} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="Budget Variance" value={formatCurrencyString(kpiSummary.budgetVariance || 0)} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
             </div>
 
             <AIFeed />
@@ -292,7 +296,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <AccountsOverview accounts={data.accounts} onClick={() => setActivePage('Platform')} />
+                <AccountsOverview accounts={data.accounts} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 

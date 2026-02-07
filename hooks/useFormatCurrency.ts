@@ -4,28 +4,43 @@ import { useCurrency } from '../context/CurrencyContext';
 interface FormatCurrencyOptions {
     digits?: number;
     colorize?: boolean;
+    showSecondary?: boolean; // New option to show the other currency
 }
 
 export const useFormatCurrency = () => {
     const { currency, exchangeRate } = useCurrency();
 
     const formatCurrencyString = (value: number, options: Omit<FormatCurrencyOptions, 'colorize'> = {}) => {
-        const { digits = 2 } = options;
+        const { digits = 2, showSecondary = false } = options;
         const displayValue = currency === 'USD' ? value / exchangeRate : value;
         const locale = 'en-US';
         
-        return new Intl.NumberFormat(locale, {
+        let formattedString = new Intl.NumberFormat(locale, {
             style: 'currency',
             currency: currency,
             minimumFractionDigits: digits,
             maximumFractionDigits: digits,
         }).format(displayValue);
+
+        if (showSecondary) {
+            const secondaryCurrency = currency === 'SAR' ? 'USD' : 'SAR';
+            const secondaryValue = currency === 'SAR' ? value / exchangeRate : value * exchangeRate;
+            const secondaryFormatted = new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: secondaryCurrency,
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits,
+            }).format(secondaryValue);
+            formattedString += ` (${secondaryFormatted})`;
+        }
+        
+        return formattedString;
     };
     
     const formatCurrency = (value: number, options: FormatCurrencyOptions = {}) => {
-        const { digits = 2, colorize = false } = options;
+        const { colorize = false, ...restOptions } = options;
         
-        const formattedString = formatCurrencyString(value, { digits });
+        const formattedString = formatCurrencyString(value, restOptions);
 
         if (!colorize) {
             return formattedString;

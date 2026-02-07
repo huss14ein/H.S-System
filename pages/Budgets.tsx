@@ -31,7 +31,23 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onSave({ category, limit: parseFloat(limit) || 0 });
+        // FIX: Construct a full Budget object to satisfy the onSave prop type.
+        // The original implementation was missing id, month, and year.
+        if (budgetToEdit) {
+            onSave({
+                ...budgetToEdit,
+                limit: parseFloat(limit) || 0,
+            });
+        } else {
+            const today = new Date();
+            onSave({
+                id: `budget-${Date.now()}`, // Temporary ID for a new budget
+                category,
+                limit: parseFloat(limit) || 0,
+                month: today.getMonth() + 1,
+                year: today.getFullYear(),
+            });
+        }
         onClose();
     };
     

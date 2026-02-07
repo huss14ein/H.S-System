@@ -1,8 +1,6 @@
-
-
 import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Transaction, Account } from '../types';
+import { Transaction, Account, Page } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { PencilIcon } from '../components/icons/PencilIcon';
@@ -14,7 +12,16 @@ import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 
-const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (transaction: Omit<Transaction, 'id'> | Transaction) => void; transactionToEdit: Transaction | null; budgetCategories: string[], allCategories: string[], accounts: Account[] }> = ({ isOpen, onClose, onSave, transactionToEdit, budgetCategories, allCategories, accounts }) => {
+const TransactionModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (transaction: Omit<Transaction, 'id'> | Transaction) => void;
+    onSaveAndTrade: (transaction: Omit<Transaction, 'id'>) => void;
+    transactionToEdit: Transaction | null;
+    budgetCategories: string[],
+    allCategories: string[],
+    accounts: Account[]
+}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
@@ -55,21 +62,22 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
         }
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
+    const buildTransactionData = (): Omit<Transaction, 'id'> => ({
+        date,
+        description,
+        amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
+        category,
+        subcategory: subcategory || undefined,
+        budgetCategory: type === 'expense' ? budgetCategory : undefined,
+        type,
+        accountId,
+        transactionNature: type === 'expense' ? transactionNature : undefined,
+        expenseType: type === 'expense' ? expenseType : undefined,
+    });
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const transactionData: Omit<Transaction, 'id'> = {
-            date,
-            description,
-            amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
-            category,
-            subcategory: subcategory || undefined,
-            budgetCategory: type === 'expense' ? budgetCategory : undefined,
-            type,
-            accountId,
-            transactionNature: type === 'expense' ? transactionNature : undefined,
-            expenseType: type === 'expense' ? expenseType : undefined,
-        };
-        
+        const transactionData = buildTransactionData();
         if (transactionToEdit) {
             onSave({ ...transactionData, id: transactionToEdit.id });
         } else {
@@ -77,6 +85,13 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
         }
         onClose();
     };
+    
+    const handleSaveAndTrade = (e: React.FormEvent) => {
+        e.preventDefault();
+        const transactionData = buildTransactionData();
+        onSaveAndTrade(transactionData);
+        onClose();
+    }
 
     const handleSuggestCategory = async () => {
         if (!description) return;
@@ -147,7 +162,14 @@ const TransactionModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave:
                         </div>
                     </div>
                  )}
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Transaction</button>
+                <div className="flex flex-col space-y-2">
+                    <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Transaction</button>
+                    {type === 'expense' && budgetCategory === 'Savings & Investments' && (
+                        <button type="button" onClick={handleSaveAndTrade} className="w-full px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700">
+                            Save & Record Trade
+                        </button>
+                    )}
+                </div>
             </form>
         </Modal>
     );
@@ -162,9 +184,10 @@ const FilterButton: React.FC<{ label: string, value: string, current: string, on
 interface TransactionsProps {
   pageAction?: string | null;
   clearPageAction?: () => void;
+  triggerPageAction: (page: Page, action: string) => void;
 }
 
-const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction }) => {
+const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
 
@@ -235,6 +258,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
     };
     
+    const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
+        addTransaction(transaction); // This is async but we don't need to wait
+        triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
+    };
+    
     const handleConfirmDelete = () => {
         if (!itemToDelete) return;
         deleteTransaction(itemToDelete.id);
@@ -282,12 +310,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             <label className="text-xs font-medium text-gray-500">Nature</label>
                             <div className="flex items-center space-x-2 mt-1">
                                 <FilterButton label="All" value="all" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
-                                <FilterButton label="Fixed" value="Fixed" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
                                 <FilterButton label="Variable" value="Variable" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                                <FilterButton label="Fixed" value="Fixed" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
                             </div>
                         </div>
-                         <div className="p-2 bg-gray-50 rounded-lg">
-                            <label className="text-xs font-medium text-gray-500">Type</label>
+                        <div className="p-2 bg-gray-50 rounded-lg">
+                            <label className="text-xs font-medium text-gray-500">Expense Type</label>
                             <div className="flex items-center space-x-2 mt-1">
                                 <FilterButton label="All" value="all" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                                 <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
@@ -296,57 +324,43 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         </div>
                     </div>
                  </div>
-                 <div className="bg-white shadow rounded-lg overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                         <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                             {filteredTransactions.map((t) => (
-                                <tr key={t.id} className="hover:bg-gray-50">
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        <div>{new Date(t.date).toLocaleDateString()}</div>
-                                        <div className="text-xs text-gray-500">{toHijri(t.date)}</div>
-                                    </td>
-                                    <td className="px-4 py-4 whitespace-nowrap">
-                                        <div className="text-sm font-medium text-gray-900">{t.description}</div>
-                                        <div className="text-xs text-gray-500">{data.accounts.find(a => a.id === t.accountId)?.name}</div>
-                                    </td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <div>{t.category}</div>
-                                        {t.subcategory && <div className="text-xs text-gray-400 font-medium">↳ {t.subcategory}</div>}
-                                    </td>
-                                     <td className="px-4 py-4 whitespace-nowrap text-xs">
-                                        {t.type === 'expense' && (
-                                            <div className="flex items-center gap-2">
-                                                {t.transactionNature && <span className={`px-2 py-0.5 rounded-full font-semibold ${t.transactionNature === 'Fixed' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>{t.transactionNature}</span>}
-                                                {t.expenseType && <span className={`px-2 py-0.5 rounded-full font-semibold ${t.expenseType === 'Core' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}`}>{t.expenseType}</span>}
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-semibold`}>
-                                        {formatCurrency(t.amount, { colorize: true })}
-                                    </td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-center text-sm">
-                                        <button onClick={() => handleOpenTransactionModal(t)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                                        <button onClick={() => setItemToDelete(t)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
-                                    </td>
-                                </tr>
-                             ))}
-                        </tbody>
-                    </table>
-                 </div>
+                <div className="bg-white shadow rounded-lg overflow-hidden">
+                    <ul className="divide-y divide-gray-200">
+                        {filteredTransactions.map(transaction => (
+                            <li key={transaction.id} className="p-4 hover:bg-gray-50">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                        <p className="font-semibold text-dark">{transaction.description}</p>
+                                        <div className="text-sm text-gray-500 flex items-center space-x-2">
+                                            <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
+                                            <span className="text-gray-300">|</span>
+                                            <span className="px-2 py-0.5 bg-gray-100 rounded-full text-xs">{transaction.category}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center space-x-4">
+                                        <p className={`font-bold text-lg ${transaction.type === 'income' ? 'text-success' : 'text-danger'}`}>{formatCurrency(transaction.amount)}</p>
+                                        <button onClick={() => handleOpenTransactionModal(transaction)} className="text-gray-400 hover:text-primary"><PencilIcon className="h-5 w-5"/></button>
+                                        <button onClick={() => setItemToDelete(transaction)} className="text-gray-400 hover:text-danger"><TrashIcon className="h-5 w-5"/></button>
+                                    </div>
+                                </div>
+                            </li>
+                        ))}
+                         {filteredTransactions.length === 0 && <li className="p-8 text-center text-gray-500">No transactions found for the selected period.</li>}
+                    </ul>
+                </div>
             </div>
-
-            <TransactionModal isOpen={isTransactionModalOpen} onClose={() => setIsTransactionModalOpen(false)} onSave={handleSaveTransaction} transactionToEdit={transactionToEdit} budgetCategories={budgetCategories} allCategories={allCategories} accounts={data.accounts} />
-            <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''}/>
+            
+            <TransactionModal 
+                isOpen={isTransactionModalOpen} 
+                onClose={() => setIsTransactionModalOpen(false)} 
+                onSave={handleSaveTransaction}
+                onSaveAndTrade={handleSaveAndTrade}
+                transactionToEdit={transactionToEdit} 
+                budgetCategories={budgetCategories}
+                allCategories={allCategories}
+                accounts={data.accounts}
+            />
+             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
         </div>
     );
 };

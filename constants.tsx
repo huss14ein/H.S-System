@@ -13,14 +13,16 @@ import { ShieldCheckIcon } from './components/icons/ShieldCheckIcon';
 import { ServerStackIcon } from './components/icons/ServerStackIcon';
 import { AcademicCapIcon } from './components/icons/AcademicCapIcon';
 import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
-import { Squares2X2Icon } from './components/icons/Squares2X2Icon';
+import { CubeIcon } from './components/icons/CubeIcon';
+import { BellIcon } from './components/icons/BellIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
   { name: 'Summary', icon: UsersIcon },
-  { name: 'Platform', icon: Squares2X2Icon },
+  { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
   { name: 'Assets', icon: BuildingLibraryIcon },
+  { name: 'Commodities', icon: CubeIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Transactions', icon: CreditCardIcon },
   { name: 'Budgets', icon: PiggyBankIcon },
@@ -29,5 +31,6 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Forecast', icon: AcademicCapIcon },
   { name: 'Analysis', icon: ChartBarIcon },
   { name: 'Zakat', icon: ReceiptPercentIcon },
+  { name: 'Notifications', icon: BellIcon },
   { name: 'System & APIs Health', icon: ServerStackIcon },
 ];

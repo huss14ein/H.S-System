@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account } from '../types';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -23,12 +23,13 @@ import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import { LinkIcon } from '../components/icons/LinkIcon';
 
-type InvestmentSubPage = 'Overview' | 'Platform' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
-    { name: 'Platform', icon: Squares2X2Icon },
+    { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
     { name: 'Trade Advices', icon: BookOpenIcon },
@@ -335,6 +336,7 @@ const PlatformCard: React.FC<{
     platform: Account;
     portfolios: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
+    goals: Goal[];
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
     onAddPortfolio: (accountId: string) => void;
@@ -344,7 +346,7 @@ const PlatformCard: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, transactions, goals, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
@@ -368,6 +370,8 @@ const PlatformCard: React.FC<{
         const gainLoss = h.currentValue - totalCost;
         return { ...h, totalCost, gainLoss };
     }).sort((a,b) => b.currentValue - a.currentValue);
+    
+    const getGoalName = (goalId?: string) => goalId ? goals.find(g => g.id === goalId)?.name : undefined;
 
     return (
         <div className="bg-white p-6 rounded-lg shadow flex flex-col hover:shadow-xl transition-shadow duration-300 ease-in-out">
@@ -409,6 +413,7 @@ const PlatformCard: React.FC<{
                                             <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="font-medium text-gray-900 text-left bg-transparent border-none p-0 hover:underline truncate" title={h.name}>{h.symbol}</button>
                                              <button onClick={() => onEditHolding(h)} className="text-gray-300 group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"><PencilIcon className="h-3 w-3" /></button>
                                              {h.zakahClass === 'Zakatable' && <span title="Zakatable Asset"><MoonIcon className="h-3 w-3 text-blue-400" /></span>}
+                                             {h.goalId && <span title={`Linked to: ${getGoalName(h.goalId)}`}><LinkIcon className="h-3 w-3 text-green-500" /></span>}
                                         </div>
                                         <div className="w-24 text-right font-semibold text-dark tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>
                                         <div className="w-28 text-right font-medium text-xs tabular-nums">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
@@ -461,7 +466,7 @@ const PlatformView: React.FC<{
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
                 {platformsData.map(p => (
-                    <PlatformCard key={p.account.id} platform={p.account} portfolios={p.portfolios} transactions={p.transactions} {...props} />
+                    <PlatformCard key={p.account.id} platform={p.account} portfolios={p.portfolios} transactions={p.transactions} goals={data.goals} {...props} />
                 ))}
             </div>
         </div>
@@ -485,7 +490,7 @@ interface InvestmentsProps {
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
-  const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
+  const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Portfolios');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; }) | null>(null);
@@ -546,7 +551,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const renderContent = () => {
     switch (activeTab) {
       case 'Overview': return <InvestmentOverview />;
-      case 'Platform':
+      case 'Portfolios':
         return <PlatformView 
             simulatedPrices={simulatedPrices}
             onAddPlatform={() => handleOpenPlatformModal()} 
@@ -570,6 +575,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
         <div className="flex justify-between items-center flex-wrap gap-4">
              <h1 className="text-3xl font-bold text-dark">Investments</h1>
              <div className="flex items-center space-x-2">
+                <button onClick={() => handleOpenPlatformModal(null)} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center"><PlusIcon className="h-4 w-4 mr-2" />Add Platform</button>
                 <button onClick={() => handleOpenPortfolioModal(null, null)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center"><PlusIcon className="h-4 w-4 mr-2" />Add Portfolio</button>
                 <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
              </div>

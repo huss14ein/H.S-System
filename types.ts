@@ -1,6 +1,6 @@
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Platform' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'System & APIs Health';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Commodities' | 'Notifications' | 'System & APIs Health';
 
 export interface Goal {
   id: string;
@@ -57,6 +57,8 @@ export interface Liability {
   name: string;
   type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan';
   amount: number;
+  status?: 'Active' | 'Paid';
+  goalId?: string;
 }
 
 export interface Transaction {
@@ -119,7 +121,7 @@ export interface InvestmentTransaction {
   user_id?: string;
   accountId: string;
   date: string;
-  type: 'buy' | 'sell';
+  type: 'buy' | 'sell' | 'dividend';
   symbol: string;
   quantity: number;
   price: number;
@@ -127,9 +129,23 @@ export interface InvestmentTransaction {
 }
 
 export interface Budget {
+  id: string;
   user_id?: string;
   category: string;
   limit: number;
+  month: number; // 1-12
+  year: number;
+}
+
+export interface CommodityHolding {
+  id: string;
+  user_id?: string;
+  name: 'Gold' | 'Silver' | 'Bitcoin' | 'Other';
+  quantity: number;
+  unit: 'gram' | 'ounce' | 'BTC' | 'unit';
+  purchaseValue: number;
+  currentValue: number;
+  symbol: string; // e.g., GOLD_GRAM, BTC_USD
 }
 
 export interface WatchlistItem {
@@ -165,6 +181,20 @@ export interface PriceAlert {
   createdAt: string;
 }
 
+export interface PlannedTrade {
+  id: string;
+  user_id?: string;
+  symbol: string;
+  name: string;
+  tradeType: 'buy' | 'sell';
+  conditionType: 'price' | 'date';
+  targetValue: number; // Price or Date timestamp
+  quantity?: number;
+  amount?: number; // in SAR
+  priority: 'High' | 'Medium' | 'Low';
+  status: 'Planned' | 'Executed';
+  notes?: string;
+}
 
 export interface FinancialData {
   accounts: Account[];
@@ -175,10 +205,12 @@ export interface FinancialData {
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
   budgets: Budget[];
+  commodityHoldings: CommodityHolding[];
   watchlist: WatchlistItem[];
   settings: Settings;
   zakatPayments: ZakatPayment[];
   priceAlerts: PriceAlert[];
+  plannedTrades: PlannedTrade[];
 }
 
 export interface KPISummary {

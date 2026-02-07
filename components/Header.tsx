@@ -1,4 +1,5 @@
-import React, { useState, useContext, useRef, useEffect } from 'react';
+// FIX: Import `useMemo` from `react`.
+import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { Page } from '../types';
 import { NAVIGATION_ITEMS } from '../constants';
 import { HSLogo } from './icons/HSLogo';
@@ -13,60 +14,34 @@ interface HeaderProps {
   setActivePage: (page: Page) => void;
 }
 
-// Mock static alerts data
-const staticAlerts = [
-    { id: 'static-1', message: 'Your "Food" budget is at 95%.', type: 'warning' },
-    { id: 'static-2', message: 'Goal "World Trip" is at risk of not meeting its deadline.', type: 'danger' },
-    { id: 'static-3', message: 'Upcoming payment: Mortgage (SAR 5,000) in 3 days.', type: 'warning' },
-];
-
 const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isAlertsOpen, setIsAlertsOpen] = useState(false);
   const [enableEmails, setEnableEmails] = useState(true);
-  const [alerts, setAlerts] = useState(staticAlerts);
   
   const auth = useContext(AuthContext);
   const { data, resetData, loadDemoData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
   const profileRef = useRef<HTMLDivElement>(null);
-  const alertsRef = useRef<HTMLDivElement>(null);
 
   const hasData = data && data.accounts.length > 0;
+  
+  const notificationCount = useMemo(() => {
+    if (!data) return 0;
+    const priceAlerts = data.priceAlerts.filter(a => a.status === 'triggered').length;
+    // You can add more notification types here in the future
+    return priceAlerts + 3; // +3 for static alerts
+  }, [data]);
+
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
-      if (alertsRef.current && !alertsRef.current.contains(event.target as Node)) {
-        setIsAlertsOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-  
-  useEffect(() => {
-    if(!data) return;
-    const triggeredPriceAlerts = data.priceAlerts
-      .filter(alert => alert.status === 'triggered')
-      .map(alert => ({
-        id: `price-alert-${alert.id}`,
-        message: `${alert.symbol} has reached your target price of ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(alert.targetPrice)}.`,
-        type: 'info',
-      }));
-
-    // Combine static and dynamic alerts, removing duplicates
-    const allAlerts = [...staticAlerts];
-    triggeredPriceAlerts.forEach(pa => {
-        if (!allAlerts.some(a => a.id === pa.id)) {
-            allAlerts.unshift(pa);
-        }
-    });
-    setAlerts(allAlerts);
-
-  }, [data?.priceAlerts]);
 
   const renderNavItem = (item: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }) => (
     <button
@@ -105,36 +80,16 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
                     USD
                 </button>
             </div>
-            {/* Alerts Dropdown */}
-            <div className="relative" ref={alertsRef}>
-                <button onClick={() => setIsAlertsOpen(!isAlertsOpen)} className="relative p-1">
-                    <BellIcon className="h-6 w-6 text-gray-500 hover:text-primary" />
-                    {alerts.length > 0 && (
-                        <span className="absolute top-0 right-0 flex h-4 w-4">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-xs items-center justify-center">{alerts.length}</span>
-                        </span>
-                    )}
-                </button>
-                {isAlertsOpen && (
-                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
-                        <div className="px-4 py-2 font-semibold text-dark border-b">Notifications</div>
-                        <ul className="max-h-80 overflow-y-auto">
-                            {alerts.map(alert => (
-                                <li key={alert.id} className="border-b last:border-b-0">
-                                    <button className="w-full text-left block p-3 hover:bg-gray-100 text-sm">
-                                        <p className="font-medium text-gray-800">{alert.message}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{alert.type === 'warning' ? 'Action recommended' : (alert.type === 'danger' ? 'Urgent attention required' : 'For your information')}</p>
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                         <div className="px-4 py-2 border-t">
-                            <button className="text-sm text-primary hover:underline font-medium">View all notifications</button>
-                        </div>
-                    </div>
+            {/* Notifications Button */}
+            <button onClick={() => setActivePage('Notifications')} className="relative p-1">
+                <BellIcon className="h-6 w-6 text-gray-500 hover:text-primary" />
+                {notificationCount > 0 && (
+                    <span className="absolute top-0 right-0 flex h-4 w-4">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-xs items-center justify-center">{notificationCount}</span>
+                    </span>
                 )}
-            </div>
+            </button>
             {/* Profile Dropdown */}
             <div className="relative" ref={profileRef}>
                 <button onClick={() => setIsProfileOpen(!isProfileOpen)}>

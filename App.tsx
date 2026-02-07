@@ -12,7 +12,7 @@ import MarketSimulator from './components/MarketSimulator';
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Summary = lazy(() => import('./pages/Summary'));
-const Platforms = lazy(() => import('./pages/Platforms'));
+const Accounts = lazy(() => import('./pages/Accounts'));
 const Investments = lazy(() => import('./pages/Investments'));
 const Assets = lazy(() => import('./pages/Assets'));
 const Liabilities = lazy(() => import('./pages/Liabilities'));
@@ -23,6 +23,8 @@ const Plan = lazy(() => import('./pages/Plan'));
 const Forecast = lazy(() => import('./pages/Forecast'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const Zakat = lazy(() => import('./pages/Zakat'));
+const Commodities = lazy(() => import('./pages/Commodities'));
+const Notifications = lazy(() => import('./pages/Notifications'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 
 const LoadingSpinner: React.FC = () => (
@@ -55,17 +57,20 @@ const App: React.FC = () => {
     switch (activePage) {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
       case 'Summary': return <Summary />;
-      case 'Platform': return <Platforms />;
+      case 'Accounts': return <Accounts />;
+      // FIX: Removed unused `triggerPageAction` prop from the `Investments` component as it is not defined in its props interface.
       case 'Investments': return <Investments {...actionProps} />;
       case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities />;
-      case 'Transactions': return <Transactions {...actionProps} />;
+      case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets />;
       case 'Goals': return <Goals />;
       case 'Plan': return <Plan />;
       case 'Forecast': return <Forecast />;
       case 'Analysis': return <Analysis />;
       case 'Zakat': return <Zakat />;
+      case 'Commodities': return <Commodities />;
+      case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }

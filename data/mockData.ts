@@ -7,6 +7,9 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
   const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 15).toISOString().split('T')[0];
   const twoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 10).toISOString().split('T')[0];
   const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 5).toISOString().split('T')[0];
+  
+  // Helper to give a slight variation to current value for realism
+  const withVariation = (value: number) => value * (0.95 + Math.random() * 0.1); // +/- 5% variation
 
   return {
     accounts: [
@@ -23,8 +26,8 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         { id: 'asset4', name: 'Gold Bullion (100g)', type: 'Gold and precious metals', value: 27500, purchasePrice: 22000 },
     ],
     liabilities: [
-        { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -1250000 },
-        { id: 'liab2', name: 'Car Loan', type: 'Loan', amount: -65000 },
+        { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -1250000, status: 'Active' },
+        { id: 'liab2', name: 'Car Loan', type: 'Loan', amount: -65000, status: 'Active' },
     ],
     goals: [
         { id: 'goal1', name: 'World Trip', targetAmount: 75000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 2, 5, 1).toISOString(), savingsAllocationPercent: 30 },
@@ -46,9 +49,9 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         name: 'Tadawul Portfolio',
         accountId: 'acc4',
         holdings: [
-          { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35.50, currentValue: 3450, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80.20, currentValue: 4100, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h3', symbol: 'REITF.SR', name: 'AlJazira REIT', quantity: 200, avgCost: 18.00, currentValue: 3700, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'REIT' },
+          { id: 'h1', symbol: '2222.SR', name: 'Saudi Aramco', quantity: 100, avgCost: 35.50, currentValue: withVariation(35.50 * 100), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h2', symbol: '1120.SR', name: 'Al Rajhi Bank', quantity: 50, avgCost: 80.20, currentValue: withVariation(80.20 * 50), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h3', symbol: 'REITF.SR', name: 'AlJazira REIT', quantity: 200, avgCost: 18.00, currentValue: withVariation(18.00 * 200), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'REIT' },
         ]
       },
       {
@@ -56,8 +59,8 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         name: 'International Stocks',
         accountId: 'acc5',
         holdings: [
-          { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00, currentValue: 3100, zakahClass: 'Zakatable', realizedPnL: 150, assetClass: 'Stock' },
-          { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00, currentValue: 2150, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF' },
+          { id: 'h4', symbol: 'MSFT', name: 'Microsoft Corp', quantity: 10, avgCost: 300.00, currentValue: withVariation(300.00 * 10), zakahClass: 'Zakatable', realizedPnL: 150, assetClass: 'Stock' },
+          { id: 'h5', symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 5, avgCost: 400.00, currentValue: withVariation(400.00 * 5), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'ETF' },
         ]
       },
       {
@@ -65,8 +68,8 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         name: 'US Growth Portfolio',
         accountId: 'acc4',
         holdings: [
-          { id: 'h6', symbol: 'NVDA', name: 'NVIDIA Corp', quantity: 5, avgCost: 120.00, currentValue: 650, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
-          { id: 'h7', symbol: 'TSLA', name: 'Tesla, Inc.', quantity: 10, avgCost: 180.00, currentValue: 1750, zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h6', symbol: 'NVDA', name: 'NVIDIA Corp', quantity: 5, avgCost: 120.00, currentValue: withVariation(120.00 * 5), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
+          { id: 'h7', symbol: 'TSLA', name: 'Tesla, Inc.', quantity: 10, avgCost: 180.00, currentValue: withVariation(180.00 * 10), zakahClass: 'Zakatable', realizedPnL: 0, assetClass: 'Stock' },
         ]
       }
     ],
@@ -78,17 +81,47 @@ export const getMockData = (): Omit<FinancialData, 'settings' | 'zakatPayments' 
         { id: 'it5', accountId: 'acc4', date: threeMonthsAgo, type: 'buy', symbol: 'TSLA', quantity: 10, price: 180.00, total: 1800 },
     ],
     budgets: [
-        { category: 'Food', limit: 3000 },
-        { category: 'Housing', limit: 8000 },
-        { category: 'Transportation', limit: 1500 },
-        { category: 'Utilities', limit: 1000 },
-        { category: 'Shopping', limit: 2000 },
-        { category: 'Entertainment', limit: 1000 },
-        { category: 'Savings & Investments', limit: 5000 },
+        { id: 'b1', category: 'Food', limit: 3000, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b2', category: 'Housing', limit: 8000, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b3', category: 'Transportation', limit: 1500, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b4', category: 'Utilities', limit: 1000, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b5', category: 'Shopping', limit: 2000, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b6', category: 'Entertainment', limit: 1000, month: today.getMonth() + 1, year: today.getFullYear() },
+        { id: 'b7', category: 'Savings & Investments', limit: 5000, month: today.getMonth() + 1, year: today.getFullYear() },
+    ],
+    commodityHoldings: [
+      { id: 'ch1', name: 'Gold', quantity: 100, unit: 'gram', purchaseValue: 22000, currentValue: withVariation(27500), symbol: 'XAU_GRAM' },
+      { id: 'ch2', name: 'Bitcoin', quantity: 0.05, unit: 'BTC', purchaseValue: 12000, currentValue: withVariation(13000), symbol: 'BTC_USD' }
     ],
     watchlist: [
         { symbol: '7010.SR', name: 'STC' },
         { symbol: 'AAPL', name: 'Apple Inc.' },
+    ],
+    plannedTrades: [
+      {
+        id: 'pt1',
+        symbol: 'AAPL',
+        name: 'Apple Inc.',
+        tradeType: 'buy',
+        conditionType: 'price',
+        targetValue: 180, // Price target
+        amount: 5000,
+        priority: 'Medium',
+        status: 'Planned',
+        notes: 'Buy on dip before next product launch.'
+      },
+      {
+        id: 'pt2',
+        symbol: '2222.SR',
+        name: 'Saudi Aramco',
+        tradeType: 'sell',
+        conditionType: 'date',
+        targetValue: new Date(new Date().getFullYear(), new Date().getMonth() + 3, 1).getTime(), // Date target
+        quantity: 50,
+        priority: 'High',
+        status: 'Planned',
+        notes: 'Re-evaluate position in 3 months.'
+      }
     ],
   };
 };
