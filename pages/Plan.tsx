@@ -1,8 +1,6 @@
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import Card from '../components/Card';
-import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AIAdvisor from '../components/AIAdvisor';
@@ -119,8 +117,8 @@ const AnnualFinancialPlan: React.FC = () => {
         setPlanData([incomeRow, ...expenseRows]);
     }, [data.budgets, data.transactions, year]);
     
-    const processedPlanData = useMemo(() => {
-        let baseData = JSON.parse(JSON.stringify(planData));
+    const processedPlanData: PlanRow[] = useMemo(() => {
+        let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
 
         // Apply scenarios
         let incomeRow = baseData.find((r: PlanRow) => r.type === 'income');
@@ -158,12 +156,12 @@ const AnnualFinancialPlan: React.FC = () => {
     }, [planData, incomeShock, expenseStress, events]);
     
     const totals = useMemo(() => {
-        const income = processedPlanData.find(r => r.type === 'income');
+        const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
         const totalPlannedIncome = income?.monthly_planned.reduce((a: number, b: number) => a + b, 0) || 0;
         const totalActualIncome = income?.monthly_actual.reduce((a: number, b: number) => a + b, 0) || 0;
         
-        const totalPlannedExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_planned.reduce((a: number,b: number) => a + b, 0), 0);
-        const totalActualExpenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, row) => sum + row.monthly_actual.reduce((a: number,b: number) => a + b, 0), 0);
+        const totalPlannedExpenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, row: PlanRow) => sum + row.monthly_planned.reduce((a: number,b: number) => a + b, 0), 0);
+        const totalActualExpenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, row: PlanRow) => sum + row.monthly_actual.reduce((a: number,b: number) => a + b, 0), 0);
 
         const projectedNet = totalPlannedIncome - totalPlannedExpenses;
         const actualNet = totalActualIncome - totalActualExpenses;
@@ -173,8 +171,8 @@ const AnnualFinancialPlan: React.FC = () => {
     
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
-            const income = processedPlanData.find(r => r.type === 'income')?.monthly_planned[index] || 0;
-            const expenses = processedPlanData.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.monthly_planned[index], 0);
+            const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
+            const expenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, r: PlanRow) => sum + r.monthly_planned[index], 0);
             return { name: month, Income: income, Expenses: expenses, "Net Savings": income - expenses };
         });
     }, [processedPlanData]);
@@ -222,7 +220,7 @@ const AnnualFinancialPlan: React.FC = () => {
                     <ComposedChart data={planChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="name" />
-                        <YAxis tickFormatter={(val) => new Intl.NumberFormat('en-US', { notation: 'compact' }).format(val)} />
+                        <YAxis tickFormatter={(val) => new Intl.NumberFormat('en-US', { notation: 'compact' }).format(val as number)} />
                         <Tooltip formatter={(val: number) => formatCurrencyString(val, { digits: 0 })} />
                         <Legend />
                         <Bar dataKey="Expenses" fill="#f43f5e" name="Planned Expenses" />
@@ -289,7 +287,7 @@ const AnnualFinancialPlan: React.FC = () => {
                     <tbody className="divide-y divide-gray-200">
                         {/* Income */}
                         <tr className="bg-green-50"><td colSpan={14} className="p-2 font-bold text-green-800">Income</td></tr>
-                        {processedPlanData.filter(r => r.type === 'income').map((row, rowIndex) => {
+                        {processedPlanData.filter((r: PlanRow) => r.type === 'income').map((row: PlanRow, rowIndex: number) => {
                              const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
                              const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
                              return (
@@ -312,7 +310,7 @@ const AnnualFinancialPlan: React.FC = () => {
                         })}
                         {/* Expenses */}
                         <tr className="bg-red-50"><td colSpan={14} className="p-2 font-bold text-red-800">Expenses</td></tr>
-                        {processedPlanData.filter(r => r.type === 'expense').map((row) => {
+                        {processedPlanData.filter((r: PlanRow) => r.type === 'expense').map((row: PlanRow) => {
                              const originalIndex = planData.findIndex(item => item.category === row.category && item.type === 'expense');
                              const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
                              const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
