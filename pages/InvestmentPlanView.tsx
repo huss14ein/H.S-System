@@ -53,6 +53,11 @@ const PlanTradeModal: React.FC<{
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        if (!quantity && !amount) {
+            alert("Please specify either a quantity of shares or a total amount in SAR for the trade.");
+            return;
+        }
+        
         const planData = {
             symbol: symbol.toUpperCase().trim(),
             name,

@@ -19,6 +19,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
+    percentage: number;
 }
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
@@ -129,27 +130,44 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], onClick: () =>
 
 const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }> = ({ budgets, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysLeft = daysInMonth - now.getDate();
+
+    const getStatus = (percentage: number) => {
+        if (percentage > 100) return { text: 'Over Budget', colorClass: 'bg-danger', textColorClass: 'text-danger' };
+        if (percentage > 75) return { text: 'Nearing Limit', colorClass: 'bg-warning', textColorClass: 'text-warning' };
+        return { text: 'On Track', colorClass: 'bg-success', textColorClass: 'text-success' };
+    };
+
     return (
         <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={onClick}>
             <h3 className="text-lg font-semibold mb-4 text-dark">Budget Health (This Month)</h3>
             <div className="space-y-4">
-                {budgets.slice(0, 4).map(budget => (
-                    <div key={budget.category}>
-                        <div className="flex justify-between items-baseline mb-1">
-                            <span className="font-medium text-sm text-dark">{budget.category}</span>
-                            <span className={`text-sm font-medium ${budget.spent > budget.limit ? 'text-danger' : 'text-gray-600'}`}>
-                                {formatCurrencyString(budget.spent, { digits: 0 })} / {formatCurrencyString(budget.limit, { digits: 0 })}
-                            </span>
+                {budgets.slice(0, 4).map(budget => {
+                    const status = getStatus(budget.percentage);
+                    return (
+                        <div key={budget.category} className="border-t pt-3 first:border-t-0">
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="font-bold text-dark">{budget.category}</span>
+                                <span className={`text-sm font-semibold flex items-center gap-1.5 ${status.textColorClass}`}>
+                                    <span className={`w-2 h-2 rounded-full ${status.colorClass}`}></span>
+                                    {status.text}
+                                </span>
+                            </div>
+                            <ProgressBar value={budget.spent} max={budget.limit} color={status.colorClass} />
+                            <div className="flex justify-between items-baseline text-xs text-gray-500 mt-1">
+                                <span>
+                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.limit, { digits: 0 })}
+                                    <span className="font-medium text-gray-600"> ({budget.percentage.toFixed(0)}%)</span>
+                                </span>
+                                <span>
+                                    {daysLeft} days left
+                                </span>
+                            </div>
                         </div>
-                        <ProgressBar value={budget.spent} max={budget.limit} />
-                        <p className={`text-right text-xs mt-1 font-medium ${budget.limit - budget.spent >= 0 ? 'text-gray-500' : 'text-danger'}`}>
-                          {budget.limit - budget.spent >= 0 
-                              ? `${formatCurrencyString(budget.limit - budget.spent, { digits: 0 })} left`
-                              : `${formatCurrencyString(Math.abs(budget.limit - budget.spent), { digits: 0 })} over`
-                          }
-                        </p>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
@@ -209,7 +227,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
                 monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
-        const monthlyBudgets = data.budgets.map(budget => ({ ...budget, spent: monthlySpending.get(budget.category) || 0, }));
+
+        const monthlyBudgets = data.budgets
+            .map(budget => {
+                const spent = monthlySpending.get(budget.category) || 0;
+                const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
+                return { ...budget, spent, percentage };
+            })
+            .sort((a, b) => b.percentage - a.percentage);
         
         // Cashflow Chart Data
         const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
@@ -301,7 +326,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Transactions')} />
+                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
                 <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
             
