@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Account, Page, InvestmentPortfolio } from '../types';
+import { Account, InvestmentPortfolio } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -125,7 +125,7 @@ const AccountCardComponent: React.FC<{
     );
 };
 
-const Platforms: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
+const Platforms: React.FC = () => {
     const { data, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 

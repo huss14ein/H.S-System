@@ -55,7 +55,7 @@ const App: React.FC = () => {
     switch (activePage) {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
       case 'Summary': return <Summary />;
-      case 'Platform': return <Platforms setActivePage={setActivePage} />;
+      case 'Platform': return <Platforms />;
       case 'Investments': return <Investments {...actionProps} />;
       case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities />;
