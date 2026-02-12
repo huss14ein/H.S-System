@@ -163,7 +163,6 @@ const Budgets: React.FC = () => {
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
                             <button onClick={() => handleOpenModal(budget)} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                            {/* FIX: The deleteBudget function requires month and year in addition to the category. */}
                             <button onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
