@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 const createSupabaseClient = () => {
+    // FIX: Use process.env to access environment variables, which is consistent with other parts of the app.
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
 
