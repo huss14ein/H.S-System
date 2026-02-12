@@ -25,11 +25,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use process.env.API_KEY as per guidelines to fix TypeScript errors.
+    // FIX: Per Gemini guidelines, API key must be from process.env.API_KEY. This also resolves issues with import.meta.env.
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        // FIX: Update warning message to reflect the change to process.env.API_KEY.
-        console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        console.warn("AI features are disabled. Set API_KEY environment variable.");
         return null;
     }
     return new GoogleGenAI({ apiKey });

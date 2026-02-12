@@ -1,9 +1,12 @@
-// FIX: Define types for process.env to resolve TypeScript errors.
-declare var process: {
-  env: {
-    API_KEY?: string;
-    SUPABASE_URL?: string;
-    SUPABASE_ANON_KEY?: string;
-    [key: string]: string | undefined;
+// FIX: Correctly augment global process.env types to avoid redeclaration errors.
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      API_KEY?: string;
+      SUPABASE_URL?: string;
+      SUPABASE_ANON_KEY?: string;
+    }
   }
 }
+
+export {};

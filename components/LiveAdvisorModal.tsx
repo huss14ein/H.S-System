@@ -135,12 +135,11 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // FIX: Use process.env.API_KEY as per guidelines to fix TypeScript errors.
+        // FIX: Per Gemini guidelines, API key must be from process.env.API_KEY. This also resolves issues with import.meta.env.
         const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');
-            // FIX: Update error message to reflect the change to process.env.API_KEY.
-            console.error("API_KEY environment variable is not configured for Live Advisor.");
+            console.error("Live Advisor is unavailable: Set API_KEY environment variable.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;
         }
