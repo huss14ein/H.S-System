@@ -1,12 +1,14 @@
-/// <reference types="vite/client" />
+
 import { createClient } from '@supabase/supabase-js';
 
 const createSupabaseClient = () => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    // FIX: Use process.env to resolve TypeScript errors with import.meta.env.
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      console.error("VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not configured. Supabase client will not be initialized.");
+      // FIX: Update error message to reflect new environment variables.
+      console.error("SUPABASE_URL and SUPABASE_ANON_KEY are not configured. Supabase client will not be initialized.");
       return null;
     }
 

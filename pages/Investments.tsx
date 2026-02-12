@@ -290,7 +290,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
 export const PortfolioModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (p: any) => void;
+    onSave: (p: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'> | InvestmentPortfolio) => void;
     portfolioToEdit: InvestmentPortfolio | null;
     accountId: string | null;
     investmentAccounts: Account[];
@@ -526,7 +526,7 @@ interface PlatformModalProps { isOpen: boolean; onClose: () => void; onSave: (pl
 const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, platformToEdit }) => {
     const [name, setName] = useState('');
     useEffect(() => { if (platformToEdit) setName(platformToEdit.name); else setName(''); }, [platformToEdit, isOpen]);
-    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSave({ ...(platformToEdit || {}), id: platformToEdit?.id || '', name, type: 'Investment', balance: platformToEdit?.balance || 0 }); onClose(); };
+    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); onClose(); };
     return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
 };
 // #endregion
@@ -580,7 +580,15 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const handleSaveHolding = (holding: Holding) => { updateHolding(holding); };
   
   const handleOpenPlatformModal = (platform: Account | null = null) => { setPlatformToEdit(platform); setIsPlatformModalOpen(true); };
-  const handleSavePlatform = (platform: Account) => { if (platform.id) updatePlatform(platform); else addPlatform(platform); };
+  
+  const handleSavePlatform = (platform: Account) => {
+      if (platform.id) {
+          updatePlatform(platform);
+      } else {
+          const { id, balance, ...newPlatformData } = platform;
+          addPlatform(newPlatformData);
+      }
+  };
 
   const handleOpenDeleteModal = (item: Account | InvestmentPortfolio) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
   const handleConfirmDelete = () => {
@@ -599,9 +607,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
       setCurrentAccountId(accountId);
       setIsPortfolioModalOpen(true);
   };
-  const handleSavePortfolio = (portfolio: any) => {
-      if(portfolio.id) updatePortfolio(portfolio);
-      else addPortfolio(portfolio);
+  const handleSavePortfolio = (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'> | InvestmentPortfolio) => {
+      if ('id' in portfolio && portfolio.id) {
+          const { holdings, ...portfolioToUpdate } = portfolio as InvestmentPortfolio;
+          updatePortfolio(portfolioToUpdate);
+      } else {
+          addPortfolio(portfolio as Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>);
+      }
   };
   
   const handleExecutePlan = (plan: PlannedTrade) => {

@@ -335,7 +335,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     // --- Transactions ---
-    const addTransaction = async (transaction: Omit<Transaction, 'id'>) => {
+    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
         if(!supabase) return;
         const db = supabase;
         const { data: newTx, error } = await db.from('transactions').insert(withUser(transaction)).select().single();
@@ -381,7 +381,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     // --- Investments ---
-    const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'holdings'>) => {
+    const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => {
         if(!supabase) return;
         const db = supabase;
         const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
@@ -603,7 +603,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await db.from('price_alerts').delete().match({ id: alertId, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
     };
-    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id'>) => {
+    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => {
         if(!supabase) return;
         const db = supabase;
         const { data: newPayment } = await db.from('zakat_payments').insert(withUser(payment)).select().single();

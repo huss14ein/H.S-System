@@ -10,6 +10,7 @@ import { TrashIcon } from '../components/icons/TrashIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
+import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -53,6 +54,7 @@ const AccountModal: React.FC<{
                     <option value="Checking">Checking</option>
                     <option value="Savings">Savings</option>
                     <option value="Credit">Credit Card</option>
+                    <option value="Investment">Investment</option>
                 </select>
                 <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Account</button>
@@ -74,6 +76,7 @@ const AccountCardComponent: React.FC<{
         switch (type) {
             case 'Checking': case 'Savings': return <BanknotesIcon className={`${iconClass} text-green-500`} />;
             case 'Credit': return <CreditCardIcon className={`${iconClass} text-red-500`} />;
+            case 'Investment': return <ArrowTrendingUpIcon className={`${iconClass} text-indigo-500`} />;
             default: return <BuildingLibraryIcon className={`${iconClass} text-gray-500`} />;
         }
     };
@@ -115,19 +118,36 @@ const Accounts: React.FC = () => {
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
     
-    const { cashAccounts, creditAccounts, totalCash, totalCredit } = useMemo(() => {
+    const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
         const credit = data.accounts.filter(a => a.type === 'Credit');
+        const investments = data.accounts.filter(a => a.type === 'Investment');
         
         const totalCash = cash.reduce((sum, acc) => sum + acc.balance, 0);
         const totalCredit = credit.reduce((sum, acc) => sum + acc.balance, 0);
 
-        return { cashAccounts: cash, creditAccounts: credit, totalCash, totalCredit };
-    }, [data.accounts]);
+        const investmentsWithUpdatedBalance = investments.map(acc => {
+            const portfolioValue = data.investments
+                .filter(p => p.accountId === acc.id)
+                .reduce((pSum, p) => pSum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            return { ...acc, balance: portfolioValue };
+        });
+
+        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + acc.balance, 0);
+
+        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
+    }, [data.accounts, data.investments]);
     
     // --- Account Handlers ---
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
-    const handleSaveAccount = (account: Omit<Account, 'id' | 'balance'> | Account) => { if ('id' in account) updatePlatform(account); else addPlatform(account); };
+    
+    const handleSaveAccount = (account: Omit<Account, 'id' | 'balance'> | Account) => {
+        if ('id' in account && account.id) {
+            updatePlatform(account as Account);
+        } else {
+            addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'>);
+        }
+    };
 
     const handleOpenDeleteModal = (item: Account) => setItemToDelete(item);
     const handleConfirmDelete = () => {
@@ -143,9 +163,10 @@ const Accounts: React.FC = () => {
                 <button onClick={() => handleOpenAccountModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add New Account</button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                  <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} />
                  <Card title="Total Credit Balance" value={formatCurrencyString(totalCredit)} />
+                 <Card title="Total Investment Value" value={formatCurrencyString(totalInvestments)} />
             </div>
             
             <section>
@@ -159,6 +180,13 @@ const Accounts: React.FC = () => {
                 <h2 className="text-2xl font-semibold text-dark mb-4">Credit Cards</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {creditAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} />)}
+                </div>
+            </section>
+
+             <section>
+                <h2 className="text-2xl font-semibold text-dark mb-4">Investment Platforms</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {investmentAccounts.map(acc => <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} />)}
                 </div>
             </section>
 

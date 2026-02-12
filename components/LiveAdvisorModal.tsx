@@ -1,4 +1,4 @@
-/// <reference types="vite/client" />
+
 import React, { useState, useRef, useContext, useCallback } from 'react';
 import Modal from './Modal';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob as GenaiBlob } from '@google/genai';
@@ -135,10 +135,12 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        const apiKey = import.meta.env.VITE_API_KEY;
+        // FIX: Use process.env.API_KEY as per guidelines to fix TypeScript errors.
+        const apiKey = process.env.API_KEY;
         if (!apiKey) {
             setStatus('Error');
-            console.error("VITE_API_KEY environment variable is not configured for Live Advisor.");
+            // FIX: Update error message to reflect the change to process.env.API_KEY.
+            console.error("API_KEY environment variable is not configured for Live Advisor.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;
         }

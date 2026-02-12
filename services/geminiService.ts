@@ -1,4 +1,4 @@
-/// <reference types="vite/client" />
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding } from '../types';
 
@@ -25,9 +25,11 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    const apiKey = import.meta.env.VITE_API_KEY;
+    // FIX: Use process.env.API_KEY as per guidelines to fix TypeScript errors.
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("VITE_API_KEY environment variable not set. AI features will be disabled.");
+        // FIX: Update warning message to reflect the change to process.env.API_KEY.
+        console.warn("API_KEY environment variable not set. AI features will be disabled.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
