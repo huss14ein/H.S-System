@@ -13,15 +13,3 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
-
-// Add type definition for process.env.API_KEY to satisfy TypeScript
-// and adhere to Gemini API guidelines for key management.
-// This is a type declaration and does not define the variable at runtime.
-// FIX: Changed from `declare var process` to `declare namespace NodeJS` to extend
-// the global process type instead of overwriting it. This fixes errors with
-// `process.cwd()` in vite.config.ts and redeclaration errors.
-declare namespace NodeJS {
-  interface ProcessEnv {
-    readonly API_KEY: string;
-  }
-}

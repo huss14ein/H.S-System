@@ -78,20 +78,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 accounts, assets, liabilities, goals, transactions, investments,
                 investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades
             ] = await Promise.all([
-                db.from('accounts').select('*'),
-                db.from('assets').select('*'),
-                db.from('liabilities').select('*'),
-                db.from('goals').select('*'),
-                db.from('transactions').select('*'),
-                db.from('investment_portfolios').select('*, holdings(*)'),
-                db.from('investment_transactions').select('*'),
-                db.from('budgets').select('*'),
-                db.from('watchlist').select('*'),
-                db.from('settings').select('*').single(),
-                db.from('zakat_payments').select('*'),
-                db.from('price_alerts').select('*'),
-                db.from('commodity_holdings').select('*'),
-                db.from('planned_trades').select('*')
+                db.from('accounts').select('*').eq('user_id', auth.user.id),
+                db.from('assets').select('*').eq('user_id', auth.user.id),
+                db.from('liabilities').select('*').eq('user_id', auth.user.id),
+                db.from('goals').select('*').eq('user_id', auth.user.id),
+                db.from('transactions').select('*').eq('user_id', auth.user.id),
+                db.from('investment_portfolios').select('*, holdings(*)').eq('user_id', auth.user.id),
+                db.from('investment_transactions').select('*').eq('user_id', auth.user.id),
+                db.from('budgets').select('*').eq('user_id', auth.user.id),
+                db.from('watchlist').select('*').eq('user_id', auth.user.id),
+                db.from('settings').select('*').eq('user_id', auth.user.id).single(),
+                db.from('zakat_payments').select('*').eq('user_id', auth.user.id),
+                db.from('price_alerts').select('*').eq('user_id', auth.user.id),
+                db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
+                db.from('planned_trades').select('*').eq('user_id', auth.user.id)
             ]);
 
             const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades };
