@@ -85,7 +85,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setIsLoading(true);
         try {
             const response = await invokeGeminiProxy({
-                model: 'gemini-3-pro-preview',
+                model: 'gemini-2.5-pro',
                 contents: chatHistory,
                 config: { tools: [{ functionDeclarations }] }
             });
@@ -104,7 +104,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                     }
                 }
                 
-                const modelResponseWithFunctionCall: Content = { role: 'model', parts: [{ functionCall: calls[0] }] }; // Simplified for now
+                const functionCallParts: Part[] = calls.map(fc => ({ functionCall: fc }));
+                const modelResponseWithFunctionCall: Content = { role: 'model', parts: functionCallParts };
                 const toolResponse: Content = { role: 'tool', parts: toolResponseParts };
 
                 // Recurse with the function response
@@ -118,8 +119,12 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 setIsLoading(false);
             }
         } catch (e) {
-            console.error(e);
-            setHistory(prev => [...prev, { role: 'model', parts: [{ text: `Error: ${e instanceof Error ? e.message : String(e)}` }] }]);
+            console.error("Error in Live Advisor processTurn:", e);
+            let errorMessage = "An unknown error occurred while communicating with the AI service.";
+            if (e instanceof Error) {
+                errorMessage = `AI Service Error: ${e.message}`;
+            }
+            setHistory(prev => [...prev, { role: 'model', parts: [{ text: errorMessage }] }]);
             setIsLoading(false);
         }
     };

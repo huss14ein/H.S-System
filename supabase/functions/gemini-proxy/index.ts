@@ -22,7 +22,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json();
+    const { model, contents, config } = await req.json();
     const apiKey = Deno.env.get("GEMINI_API_KEY");
 
     if (!apiKey) {
@@ -32,7 +32,7 @@ serve(async (req: Request) => {
     const ai = new GoogleGenAI({ apiKey });
     
     // The client sends the parameters for generateContent (model, contents, config)
-    const response: GenerateContentResponse = await ai.models.generateContent(body);
+    const response: GenerateContentResponse = await ai.models.generateContent({ model, contents, config });
 
     // The SDK's response object is a class instance. Getters like `.text` are not
     // preserved when stringified. We must explicitly build a plain JSON object
