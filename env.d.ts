@@ -11,3 +11,15 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// FIX: Replaced `declare const process` with a global augmentation of `NodeJS.ProcessEnv`.
+// This avoids redeclaring the `process` variable which is already provided by Node.js types,
+// and correctly adds types for environment variables, resolving the "Cannot redeclare block-scoped variable" error.
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      VITE_SUPABASE_URL: string;
+      VITE_SUPABASE_ANON_KEY: string;
+    }
+  }
+}

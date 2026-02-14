@@ -4,8 +4,9 @@ import { supabase } from './supabaseClient';
 
 // --- Model Constants ---
 // Use stable model aliases to avoid issues with preview model lifecycles.
-const FAST_MODEL = 'gemini-2.5-flash';
-const DEEP_MODEL = 'gemini-2.5-pro';
+// FIX: Updated models to align with current Gemini API guidelines for better performance and features.
+const FAST_MODEL = 'gemini-3-flash-preview';
+const DEEP_MODEL = 'gemini-3-pro-preview';
 
 // --- AI Error Formatting ---
 function formatAiError(error: any): string {
