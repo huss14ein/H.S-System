@@ -84,9 +84,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const processTurn = async (chatHistory: Content[]) => {
         setIsLoading(true);
         try {
-            // FIX: Updated model to align with Gemini API guidelines.
             const response = await invokeGeminiProxy({
-                model: 'gemini-3-pro-preview',
+                model: 'gemini-2.5-pro',
                 contents: chatHistory,
                 config: { tools: [{ functionDeclarations }] }
             });
