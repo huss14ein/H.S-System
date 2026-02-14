@@ -31,13 +31,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         }
     }, [isOpen, view, history]);
 
-    // Define functions that the AI can call
-    const getNetWorth = useCallback(() => { /* ... */ }, [data]);
-    const getBudgetStatus = useCallback(({ category }: { category: string }) => { /* ... */ }, [data]);
-    const getRecentTransactions = useCallback(({ limit }: { limit: number }) => { /* ... */ }, [data]);
-    const handleAddWatchlistItem = useCallback(async ({ symbol, name }: { symbol: string, name: string }) => { /* ... */ }, [addWatchlistItem]);
-
-    // Function definitions (contents are folded for brevity, but they are here)
+    // Function definitions
     const getNetWorth_ = useCallback(() => {
         const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
         const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
@@ -166,7 +160,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 <div className="flex flex-col h-[70vh]">
                     <div className="flex-grow bg-gray-100 rounded-lg p-4 overflow-y-auto space-y-4">
                         {history.map((msg, index) => (
-                            (msg.role === 'user' || msg.role === 'model') && msg.parts.map((part, pIndex) => (
+                            (msg.role === 'user' || msg.role === 'model') && msg.parts?.map((part, pIndex) => (
                                 part.text && (
                                     <div key={`${index}-${pIndex}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                         <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.role === 'user' ? 'bg-primary text-white' : 'bg-white'}`}>
