@@ -558,7 +558,7 @@ interface InvestmentsProps {
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
-  const { formatCurrency } = useFormatCurrency();
+  const { formatCurrency, formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Portfolios');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
@@ -580,22 +580,33 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
-  const { totalDailyPnL, trendPercentage } = useMemo(() => {
-    if (!data || !data.investments) return { totalDailyPnL: 0, trendPercentage: 0 };
+  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage } = useMemo(() => {
+    if (!data || !data.investments) {
+        return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
+    }
     
     const allHoldings = data.investments.flatMap(p => p.holdings || []);
     
+    const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+
+    const totalInvested = data.investmentTransactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
+    const totalWithdrawn = Math.abs(data.investmentTransactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+    const netCapital = totalInvested - totalWithdrawn;
+    
+    const totalGainLoss = totalValue - netCapital;
+    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+
     const totalDailyPnL = allHoldings.reduce((sum, h) => {
         const priceInfo = simulatedPrices[h.symbol];
         return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
     }, 0);
 
-    const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
-    return { totalDailyPnL, trendPercentage };
-  }, [data.investments, simulatedPrices]);
+    return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
+  }, [data.investments, data.investmentTransactions, simulatedPrices]);
+
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -708,15 +719,16 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
              </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="md:col-start-4">
-                <Card 
-                    title="Total Daily P/L" 
-                    value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2 })}
-                    trend={getTrendString(trendPercentage)}
-                    tooltip="Total profit or loss for all investments based on today's simulated market changes."
-                />
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <Card title="Total Investment Value" value={formatCurrencyString(totalValue)} />
+            <Card title="Total Unrealized P/L" value={formatCurrency(totalGainLoss, { colorize: true })} />
+            <Card title="Overall Portfolio ROI" value={`${roi.toFixed(2)}%`} valueColor={roi >= 0 ? 'text-success' : 'text-danger'} />
+            <Card 
+                title="Total Daily P/L" 
+                value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2 })}
+                trend={getTrendString(trendPercentage)}
+                tooltip="Total profit or loss for all investments based on today's simulated market changes."
+            />
         </div>
       
         <div className="border-b border-gray-200">
