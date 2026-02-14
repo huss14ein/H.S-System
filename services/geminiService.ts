@@ -44,9 +44,9 @@ function robustJsonParse(jsonString: string | undefined): any {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    const apiKey = import.meta.env.VITE_API_KEY;
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("AI features are disabled. VITE_API_KEY environment variable not set.");
+        console.warn("AI features are disabled. API_KEY is not configured in the environment secrets.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
