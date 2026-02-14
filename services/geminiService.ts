@@ -1,8 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding } from '../types';
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
 
 // --- AI Request Cache ---
-// Simple in-memory cache to avoid redundant API calls for the same data.
 const aiAnalysisCache = new Map<string, { timestamp: number; result: string }>();
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -10,6 +9,7 @@ function getFromCache(key: string): string | null {
     const cached = aiAnalysisCache.get(key);
     if (cached && (Date.now() - cached.timestamp < CACHE_DURATION_MS)) {
         console.log("Returning AI analysis from cache.");
+        // FIX: The function was returning the entire cache object instead of the result string.
         return cached.result;
     }
     aiAnalysisCache.delete(key); // Stale entry
@@ -20,6 +20,26 @@ function setToCache(key: string, result: string) {
     aiAnalysisCache.set(key, { timestamp: Date.now(), result });
 }
 // --- End AI Request Cache ---
+
+// --- Robust JSON Parsing ---
+function robustJsonParse(jsonString: string | undefined): any {
+    if (!jsonString) {
+        return null;
+    }
+    
+    // Attempt to find JSON within markdown code blocks
+    const jsonMatch = jsonString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    const potentialJson = (jsonMatch && jsonMatch[1]) ? jsonMatch[1] : jsonString;
+    
+    try {
+        return JSON.parse(potentialJson.trim());
+    } catch (error) {
+        console.error("Failed to parse AI JSON response:", error);
+        console.error("Original string:", jsonString);
+        return null;
+    }
+}
+// --- End Robust JSON Parsing ---
 
 
 // Helper function to get the AI client only when needed.
@@ -47,11 +67,10 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
 };
 
 
-export const getAIFeedInsights = async (data: FinancialData): Promise<string> => {
+export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]> => {
     const ai = getAiClient();
-    if (!ai) return "[]";
+    if (!ai) return [];
 
-    // Feed insights should always be fresh, so we don't cache this.
     try {
         const prompt = `
             You are a proactive financial analyst for the Wealth Ultra platform. 
@@ -85,10 +104,11 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<string> =>
                 }
             }
         });
-        return response.text || "[]";
+        const items = robustJsonParse(response.text);
+        return Array.isArray(items) ? items : [];
     } catch (error) {
         console.error("Error fetching AI Feed insights:", error);
-        return "[]";
+        return [];
     }
 };
 
@@ -170,13 +190,13 @@ export const getAIFinancialPersona = async (
     debtToAssetRatio: number,
     emergencyFundMonths: number,
     investmentStyle: string
-): Promise<string> => {
+): Promise<PersonaAnalysis | null> => {
     const ai = getAiClient();
-    if (!ai) return "{}";
+    if (!ai) return null;
 
     const cacheKey = `getAIFinancialPersona:${savingsRate.toFixed(2)}:${debtToAssetRatio.toFixed(2)}:${emergencyFundMonths.toFixed(1)}:${investmentStyle}`;
     const cached = getFromCache(cacheKey);
-    if (cached) return cached;
+    if (cached) return JSON.parse(cached);
 
     try {
         const prompt = `
@@ -201,13 +221,15 @@ export const getAIFinancialPersona = async (
                 }
             }
         });
-        const result = response.text || "{}";
-        setToCache(cacheKey, result);
+        const result = robustJsonParse(response.text);
+        if (result) {
+            setToCache(cacheKey, JSON.stringify(result));
+        }
         return result;
 
     } catch (error) {
         console.error("Error fetching AI financial persona:", error);
-        return "{}";
+        return null;
     }
 };
 
@@ -422,7 +444,6 @@ export const getAICategorySuggestion = async (description: string, categories: s
     } catch (error) { console.error(error); return ""; }
 };
 
-// FIX: Update function signature and implementation to return grounding chunks as required by guidelines for googleSearch tool.
 export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     const ai = getAiClient();
     if (!ai || commodities.length === 0) return { prices: [], groundingChunks: [] };
@@ -455,12 +476,10 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
             }
         });
 
-        const resultString = response.text;
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-        if (!resultString) return { prices: [], groundingChunks };
+        const prices = robustJsonParse(response.text);
         
-        const prices = JSON.parse(resultString);
-        return { prices, groundingChunks };
+        return { prices: prices || [], groundingChunks };
 
     } catch (error) {
         console.error("Error fetching AI commodity prices:", error);

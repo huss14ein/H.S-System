@@ -235,3 +235,26 @@ export interface KPISummary {
   budgetVariance: number;
   roi: number;
 }
+
+export interface FeedItem {
+    type: 'BUDGET' | 'GOAL' | 'INVESTMENT' | 'SAVINGS';
+    title: string;
+    description: string;
+    emoji: string;
+}
+
+export interface ReportCardItem {
+    metric: string;
+    value: string;
+    rating: 'Excellent' | 'Good' | 'Needs Improvement';
+    analysis: string;
+    suggestion: string;
+}
+
+export interface PersonaAnalysis {
+    persona: {
+        title: string;
+        description: string;
+    };
+    reportCard: ReportCardItem[];
+}

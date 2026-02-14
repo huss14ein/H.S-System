@@ -11,6 +11,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import AddButton from '../components/AddButton';
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -160,7 +161,7 @@ const Accounts: React.FC = () => {
         <div className="space-y-8">
             <div className="flex justify-between items-center">
                 <h1 className="text-3xl font-bold text-dark">Accounts</h1>
-                <button onClick={() => handleOpenAccountModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add New Account</button>
+                <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

@@ -213,7 +213,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { id, user_id, ...insertData } = asset;
         const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
         if (error) { console.error("Error adding asset:", error); throw error; }
-        else setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
+        if (newAsset) setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) return;
@@ -237,7 +237,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { id, user_id, ...insertData } = goal;
         const { data: newGoal, error } = await db.from('goals').insert(withUser(insertData)).select().single();
         if (error) { console.error("Error adding goal:", error); throw error; }
-        else setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
+        if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
     };
     const updateGoal = async (goal: Goal) => {
       if(!supabase || !auth?.user) return;
@@ -269,7 +269,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const { id, user_id, ...insertData } = liability;
       const { data: newLiability, error } = await db.from('liabilities').insert(withUser(insertData)).select().single();
       if (error) { console.error("Error adding liability:", error); throw error; }
-      else setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
+      if (newLiability) setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
     };
     const updateLiability = async (liability: Liability) => {
       if(!supabase || !auth?.user) return;
@@ -292,7 +292,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const db = supabase;
       const { data: newBudget, error } = await db.from('budgets').insert(withUser(budget)).select().single();
       if(error) console.error("Error adding budget:", error);
-      else setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
+      if (newBudget) setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
     };
     const updateBudget = async (budget: Budget) => {
       if(!supabase || !auth?.user) return;
@@ -340,7 +340,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const { data: newTx, error } = await db.from('transactions').insert(withUser(transaction)).select().single();
         if(error) console.error("Error adding transaction:", error);
-        else setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
+        if (newTx) setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
@@ -363,7 +363,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
         if(error) console.error("Error adding platform:", error);
-        else setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
+        if (newPlatform) setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
     };
     const updatePlatform = async (platform: Account) => {
         if(!supabase || !auth?.user) return;
@@ -386,7 +386,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
         if(error) console.error("Error adding portfolio:", error);
-        else setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
+        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
@@ -406,14 +406,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase) return;
         const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(holding)).select().single();
         if (error) { console.error("Error adding holding:", error); throw error; }
-        setData(prev => ({
-            ...prev,
-            investments: prev.investments.map(p =>
-                p.id === newHolding.portfolio_id
-                    ? { ...p, holdings: [...p.holdings, newHolding] }
-                    : p
-            )
-        }));
+        if (newHolding) {
+            setData(prev => ({
+                ...prev,
+                investments: prev.investments.map(p =>
+                    p.id === newHolding.portfolio_id
+                        ? { ...p, holdings: [...p.holdings, newHolding] }
+                        : p
+                )
+            }));
+        }
     };
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
@@ -455,7 +457,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const tradeTotal = tradeData.quantity * tradeData.price;
         const { data: newTransaction, error: txError } = await supabase.from('investment_transactions').insert(withUser({ ...tradeData, total: tradeTotal })).select().single();
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
-        setData(prev => ({ ...prev, investmentTransactions: [newTransaction, ...prev.investmentTransactions] }));
+        if (newTransaction) setData(prev => ({ ...prev, investmentTransactions: [newTransaction, ...prev.investmentTransactions] }));
 
         // 2. Find portfolio and holding from state
         const portfolio = data.investments.find(p => p.id === portfolioId);
@@ -517,7 +519,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
         if (error) { console.error(error); }
-        else { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
+        else if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
     };
     const updatePlannedTrade = async (plan: PlannedTrade) => {
         if(!supabase || !auth?.user) return;
@@ -536,8 +538,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
         if (!supabase) return;
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(holding)).select().single();
-        if (error) console.error(error);
-        else setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, newHolding] }));
+        if (error) console.error("Error adding commodity:", error);
+        else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, newHolding] }));
     };
     const updateCommodityHolding = async (holding: CommodityHolding) => {
         if (!supabase || !auth?.user) return;
@@ -588,8 +590,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const db = supabase;
         const newAlert = { ...alert, status: 'active' as const, createdAt: new Date().toISOString() };
-        const { data: created } = await db.from('price_alerts').insert(withUser(newAlert)).select().single();
-        if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, created] }));
+        const { data: created, error } = await db.from('price_alerts').insert(withUser(newAlert)).select().single();
+        if(error) console.error(error);
+        else if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, created] }));
     };
     const updatePriceAlert = async (alert: PriceAlert) => {
         if(!supabase || !auth?.user) return;
@@ -606,8 +609,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => {
         if(!supabase) return;
         const db = supabase;
-        const { data: newPayment } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
-        if(newPayment) setData(prev => ({ ...prev, zakatPayments: [newPayment, ...prev.zakatPayments] }));
+        const { data: newPayment, error } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
+        if(error) console.error(error);
+        else if(newPayment) setData(prev => ({ ...prev, zakatPayments: [newPayment, ...prev.zakatPayments] }));
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;

@@ -6,7 +6,7 @@ import SignupPage from './pages/SignupPage';
 import { AuthContext } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
-import { MarketDataProvider } from './context/MarketDataProvider';
+import { MarketDataProvider } from './context/MarketDataContext';
 import MarketSimulator from './components/MarketSimulator';
 
 // --- Lazy Load Pages for Code Splitting ---

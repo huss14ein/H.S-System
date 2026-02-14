@@ -11,22 +11,7 @@ import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
-
-interface ReportCardItem {
-    metric: string;
-    value: string;
-    rating: 'Excellent' | 'Good' | 'Needs Improvement';
-    analysis: string;
-    suggestion: string;
-}
-
-interface PersonaAnalysis {
-    persona: {
-        title: string;
-        description: string;
-    };
-    reportCard: ReportCardItem[];
-}
+import { PersonaAnalysis, ReportCardItem } from '../types';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -121,19 +106,13 @@ const Summary: React.FC = () => {
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
-        const resultString = await getAIFinancialPersona(financialMetrics.savingsRate, financialMetrics.debtToAssetRatio, financialMetrics.emergencyFundMonths, financialMetrics.investmentStyle);
-        try {
-            let jsonToParse = resultString;
-            const jsonMatch = resultString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-            if (jsonMatch && jsonMatch[1]) {
-                jsonToParse = jsonMatch[1];
-            }
-            const parsedResult = JSON.parse(jsonToParse);
-            setAnalysis(parsedResult);
-        } catch (error) {
-            console.error("Failed to parse AI response:", error);
-            setAnalysis(null);
-        }
+        const result = await getAIFinancialPersona(
+            financialMetrics.savingsRate, 
+            financialMetrics.debtToAssetRatio, 
+            financialMetrics.emergencyFundMonths, 
+            financialMetrics.investmentStyle
+        );
+        setAnalysis(result);
         setIsLoading(false);
     }, [financialMetrics]);
 

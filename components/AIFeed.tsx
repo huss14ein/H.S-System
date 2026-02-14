@@ -7,13 +7,7 @@ import { PiggyBankIcon } from './icons/PiggyBankIcon';
 import { TrophyIcon } from './icons/TrophyIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
-
-interface FeedItem {
-    type: 'BUDGET' | 'GOAL' | 'INVESTMENT' | 'SAVINGS';
-    title: string;
-    description: string;
-    emoji: string;
-}
+import { FeedItem } from '../types';
 
 const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
     const iconClass = "h-6 w-6";
@@ -40,15 +34,7 @@ const AIFeed: React.FC = () => {
         setIsLoading(true);
         setFeedItems([]);
         try {
-            let resultString = await getAIFeedInsights(dataRef.current);
-            
-            // Sanitize the string to extract JSON from a markdown code block if present
-            const jsonMatch = resultString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-            if (jsonMatch && jsonMatch[1]) {
-                resultString = jsonMatch[1];
-            }
-
-            const items = JSON.parse(resultString) as FeedItem[];
+            const items = await getAIFeedInsights(dataRef.current);
             setFeedItems(items);
         } catch (error) {
             console.error("AI Feed generation failed:", error);

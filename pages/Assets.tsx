@@ -16,6 +16,7 @@ import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices } from '../services/geminiService';
+import AddMenu from '../components/AddMenu';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -225,7 +226,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
-    // FIX: Add state to hold grounding chunks from AI price updates.
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
 
     useEffect(() => {
@@ -258,10 +258,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleUpdatePrices = async () => {
         if (data.commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
-        // FIX: Reset grounding chunks before fetching new ones.
         setGroundingChunks([]);
         try {
-            // FIX: Handle the new return type from getAICommodityPrices.
             const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
             if (chunks) {
                 setGroundingChunks(chunks);
@@ -274,14 +272,16 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         finally { setIsUpdatingPrices(false); }
     };
 
+    const addActions = [
+        { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal() },
+        { label: 'Commodity', icon: CubeIcon, onClick: () => handleOpenCommodityModal() }
+    ];
+
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap justify-between items-center gap-4">
                 <h1 className="text-3xl font-bold text-dark">Assets</h1>
-                <div className="flex gap-2">
-                    <button onClick={() => handleOpenAssetModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Physical Asset</button>
-                    <button onClick={() => handleOpenCommodityModal()} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm">Add Commodity</button>
-                </div>
+                <AddMenu actions={addActions} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -304,7 +304,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
                     <button onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-2" />{isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}</button>
                 </div>
-                {/* FIX: Render grounding chunks (sources) when available. */}
                 {groundingChunks.length > 0 && (
                     <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-md border">
                         <p className="font-semibold text-gray-700">Sources:</p>
