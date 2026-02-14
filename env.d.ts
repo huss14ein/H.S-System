@@ -6,13 +6,8 @@
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
-  // FIX: Added VITE_API_KEY which is used in vite.config.ts
-  readonly VITE_API_KEY: string;
-  readonly GEMINI_API_KEY?: string;
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
-
-declare const __APP_GEMINI_API_KEY__: string;

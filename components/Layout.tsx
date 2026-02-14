@@ -6,7 +6,6 @@ import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
-import { HeadsetIcon } from './icons/HeadsetIcon';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -49,18 +48,6 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
         setIsOpen={setIsCommandPaletteOpen}
         setActivePage={setActivePage}
       />
-      <div className="fixed bottom-24 right-6 z-20">
-         <button
-            onClick={() => setIsLiveAdvisorOpen(true)}
-            className="group relative flex items-center justify-center w-16 h-16 bg-secondary text-white rounded-full shadow-lg hover:bg-violet-700 transition-all duration-300"
-            title="Talk to Live AI Advisor"
-          >
-              <HeadsetIcon className="h-8 w-8" />
-              <span className="absolute right-full mr-3 px-2 py-1 bg-gray-800 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                  Live Advisor
-              </span>
-          </button>
-      </div>
        <LiveAdvisorModal 
         isOpen={isLiveAdvisorOpen}
         onClose={() => setIsLiveAdvisorOpen(false)}

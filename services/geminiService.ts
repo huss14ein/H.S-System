@@ -1,22 +1,22 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
+import { supabase } from './supabaseClient';
 
 // --- AI Request Cache ---
-const aiAnalysisCache = new Map<string, { timestamp: number; result: string }>();
+const aiAnalysisCache = new Map<string, { timestamp: number; result: any }>();
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
-function getFromCache(key: string): string | null {
+function getFromCache(key: string): any | null {
     const cached = aiAnalysisCache.get(key);
     if (cached && (Date.now() - cached.timestamp < CACHE_DURATION_MS)) {
         console.log("Returning AI analysis from cache.");
-        // FIX: The function was returning the entire cache object instead of the result string.
         return cached.result;
     }
     aiAnalysisCache.delete(key); // Stale entry
     return null;
 }
 
-function setToCache(key: string, result: string) {
+function setToCache(key: string, result: any) {
     aiAnalysisCache.set(key, { timestamp: Date.now(), result });
 }
 // --- End AI Request Cache ---
@@ -41,20 +41,30 @@ function robustJsonParse(jsonString: string | undefined): any {
 }
 // --- End Robust JSON Parsing ---
 
-
-// Helper function to get the AI client only when needed.
-function getAiClient() {
-    // Vite replaces import.meta.env.VITE_API_KEY with the value from .env files.
-    // __APP_GEMINI_API_KEY__ is a global constant injected by vite.config.ts during the build process.
-    // This ensures the key is available in the browser without exposing `process.env`.
-    const apiKey = import.meta.env.VITE_API_KEY || (typeof __APP_GEMINI_API_KEY__ !== 'undefined' ? __APP_GEMINI_API_KEY__ : undefined);
-
-    if (!apiKey) {
-        console.warn("AI features are disabled. Configure VITE_API_KEY/GEMINI_API_KEY in .env.local or API_KEY as a secret.");
-        return null;
+// Helper function to securely invoke the Gemini API via a Supabase Edge Function.
+async function invokeGeminiProxy(payload: { model: string, contents: string, config?: any }): Promise<any> {
+    if (!supabase) {
+        console.warn("AI features are disabled. Supabase client is not configured.");
+        return { text: "AI features are disabled because the backend is not configured." };
     }
-    return new GoogleGenAI({ apiKey });
+
+    const { data, error } = await supabase.functions.invoke('gemini-proxy', {
+        body: payload,
+    });
+
+    if (error) {
+        console.error("Error invoking Gemini proxy function:", error);
+        throw new Error(`AI service error: ${error.message}`);
+    }
+    
+    if (data.error) {
+         console.error("Error from Gemini proxy function:", data.error);
+         throw new Error(`AI service error: ${data.error}`);
+    }
+    
+    return data;
 }
+
 
 const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
     if (!investments || investments.length === 0) {
@@ -71,9 +81,6 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
 
 
 export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]> => {
-    const ai = getAiClient();
-    if (!ai) return [];
-
     try {
         const prompt = `
             You are a proactive financial analyst for the Wealth Ultra platform. 
@@ -88,7 +95,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
             Generate a JSON array of feed items based on the provided schema. Each item should have a 'type', 'title', 'description', and a relevant emoji.
         `;
 
-        const response = await ai.models.generateContent({
+        const response = await invokeGeminiProxy({
             model: "gemini-3-pro-preview",
             contents: prompt,
             config: {
@@ -117,9 +124,6 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
 
 
 export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
-  const ai = getAiClient();
-  if (!ai) return "AI features are disabled because the API key is not configured.";
-
   const cacheKey = `getAIAnalysis:${JSON.stringify(summary)}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
@@ -140,7 +144,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
       Provide the Markdown analysis now.
     `;
     
-    const response = await ai.models.generateContent({
+    const response = await invokeGeminiProxy({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
@@ -156,9 +160,6 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
 };
 
 export const getAITransactionAnalysis = async (transactions: Transaction[], budgets: Budget[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
-    
     const cacheKey = `getAITransactionAnalysis:${transactions.length}:${budgets.length}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -174,7 +175,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             Provide the Markdown analysis now.
         `;
 
-        const response = await ai.models.generateContent({
+        const response = await invokeGeminiProxy({
             model: 'gemini-3-flash-preview',
             contents: prompt,
         });
@@ -194,12 +195,9 @@ export const getAIFinancialPersona = async (
     emergencyFundMonths: number,
     investmentStyle: string
 ): Promise<PersonaAnalysis | null> => {
-    const ai = getAiClient();
-    if (!ai) return null;
-
     const cacheKey = `getAIFinancialPersona:${savingsRate.toFixed(2)}:${debtToAssetRatio.toFixed(2)}:${emergencyFundMonths.toFixed(1)}:${investmentStyle}`;
     const cached = getFromCache(cacheKey);
-    if (cached) return JSON.parse(cached);
+    if (cached) return cached;
 
     try {
         const prompt = `
@@ -210,7 +208,7 @@ export const getAIFinancialPersona = async (
             Analysis and suggestions should be concise and educational.
         `;
 
-        const response = await ai.models.generateContent({
+        const response = await invokeGeminiProxy({
             model: "gemini-3-pro-preview",
             contents: prompt,
             config: {
@@ -226,7 +224,7 @@ export const getAIFinancialPersona = async (
         });
         const result = robustJsonParse(response.text);
         if (result) {
-            setToCache(cacheKey, JSON.stringify(result));
+            setToCache(cacheKey, result);
         }
         return result;
 
@@ -237,8 +235,6 @@ export const getAIFinancialPersona = async (
 };
 
 export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     const cacheKey = `getAIPlanAnalysis:${JSON.stringify(totals)}:${JSON.stringify(scenarios)}`;
     const cached = getFromCache(cacheKey);
     if(cached) return cached;
@@ -266,7 +262,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
             
             Provide the Markdown analysis now.
         `;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -281,9 +277,6 @@ export const getAIAnalysisPageInsights = async (
     trendData: { name: string; income: number; expenses: number }[],
     compositionData: { name: string; value: number }[]
 ): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
-    
     const cacheKey = `getAIAnalysisPageInsights:${JSON.stringify(spendingData)}:${JSON.stringify(trendData)}:${JSON.stringify(compositionData)}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -310,7 +303,7 @@ export const getAIAnalysisPageInsights = async (
             Provide the Markdown analysis now.
         `;
 
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -326,9 +319,6 @@ export const getAIInvestmentOverviewAnalysis = async (
     assetClassAllocation: { name: string; value: number }[],
     topHoldings: { name: string; gainLossPercent: number }[]
 ): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
-
     const cacheKey = `getAIInvestmentOverviewAnalysis:${JSON.stringify(portfolioAllocation)}:${JSON.stringify(assetClassAllocation)}:${JSON.stringify(topHoldings)}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -354,7 +344,7 @@ export const getAIInvestmentOverviewAnalysis = async (
             Keep the analysis concise and educational. Do not provide financial advice. Provide the Markdown analysis now.
         `;
 
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -367,14 +357,12 @@ export const getAIInvestmentOverviewAnalysis = async (
 
 
 export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
-  const ai = getAiClient();
-  if (!ai) return "AI features are disabled.";
   const cacheKey = `getInvestmentAIAnalysis:${holdings.map(h => h.symbol + h.quantity).join(',')}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
     const prompt = `You are an expert investment analyst. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Do not give financial advice, and do not include any HTML tags. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
-    const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+    const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
     const result = response.text || "Could not retrieve analysis.";
     setToCache(cacheKey, result);
     return result;
@@ -382,54 +370,44 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 };
 
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-pro-preview', contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), generate a realistic but fictional summary of market news and dividend announcements in markdown. Do not use any HTML tags in your response.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text || "Could not retrieve news.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. Sections: Trading Pattern Analysis, Potential Portfolio Impact, Key Concept for Research. Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     const cacheKey = `getGoalAIPlan:${goal.id}:${goal.currentAmount}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
         const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}. Generate a simple, encouraging, actionable plan in Markdown format. Your response must not contain any HTML tags.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not generate plan.";
         setToCache(cacheKey, result);
         return result;
@@ -437,35 +415,29 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
 };
 
 export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Total Monthly Savings: ${monthlySavings}. Goals: ${goals.length} goals. Provide a holistic analysis in markdown. Do not use any HTML tags in your response.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
         const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Your response must not contain any HTML. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`; // Cache this for a while
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
         const prompt = `You are a creative financial content generator. For the stock ${holding.name} (${holding.symbol}), generate a brief, fictional but realistic analyst report in markdown. Your response must not contain any HTML tags. Sections: Fictional Analyst Rating, Fictional Recent News. Do not use real-time data or give financial advice.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -473,28 +445,23 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
 };
 
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-pro-preview', contents: prompt });
         return response.text || "Could not generate plan.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
 
 export const getAICategorySuggestion = async (description: string, categories: string[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "";
     try {
         const prompt = `You are an automated financial assistant. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text?.trim() || "";
     } catch (error) { console.error(error); return ""; }
 };
 
 export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
-    const ai = getAiClient();
-    if (!ai || commodities.length === 0) return { prices: [], groundingChunks: [] };
+    if (commodities.length === 0) return { prices: [], groundingChunks: [] };
 
     try {
         const commodityList = commodities.map(c => `${c.name} (${c.symbol})`).join(', ');
@@ -504,7 +471,7 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
             Return the result as a JSON array based on the provided schema.
         `;
 
-        const response = await ai.models.generateContent({
+        const response = await invokeGeminiProxy({
             model: "gemini-3-pro-preview",
             contents: prompt,
             config: {
@@ -536,8 +503,6 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
 };
 
 export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
-    const ai = getAiClient();
-    if (!ai) return "AI features are disabled.";
     try {
         const prompt = `You are a financial analyst specializing in dividend income. Analyze the following dividend data and provide a brief, insightful analysis in Markdown. Do not give financial advice, and do not include HTML tags.
         - Year-to-Date (YTD) Dividend Income: ${ytdIncome.toLocaleString()} SAR
@@ -549,7 +514,7 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
         2.  Concentration risk based on the top contributors.
         3.  One educational suggestion for improving a dividend strategy.
         `;
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const response = await invokeGeminiProxy({ model: 'gemini-3-flash-preview', contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { console.error(error); return "An error occurred."; }
 };
