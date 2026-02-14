@@ -1,4 +1,3 @@
-// FIX: Removed vite/client reference to resolve TypeScript errors.
 import React, { useState, useRef, useContext, useCallback } from 'react';
 import Modal from './Modal';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Blob as GenaiBlob } from '@google/genai';
@@ -135,12 +134,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        // FIX: Use process.env.API_KEY exclusively per guidelines, resolving import.meta.env error.
-        const apiKey = process.env.API_KEY;
+        const apiKey = import.meta.env.VITE_API_KEY;
         if (!apiKey) {
             setStatus('Error');
-            // FIX: Updated error message to be consistent with environment variable change.
-            console.error("Live Advisor is unavailable: Set API_KEY environment variable.");
+            console.error("Live Advisor is unavailable: Set VITE_API_KEY environment variable.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;
         }

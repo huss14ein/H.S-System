@@ -1,4 +1,3 @@
-// FIX: Removed vite/client reference to resolve TypeScript errors.
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding } from '../types';
 
@@ -25,11 +24,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Use process.env.API_KEY exclusively per guidelines, resolving import.meta.env error.
-    const apiKey = process.env.API_KEY;
+    // Correctly access environment variables in a Vite project
+    const apiKey = import.meta.env.VITE_API_KEY;
     if (!apiKey) {
-        // FIX: Updated console warning to be consistent with environment variable change.
-        console.warn("AI features are disabled. Set API_KEY environment variable.");
+        console.warn("AI features are disabled. Set VITE_API_KEY environment variable.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
