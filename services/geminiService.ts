@@ -44,12 +44,13 @@ function robustJsonParse(jsonString: string | undefined): any {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    const envApiKey = typeof process !== 'undefined' ? (process.env?.API_KEY || process.env?.GEMINI_API_KEY) : undefined;
-    const viteApiKey = import.meta.env.VITE_API_KEY || import.meta.env.GEMINI_API_KEY;
-    const apiKey = envApiKey || viteApiKey;
+    // Vite replaces import.meta.env.VITE_API_KEY with the value from .env files.
+    // __APP_GEMINI_API_KEY__ is a global constant injected by vite.config.ts during the build process.
+    // This ensures the key is available in the browser without exposing `process.env`.
+    const apiKey = import.meta.env.VITE_API_KEY || (typeof __APP_GEMINI_API_KEY__ !== 'undefined' ? __APP_GEMINI_API_KEY__ : undefined);
 
     if (!apiKey) {
-        console.warn("AI features are disabled. Configure VITE_API_KEY/GEMINI_API_KEY in .env.local or API_KEY in server secrets.");
+        console.warn("AI features are disabled. Configure VITE_API_KEY/GEMINI_API_KEY in .env.local or API_KEY as a secret.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
