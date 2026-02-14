@@ -1,6 +1,6 @@
 import React, { useState, useRef, useContext, useCallback, useEffect } from 'react';
 import Modal from './Modal';
-import { Type, FunctionDeclaration, Content, Part } from '@google/genai';
+import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { DataContext } from '../context/DataContext';
 import { invokeGeminiProxy } from '../services/geminiService';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -104,7 +104,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                     }
                 }
                 
-                const functionCallParts: Part[] = calls.map(fc => ({ functionCall: fc }));
+                const functionCallParts: Part[] = calls.map((fc: FunctionCall) => ({ functionCall: fc }));
                 const modelResponseWithFunctionCall: Content = { role: 'model', parts: functionCallParts };
                 const toolResponse: Content = { role: 'tool', parts: toolResponseParts };
 
