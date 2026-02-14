@@ -1,4 +1,4 @@
-
+// FIX: Removed vite/client reference to resolve TypeScript errors.
 import { GoogleGenAI, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding } from '../types';
 
@@ -25,9 +25,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // FIX: Per Gemini guidelines, API key must be from process.env.API_KEY. This also resolves issues with import.meta.env.
+    // FIX: Use process.env.API_KEY exclusively per guidelines, resolving import.meta.env error.
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
+        // FIX: Updated console warning to be consistent with environment variable change.
         console.warn("AI features are disabled. Set API_KEY environment variable.");
         return null;
     }
