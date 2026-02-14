@@ -24,6 +24,7 @@ import { useMarketData } from '../context/MarketDataContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
+import Card from '../components/Card';
 
 const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
 
@@ -394,19 +395,35 @@ const PlatformCard: React.FC<{
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
-    const { totalValue, totalGainLoss, roi, dailyPnL } = useMemo(() => {
+    const { totalValue, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings);
         const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-        const totalInvested = transactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-        const totalWithdrawn = Math.abs(transactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+        
+        // Sum all 'buy' transactions to get the total capital invested.
+        const totalInvested = transactions
+            .filter(t => t.type === 'buy')
+            .reduce((sum, t) => sum + t.total, 0);
+        
+        // Sum all 'sell' transactions to get the total capital withdrawn.
+        // The 'total' for sell transactions is stored as a positive number.
+        const totalWithdrawn = transactions
+            .filter(t => t.type === 'sell')
+            .reduce((sum, t) => sum + t.total, 0);
+        
+        // Net capital is the difference between money in and money out.
         const netCapital = totalInvested - totalWithdrawn;
+
+        // Unrealized P/L is the current market value minus the net capital invested.
         const totalGainLoss = totalValue - netCapital;
+
+        // ROI is the return (gain/loss) as a percentage of the net capital invested.
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+        
         const dailyPnL = allHoldings.reduce((sum, h) => {
             const priceInfo = simulatedPrices[h.symbol];
             return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
         }, 0);
-        return { totalValue, totalGainLoss, roi, dailyPnL };
+        return { totalValue, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi };
     }, [portfolios, transactions, simulatedPrices]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
@@ -428,10 +445,12 @@ const PlatformCard: React.FC<{
                     </div>
                     <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center text-sm text-primary hover:underline"><ArrowsRightLeftIcon className="h-4 w-4 mr-1"/>Transaction Log</button>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-x-2 text-center pt-3 border-t">
+                <div className="mt-4 grid grid-cols-3 gap-4 text-center pt-3 border-t">
                     <div><dt className="text-xs text-gray-500">Unrealized P/L</dt><dd className="font-semibold">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd></div>
                     <div><dt className="text-xs text-gray-500">Daily P/L</dt><dd className="font-semibold">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd></div>
-                    <div><dt className="text-xs text-gray-500">Total ROI</dt><dd className={`font-semibold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>{roi.toFixed(2)}%</dd></div>
+                    <div><dt className="text-xs text-gray-500">Total ROI</dt><dd className={`font-semibold ${roi >= 0 ? 'text-success' : 'text-danger'}`}>{roi.toFixed(1)}%</dd></div>
+                    <div className="col-span-1"><dt className="text-xs text-gray-500">Total Invested</dt><dd className="font-semibold text-dark">{formatCurrencyString(totalInvested, { digits: 0 })}</dd></div>
+                    <div className="col-span-2"><dt className="text-xs text-gray-500">Total Withdrawn</dt><dd className="font-semibold text-dark">{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd></div>
                 </div>
             </div>
             
@@ -539,6 +558,7 @@ interface InvestmentsProps {
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
+  const { formatCurrency } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Portfolios');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
@@ -559,6 +579,27 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
+
+  const { totalDailyPnL, trendPercentage } = useMemo(() => {
+    if (!data || !data.investments) return { totalDailyPnL: 0, trendPercentage: 0 };
+    
+    const allHoldings = data.investments.flatMap(p => p.holdings || []);
+    
+    const totalDailyPnL = allHoldings.reduce((sum, h) => {
+        const priceInfo = simulatedPrices[h.symbol];
+        return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
+    }, 0);
+
+    const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+    const previousTotalValue = totalValue - totalDailyPnL;
+    const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
+
+    return { totalDailyPnL, trendPercentage };
+  }, [data.investments, simulatedPrices]);
+
+  const getTrendString = (trend: number) => {
+    return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
+  }
 
   useEffect(() => {
     if (pageAction?.startsWith('open-trade-modal')) {
@@ -666,14 +707,25 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
                 <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
              </div>
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="md:col-start-4">
+                <Card 
+                    title="Total Daily P/L" 
+                    value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2 })}
+                    trend={getTrendString(trendPercentage)}
+                    tooltip="Total profit or loss for all investments based on today's simulated market changes."
+                />
+            </div>
+        </div>
       
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
-          {INVESTMENT_SUB_PAGES.map(tab => (
-            <button key={tab.name} onClick={() => setActiveTab(tab.name)} className={`${ activeTab === tab.name ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' } group inline-flex items-center whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm transition-colors`}><tab.icon className="-ml-0.5 mr-2 h-5 w-5" />{tab.name}</button>
-          ))}
-        </nav>
-      </div>
+        <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
+            {INVESTMENT_SUB_PAGES.map(tab => (
+                <button key={tab.name} onClick={() => setActiveTab(tab.name)} className={`${ activeTab === tab.name ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' } group inline-flex items-center whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm transition-colors`}><tab.icon className="-ml-0.5 mr-2 h-5 w-5" />{tab.name}</button>
+            ))}
+            </nav>
+        </div>
       
       <Suspense fallback={<div className="text-center p-8">Loading...</div>}>
         {renderContent()}
