@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse } from "https://esm.sh/@google/genai@0.11.3";
+import { GoogleGenAI, GenerateContentResponse } from "https://esm.sh/@google/genai@1.40.0";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 // FIX: Add Deno type declaration to resolve "Cannot find name 'Deno'" error.

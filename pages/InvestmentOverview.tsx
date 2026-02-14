@@ -46,7 +46,6 @@ const InvestmentOverview: React.FC = () => {
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
         const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
-        // FIX: Map holdings to the type expected by the AI service, providing a fallback for the optional 'name' property.
         const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
         setAiAnalysis(result);
         setIsAiLoading(false);
