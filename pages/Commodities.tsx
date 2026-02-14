@@ -144,10 +144,13 @@ const Commodities: React.FC = () => {
         if (data.commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
         try {
-            const prices = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            // FIX: Destructure the response from getAICommodityPrices to get the 'prices' array.
+            const { prices } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            // FIX: Check if the `prices` array has items. The `length` property is on the `prices` array, not the returned object.
             if (prices.length > 0) {
                 const updates = data.commodityHoldings
                     .map(h => {
+                        // FIX: The 'prices' variable is now an array, so .find() can be used.
                         const newPriceInfo = prices.find(p => p.symbol === h.symbol);
                         return newPriceInfo ? { id: h.id, currentValue: newPriceInfo.price * h.quantity } : null;
                     })

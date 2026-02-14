@@ -18,8 +18,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client"]
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "components",
@@ -32,7 +31,8 @@
     "App.tsx",
     "constants.tsx",
     "index.tsx",
-    "types.ts"
+    "types.ts",
+    "env.d.ts"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

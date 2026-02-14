@@ -24,10 +24,10 @@ function setToCache(key: string, result: string) {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    // Correctly access environment variables in a Vite project
-    const apiKey = import.meta.env.VITE_API_KEY;
+    // FIX: API key must be retrieved from process.env.API_KEY per coding guidelines.
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("AI features are disabled. Set VITE_API_KEY environment variable.");
+        console.warn("AI features are disabled. API_KEY environment variable not set.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
@@ -422,9 +422,10 @@ export const getAICategorySuggestion = async (description: string, categories: s
     } catch (error) { console.error(error); return ""; }
 };
 
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> => {
+// FIX: Update function signature and implementation to return grounding chunks as required by guidelines for googleSearch tool.
+export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     const ai = getAiClient();
-    if (!ai || commodities.length === 0) return [];
+    if (!ai || commodities.length === 0) return { prices: [], groundingChunks: [] };
 
     try {
         const commodityList = commodities.map(c => `${c.name} (${c.symbol})`).join(', ');
@@ -455,13 +456,14 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
         });
 
         const resultString = response.text;
-        if (!resultString) return [];
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        if (!resultString) return { prices: [], groundingChunks };
         
         const prices = JSON.parse(resultString);
-        return prices;
+        return { prices, groundingChunks };
 
     } catch (error) {
         console.error("Error fetching AI commodity prices:", error);
-        return [];
+        return { prices: [], groundingChunks: [] };
     }
 };

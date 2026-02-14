@@ -225,6 +225,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+    // FIX: Add state to hold grounding chunks from AI price updates.
+    const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -256,8 +258,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleUpdatePrices = async () => {
         if (data.commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
+        // FIX: Reset grounding chunks before fetching new ones.
+        setGroundingChunks([]);
         try {
-            const prices = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            // FIX: Handle the new return type from getAICommodityPrices.
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            if (chunks) {
+                setGroundingChunks(chunks);
+            }
             if (prices.length > 0) {
                 const updates = data.commodityHoldings.map(h => { const p = prices.find(p => p.symbol === h.symbol); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
@@ -296,6 +304,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
                     <button onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-2" />{isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}</button>
                 </div>
+                {/* FIX: Render grounding chunks (sources) when available. */}
+                {groundingChunks.length > 0 && (
+                    <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-md border">
+                        <p className="font-semibold text-gray-700">Sources:</p>
+                        <ul className="list-disc pl-5 mt-1 space-y-1">
+                            {groundingChunks.map((chunk, index) => (
+                                chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {data.commodityHoldings.map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
                     {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}

@@ -15,7 +15,6 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [enableEmails, setEnableEmails] = useState(true);
   
   const auth = useContext(AuthContext);
   const { data, resetData, loadDemoData } = useContext(DataContext)!;
@@ -101,17 +100,12 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
                     <p className="text-gray-500 text-xs truncate">{auth?.user?.id}</p>
                     </div>
                     <div className="border-t border-gray-100"></div>
-                    <div className="px-4 py-3">
-                    <label htmlFor="email-toggle" className="flex items-center justify-between cursor-pointer">
-                        <span className="text-sm text-gray-700">Weekly Email Reports</span>
-                        <div className="relative">
-                            <input id="email-toggle" type="checkbox" className="sr-only" checked={enableEmails} onChange={() => setEnableEmails(!enableEmails)} />
-                            <div className={`block w-10 h-6 rounded-full transition ${enableEmails ? 'bg-primary' : 'bg-gray-200'}`}></div>
-                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${enableEmails ? 'transform translate-x-full' : ''}`}></div>
-                        </div>
-                    </label>
-                    </div>
-                    <div className="border-t border-gray-100"></div>
+                    <button
+                        onClick={() => setActivePage('Settings')}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                        Settings
+                    </button>
                     {hasData ? (
                         <button
                             onClick={resetData}

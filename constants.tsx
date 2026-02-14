@@ -15,6 +15,7 @@ import { AcademicCapIcon } from './components/icons/AcademicCapIcon';
 import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
 import { BellIcon } from './components/icons/BellIcon';
 import { GoldBarIcon } from './components/icons/GoldBarIcon';
+import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
@@ -31,5 +32,6 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Analysis', icon: ChartBarIcon },
   { name: 'Zakat', icon: ReceiptPercentIcon },
   { name: 'Notifications', icon: BellIcon },
+  { name: 'Settings', icon: Cog6ToothIcon },
   { name: 'System & APIs Health', icon: ServerStackIcon },
 ];

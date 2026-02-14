@@ -6,7 +6,7 @@ import SignupPage from './pages/SignupPage';
 import { AuthContext } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
-import { MarketDataProvider } from './context/MarketDataContext';
+import { MarketDataProvider } from './context/MarketDataProvider';
 import MarketSimulator from './components/MarketSimulator';
 
 // --- Lazy Load Pages for Code Splitting ---
@@ -24,6 +24,7 @@ const Forecast = lazy(() => import('./pages/Forecast'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const Zakat = lazy(() => import('./pages/Zakat'));
 const Notifications = lazy(() => import('./pages/Notifications'));
+const Settings = lazy(() => import('./pages/Settings'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 
 const LoadingSpinner: React.FC = () => (
@@ -68,6 +69,7 @@ const App: React.FC = () => {
       case 'Analysis': return <Analysis />;
       case 'Zakat': return <Zakat />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
+      case 'Settings': return <Settings />;
       case 'System & APIs Health': return <SystemHealth />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }
