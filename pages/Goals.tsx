@@ -159,7 +159,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             status = 'At Risk';
         }
         
-        const color = status === 'At Risk' ? 'bg-danger' : status === 'Needs Attention' ? 'bg-warning' : 'bg-success';
+        const color = progressPercent < 33 ? 'bg-danger' : progressPercent < 66 ? 'bg-warning' : 'bg-success';
         const borderColor = status === 'At Risk' ? 'border-danger' : status === 'Needs Attention' ? 'border-warning' : 'border-success';
 
         return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };

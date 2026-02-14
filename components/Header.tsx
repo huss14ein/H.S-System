@@ -1,4 +1,4 @@
-import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useContext, useMemo } from 'react';
 import { Page } from '../types';
 import { NAVIGATION_ITEMS } from '../constants';
 import { HSLogo } from './icons/HSLogo';
