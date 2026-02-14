@@ -44,9 +44,12 @@ function robustJsonParse(jsonString: string | undefined): any {
 
 // Helper function to get the AI client only when needed.
 function getAiClient() {
-    const apiKey = process.env.API_KEY;
+    const envApiKey = typeof process !== 'undefined' ? (process.env?.API_KEY || process.env?.GEMINI_API_KEY) : undefined;
+    const viteApiKey = import.meta.env.VITE_API_KEY || import.meta.env.GEMINI_API_KEY;
+    const apiKey = envApiKey || viteApiKey;
+
     if (!apiKey) {
-        console.warn("AI features are disabled. API_KEY is not configured in the environment secrets.");
+        console.warn("AI features are disabled. Configure VITE_API_KEY/GEMINI_API_KEY in .env.local or API_KEY in server secrets.");
         return null;
     }
     return new GoogleGenAI({ apiKey });
@@ -529,4 +532,23 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
         console.error("Error fetching AI commodity prices:", error);
         return { prices: [], groundingChunks: [] };
     }
+};
+
+export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled.";
+    try {
+        const prompt = `You are a financial analyst specializing in dividend income. Analyze the following dividend data and provide a brief, insightful analysis in Markdown. Do not give financial advice, and do not include HTML tags.
+        - Year-to-Date (YTD) Dividend Income: ${ytdIncome.toLocaleString()} SAR
+        - Projected Annual Dividend Income: ${projectedAnnual.toLocaleString()} SAR
+        - Top Dividend Contributors: ${topPayers.map(p => `${p.name} (~${p.projected.toLocaleString()} SAR/yr)`).join(', ')}
+
+        Your analysis should cover:
+        1.  The relationship between YTD and projected income (is it on track?).
+        2.  Concentration risk based on the top contributors.
+        3.  One educational suggestion for improving a dividend strategy.
+        `;
+        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        return response.text || "Could not retrieve dividend analysis.";
+    } catch (error) { console.error(error); return "An error occurred."; }
 };

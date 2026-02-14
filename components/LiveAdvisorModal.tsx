@@ -134,10 +134,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setStatus('Connecting');
         setTranscript([]);
 
-        const apiKey = process.env.API_KEY;
+        const apiKey = process.env.API_KEY || import.meta.env.VITE_API_KEY || import.meta.env.GEMINI_API_KEY;
         if (!apiKey) {
             setStatus('Error');
-            console.error("Live Advisor is unavailable: API_KEY environment variable not set.");
+            console.error("Live Advisor is unavailable. Configure API_KEY (AI Studio secret) or VITE_API_KEY/GEMINI_API_KEY (.env.local) to enable them.");
             alert("Live Advisor is unavailable: API Key not found.");
             return;
         }

@@ -82,7 +82,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
                     <LightBulbIcon className="h-6 w-6 text-yellow-500" />
                     <h2 className="text-xl font-semibold text-dark">AI Financial Advisor</h2>
                 </div>
-                <button onClick={handleGenerate} disabled={isLoading} className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                <button type="button" onClick={handleGenerate} disabled={isLoading} className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Analyzing...' : 'Get AI Insights'}
                 </button>
