@@ -286,6 +286,36 @@ const Goals: React.FC = () => {
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
     }, [data.transactions]);
+
+    const { totalTargetAmount, totalCurrentAmount } = useMemo(() => {
+        let totalTarget = 0;
+        let totalCurrent = 0;
+        
+        const goalAssetValues = new Map<string, number>();
+
+        data.assets.forEach(a => {
+            if (a.goalId) {
+                goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + a.value);
+            }
+        });
+
+        data.investments.forEach(p => {
+            p.holdings.forEach(h => {
+                if (h.goalId) {
+                    goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + h.currentValue);
+                }
+            });
+        });
+
+        data.goals.forEach(goal => {
+            totalTarget += goal.targetAmount;
+            totalCurrent += goalAssetValues.get(goal.id) || 0;
+        });
+
+        return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent };
+    }, [data.goals, data.assets, data.investments]);
+    
+    const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
     
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
@@ -319,6 +349,21 @@ const Goals: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center"><h1 className="text-3xl font-bold text-dark">Goal Command Center</h1><button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center gap-2"><PlusCircleIcon className="h-5 w-5"/>Add New Goal</button></div>
+      
+       <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold text-dark mb-4">Overall Goal Progress</h3>
+        <GoalProgressBar progress={overallProgress} colorClass="bg-primary" />
+        <div className="flex justify-between items-baseline text-sm mt-2">
+            <div>
+                <span className="text-gray-500">Total Saved: </span>
+                <span className="font-semibold text-dark">{formatCurrencyString(totalCurrentAmount)}</span>
+            </div>
+            <div>
+                <span className="text-gray-500">Total Target: </span>
+                <span className="font-semibold text-dark">{formatCurrencyString(totalTargetAmount)}</span>
+            </div>
+        </div>
+      </div>
       
       <div className="bg-white p-6 rounded-lg shadow">
         <h3 className="text-lg font-semibold text-dark mb-2">Savings Allocation Strategy</h3>
