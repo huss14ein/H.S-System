@@ -11,15 +11,17 @@ import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import useClickOutside from '../hooks/useClickOutside';
 import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
+import { HeadsetIcon } from './icons/HeadsetIcon';
 
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
+  onOpenLiveAdvisor: () => void;
 }
 
 const PRIMARY_NAV: Page[] = ['Dashboard', 'Accounts', 'Investments', 'Transactions', 'Goals'];
 
-const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
+const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -105,6 +107,10 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage }) => {
                     </span>
                 )}
             </button>
+
+            <button onClick={onOpenLiveAdvisor} className="p-1 text-gray-500 hover:text-primary" title="Live AI Advisor">
+               <HeadsetIcon className="h-6 w-6" />
+           </button>
             
             <div className="relative" ref={profileRef}>
                 <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="text-gray-500 hover:text-primary">

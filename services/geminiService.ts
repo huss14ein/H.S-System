@@ -42,10 +42,11 @@ function robustJsonParse(jsonString: string | undefined): any {
 // --- End Robust JSON Parsing ---
 
 // Helper function to securely invoke the Gemini API via a Supabase Edge Function.
-async function invokeGeminiProxy(payload: { model: string, contents: string, config?: any }): Promise<any> {
+export async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
     if (!supabase) {
-        console.warn("AI features are disabled. Supabase client is not configured.");
-        return { text: "AI features are disabled because the backend is not configured." };
+        const errorMsg = "AI features are disabled because the backend (Supabase) is not configured. Please check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.";
+        console.error(errorMsg);
+        throw new Error(errorMsg);
     }
 
     const { data, error } = await supabase.functions.invoke('gemini-proxy', {
@@ -224,7 +225,7 @@ export const getAIFinancialPersona = async (
         });
         const result = robustJsonParse(response.text);
         if (result) {
-            setToCache(cacheKey, result);
+            setToCache(cacheKey, JSON.stringify(result));
         }
         return result;
 
