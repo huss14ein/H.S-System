@@ -317,6 +317,51 @@ export const getAIAnalysisPageInsights = async (
     }
 };
 
+export const getAIInvestmentOverviewAnalysis = async (
+    portfolioAllocation: { name: string; value: number }[],
+    assetClassAllocation: { name: string; value: number }[],
+    topHoldings: { name: string; gainLossPercent: number }[]
+): Promise<string> => {
+    const ai = getAiClient();
+    if (!ai) return "AI features are disabled.";
+
+    const cacheKey = `getAIInvestmentOverviewAnalysis:${JSON.stringify(portfolioAllocation)}:${JSON.stringify(assetClassAllocation)}:${JSON.stringify(topHoldings)}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) return cached;
+    
+    try {
+        const prompt = `
+            You are a senior investment analyst providing a high-level summary of a user's investment portfolio. Your response must be in Markdown format only and contain no HTML tags.
+            Analyze the following data:
+
+            1.  **Portfolio Allocation (Value by portfolio):**
+                ${portfolioAllocation.map(p => `- ${p.name}: ${p.value.toLocaleString()} SAR`).join('\n')}
+
+            2.  **Asset Class Allocation (Value by asset type):**
+                ${assetClassAllocation.map(a => `- ${a.name}: ${a.value.toLocaleString()} SAR`).join('\n')}
+
+            3.  **Top 5 Holdings by Performance:**
+                ${topHoldings.slice(0, 5).map(h => `- ${h.name}: ${h.gainLossPercent.toFixed(2)}%`).join('\n')}
+
+            Your analysis should have two sections using '###' headers:
+            - ### Composition & Diversification: Comment on how the investments are spread across different portfolios and asset classes. Is there a heavy concentration?
+            - ### Performance Highlights: Briefly mention any standout performers from the top holdings list.
+            
+            Keep the analysis concise and educational. Do not provide financial advice. Provide the Markdown analysis now.
+        `;
+
+        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+        const result = response.text || "Could not retrieve analysis.";
+        setToCache(cacheKey, result);
+        return result;
+
+    } catch (error) {
+        console.error("Error fetching Investment Overview insights:", error);
+        return "An error occurred during analysis.";
+    }
+};
+
+
 export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
   const ai = getAiClient();
   if (!ai) return "AI features are disabled.";
