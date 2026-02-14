@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Cell } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
 interface ChartData {
@@ -11,6 +11,24 @@ interface AllocationBarChartProps {
     data: ChartData[];
 }
 
+const COLORS = ['#4f46e5', '#be185d', '#f59e0b', '#10b981', '#6366f1', '#f43f5e', '#fbbf24', '#22c55e'];
+
+const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
+    const { formatCurrencyString } = useFormatCurrency();
+    if (active && payload && payload.length) {
+        const data = payload[0].payload;
+        const percentage = totalValue > 0 ? (data.value / totalValue) * 100 : 0;
+        return (
+            <div className="bg-white/80 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-lg text-sm">
+                <p className="font-bold text-dark">{data.name}</p>
+                <p className="text-gray-600">{formatCurrencyString(data.value)}</p>
+                <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
+            </div>
+        );
+    }
+    return null;
+};
+
 const AllocationBarChart: React.FC<AllocationBarChartProps> = ({ data }) => {
     const { formatCurrencyString } = useFormatCurrency();
 
@@ -18,6 +36,7 @@ const AllocationBarChart: React.FC<AllocationBarChartProps> = ({ data }) => {
         return <div className="flex items-center justify-center h-full text-gray-500">No data to display.</div>;
     }
 
+    const totalValue = data.reduce((sum, item) => sum + item.value, 0);
     const chartData = [...data].reverse();
 
     return (
@@ -25,14 +44,8 @@ const AllocationBarChart: React.FC<AllocationBarChartProps> = ({ data }) => {
             <BarChart
                 layout="vertical"
                 data={chartData}
-                margin={{ top: 5, right: 40, left: 20, bottom: 5 }}
+                margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
             >
-                <defs>
-                    <linearGradient id="colorBar" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#818cf8" stopOpacity={0.8} />
-                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.8} />
-                    </linearGradient>
-                </defs>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
                 <XAxis type="number" hide />
                 <YAxis
@@ -46,16 +59,12 @@ const AllocationBarChart: React.FC<AllocationBarChartProps> = ({ data }) => {
                 />
                 <Tooltip
                     cursor={{ fill: 'rgba(239, 246, 255, 0.7)' }}
-                    formatter={(value: number) => [formatCurrencyString(value), "Value"]}
-                    contentStyle={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                        backdropFilter: 'blur(4px)',
-                        borderRadius: '0.5rem',
-                        border: '1px solid #e5e7eb',
-                        boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)'
-                    }}
+                    content={<CustomTooltip totalValue={totalValue} />}
                 />
-                <Bar dataKey="value" name="Value" fill="url(#colorBar)" radius={[0, 4, 4, 0]} barSize={20}>
+                <Bar dataKey="value" name="Value" barSize={20} radius={[0, 4, 4, 0]}>
+                    {chartData.map((_entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
                     <LabelList
                         dataKey="value"
                         position="right"

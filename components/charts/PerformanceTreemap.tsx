@@ -1,9 +1,9 @@
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 
-const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, index, colors, name, gainLossPercent }) => {
-    // Determine text color based on background darkness
-    const textColor = depth === 1 ? 'white' : 'black';
+const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, gainLossPercent, color }) => {
+    const textColor = 'white';
+    const fontSize = Math.min(width / 4, height / 2.5, 16);
 
     return (
         <g>
@@ -12,21 +12,19 @@ const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, index, c
                 y={y}
                 width={width}
                 height={height}
+                rx={4}
+                ry={4}
                 style={{
-                    fill: colors[index % colors.length],
+                    fill: color,
                     stroke: '#fff',
-                    strokeWidth: 2 / (depth + 1e-10),
-                    strokeOpacity: 1 / (depth + 1e-10),
+                    strokeWidth: 2,
+                    strokeOpacity: 1,
                 }}
             />
             {depth === 1 && width > 50 && height > 25 ? (
-                <text x={x + width / 2} y={y + height / 2} textAnchor="middle" fill={textColor} fontSize={14} fontWeight="bold">
-                    {name}
-                </text>
-            ) : null}
-             {depth === 1 && width > 60 && height > 40 ? (
-                <text x={x + width / 2} y={y + height / 2 + 16} textAnchor="middle" fill={textColor} fontSize={12} opacity={0.8}>
-                    {gainLossPercent.toFixed(1)}%
+                <text x={x + width / 2} y={y + height / 2} dy=".35em" textAnchor="middle" fill={textColor} style={{ fontSize: `${fontSize}px`, fontWeight: 'bold' }}>
+                    <tspan x={x + width / 2} dy="-0.5em">{name}</tspan>
+                    <tspan x={x + width / 2} dy="1.2em" style={{ opacity: 0.8, fontSize: `${fontSize * 0.8}px` }}>{gainLossPercent.toFixed(1)}%</tspan>
                 </text>
             ) : null}
         </g>
@@ -51,42 +49,47 @@ const TreemapTooltip: React.FC<any> = ({ active, payload }) => {
 
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     
-    const processedData = data.map(item => ({
-        name: item.symbol,
-        size: item.currentValue,
-        gainLossPercent: item.gainLossPercent
-    }));
-
     const getColor = (percentage: number) => {
-        const clampedPercent = Math.max(-10, Math.min(10, percentage));
-        const normalized = (clampedPercent + 10) / 20;
+        const clampedPercent = Math.max(-25, Math.min(25, percentage));
+        const normalized = (clampedPercent + 25) / 50;
 
-        // Red (239, 68, 68) -> Yellow (250, 204, 21) -> Green (34, 197, 94)
+        const r_loss = 220, g_loss = 38, b_loss = 38; // red-600
+        const r_neutral = 156, g_neutral = 163, b_neutral = 175; // gray-500
+        const r_gain = 22, g_gain = 163, b_gain = 74; // green-600
+        
         let r, g, b;
         if (normalized < 0.5) {
-            const t = normalized * 2; // 0 -> 1 for red to yellow
-            r = 239 + (250 - 239) * t;
-            g = 68 + (204 - 68) * t;
-            b = 68 + (21 - 68) * t;
+            const t = normalized * 2;
+            r = r_loss + (r_neutral - r_loss) * t;
+            g = g_loss + (g_neutral - g_loss) * t;
+            b = b_loss + (b_neutral - b_loss) * t;
         } else {
-            const t = (normalized - 0.5) * 2; // 0 -> 1 for yellow to green
-            r = 250 + (34 - 250) * t;
-            g = 204 + (197 - 204) * t;
-            b = 21 + (94 - 21) * t;
+            const t = (normalized - 0.5) * 2;
+            r = r_neutral + (r_gain - r_neutral) * t;
+            g = g_neutral + (g_gain - g_neutral) * t;
+            b = b_neutral + (b_gain - b_neutral) * t;
         }
 
         return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
     };
+    
+    const processedData = data.map(item => ({
+        name: item.symbol,
+        size: item.currentValue,
+        gainLossPercent: item.gainLossPercent,
+        color: getColor(item.gainLossPercent),
+    }));
 
     return (
         <ResponsiveContainer width="100%" height="100%">
             <Treemap
-                isAnimationActive={false} // Better for performance with dynamic colors
+                isAnimationActive={true}
+                animationDuration={800}
                 data={processedData}
                 dataKey="size"
                 aspectRatio={4 / 3}
                 stroke="#fff"
-                content={<CustomizedContent colors={processedData.map(d => getColor(d.gainLossPercent))} />}
+                content={<CustomizedContent />}
             >
                 <Tooltip content={<TreemapTooltip />} />
             </Treemap>
