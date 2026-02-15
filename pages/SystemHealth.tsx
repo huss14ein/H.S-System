@@ -155,13 +155,13 @@ const SystemHealth: React.FC = () => {
             <div className="bg-white shadow rounded-lg overflow-hidden">
                 <ul className="divide-y divide-gray-200">
                     {services.map(service => {
-                        const { color, icon, text } = getStatusInfo(service.status);
+                        const { icon, text } = getStatusInfo(service.status);
                         return (
                             <li key={service.name} className="p-4 flex justify-between items-center">
                                 <div>
                                     <p className="font-medium text-dark">{service.name}</p>
                                     <div className="flex items-center space-x-2 mt-1">
-                                        <div className={`h-3 w-3 rounded-full ${color}`}></div>
+                                        {icon}
                                         <span className={`text-sm font-semibold ${text}`}>{service.status}</span>
                                     </div>
                                 </div>
