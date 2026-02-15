@@ -4,7 +4,6 @@
   functions = "netlify/functions"
 
 [functions]
-  # Set longer timeout for AI requests (default is 10s)
   timeout = 30
 
 [[redirects]]
