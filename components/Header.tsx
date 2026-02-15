@@ -12,6 +12,7 @@ import useClickOutside from '../hooks/useClickOutside';
 import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
+import { CheckIcon } from './icons/CheckIcon';
 
 interface HeaderProps {
   activePage: Page;
@@ -25,6 +26,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
   
   const auth = useContext(AuthContext);
   const { data, resetData, loadDemoData } = useContext(DataContext)!;
@@ -32,6 +34,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
   const moreMenuRef = useClickOutside<HTMLDivElement>(() => setIsMoreMenuOpen(false));
+  const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
 
   const hasData = data && data.accounts.length > 0;
   
@@ -48,72 +51,87 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   }, []);
 
   return (
-    <header className="bg-white shadow-sm sticky top-0 z-30">
+    <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-shrink-0">
             <HSLogo className="h-8 w-8" />
             <h1 className="text-xl font-bold text-dark hidden sm:block">H.S</h1>
           </div>
 
-          <nav className="hidden md:flex items-center h-full space-x-6">
-            {primaryNavItems.map(item => (
-              <button
-                key={item.name}
-                onClick={() => setActivePage(item.name)}
-                className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${activePage === item.name ? 'border-primary text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
-              >
-                {item.name}
-              </button>
-            ))}
+          <nav className="hidden md:flex items-center justify-center flex-1 min-w-0">
+            <div className="flex items-center h-full space-x-8">
+              {primaryNavItems.map(item => (
+                <button
+                  key={item.name}
+                  onClick={() => setActivePage(item.name)}
+                  className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${activePage === item.name ? 'border-primary text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
+                >
+                  {item.name}
+                </button>
+              ))}
 
-            <div className="relative h-full flex items-center" ref={moreMenuRef}>
-              <button 
-                onClick={() => setIsMoreMenuOpen(prev => !prev)}
-                className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${isMoreMenuOpen ? 'border-gray-300 text-gray-700' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
-              >
-                More <ChevronDownIcon className="h-4 w-4 ml-1" />
-              </button>
-              {isMoreMenuOpen && (
-                 <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
-                    {secondaryNavItems.map(item => (
-                       <button
-                          key={item.name}
-                          onClick={() => { setActivePage(item.name); setIsMoreMenuOpen(false); }}
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3"
-                      >
-                          <item.icon className="h-5 w-5 text-gray-400" />
-                          <span>{item.name}</span>
-                      </button>
-                    ))}
-                 </div>
-              )}
+              <div className="relative h-full flex items-center" ref={moreMenuRef}>
+                <button 
+                  onClick={() => setIsMoreMenuOpen(prev => !prev)}
+                  className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${isMoreMenuOpen ? 'border-gray-300 text-gray-700' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
+                >
+                  More <ChevronDownIcon className="h-4 w-4 ml-1" />
+                </button>
+                {isMoreMenuOpen && (
+                   <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
+                      {secondaryNavItems.map(item => (
+                         <button
+                            key={item.name}
+                            onClick={() => { setActivePage(item.name); setIsMoreMenuOpen(false); }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3"
+                        >
+                            <item.icon className="h-5 w-5 text-gray-400" />
+                            <span>{item.name}</span>
+                        </button>
+                      ))}
+                   </div>
+                )}
+              </div>
             </div>
           </nav>
           
           <div className="flex items-center space-x-2 sm:space-x-4">
-            <div className="hidden md:flex items-center p-1 bg-gray-100 rounded-full">
-                <button onClick={() => setCurrency('SAR')} className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${currency === 'SAR' ? 'bg-white text-primary shadow' : 'text-gray-500'}`}>SAR</button>
-                <button onClick={() => setCurrency('USD')} className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${currency === 'USD' ? 'bg-white text-primary shadow' : 'text-gray-500'}`}>USD</button>
+            {/* Currency Dropdown */}
+            <div className="relative hidden md:block" ref={currencyRef}>
+              <button onClick={() => setIsCurrencyOpen(!isCurrencyOpen)} className="flex items-center text-sm font-medium text-gray-600 hover:text-primary p-2 rounded-md hover:bg-gray-100 transition-colors">
+                {currency}
+                <ChevronDownIcon className="h-4 w-4 ml-1 opacity-70" />
+              </button>
+              {isCurrencyOpen && (
+                <div className="absolute right-0 mt-2 w-28 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
+                  <button onClick={() => { setCurrency('SAR'); setIsCurrencyOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between">
+                    SAR {currency === 'SAR' && <CheckIcon className="h-4 w-4 text-primary" />}
+                  </button>
+                  <button onClick={() => { setCurrency('USD'); setIsCurrencyOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between">
+                    USD {currency === 'USD' && <CheckIcon className="h-4 w-4 text-primary" />}
+                  </button>
+                </div>
+              )}
             </div>
             
-            <button onClick={() => setActivePage('Notifications')} className="relative p-1 text-gray-500 hover:text-primary">
+            <button onClick={() => setActivePage('Notifications')} className="relative p-2 rounded-full text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors">
                 <BellIcon className="h-6 w-6" />
                 {notificationCount > 0 && (
-                    <span className="absolute top-0 right-0 flex h-4 w-4">
+                    <span className="absolute top-1 right-1 flex h-4 w-4">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-xs items-center justify-center">{notificationCount}</span>
                     </span>
                 )}
             </button>
 
-            <button onClick={onOpenLiveAdvisor} className="p-1 text-gray-500 hover:text-primary" title="Live AI Advisor">
+            <button onClick={onOpenLiveAdvisor} className="p-2 rounded-full text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors" title="Live AI Advisor">
                <HeadsetIcon className="h-6 w-6" />
            </button>
             
             <div className="relative" ref={profileRef}>
-                <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="text-gray-500 hover:text-primary">
+                <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="p-1 rounded-full text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors">
                     <UserCircleIcon className="h-8 w-8" />
                 </button>
                 {isProfileOpen && (

@@ -1,11 +1,12 @@
-import { Type } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
 import { supabase } from './supabaseClient';
 
 // --- Model Constants ---
 // Use stable model aliases to avoid issues with preview model lifecycles.
-const FAST_MODEL = 'gemini-2.5-flash';
-const DEEP_MODEL = 'gemini-2.5-pro';
+// FIX: Updated models to align with current Gemini API guidelines for better performance and features.
+const FAST_MODEL = 'gemini-3-flash-preview';
+const DEEP_MODEL = 'gemini-3-pro-preview';
 
 // --- AI Error Formatting ---
 function formatAiError(error: any): string {
@@ -66,29 +67,46 @@ function robustJsonParse(jsonString: string | undefined): any {
 }
 // --- End Robust JSON Parsing ---
 
-// Helper function to securely invoke the Gemini API via a Supabase Edge Function.
+// Helper function to securely invoke the Gemini API.
+// It prioritizes a direct client-side key and falls back to a Supabase Edge Function.
 export async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    if (!supabase) {
-        const errorMsg = "AI features are disabled because the backend (Supabase) is not configured. Please check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.";
+    const directApiKey = process.env.VITE_GEMINI_API_KEY;
+
+    if (directApiKey) {
+        try {
+            // Use direct Gemini API call
+            const ai = new GoogleGenAI({ apiKey: directApiKey });
+            // The SDK's response object works directly with the rest of the app
+            const response: GenerateContentResponse = await ai.models.generateContent(payload);
+            return response;
+        } catch (error) {
+            console.error("Direct Gemini API call failed:", error);
+            // Re-throw to be caught by the calling function's error handler
+            throw error;
+        }
+    } else if (supabase) {
+        // Fallback to Supabase proxy
+        const { data, error } = await supabase.functions.invoke('gemini-proxy', {
+            body: payload,
+        });
+
+        if (error) {
+            console.error("Error invoking Gemini proxy function:", error);
+            throw new Error(`AI service error: ${error.message}`);
+        }
+        
+        if (data.error) {
+             console.error("Error from Gemini proxy function:", data.error);
+             throw new Error(`AI service error: ${data.error}`);
+        }
+        
+        return data;
+    } else {
+        // No AI configuration available
+        const errorMsg = "AI features are disabled. Please configure either your Supabase connection (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY) or a direct Gemini API key (VITE_GEMINI_API_KEY).";
         console.error(errorMsg);
         throw new Error(errorMsg);
     }
-
-    const { data, error } = await supabase.functions.invoke('gemini-proxy', {
-        body: payload,
-    });
-
-    if (error) {
-        console.error("Error invoking Gemini proxy function:", error);
-        throw new Error(`AI service error: ${error.message}`);
-    }
-    
-    if (data.error) {
-         console.error("Error from Gemini proxy function:", data.error);
-         throw new Error(`AI service error: ${data.error}`);
-    }
-    
-    return data;
 }
 
 
