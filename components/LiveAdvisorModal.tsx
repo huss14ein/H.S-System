@@ -2,7 +2,7 @@ import React, { useState, useRef, useContext, useCallback, useEffect } from 'rea
 import Modal from './Modal';
 import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { DataContext } from '../context/DataContext';
-import { invokeGeminiProxy } from '../services/geminiService';
+import { invokeAI } from '../services/geminiService';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
@@ -84,8 +84,9 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const processTurn = async (chatHistory: Content[]) => {
         setIsLoading(true);
         try {
-            const response = await invokeGeminiProxy({
-                model: 'gemini-2.5-pro',
+            const response = await invokeAI({
+                // FIX: Updated to recommended model for complex chat and function calling.
+                model: 'gemini-3-pro-preview',
                 contents: chatHistory,
                 config: { tools: [{ functionDeclarations }] }
             });

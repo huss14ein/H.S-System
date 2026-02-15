@@ -160,12 +160,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await Promise.all([
                 db.from('assets').insert(mock.assets.map(({ id, ...a }) => ({ ...a, user_id: userId }))),
                 db.from('liabilities').insert(mock.liabilities.map(({ id, ...l }) => ({ ...l, user_id: userId }))),
-                db.from('budgets').insert(mock.budgets.map(b => ({ ...b, user_id: userId }))),
+                // FIX: Removed hardcoded `id` from budget insertion to prevent UUID type error.
+                db.from('budgets').insert(mock.budgets.map(({ id, ...b }) => ({ ...b, user_id: userId }))),
                 db.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
                 db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
                 db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
-                db.from('settings').insert([{ ...(mock.settings || initialData.settings), user_id: userId }]),
+                db.from('settings').insert([{ ...mock.settings, user_id: userId }]),
             ]);
 
             // Accounts

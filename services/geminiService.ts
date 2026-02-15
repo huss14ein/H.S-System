@@ -1,11 +1,25 @@
-import { Type } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
 import { supabase } from './supabaseClient';
 
+// --- Client-side Gemini Initialization ---
+// Check for a client-side API key. If present, use it directly. Otherwise, fall back to the proxy.
+const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+let ai: GoogleGenAI | null = null;
+if (clientSideApiKey) {
+    console.log("Using client-side Gemini API key. AI requests will bypass the proxy.");
+    ai = new GoogleGenAI({ apiKey: clientSideApiKey });
+} else {
+    console.log("Using Supabase proxy for Gemini API calls.");
+}
+// --- End Initialization ---
+
+
 // --- Model Constants ---
 // Use stable model aliases to avoid issues with preview model lifecycles.
-const FAST_MODEL = 'gemini-2.5-flash';
-const DEEP_MODEL = 'gemini-2.5-pro';
+// FIX: Updated model aliases to recommended versions for better performance and features.
+const FAST_MODEL = 'gemini-3-flash-preview';
+const DEEP_MODEL = 'gemini-3-pro-preview';
 
 // --- AI Error Formatting ---
 function formatAiError(error: any): string {
@@ -67,7 +81,7 @@ function robustJsonParse(jsonString: string | undefined): any {
 // --- End Robust JSON Parsing ---
 
 // Helper function to securely invoke the Gemini API via a Supabase Edge Function.
-export async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
     if (!supabase) {
         const errorMsg = "AI features are disabled because the backend (Supabase) is not configured. Please check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.";
         console.error(errorMsg);
@@ -89,6 +103,28 @@ export async function invokeGeminiProxy(payload: { model: string, contents: any,
     }
     
     return data;
+}
+
+// Unified AI invocation function. Decides whether to use client-side SDK or proxy.
+export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    if (ai) {
+        // Use client-side SDK
+        try {
+            const response: GenerateContentResponse = await ai.models.generateContent(payload);
+            // Replicate the proxy response structure for consistency
+            return {
+                text: response.text,
+                candidates: response.candidates,
+                functionCalls: response.functionCalls,
+            };
+        } catch (error) {
+            // Re-throw with a formatted message
+            throw new Error(formatAiError(error));
+        }
+    } else {
+        // Use Supabase proxy
+        return invokeGeminiProxy(payload);
+    }
 }
 
 
@@ -121,7 +157,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
             Generate a JSON array of feed items based on the provided schema. Each item should have a 'type', 'title', 'description', and a relevant emoji.
         `;
 
-        const response = await invokeGeminiProxy({
+        const response = await invokeAI({
             model: DEEP_MODEL,
             contents: prompt,
             config: {
@@ -170,7 +206,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
       Provide the Markdown analysis now.
     `;
     
-    const response = await invokeGeminiProxy({
+    const response = await invokeAI({
       model: FAST_MODEL,
       contents: prompt,
     });
@@ -200,7 +236,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeGeminiProxy({
+        const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
         });
@@ -232,7 +268,7 @@ export const getAIFinancialPersona = async (
             Analysis and suggestions should be concise and educational.
         `;
 
-        const response = await invokeGeminiProxy({
+        const response = await invokeAI({
             model: DEEP_MODEL,
             contents: prompt,
             config: {
@@ -286,7 +322,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
             
             Provide the Markdown analysis now.
         `;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -326,7 +362,7 @@ export const getAIAnalysisPageInsights = async (
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -366,7 +402,7 @@ export const getAIInvestmentOverviewAnalysis = async (
             Keep the analysis concise and educational. Do not provide financial advice. Provide the Markdown analysis now.
         `;
 
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -383,7 +419,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
   if (cached) return cached;
   try {
     const prompt = `You are an expert investment analyst. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Do not give financial advice, and do not include any HTML tags. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
-    const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || "Could not retrieve analysis.";
     setToCache(cacheKey, result);
     return result;
@@ -393,7 +429,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
     try {
         const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
-        const response = await invokeGeminiProxy({ model: DEEP_MODEL, contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -401,7 +437,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
         const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
-        const response = await invokeGeminiProxy({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { return formatAiError(error); }
 };
@@ -409,7 +445,7 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<string> => {
     try {
         const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), generate a realistic but fictional summary of market news and dividend announcements in markdown. Do not use any HTML tags in your response.`;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve news.";
     } catch (error) { return formatAiError(error); }
 };
@@ -417,7 +453,7 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
     try {
         const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. Sections: Trading Pattern Analysis, Potential Portfolio Impact, Key Concept for Research. Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -428,7 +464,7 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
     if (cached) return cached;
     try {
         const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}. Generate a simple, encouraging, actionable plan in Markdown format. Your response must not contain any HTML tags.`;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not generate plan.";
         setToCache(cacheKey, result);
         return result;
@@ -438,7 +474,7 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
 export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number): Promise<string> => {
     try {
         const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Total Monthly Savings: ${monthlySavings}. Goals: ${goals.length} goals. Provide a holistic analysis in markdown. Do not use any HTML tags in your response.`;
-        const response = await invokeGeminiProxy({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -447,7 +483,7 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
         const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Your response must not contain any HTML. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
-        const response = await invokeGeminiProxy({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { return formatAiError(error); }
 };
@@ -458,7 +494,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
     if (cached) return cached;
     try {
         const prompt = `You are a creative financial content generator. For the stock ${holding.name} (${holding.symbol}), generate a brief, fictional but realistic analyst report in markdown. Your response must not contain any HTML tags. Sections: Fictional Analyst Rating, Fictional Recent News. Do not use real-time data or give financial advice.`;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -468,7 +504,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
     try {
         const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
-        const response = await invokeGeminiProxy({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not generate plan.";
     } catch (error) { return formatAiError(error); }
 };
@@ -476,7 +512,7 @@ export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses:
 export const getAICategorySuggestion = async (description: string, categories: string[]): Promise<string> => {
     try {
         const prompt = `You are an automated financial assistant. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name.`;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text?.trim() || "";
     } catch (error) { console.error(error); return ""; }
 };
@@ -492,7 +528,7 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
             Return the result as a JSON array based on the provided schema.
         `;
 
-        const response = await invokeGeminiProxy({
+        const response = await invokeAI({
             model: DEEP_MODEL,
             contents: prompt,
             config: {
@@ -535,7 +571,7 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
         2.  Concentration risk based on the top contributors.
         3.  One educational suggestion for improving a dividend strategy.
         `;
-        const response = await invokeGeminiProxy({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { return formatAiError(error); }
 };
