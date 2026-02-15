@@ -3,14 +3,25 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 import { supabase } from './supabaseClient';
 
 // --- Client-side Gemini Initialization ---
-// Check for a client-side API key ONLY in development. In production, always use the proxy.
-const clientSideApiKey = import.meta.env.DEV ? import.meta.env.VITE_GEMINI_API_KEY : undefined;
 let ai: GoogleGenAI | null = null;
-if (clientSideApiKey) {
-    console.log("Using client-side Gemini API key for local development. AI requests will bypass the proxy.");
-    ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-} else {
-    console.log("Using Supabase proxy for Gemini API calls. This is the expected behavior in production.");
+let isAiInitialized = false;
+
+function getAiClient(): GoogleGenAI | null {
+    if (isAiInitialized) {
+        return ai;
+    }
+
+    const clientSideApiKey = import.meta.env.DEV ? import.meta.env.VITE_GEMINI_API_KEY : undefined;
+    if (clientSideApiKey) {
+        console.log("Initializing and using client-side Gemini API key for local development. AI requests will bypass the proxy.");
+        ai = new GoogleGenAI({ apiKey: clientSideApiKey });
+    } else {
+        console.log("Using Supabase proxy for Gemini API calls. This is the expected behavior in production.");
+        ai = null; // Explicitly set to null
+    }
+
+    isAiInitialized = true;
+    return ai;
 }
 // --- End Initialization ---
 
@@ -107,10 +118,11 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 
 // Unified AI invocation function. Decides whether to use client-side SDK or proxy.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    if (ai) {
+    const localAi = getAiClient();
+    if (localAi) {
         // Use client-side SDK
         try {
-            const response: GenerateContentResponse = await ai.models.generateContent(payload);
+            const response: GenerateContentResponse = await localAi.models.generateContent(payload);
             // Replicate the proxy response structure for consistency
             return {
                 text: response.text,

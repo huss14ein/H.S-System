@@ -9,6 +9,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
+import Combobox from '../components/Combobox';
 
 interface BudgetModalProps {
     isOpen: boolean;
@@ -25,6 +26,13 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [limit, setLimit] = useState('');
 
     const existingCategories = useMemo(() => new Set(data.budgets.filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data.budgets, currentYear, currentMonth]);
+    
+    const availableCategories = useMemo(() => {
+        const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
+        if (budgetToEdit) return allPossible;
+        return allPossible.filter(c => !existingCategories.has(c));
+    }, [existingCategories, budgetToEdit]);
+
 
     React.useEffect(() => {
         if (budgetToEdit) {
@@ -50,12 +58,20 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
+                 <div>
                     <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
-                    <input list="category-list" type="text" id="category" value={category} onChange={e => setCategory(e.target.value)} required disabled={!!budgetToEdit} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100" />
-                    <datalist id="category-list">
-                        {['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care'].filter(c => !existingCategories.has(c)).map(c => <option key={c} value={c} />)}
-                    </datalist>
+                    {budgetToEdit ? (
+                        <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
+                    ) : (
+                        <div className="mt-1">
+                            <Combobox 
+                                items={availableCategories}
+                                selectedItem={category}
+                                onSelectItem={setCategory}
+                                placeholder="Select or create a category..."
+                            />
+                        </div>
+                    )}
                 </div>
                  <div>
                     <label htmlFor="limit" className="block text-sm font-medium text-gray-700">Monthly Limit</label>
@@ -107,8 +123,8 @@ const Budgets: React.FC = () => {
     };
 
     const handleSaveBudget = (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
-        if (isEditing) {
-            updateBudget(budget as Budget);
+        if (isEditing && budgetToEdit) {
+            updateBudget({ ...budgetToEdit, ...budget });
         } else {
             addBudget(budget);
         }
