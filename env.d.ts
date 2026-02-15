@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY: string;
   // FIX: Add VITE_GEMINI_API_KEY to the environment variables type definition.
   readonly VITE_GEMINI_API_KEY?: string;
+  // FIX: Add DEV property for Vite's dev mode flag, used in geminiService.ts.
+  readonly DEV: boolean;
 }
 
 interface ImportMeta {

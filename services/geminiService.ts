@@ -3,14 +3,14 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 import { supabase } from './supabaseClient';
 
 // --- Client-side Gemini Initialization ---
-// Check for a client-side API key. If present, use it directly. Otherwise, fall back to the proxy.
-const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+// Check for a client-side API key ONLY in development. In production, always use the proxy.
+const clientSideApiKey = import.meta.env.DEV ? import.meta.env.VITE_GEMINI_API_KEY : undefined;
 let ai: GoogleGenAI | null = null;
 if (clientSideApiKey) {
-    console.log("Using client-side Gemini API key. AI requests will bypass the proxy.");
+    console.log("Using client-side Gemini API key for local development. AI requests will bypass the proxy.");
     ai = new GoogleGenAI({ apiKey: clientSideApiKey });
 } else {
-    console.log("Using Supabase proxy for Gemini API calls.");
+    console.log("Using Supabase proxy for Gemini API calls. This is the expected behavior in production.");
 }
 // --- End Initialization ---
 
