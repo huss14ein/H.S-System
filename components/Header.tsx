@@ -20,11 +20,8 @@ interface HeaderProps {
   onOpenLiveAdvisor: () => void;
 }
 
-const PRIMARY_NAV: Page[] = ['Dashboard', 'Accounts', 'Investments', 'Transactions', 'Goals'];
-
 const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
   
@@ -33,7 +30,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const { currency, setCurrency } = useCurrency();
   
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
-  const moreMenuRef = useClickOutside<HTMLDivElement>(() => setIsMoreMenuOpen(false));
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
 
   const hasData = data && data.accounts.length > 0;
@@ -44,63 +40,38 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     return priceAlerts + 3; // +3 for static alerts
   }, [data]);
 
-  const [primaryNavItems, secondaryNavItems] = useMemo(() => {
-    const primary = NAVIGATION_ITEMS.filter(item => PRIMARY_NAV.includes(item.name));
-    const secondary = NAVIGATION_ITEMS.filter(item => !PRIMARY_NAV.includes(item.name));
-    return [primary, secondary];
-  }, []);
-
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-30">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
           
-          <div className="flex items-center space-x-2 flex-shrink-0">
+          <div className="flex items-center space-x-4 flex-shrink-0">
             <HSLogo className="h-8 w-8" />
             <h1 className="text-xl font-bold text-dark hidden sm:block">H.S</h1>
           </div>
 
-          <nav className="hidden md:flex items-center justify-center flex-1 min-w-0">
-            <div className="flex items-center h-full space-x-8">
-              {primaryNavItems.map(item => (
+          <nav className="hidden md:block flex-1 min-w-0 px-4 lg:px-8">
+            <div className="flex items-center space-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-hide">
+              {NAVIGATION_ITEMS.map(item => (
                 <button
                   key={item.name}
                   onClick={() => setActivePage(item.name)}
-                  className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${activePage === item.name ? 'border-primary text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
+                  className={`flex items-center whitespace-nowrap px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    activePage === item.name 
+                      ? 'bg-gray-100 text-primary font-semibold' 
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-dark'
+                  }`}
                 >
                   {item.name}
                 </button>
               ))}
-
-              <div className="relative h-full flex items-center" ref={moreMenuRef}>
-                <button 
-                  onClick={() => setIsMoreMenuOpen(prev => !prev)}
-                  className={`inline-flex items-center h-full px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${isMoreMenuOpen ? 'border-gray-300 text-gray-700' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
-                >
-                  More <ChevronDownIcon className="h-4 w-4 ml-1" />
-                </button>
-                {isMoreMenuOpen && (
-                   <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-56 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
-                      {secondaryNavItems.map(item => (
-                         <button
-                            key={item.name}
-                            onClick={() => { setActivePage(item.name); setIsMoreMenuOpen(false); }}
-                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3"
-                        >
-                            <item.icon className="h-5 w-5 text-gray-400" />
-                            <span>{item.name}</span>
-                        </button>
-                      ))}
-                   </div>
-                )}
-              </div>
             </div>
           </nav>
           
-          <div className="flex items-center space-x-2 sm:space-x-4">
+          <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
             {/* Currency Dropdown */}
             <div className="relative hidden md:block" ref={currencyRef}>
-              <button onClick={() => setIsCurrencyOpen(!isCurrencyOpen)} className="flex items-center text-sm font-medium text-gray-600 hover:text-primary p-2 rounded-md hover:bg-gray-100 transition-colors">
+              <button onClick={() => setIsCurrencyOpen(!isCurrencyOpen)} className="flex items-center text-sm font-medium text-gray-600 hover:text-primary p-2 rounded-full hover:bg-gray-100 transition-colors">
                 {currency}
                 <ChevronDownIcon className="h-4 w-4 ml-1 opacity-70" />
               </button>
