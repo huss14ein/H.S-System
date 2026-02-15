@@ -16,7 +16,7 @@ function getAiClient(): GoogleGenAI | null {
         console.log("Initializing and using client-side Gemini API key for local development. AI requests will bypass the proxy.");
         ai = new GoogleGenAI({ apiKey: clientSideApiKey });
     } else {
-        console.log("Using Supabase proxy for Gemini API calls. This is the expected behavior in production.");
+        console.log("Using Netlify function proxy for Gemini API calls. This is the expected behavior in production.");
         ai = null; // Explicitly set to null
     }
 
@@ -91,36 +91,38 @@ function robustJsonParse(jsonString: string | undefined): any {
 }
 // --- End Robust JSON Parsing ---
 
-// Helper function to securely invoke the Gemini API via a Supabase Edge Function.
+// Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    if (!supabase) {
-        const errorMsg = "AI features are disabled because the backend (Supabase) is not configured. Please check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.";
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-    }
+    try {
+        const response = await fetch('/api/gemini-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
 
-    const { data, error } = await supabase.functions.invoke('gemini-proxy', {
-        body: payload,
-    });
+        const data = await response.json();
 
-    if (error) {
-        console.error("Error invoking Gemini proxy function:", error);
-        throw new Error(`AI service error: ${error.message}`);
+        if (!response.ok) {
+            // Use the error message from the function if available
+            throw new Error(data.error || `Request to AI proxy failed with status ${response.status}`);
+        }
+        
+        return data;
+    } catch (error) {
+        console.error("Error invoking Netlify function:", error);
+        if (error instanceof TypeError) { // This often indicates a network error or failed deployment
+             const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
+             throw new Error(detailedMessage);
+        }
+        throw error; // Re-throw other errors (like JSON parsing errors or errors from the function itself)
     }
-    
-    if (data.error) {
-         console.error("Error from Gemini proxy function:", data.error);
-         throw new Error(`AI service error: ${data.error}`);
-    }
-    
-    return data;
 }
 
 // Unified AI invocation function. Decides whether to use client-side SDK or proxy.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     const localAi = getAiClient();
     if (localAi) {
-        // Use client-side SDK
+        // Use client-side SDK for local development
         try {
             const response: GenerateContentResponse = await localAi.models.generateContent(payload);
             // Replicate the proxy response structure for consistency
@@ -134,7 +136,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
             throw new Error(formatAiError(error));
         }
     } else {
-        // Use Supabase proxy
+        // Use Netlify function proxy in production
         return invokeGeminiProxy(payload);
     }
 }

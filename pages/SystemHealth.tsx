@@ -8,6 +8,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
+import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 
 
 type ServiceStatus = 'Operational' | 'Degraded Performance' | 'Outage' | 'Checking...' | 'Simulated';
@@ -16,6 +17,7 @@ interface Service {
   name: string;
   status: ServiceStatus;
   responseTime?: number;
+  error?: string;
 }
 
 const initialServices: Service[] = [
@@ -46,17 +48,18 @@ const SystemHealth: React.FC = () => {
         setIsLoading(true);
         // Reset to checking state, but keep simulated ones as is
         setServices(currentServices => currentServices.map(s => 
-            s.status !== 'Simulated' ? { ...s, status: 'Checking...', responseTime: undefined } : s
+            s.status !== 'Simulated' ? { ...s, status: 'Checking...', responseTime: undefined, error: undefined } : s
         ));
 
         const checkSupabaseAuth = async (): Promise<Partial<Service>> => {
             try {
                 const start = performance.now();
-                const { error } = await supabase!.auth.getUser();
+                // FIX: `getUser()` does not exist in older Supabase versions. Replaced with `refreshSession()` which provides a reliable async check.
+                const { error } = await supabase!.auth.refreshSession();
                 if (error) throw error;
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
-            } catch (e) { return { status: 'Outage' }; }
+            } catch (e) { return { status: 'Outage', error: 'Could not connect to Supabase Auth.' }; }
         };
 
         const checkSupabaseDB = async (): Promise<Partial<Service>> => {
@@ -66,7 +69,7 @@ const SystemHealth: React.FC = () => {
                 if (error) throw error;
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
-            } catch (e) { return { status: 'Outage' }; }
+            } catch (e) { return { status: 'Outage', error: 'Could not connect to Supabase Database.' }; }
         };
 
         const checkAIService = async (): Promise<Partial<Service>> => {
@@ -75,7 +78,10 @@ const SystemHealth: React.FC = () => {
                 await invokeAI({ model: 'gemini-3-flash-preview', contents: 'hello' });
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 3000 ? 'Degraded Performance' : 'Operational', responseTime: duration };
-            } catch (e) { return { status: 'Outage' }; }
+            } catch (e) { 
+                const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+                return { status: 'Outage', error: errorMessage };
+            }
         };
         
         const checkMarketData = (): Partial<Service> => {
@@ -151,21 +157,39 @@ const SystemHealth: React.FC = () => {
             </div>
           
             <OverallStatusCard status={overallStatus} />
+
+            <div className="bg-blue-50 border-l-4 border-blue-400 text-blue-800 p-4 rounded-r-lg shadow-sm">
+                <div className="flex">
+                    <div className="py-1"><LightBulbIcon className="h-6 w-6 text-blue-500 mr-3"/></div>
+                    <div>
+                        <p className="font-bold">AI Service Troubleshooting</p>
+                        <p className="text-sm mt-1">For AI features to work, a Netlify Function acts as a secure proxy. An "Outage" status usually means this function isn't deployed or the `GEMINI_API_KEY` is missing in your Netlify environment variables.</p>
+                        <a href="https://docs.netlify.com/functions/overview/" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mt-2 inline-block">
+                            Learn about Netlify Functions &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
         
             <div className="bg-white shadow rounded-lg overflow-hidden">
                 <ul className="divide-y divide-gray-200">
                     {services.map(service => {
                         const { icon, text } = getStatusInfo(service.status);
                         return (
-                            <li key={service.name} className="p-4 flex justify-between items-center">
-                                <div>
+                            <li key={service.name} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center">
+                                <div className="flex-1">
                                     <p className="font-medium text-dark">{service.name}</p>
                                     <div className="flex items-center space-x-2 mt-1">
                                         {icon}
                                         <span className={`text-sm font-semibold ${text}`}>{service.status}</span>
                                     </div>
+                                    {service.error && (
+                                        <div className="mt-2 text-xs text-red-700 bg-red-50 p-2 rounded-md border border-red-200">
+                                            <strong>Error:</strong> {service.error}
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="text-right">
+                                <div className="text-left sm:text-right mt-2 sm:mt-0">
                                     <p className="font-semibold text-dark">{service.responseTime ? `${service.responseTime} ms` : service.status === 'Checking...' ? '...' : '--'}</p>
                                     <p className="text-xs text-gray-500">Response Time</p>
                                 </div>

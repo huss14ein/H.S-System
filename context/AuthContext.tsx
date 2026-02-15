@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
-import type { User, Session, AuthError } from '@supabase/supabase-js';
+// FIX: Supabase types like User, Session, and AuthError are not always exported from the main package in older versions. Importing from '@supabase/gotrue-js' is a more stable alternative.
+import type { User, Session, AuthError } from '@supabase/gotrue-js';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -19,8 +20,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        setLoading(true);
-
         if (!supabase) {
             console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             setLoading(false);
@@ -29,17 +28,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
         let mounted = true;
     
-        // Fetch the initial session
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            if (mounted) {
-                setSession(session);
-                setUser(session?.user ?? null);
-                setLoading(false);
-            }
-        });
+        // FIX: Replaced async `getSession()` with sync `session()` for compatibility with older Supabase versions.
+        // The initial session is retrieved synchronously, and the auth listener handles any subsequent changes.
+        const currentSession = supabase.auth.session();
+        if (mounted) {
+            setSession(currentSession);
+            setUser(currentSession?.user ?? null);
+            setLoading(false);
+        }
     
-        // Set up the auth state listener
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        // FIX: Updated `onAuthStateChange` to match the API of older Supabase versions.
+        // The listener is retrieved from the `data` property and its `unsubscribe` method is called for cleanup.
+        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
             if (mounted) {
                 setSession(session);
                 setUser(session?.user ?? null);
@@ -48,7 +48,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
         return () => {
             mounted = false;
-            subscription?.unsubscribe();
+            authListener?.unsubscribe();
         };
     }, []);
     
@@ -59,28 +59,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const login = async (email: string, pass: string) => {
         if (!supabase) return noOpPromise('Supabase not configured.');
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+        // FIX: Replaced `signInWithPassword` with `signIn` for compatibility with older Supabase client versions.
+        const { error } = await supabase.auth.signIn({ email, password: pass });
         return { error };
     };
     
     const logout = async () => {
         if (!supabase) return { error: null }; // Logout should not fail
+        // FIX: `signOut` is generally consistent, but ensuring it's awaited correctly.
         const { error } = await supabase.auth.signOut();
         return { error };
     };
 
     const signup = async (name: string, email: string, pass: string) => {
         if (!supabase) return { ...await noOpPromise('Supabase not configured.'), user: null };
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password: pass,
-            options: {
+        // FIX: Replaced `signUp` with the two-argument version and adjusted response handling for compatibility with older Supabase client versions.
+        const { data, error } = await supabase.auth.signUp(
+            {
+                email,
+                password: pass,
+            },
+            {
                 data: {
                     full_name: name,
                 }
             }
-        });
-        return { error, user: data.user };
+        );
+        return { error, user: data?.user || null };
     };
 
     const value = {
