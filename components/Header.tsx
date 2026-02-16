@@ -13,6 +13,7 @@ import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
+import { useAI } from '../context/AiContext';
 
 interface HeaderProps {
   activePage: Page;
@@ -28,6 +29,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data, resetData, loadDemoData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
+  const { isAiAvailable } = useAI();
   
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
@@ -97,7 +99,12 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
             </button>
 
-            <button onClick={onOpenLiveAdvisor} className="p-2 rounded-full text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors" title="Live AI Advisor">
+            <button
+              onClick={onOpenLiveAdvisor}
+              className="p-2 rounded-full text-gray-500 hover:text-primary hover:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+              title={isAiAvailable ? "Live AI Advisor" : "AI features are disabled. Please configure your API key."}
+              disabled={!isAiAvailable}
+            >
                <HeadsetIcon className="h-6 w-6" />
            </button>
             

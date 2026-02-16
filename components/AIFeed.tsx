@@ -9,6 +9,7 @@ import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
 import { FeedItem } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
+import { useAI } from '../context/AiContext';
 
 const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
     const iconClass = "h-6 w-6";
@@ -26,6 +27,7 @@ const AIFeed: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const { data } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
     const dataRef = useRef(data);
 
     useEffect(() => {
@@ -53,7 +55,13 @@ const AIFeed: React.FC = () => {
                     <LightBulbIcon className="h-6 w-6 text-yellow-500" />
                     <h2 className="text-xl font-semibold text-dark">For You</h2>
                 </div>
-                <button type="button" onClick={handleGenerate} disabled={isLoading} className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={!isAiAvailable || isLoading}
+                  title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Refresh Feed"}
+                  className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Thinking...' : 'Refresh Feed'}
                 </button>
@@ -95,10 +103,17 @@ const AIFeed: React.FC = () => {
                 </div>
             )}
 
-            {feedItems.length === 0 && !isLoading && !error && (
-                <div className="text-center p-4 text-gray-500">
-                    Click "Refresh Feed" for personalized AI insights on your finances.
+            {!isAiAvailable ? (
+                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                    <p className="font-semibold">AI Features Disabled</p>
+                    <p className="text-sm">Please set your Gemini API key in the environment variables to enable personalized insights.</p>
                 </div>
+            ) : (
+                feedItems.length === 0 && !isLoading && !error && (
+                    <div className="text-center p-4 text-gray-500">
+                        Click "Refresh Feed" for personalized AI insights on your finances.
+                    </div>
+                )
             )}
         </div>
     );

@@ -5,6 +5,7 @@ import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
+import { useAI } from '../context/AiContext';
 
 type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
 
@@ -61,6 +62,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
@@ -82,7 +84,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
                     <LightBulbIcon className="h-6 w-6 text-yellow-500" />
                     <h2 className="text-xl font-semibold text-dark">AI Financial Advisor</h2>
                 </div>
-                <button type="button" onClick={handleGenerate} disabled={isLoading} className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={!isAiAvailable || isLoading}
+                    title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
+                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Analyzing...' : 'Get AI Insights'}
                 </button>
@@ -94,11 +102,18 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
                     <SafeMarkdownRenderer content={insight} />
                 </div>
             )}
-
-            {!insight && !isLoading && (
-                <div className="text-center p-4 text-gray-500">
-                    Click "Get AI Insights" for an analysis of your {pageContext} data.
+            
+            {!isAiAvailable ? (
+                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                    <p className="font-semibold">AI Features Disabled</p>
+                    <p className="text-sm">Please set your Gemini API key in the environment variables to enable this feature.</p>
                 </div>
+            ) : (
+                !insight && !isLoading && (
+                    <div className="text-center p-4 text-gray-500">
+                        Click "Get AI Insights" for an analysis of your {pageContext} data.
+                    </div>
+                )
             )}
         </div>
     );

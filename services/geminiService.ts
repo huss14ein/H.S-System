@@ -1,33 +1,7 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
 
-// --- Client-side Gemini Initialization ---
-let ai: GoogleGenAI | null = null;
-let isAiInitialized = false;
-
-function getAiClient(): GoogleGenAI | null {
-    if (isAiInitialized) {
-        return ai;
-    }
-
-    const clientSideApiKey = import.meta.env.DEV ? import.meta.env.VITE_GEMINI_API_KEY : undefined;
-    if (clientSideApiKey) {
-        console.log("Initializing and using client-side Gemini API key for local development. AI requests will bypass the proxy.");
-        ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-    } else {
-        console.log("Using Netlify function proxy for Gemini API calls. This is the expected behavior in production.");
-        ai = null; // Explicitly set to null
-    }
-
-    isAiInitialized = true;
-    return ai;
-}
-// --- End Initialization ---
-
-
 // --- Model Constants ---
-// Use stable model aliases to avoid issues with preview model lifecycles.
-// FIX: Updated model aliases to recommended versions for better performance and features.
 const FAST_MODEL = 'gemini-3-flash-preview';
 const DEEP_MODEL = 'gemini-3-pro-preview';
 
@@ -47,7 +21,6 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
 - Redeploy your site.
 `;
         }
-        // Provide more actionable feedback for common issues.
         if (error.message.includes('API key not valid')) {
             return "The AI service API key is not valid. Please check the backend configuration.";
         }
@@ -88,7 +61,6 @@ function robustJsonParse(jsonString: string | undefined): any {
         return null;
     }
     
-    // Attempt to find JSON within markdown code blocks
     const jsonMatch = jsonString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     const potentialJson = (jsonMatch && jsonMatch[1]) ? jsonMatch[1] : jsonString;
     
@@ -114,40 +86,41 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
         const data = await response.json();
 
         if (!response.ok) {
-            // Use the error message from the function if available
             throw new Error(data.error || `Request to AI proxy failed with status ${response.status}`);
         }
         
         return data;
     } catch (error) {
         console.error("Error invoking Netlify function:", error);
-        if (error instanceof TypeError) { // This often indicates a network error or failed deployment
+        if (error instanceof TypeError) {
              const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
              throw new Error(detailedMessage);
         }
-        throw error; // Re-throw other errors (like JSON parsing errors or errors from the function itself)
+        throw error;
     }
 }
 
 // Unified AI invocation function. Decides whether to use client-side SDK or proxy.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    const localAi = getAiClient();
-    if (localAi) {
-        // Use client-side SDK for local development
+    // In dev mode, use the client-side key if available.
+    if (import.meta.env.DEV) {
+        const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        if (!clientSideApiKey) {
+            throw new Error("AI features are disabled in local development. Set VITE_GEMINI_API_KEY in your .env file.");
+        }
         try {
-            const response: GenerateContentResponse = await localAi.models.generateContent(payload);
-            // Replicate the proxy response structure for consistency
+            const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
+            const response: GenerateContentResponse = await ai.models.generateContent(payload);
             return {
                 text: response.text,
                 candidates: response.candidates,
                 functionCalls: response.functionCalls,
             };
         } catch (error) {
-            // Re-throw with a formatted message
             throw new Error(formatAiError(error));
         }
     } else {
-        // Use Netlify function proxy in production
+        // In production, always use the proxy.
         return invokeGeminiProxy(payload);
     }
 }
@@ -161,7 +134,6 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
     if (!firstPortfolio.holdings || firstPortfolio.holdings.length === 0) {
         return 'N/A';
     }
-    // Create a copy before sorting to avoid mutating state
     const sortedHoldings = [...firstPortfolio.holdings].sort((a, b) => b.currentValue - a.currentValue);
     return sortedHoldings[0]?.symbol || 'N/A';
 };
@@ -172,7 +144,6 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
         const prompt = `
             You are a proactive financial analyst for the Wealth Ultra platform. 
             Analyze the user's complete financial data and generate a prioritized list of 4-5 insightful, encouraging, and actionable feed items.
-            Prioritize the most important and timely information.
             Financial Data Snapshot:
             - Net Worth: Calculate from assets, accounts, and liabilities.
             - Recent Transactions: ${data.transactions.slice(0, 5).map(t => `${t.description}: ${t.amount}`).join(', ')}
@@ -231,11 +202,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
       Provide the Markdown analysis now.
     `;
     
-    const response = await invokeAI({
-      model: FAST_MODEL,
-      contents: prompt,
-    });
-
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || "Could not retrieve AI analysis.";
     setToCache(cacheKey, result);
     return result;
@@ -261,10 +228,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({
-            model: FAST_MODEL,
-            contents: prompt,
-        });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve transaction analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -514,7 +478,7 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
 };
 
 export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
-    const cacheKey = `getAIStockAnalysis:${holding.symbol}`; // Cache this for a while
+    const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {

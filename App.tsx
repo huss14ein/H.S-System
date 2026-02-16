@@ -8,6 +8,7 @@ import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { MarketDataProvider } from './context/MarketDataContext';
 import MarketSimulator from './components/MarketSimulator';
+import { AiProvider } from './context/AiContext';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -80,18 +81,20 @@ const App: React.FC = () => {
   }
 
   return (
-    <DataProvider>
-      <CurrencyProvider>
-        <MarketDataProvider>
-          <MarketSimulator />
-          <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-            <Suspense fallback={<LoadingSpinner />}>
-              {renderPage()}
-            </Suspense>
-          </Layout>
-        </MarketDataProvider>
-      </CurrencyProvider>
-    </DataProvider>
+    <AiProvider>
+      <DataProvider>
+        <CurrencyProvider>
+          <MarketDataProvider>
+            <MarketSimulator />
+            <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+              <Suspense fallback={<LoadingSpinner />}>
+                {renderPage()}
+              </Suspense>
+            </Layout>
+          </MarketDataProvider>
+        </CurrencyProvider>
+      </DataProvider>
+    </AiProvider>
   );
 };
 
