@@ -251,7 +251,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve transaction analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -334,7 +334,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
             
             Provide the Markdown analysis now.
         `;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -374,7 +374,7 @@ export const getAIAnalysisPageInsights = async (
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -484,7 +484,7 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
     `;
 
     try {
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve executive summary.";
         setToCache(cacheKey, result);
         return result;
@@ -510,7 +510,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
     try {
         const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt, config: { thinkingConfig: { thinkingBudget: 32768 } } });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -518,7 +518,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
         const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { return formatAiError(error); }
 };
@@ -527,7 +527,7 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
     try {
         const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), use Google Search to generate a concise summary of the latest market news and analyst sentiment for each. Respond in markdown, using a '###' header for each stock symbol. Do not use any HTML tags in your response.`;
         const response = await invokeAI({
-            model: DEEP_MODEL,
+            model: FAST_MODEL,
             contents: prompt,
             config: { tools: [{ googleSearch: {} }] }
         });
@@ -545,7 +545,7 @@ export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]):
         Focus on identifying patterns (e.g., frequent trading, selling winners, buying losers) and explain the potential portfolio impact. 
         Conclude with a key concept the user could research (e.g., 'dollar-cost averaging', 'portfolio diversification').
         Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -573,7 +573,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         They have ${goals.length} goals with different targets and deadlines. 
         Provide a holistic analysis in markdown. Assess if their total goals are achievable. Suggest a prioritization strategy (e.g., 'Avalanche' vs. 'Snowball' method for goals).
         Do not use any HTML tags in your response.`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { return formatAiError(error); }
 };
@@ -582,7 +582,7 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
         const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Your response must not contain any HTML. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { return formatAiError(error); }
 };
@@ -599,7 +599,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
         - ### General Analyst Sentiment: Summarize the current market sentiment (e.g., bullish, bearish, neutral).
         Do not give direct buy/sell financial advice.`;
         const response = await invokeAI({
-            model: DEEP_MODEL,
+            model: FAST_MODEL,
             contents: prompt,
             config: { tools: [{ googleSearch: {} }] }
         });
@@ -617,7 +617,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
     try {
         const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not generate plan.";
     } catch (error) { return formatAiError(error); }
 };
@@ -687,7 +687,7 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
         2.  Concentration risk based on the top contributors.
         3.  One educational suggestion for improving a dividend strategy.
         `;
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { return formatAiError(error); }
 };

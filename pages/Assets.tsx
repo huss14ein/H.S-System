@@ -17,6 +17,7 @@ import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import AddMenu from '../components/AddMenu';
+import { useAI } from '../context/AiContext';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -217,6 +218,7 @@ interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     
     // State for both types of modals
@@ -305,7 +307,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <section className="bg-white p-6 rounded-lg shadow">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                     <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
-                    <button onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-2" />{isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}</button>
+                    <button 
+                        onClick={handleUpdatePrices} 
+                        disabled={isUpdatingPrices || !isAiAvailable}
+                        title={!isAiAvailable ? "AI features are disabled" : "Update prices"}
+                        className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <SparklesIcon className="h-4 w-4 mr-2" />
+                        {isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}
+                    </button>
                 </div>
                 {groundingChunks.length > 0 && (
                     <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-md border">

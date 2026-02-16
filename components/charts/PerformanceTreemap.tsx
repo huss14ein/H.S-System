@@ -24,7 +24,7 @@ const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, ga
             {depth === 1 && width > 50 && height > 25 ? (
                 <text x={x + width / 2} y={y + height / 2} dy=".35em" textAnchor="middle" fill={textColor} style={{ fontSize: `${fontSize}px`, fontWeight: 'bold' }}>
                     <tspan x={x + width / 2} dy="-0.5em">{name}</tspan>
-                    <tspan x={x + width / 2} dy="1.2em" style={{ opacity: 0.8, fontSize: `${fontSize * 0.8}px` }}>{gainLossPercent.toFixed(1)}%</tspan>
+                    <tspan x={x + width / 2} dy="1.2em" style={{ opacity: 0.8, fontSize: `${fontSize * 0.8}px` }}>{(gainLossPercent ?? 0).toFixed(1)}%</tspan>
                 </text>
             ) : null}
         </g>
@@ -50,6 +50,9 @@ const TreemapTooltip: React.FC<any> = ({ active, payload }) => {
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     
     const getColor = (percentage: number) => {
+        if (isNaN(percentage) || !isFinite(percentage)) {
+            return '#9ca3af'; // slate-400, a neutral gray
+        }
         const clampedPercent = Math.max(-25, Math.min(25, percentage));
         const normalized = (clampedPercent + 25) / 50;
 
