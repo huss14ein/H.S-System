@@ -32,9 +32,21 @@ const FAST_MODEL = 'gemini-3-flash-preview';
 const DEEP_MODEL = 'gemini-3-pro-preview';
 
 // --- AI Error Formatting ---
-function formatAiError(error: any): string {
+export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
     if (error instanceof Error) {
+        if (error.message.includes('GEMINI_API_KEY not set')) {
+            return `
+### AI Service Configuration Error
+The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in your deployment environment.
+
+**To fix this:**
+- Go to your Netlify project settings.
+- Navigate to **Site configuration > Environment variables**.
+- Add a new variable with the key \`GEMINI_API_KEY\` and your Google Gemini API key as the value.
+- Redeploy your site.
+`;
+        }
         // Provide more actionable feedback for common issues.
         if (error.message.includes('API key not valid')) {
             return "The AI service API key is not valid. Please check the backend configuration.";
@@ -193,7 +205,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
         return Array.isArray(items) ? items : [];
     } catch (error) {
         console.error("Error fetching AI Feed insights:", error);
-        return [];
+        throw error;
     }
 };
 

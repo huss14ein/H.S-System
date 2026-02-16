@@ -9,7 +9,7 @@ const createSupabaseClient = () => {
 
     if (!supabaseUrl || !supabaseAnonKey) {
       if (!hasLoggedSupabaseError) {
-        console.error('Supabase is not configured. AI features will be disabled. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.');
+        console.error('Supabase is not configured. Authentication and database features will be disabled. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file for data persistence.');
         hasLoggedSupabaseError = true;
       }
       return null;

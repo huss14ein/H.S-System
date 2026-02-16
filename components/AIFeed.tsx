@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIFeedInsights } from '../services/geminiService';
+import { getAIFeedInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { PiggyBankIcon } from './icons/PiggyBankIcon';
@@ -8,6 +8,7 @@ import { TrophyIcon } from './icons/TrophyIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
 import { FeedItem } from '../types';
+import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 
 const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
     const iconClass = "h-6 w-6";
@@ -23,6 +24,7 @@ const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
 const AIFeed: React.FC = () => {
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const { data } = useContext(DataContext)!;
     const dataRef = useRef(data);
 
@@ -33,12 +35,13 @@ const AIFeed: React.FC = () => {
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setFeedItems([]);
+        setError(null);
         try {
             const items = await getAIFeedInsights(dataRef.current);
             setFeedItems(items);
-        } catch (error) {
-            console.error("AI Feed generation failed:", error);
-            setFeedItems([{ type: 'SAVINGS', title: 'Analysis Error', description: 'Could not generate AI insights at this time.', emoji: '😔' }]);
+        } catch (err) {
+            console.error("AI Feed generation failed:", err);
+            setError(formatAiError(err));
         }
         setIsLoading(false);
     }, []);
@@ -69,7 +72,14 @@ const AIFeed: React.FC = () => {
                 </div>
             )}
             
-            {feedItems.length > 0 && !isLoading && (
+            {error && !isLoading && (
+                <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
+                     <h4 className="font-bold">AI Feed Error</h4>
+                     <SafeMarkdownRenderer content={error} />
+                </div>
+            )}
+
+            {feedItems.length > 0 && !isLoading && !error && (
                  <div className="space-y-2">
                     {feedItems.map((item, index) => (
                         <div key={index} className="flex items-start space-x-4 p-3 hover:bg-gray-50 rounded-lg">
@@ -85,7 +95,7 @@ const AIFeed: React.FC = () => {
                 </div>
             )}
 
-            {feedItems.length === 0 && !isLoading && (
+            {feedItems.length === 0 && !isLoading && !error && (
                 <div className="text-center p-4 text-gray-500">
                     Click "Refresh Feed" for personalized AI insights on your finances.
                 </div>
