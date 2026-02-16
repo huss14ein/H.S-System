@@ -76,12 +76,14 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
     };
     
-    const processedData = data.map(item => ({
-        name: item.symbol,
-        size: item.currentValue,
-        gainLossPercent: item.gainLossPercent,
-        color: getColor(item.gainLossPercent),
-    }));
+    const processedData = data
+        .filter(item => item.currentValue > 0)
+        .map(item => ({
+            name: item.symbol,
+            size: item.currentValue,
+            gainLossPercent: item.gainLossPercent,
+            color: getColor(item.gainLossPercent),
+        }));
 
     return (
         <ResponsiveContainer width="100%" height="100%">

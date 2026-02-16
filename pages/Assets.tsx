@@ -309,8 +309,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
                     <button 
                         onClick={handleUpdatePrices} 
-                        disabled={isUpdatingPrices || !isAiAvailable}
-                        title={!isAiAvailable ? "AI features are disabled" : "Update prices"}
+                        disabled={isUpdatingPrices || !isAiAvailable || data.commodityHoldings.length === 0}
+                        title={!isAiAvailable ? "AI features are disabled" : (data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices")}
                         className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed">
                         <SparklesIcon className="h-4 w-4 mr-2" />
                         {isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}

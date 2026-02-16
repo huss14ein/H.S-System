@@ -391,7 +391,13 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  </div>
                  <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={() => setActivePage('Investments')}>
                     <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>
-                    <div className="h-80"><PerformanceTreemap data={investmentTreemapData} /></div>
+                    <div className="h-80">
+                        {investmentTreemapData.length > 0 ? (
+                            <PerformanceTreemap data={investmentTreemapData} />
+                        ) : (
+                            <div className="flex items-center justify-center h-full text-gray-500">No investment data available.</div>
+                        )}
+                    </div>
                  </div>
             </div>
             

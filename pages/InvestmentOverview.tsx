@@ -81,7 +81,13 @@ const InvestmentOverview: React.FC = () => {
              <div className="bg-white p-6 rounded-lg shadow h-[450px]">
                 <h3 className="text-lg font-semibold text-dark mb-4">Consolidated Holdings Performance</h3>
                 <p className="text-sm text-gray-500 -mt-4 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
-                <PerformanceTreemap data={allHoldingsWithGains} />
+                {allHoldingsWithGains.length > 0 ? (
+                    <PerformanceTreemap data={allHoldingsWithGains} />
+                ) : (
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                        <p>No holdings to display in the treemap.</p>
+                    </div>
+                )}
             </div>
         </div>
     );

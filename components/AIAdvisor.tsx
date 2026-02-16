@@ -44,7 +44,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
             return Promise.resolve("Not enough data for cashflow analysis.");
         case 'goals':
             if (contextData?.goals && typeof contextData?.monthlySavings !== 'undefined') {
-                return getAIGoalStrategyAnalysis(contextData.goals, contextData.monthlySavings);
+                return getAIGoalStrategyAnalysis(contextData.goals, contextData.monthlySavings, data);
             }
             return Promise.resolve("Not enough data for goal strategy analysis.");
         case 'analysis':

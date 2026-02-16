@@ -113,13 +113,6 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
-    const handleGetAIPlan = useCallback(async () => {
-        setIsLoading(true);
-        const plan = await getGoalAIPlan(goal, monthlySavings);
-        setAiPlan(plan);
-        setIsLoading(false);
-    }, [goal, monthlySavings]);
-    
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
         
@@ -137,6 +130,14 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
     }, [data.assets, data.investments, goal.id]);
+
+    const handleGetAIPlan = useCallback(async () => {
+        setIsLoading(true);
+        const plan = await getGoalAIPlan(goal, monthlySavings, calculatedCurrentAmount);
+        setAiPlan(plan);
+        setIsLoading(false);
+    }, [goal, monthlySavings, calculatedCurrentAmount]);
+    
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
         const currentAmount = calculatedCurrentAmount;

@@ -61,7 +61,7 @@ function robustJsonParse(jsonString: string | undefined): any {
         return null;
     }
     
-    const jsonMatch = jsonString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    const jsonMatch = jsonString.match(/```(?:json)?\s*([\sS]*?)\s*```/);
     const potentialJson = (jsonMatch && jsonMatch[1]) ? jsonMatch[1] : jsonString;
     
     try {
@@ -233,20 +233,22 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
         const budgetPerformance = budgets.map(b => {
             const spent = spending.get(b.category) || 0;
             const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
-            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}%)`;
+            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
         }).join('\n');
 
         const prompt = `
-            You are a proactive Budget Adherence Analyst. Based on the following monthly spending summary, provide a sharp, actionable analysis in Markdown.
-            Your response must be in Markdown format only and contain no HTML tags.
+            You are "HS", a direct and data-driven AI budget analyst. Analyze the following monthly spending summary and provide a sharp, actionable analysis in Markdown format. Be concise and do not write an essay.
 
-            Monthly Budget Performance:
+            **Data:**
             ${budgetPerformance}
 
-            Your analysis should have three sections:
-            1.  **Top Highlight:** Identify the best-managed budget category and offer encouragement.
-            2.  **Key Concern:** Pinpoint the most overspent or concerning budget category. Explain the potential long-term impact.
-            3.  **Actionable Suggestion:** Provide one specific, practical tip to help the user improve their spending in the 'Key Concern' category.
+            **Your Task:**
+            Structure your response with these exact headers:
+            ### Key Insight
+            - One bullet point identifying the most significant spending observation (e.g., "Your 'Shopping' category is 45% over budget"). Be direct and use numbers.
+
+            ### Direct Recommendation
+            - One bullet point providing a single, practical tip to address the key insight (e.g., "Review your 'Shopping' transactions to find one recurring expense you can cut.").
             
             Provide the Markdown analysis now.
         `;
@@ -281,7 +283,7 @@ export const getAIFinancialPersona = async (
         `;
 
         const response = await invokeAI({
-            model: DEEP_MODEL,
+            model: FAST_MODEL,
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -315,22 +317,22 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
         const { totalPlannedIncome, totalPlannedExpenses, projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
-            You are a financial planning analyst. Based on the user's annual plan and active 'what-if' scenarios, provide a brief, insightful analysis in Markdown.
-            Your response must be in Markdown format only and contain no HTML tags.
+            You are "HS", a sharp and concise AI planning strategist. Analyze the user's annual plan and active 'what-if' scenarios. Provide a direct, actionable analysis in Markdown format. Do not write an essay.
 
-            Annual Plan Summary:
-            - Planned Income: ${totalPlannedIncome.toLocaleString()} SAR
-            - Planned Expenses: ${totalPlannedExpenses.toLocaleString()} SAR
+            **Annual Plan Data:**
             - Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
 
-            Active Scenarios:
+            **Active Scenarios:**
             - Income Shock: ${incomeShock.percent}% change for ${incomeShock.duration} months.
             - Expense Stress: ${expenseStress.percent}% increase for the "${expenseStress.category}" category.
 
-            Your analysis should:
-            1.  Comment on the base plan's health (e.g., savings rate).
-            2.  Explain the impact of the active scenarios on their projected savings.
-            3.  Provide one strategic suggestion to improve their plan's resilience.
+            **Your Task:**
+            Structure your response with these exact headers:
+            ### Key Observation
+            - One bullet point that quantifies the combined impact of the active scenarios on their projected savings. Be direct.
+
+            ### Strategic Action
+            - One bullet point providing a single, high-impact recommendation to improve the plan's resilience against these scenarios.
             
             Provide the Markdown analysis now.
         `;
@@ -416,7 +418,7 @@ export const getAIInvestmentOverviewAnalysis = async (
             Keep the analysis concise, strategic, and educational. Do not provide direct financial advice. Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -550,16 +552,51 @@ export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]):
     } catch (error) { return formatAiError(error); }
 };
 
-export const getGoalAIPlan = async (goal: Goal, monthlySavings: number): Promise<string> => {
-    const cacheKey = `getGoalAIPlan:${goal.id}:${goal.currentAmount}:${monthlySavings}`;
+export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculatedCurrentAmount: number): Promise<string> => {
+    const cacheKey = `getGoalAIPlan:${goal.id}:${calculatedCurrentAmount}:${monthlySavings}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}.
-        Their average monthly savings capacity is ${monthlySavings} SAR.
-        Generate a simple, encouraging, actionable plan in Markdown format. 
-        First, assess if the goal is realistic given their savings capacity and deadline. Then, provide 2-3 concrete steps they could take.
-        Your response must not contain any HTML tags.`;
+        const deadline = new Date(goal.deadline);
+        const now = new Date();
+        const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
+        const remainingAmount = Math.max(0, goal.targetAmount - calculatedCurrentAmount);
+        const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
+        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+
+        const prompt = `
+            You are "HS", a smart and encouraging AI financial coach. Analyze this goal and provide a direct, concise plan in Markdown.
+            
+            **Goal Data:**
+            - **Name:** ${goal.name}
+            - **Target:** ${goal.targetAmount.toLocaleString()} SAR
+            - **Currently Saved:** ${calculatedCurrentAmount.toLocaleString()} SAR
+            - **Time Remaining:** ${monthsLeft} months
+            - **Required Monthly Savings:** ${requiredMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month
+            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (based on current allocation)
+
+            **Your Task:**
+            1.  **Status Assessment:** In one friendly sentence, state if the goal is on track, needs attention, or is at risk based on the data. Be direct.
+            2.  **Actionable Steps:** Provide a maximum of two short, powerful, and creative bullet points for what to do next. Do not write an essay.
+
+            Example for "On Track":
+            ### Status Assessment
+            Great job! You're on track to reach your "${goal.name}" goal.
+
+            ### Next Steps
+            - **Maintain Momentum:** Keep your savings allocation consistent to cruise to your target.
+            - **Explore Acceleration:** Consider linking a high-performing investment to this goal to potentially reach it even faster.
+
+            Example for "Needs Attention":
+            ### Status Assessment
+            You're making good progress, but your "${goal.name}" goal needs a small boost to stay on track.
+
+            ### Next Steps
+            - **Increase Allocation:** Try increasing your savings allocation for this goal by a few percentage points on the main Goals page.
+            - **Review Spending:** Look for one small recurring expense in your 'Transactions' you could cut to redirect funds here.
+
+            Provide the analysis for the user's goal now.
+        `;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not generate plan.";
         setToCache(cacheKey, result);
@@ -567,12 +604,43 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number): Promise
     } catch (error) { return formatAiError(error); }
 };
 
-export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number): Promise<string> => {
+export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number, allData: FinancialData): Promise<string> => {
     try {
-        const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Their total monthly savings capacity is ${monthlySavings} SAR. 
-        They have ${goals.length} goals with different targets and deadlines. 
-        Provide a holistic analysis in markdown. Assess if their total goals are achievable. Suggest a prioritization strategy (e.g., 'Avalanche' vs. 'Snowball' method for goals).
-        Do not use any HTML tags in your response.`;
+         const goalDataWithProgress = goals.map(goal => {
+            const linkedItemsValue = allData.assets.filter(a => a.goalId === goal.id).reduce((sum, a) => sum + a.value, 0) + 
+                                  allData.investments.flatMap(p => p.holdings).filter(h => h.goalId === goal.id).reduce((sum, h) => sum + h.currentValue, 0);
+            
+            const currentAmount = linkedItemsValue;
+            const progress = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
+            return `- ${goal.name}: ${progress.toFixed(0)}% complete`;
+        }).join('\n');
+
+        const totalAllocatedPercent = goals.reduce((sum, g) => sum + (g.savingsAllocationPercent || 0), 0);
+        const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);
+
+        const prompt = `
+            You are "HS", a sharp and encouraging AI strategist. Analyze the user's overall goal portfolio based on the following data. Your response must be direct, concise, and in Markdown format.
+
+            **Strategic Overview:**
+            - **Total Monthly Savings Capacity:** ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR
+            - **Currently Allocated Savings:** ${allocatedSavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR (${totalAllocatedPercent}%)
+            - **Number of Goals:** ${goals.length}
+            - **Individual Goal Progress:**
+            ${goalDataWithProgress}
+
+            **Your Task:**
+            1.  **Overall Assessment (1 sentence):** Start with a single, powerful sentence summarizing the health of their overall goal strategy.
+            2.  **Key Insight (1 bullet point):** Provide one crucial observation about their strategy (e.g., are they under-utilizing savings? are they spreading too thin?).
+            3.  **Strategic Recommendation (1 bullet point):** Offer one high-impact, actionable recommendation to improve their strategy. Be specific.
+
+            Example:
+            ### Strategic Analysis
+            Your goal strategy is solid, but you have untapped potential to accelerate your progress.
+            - **Key Insight:** You currently have ${((monthlySavings - allocatedSavings)).toLocaleString(undefined, {maximumFractionDigits: 0})} SAR of unallocated savings each month.
+            - **Strategic Recommendation:** Consider applying the 'Goal Avalanche' method: allocate your unallocated savings to the goal with the highest required monthly contribution to secure it faster.
+
+            Provide the analysis for the user's goals now.
+        `;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { return formatAiError(error); }
