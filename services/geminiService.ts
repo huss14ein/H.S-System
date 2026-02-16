@@ -1,6 +1,5 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
-import { supabase } from './supabaseClient';
 
 // --- Client-side Gemini Initialization ---
 let ai: GoogleGenAI | null = null;
