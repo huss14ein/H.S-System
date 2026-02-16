@@ -20,14 +20,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!supabase) {
+        const currentSupabase = supabase;
+        if (!currentSupabase) {
             console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             setLoading(false);
             return;
         }
     
         const getSession = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
+            const { data: { session } } = await currentSupabase.auth.getSession();
             setSession(session);
             setUser(session?.user ?? null);
             setLoading(false);
@@ -35,7 +36,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
         getSession();
     
-        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: authListener } = currentSupabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);
             setUser(session?.user ?? null);
         });

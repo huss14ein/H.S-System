@@ -25,16 +25,19 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
+import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 
 const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
+const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+    { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
     { name: 'Trade Advices', icon: BookOpenIcon },
@@ -559,7 +562,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-  const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Portfolios');
+  const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; }) | null>(null);
@@ -701,6 +704,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onEditHolding={handleOpenHoldingEditModal}
         />;
       case 'Investment Plan': return <InvestmentPlanView onExecutePlan={handleExecutePlan} />;
+      case 'Dividend Tracker': return <DividendTrackerView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
       case 'Trade Advices': return <TradeAdvicesView />;
