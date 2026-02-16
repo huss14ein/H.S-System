@@ -15,7 +15,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
-import { getAICommodityPrices } from '../services/geminiService';
+import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import AddMenu from '../components/AddMenu';
 
 // --- Physical Asset Components ---
@@ -268,7 +268,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 const updates = data.commodityHoldings.map(h => { const p = prices.find(p => p.symbol === h.symbol); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
-        } catch (error) { console.error("Failed to update prices:", error); } 
+        } catch (error) {
+            console.error("Failed to update prices:", error);
+            alert(`Failed to update commodity prices:\n\n${formatAiError(error)}`);
+        } 
         finally { setIsUpdatingPrices(false); }
     };
 

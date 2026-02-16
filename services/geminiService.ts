@@ -279,7 +279,7 @@ export const getAIFinancialPersona = async (
 
     } catch (error) {
         console.error("Error fetching AI financial persona:", error);
-        return null;
+        throw error;
     }
 };
 
@@ -503,7 +503,10 @@ export const getAICategorySuggestion = async (description: string, categories: s
         const prompt = `You are an automated financial assistant. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text?.trim() || "";
-    } catch (error) { console.error(error); return ""; }
+    } catch (error) {
+        console.error("Error fetching AI category suggestion:", error);
+        throw error;
+    }
 };
 
 export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
@@ -544,7 +547,7 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
 
     } catch (error) {
         console.error("Error fetching AI commodity prices:", error);
-        return { prices: [], groundingChunks: [] };
+        throw error;
     }
 };
 

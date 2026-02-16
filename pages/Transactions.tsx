@@ -9,7 +9,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AIAdvisor from '../components/AIAdvisor';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
-import { getAICategorySuggestion } from '../services/geminiService';
+import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 
 const TransactionModal: React.FC<{
@@ -103,6 +103,7 @@ const TransactionModal: React.FC<{
             }
         } catch (e) {
             console.error("Category suggestion failed", e);
+            alert(`AI suggestion failed:\n\n${formatAiError(e)}`);
         } finally {
             setIsSuggestingCategory(false);
         }

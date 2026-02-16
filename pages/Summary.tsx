@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIFinancialPersona } from '../services/geminiService';
+import { getAIFinancialPersona, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
@@ -12,6 +12,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -50,6 +51,7 @@ const Summary: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
         const now = new Date();
@@ -106,13 +108,19 @@ const Summary: React.FC = () => {
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
-        const result = await getAIFinancialPersona(
-            financialMetrics.savingsRate, 
-            financialMetrics.debtToAssetRatio, 
-            financialMetrics.emergencyFundMonths, 
-            financialMetrics.investmentStyle
-        );
-        setAnalysis(result);
+        setError(null);
+        setAnalysis(null);
+        try {
+            const result = await getAIFinancialPersona(
+                financialMetrics.savingsRate, 
+                financialMetrics.debtToAssetRatio, 
+                financialMetrics.emergencyFundMonths, 
+                financialMetrics.investmentStyle
+            );
+            setAnalysis(result);
+        } catch (err) {
+            setError(formatAiError(err));
+        }
         setIsLoading(false);
     }, [financialMetrics]);
 
@@ -163,8 +171,14 @@ const Summary: React.FC = () => {
                     </button>
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
-                {!isLoading && !analysis && <div className="text-center p-8 text-gray-500">Click the button to generate your AI-powered financial persona and report card.</div>}
-                {analysis && !isLoading && (
+                {!isLoading && error && (
+                    <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
+                         <h4 className="font-bold">AI Analysis Error</h4>
+                         <SafeMarkdownRenderer content={error} />
+                    </div>
+                )}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your AI-powered financial persona and report card.</div>}
+                {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">
                              <SparklesIcon className="h-10 w-10 text-primary mx-auto mb-2" />
