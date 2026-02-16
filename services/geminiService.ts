@@ -140,6 +140,10 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
 
 
 export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]> => {
+    const cacheKey = `getAIFeedInsights:${data.transactions.length}:${data.goals.length}:${data.budgets.length}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) return cached;
+
     try {
         const prompt = `
             You are a proactive financial analyst for the Wealth Ultra platform. 
@@ -154,7 +158,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
         `;
 
         const response = await invokeAI({
-            model: DEEP_MODEL,
+            model: FAST_MODEL,
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -173,7 +177,9 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
             }
         });
         const items = robustJsonParse(response.text);
-        return Array.isArray(items) ? items : [];
+        const result = Array.isArray(items) ? items : [];
+        setToCache(cacheKey, result);
+        return result;
     } catch (error) {
         console.error("Error fetching AI Feed insights:", error);
         throw error;
@@ -218,17 +224,34 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
     if (cached) return cached;
 
     try {
-        const budgetSummary = budgets.map(b => `- **${b.category}**: Limit ${b.limit.toLocaleString()} SAR`).join('\n');
+        const spending = new Map<string, number>();
+        transactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
+            const currentSpend = spending.get(t.budgetCategory!) || 0;
+            spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+        });
+
+        const budgetPerformance = budgets.map(b => {
+            const spent = spending.get(b.category) || 0;
+            const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
+            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}%)`;
+        }).join('\n');
+
         const prompt = `
-            You are a helpful budget analyst. Based on the following monthly spending summary, provide a brief, insightful analysis in Markdown.
+            You are a proactive Budget Adherence Analyst. Based on the following monthly spending summary, provide a sharp, actionable analysis in Markdown.
             Your response must be in Markdown format only and contain no HTML tags.
-            Highlight the top spending category, budget adherence, and one practical suggestion.
-            Monthly Budget Summary:
-            ${budgetSummary}
+
+            Monthly Budget Performance:
+            ${budgetPerformance}
+
+            Your analysis should have three sections:
+            1.  **Top Highlight:** Identify the best-managed budget category and offer encouragement.
+            2.  **Key Concern:** Pinpoint the most overspent or concerning budget category. Explain the potential long-term impact.
+            3.  **Actionable Suggestion:** Provide one specific, practical tip to help the user improve their spending in the 'Key Concern' category.
+            
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve transaction analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -311,7 +334,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
             
             Provide the Markdown analysis now.
         `;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -351,7 +374,7 @@ export const getAIAnalysisPageInsights = async (
             Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -372,7 +395,7 @@ export const getAIInvestmentOverviewAnalysis = async (
     
     try {
         const prompt = `
-            You are a senior investment analyst providing a high-level summary of a user's investment portfolio. Your response must be in Markdown format only and contain no HTML tags.
+            You are a senior investment analyst performing a SWOT analysis (Strengths, Weaknesses, Opportunities, Threats) on a user's investment portfolio. Your response must be in Markdown format only and contain no HTML tags.
             Analyze the following data:
 
             1.  **Portfolio Allocation (Value by portfolio):**
@@ -384,14 +407,16 @@ export const getAIInvestmentOverviewAnalysis = async (
             3.  **Top 5 Holdings by Performance:**
                 ${topHoldings.slice(0, 5).map(h => `- ${h.name}: ${h.gainLossPercent.toFixed(2)}%`).join('\n')}
 
-            Your analysis should have two sections using '###' headers:
-            - ### Composition & Diversification: Comment on how the investments are spread across different portfolios and asset classes. Is there a heavy concentration?
-            - ### Performance Highlights: Briefly mention any standout performers from the top holdings list.
+            Your analysis must have four sections using '###' headers:
+            - ### Strengths: What are the strong points? (e.g., good performers, diversification).
+            - ### Weaknesses: What are the weak points? (e.g., concentration risk, underperformers).
+            - ### Opportunities: What potential actions could improve the portfolio? (e.g., explore new asset classes).
+            - ### Threats: What are the external risks to this portfolio? (e.g., market volatility, sector-specific risks).
             
-            Keep the analysis concise and educational. Do not provide financial advice. Provide the Markdown analysis now.
+            Keep the analysis concise, strategic, and educational. Do not provide direct financial advice. Provide the Markdown analysis now.
         `;
 
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
         setToCache(cacheKey, result);
         return result;
@@ -400,6 +425,73 @@ export const getAIInvestmentOverviewAnalysis = async (
         return formatAiError(error);
     }
 };
+
+export const getAIExecutiveSummary = async (data: FinancialData): Promise<string> => {
+    const cacheKey = `getAIExecutiveSummary:${data.transactions.length}:${data.investments.length}`;
+    const cached = getFromCache(cacheKey);
+    if(cached) return cached;
+
+    // Calculate some metrics for the prompt
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthlyTransactions = data.transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
+    const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+    const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const monthlyPnL = monthlyIncome - monthlyExpenses;
+
+    const overspentBudgets = data.budgets
+        .map(budget => {
+            const spent = monthlyTransactions
+                .filter(t => t.type === 'expense' && t.budgetCategory === budget.category)
+                .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
+            return { ...budget, spent, percentage };
+        })
+        .filter(b => b.percentage > 90)
+        .map(b => `${b.category} (${b.percentage.toFixed(0)}% used)`)
+        .join(', ');
+    
+    const goalProgress = data.goals.map(g => {
+        const currentAmount = g.currentAmount; // simplified for prompt
+        const progress = g.targetAmount > 0 ? (currentAmount / g.targetAmount) * 100 : 0;
+        return `${g.name} (${progress.toFixed(0)}%)`;
+    }).join(', ');
+
+    const prompt = `
+        You are "HS", a senior personal financial advisor for a sophisticated wealth management platform. Your tone is professional, insightful, and encouraging.
+        Analyze the user's key financial data and provide a concise executive summary in Markdown format.
+        Your response must be in Markdown format only and contain no HTML tags.
+        
+        Financial Snapshot:
+        - This Month's P&L: ${monthlyPnL.toLocaleString()} SAR
+        - Budgets nearing limit (>90%): ${overspentBudgets || 'None'}
+        - Goal Progress: ${goalProgress || 'No goals set'}
+
+        Structure your response with these exact headers:
+        ### Overall Financial Health
+        A single, concise sentence summarizing the user's current financial standing for the month.
+
+        ### Key Highlights
+        - 2-3 positive bullet points based on the data. Mention specific numbers.
+
+        ### Areas for Attention
+        - 1-2 constructive bullet points about areas that need monitoring. Be gentle but direct.
+
+        ### Strategic Recommendation
+        - Provide one actionable, forward-looking recommendation to improve their financial situation.
+        
+        Provide the Markdown summary now.
+    `;
+
+    try {
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
+        const result = response.text || "Could not retrieve executive summary.";
+        setToCache(cacheKey, result);
+        return result;
+    } catch (e) {
+        return formatAiError(e);
+    }
+}
 
 
 export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
@@ -431,28 +523,43 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     } catch (error) { return formatAiError(error); }
 };
 
-export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<string> => {
+export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<{ content: string, groundingChunks: any[] }> => {
     try {
-        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), generate a realistic but fictional summary of market news and dividend announcements in markdown. Do not use any HTML tags in your response.`;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not retrieve news.";
-    } catch (error) { return formatAiError(error); }
+        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), use Google Search to generate a concise summary of the latest market news and analyst sentiment for each. Respond in markdown, using a '###' header for each stock symbol. Do not use any HTML tags in your response.`;
+        const response = await invokeAI({
+            model: DEEP_MODEL,
+            contents: prompt,
+            config: { tools: [{ googleSearch: {} }] }
+        });
+        const content = response.text || "Could not retrieve news.";
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        return { content, groundingChunks };
+    } catch (error) {
+        return { content: formatAiError(error), groundingChunks: [] };
+    }
 };
 
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
     try {
-        const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. Sections: Trading Pattern Analysis, Potential Portfolio Impact, Key Concept for Research. Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. 
+        Focus on identifying patterns (e.g., frequent trading, selling winners, buying losers) and explain the potential portfolio impact. 
+        Conclude with a key concept the user could research (e.g., 'dollar-cost averaging', 'portfolio diversification').
+        Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
 };
 
-export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
-    const cacheKey = `getGoalAIPlan:${goal.id}:${goal.currentAmount}`;
+export const getGoalAIPlan = async (goal: Goal, monthlySavings: number): Promise<string> => {
+    const cacheKey = `getGoalAIPlan:${goal.id}:${goal.currentAmount}:${monthlySavings}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}. Generate a simple, encouraging, actionable plan in Markdown format. Your response must not contain any HTML tags.`;
+        const prompt = `You are a financial coach. A user has a goal: ${goal.name}. Target: ${goal.targetAmount}, Current: ${goal.currentAmount}, Deadline: ${goal.deadline}.
+        Their average monthly savings capacity is ${monthlySavings} SAR.
+        Generate a simple, encouraging, actionable plan in Markdown format. 
+        First, assess if the goal is realistic given their savings capacity and deadline. Then, provide 2-3 concrete steps they could take.
+        Your response must not contain any HTML tags.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not generate plan.";
         setToCache(cacheKey, result);
@@ -462,7 +569,10 @@ export const getGoalAIPlan = async (goal: Goal): Promise<string> => {
 
 export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number): Promise<string> => {
     try {
-        const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Total Monthly Savings: ${monthlySavings}. Goals: ${goals.length} goals. Provide a holistic analysis in markdown. Do not use any HTML tags in your response.`;
+        const prompt = `You are a financial advisor. Analyze the user's overall goal savings strategy. Their total monthly savings capacity is ${monthlySavings} SAR. 
+        They have ${goals.length} goals with different targets and deadlines. 
+        Provide a holistic analysis in markdown. Assess if their total goals are achievable. Suggest a prioritization strategy (e.g., 'Avalanche' vs. 'Snowball' method for goals).
+        Do not use any HTML tags in your response.`;
         const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { return formatAiError(error); }
@@ -477,18 +587,32 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
     } catch (error) { return formatAiError(error); }
 };
 
-export const getAIStockAnalysis = async (holding: Holding): Promise<string> => {
+export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a creative financial content generator. For the stock ${holding.name} (${holding.symbol}), generate a brief, fictional but realistic analyst report in markdown. Your response must not contain any HTML tags. Sections: Fictional Analyst Rating, Fictional Recent News. Do not use real-time data or give financial advice.`;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        const result = response.text || "Could not retrieve analysis.";
+        const prompt = `You are a financial analyst. Using Google Search, provide a concise analyst report summary for the stock ${holding.name} (${holding.symbol}). 
+        Respond in markdown. Your response must not contain any HTML tags.
+        Include these sections using '###' headers:
+        - ### Recent News Summary: A brief of the latest significant news.
+        - ### General Analyst Sentiment: Summarize the current market sentiment (e.g., bullish, bearish, neutral).
+        Do not give direct buy/sell financial advice.`;
+        const response = await invokeAI({
+            model: DEEP_MODEL,
+            contents: prompt,
+            config: { tools: [{ googleSearch: {} }] }
+        });
+        const content = response.text || "Could not retrieve analysis.";
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const result = { content, groundingChunks };
         setToCache(cacheKey, result);
         return result;
-    } catch (error) { return formatAiError(error); }
+    } catch (error) {
+        return { content: formatAiError(error), groundingChunks: [] };
+    }
 };
+
 
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
     try {
@@ -563,7 +687,7 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
         2.  Concentration risk based on the top contributors.
         3.  One educational suggestion for improving a dividend strategy.
         `;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const response = await invokeAI({ model: DEEP_MODEL, contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { return formatAiError(error); }
 };

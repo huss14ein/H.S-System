@@ -204,12 +204,16 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
 
     const handleGetAIAnalysis = useCallback(async () => {
         if (!holding) return;
         setIsLoading(true);
-        const analysis = await getAIStockAnalysis(holding);
-        setAiAnalysis(analysis);
+        setAiAnalysis('');
+        setGroundingChunks([]);
+        const { content, groundingChunks } = await getAIStockAnalysis(holding);
+        setAiAnalysis(content);
+        setGroundingChunks(groundingChunks);
         setIsLoading(false);
     }, [holding]);
 
@@ -227,16 +231,26 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                 </div>
                 <div className="bg-gray-50 p-4 rounded-lg">
                     <div className="flex items-center justify-between">
-                        <h4 className="font-semibold text-gray-800">Fictional AI Analyst Report</h4>
+                        <h4 className="font-semibold text-gray-800">AI Analyst Report</h4>
                         <button onClick={handleGetAIAnalysis} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                             <SparklesIcon className="h-4 w-4 mr-2" />
                             {isLoading ? 'Generating...' : 'Generate Report'}
                         </button>
                     </div>
-                    {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating fictional analysis...</div>}
+                    {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating analysis...</div>}
                     {aiAnalysis && !isLoading && (
                         <div className="mt-2">
                            <SafeMarkdownRenderer content={aiAnalysis} />
+                        </div>
+                    )}
+                    {groundingChunks.length > 0 && (
+                        <div className="text-xs text-gray-500 mt-4 pt-2 border-t">
+                            <p className="font-semibold text-gray-700">Sources:</p>
+                            <ul className="list-disc pl-5 mt-1 space-y-1">
+                                {groundingChunks.map((chunk, index) => (
+                                    chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
+                                ))}
+                            </ul>
                         </div>
                     )}
                 </div>

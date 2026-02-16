@@ -55,15 +55,15 @@ const InvestmentOverview: React.FC = () => {
         <div className="space-y-6 mt-4">
             <div className="bg-white p-6 rounded-lg shadow">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-dark">AI Portfolio Snapshot</h3>
+                    <h3 className="text-lg font-semibold text-dark">AI SWOT Analysis</h3>
                     <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">
                         <SparklesIcon className="h-4 w-4 mr-2" />
-                        {isAiLoading ? 'Analyzing...' : 'Generate Analysis'}
+                        {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
                     </button>
                 </div>
-                {isAiLoading && <p className="text-sm text-center text-gray-500 py-4">Analyzing your portfolio composition...</p>}
+                {isAiLoading && <p className="text-sm text-center text-gray-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {!isAiLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                {!isAiLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an AI-powered summary of your investment overview.</p>}
+                {!isAiLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate SWOT Analysis" for an AI-powered strategic overview of your investments.</p>}
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

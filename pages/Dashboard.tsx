@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useState } from 'react';
+import React, { useMemo, useContext, useState, useCallback } from 'react';
 import Card from '../components/Card';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
@@ -16,11 +16,86 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { getAIExecutiveSummary, formatAiError } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
+import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 interface ExtendedBudget extends Budget {
     spent: number;
     percentage: number;
 }
+
+const AIExecutiveSummary: React.FC = () => {
+    const { data } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
+    const [summary, setSummary] = useState<string>('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const handleGenerate = useCallback(async () => {
+        setIsLoading(true);
+        setError(null);
+        setSummary('');
+        try {
+            const result = await getAIExecutiveSummary(data);
+            setSummary(result);
+        } catch (err) {
+            setError(formatAiError(err));
+        }
+        setIsLoading(false);
+    }, [data]);
+
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-secondary">
+            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
+                <div className="flex items-center space-x-3">
+                    <SparklesIcon className="h-7 w-7 text-secondary" />
+                    <h2 className="text-xl font-semibold text-dark">AI Executive Summary</h2>
+                </div>
+                <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={!isAiAvailable || isLoading}
+                    title={!isAiAvailable ? "AI features are disabled" : "Generate a new summary"}
+                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                    <ArrowPathIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                    {isLoading ? 'Summarizing...' : 'Generate Summary'}
+                </button>
+            </div>
+            
+            {isLoading && <div className="text-center p-8 text-gray-500">Analyzing your financial picture...</div>}
+            
+            {!isLoading && error && (
+                <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
+                    <h4 className="font-bold">Summary Error</h4>
+                    <SafeMarkdownRenderer content={error} />
+                </div>
+            )}
+
+            {!isAiAvailable ? (
+                <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                    <p className="font-semibold">AI Features Disabled</p>
+                    <p className="text-sm">Please set your Gemini API key to enable this feature.</p>
+                </div>
+            ) : (
+                !summary && !isLoading && !error && (
+                    <div className="text-center p-8 text-gray-500">
+                        Click "Generate Summary" for a high-level overview and strategic advice from your AI advisor.
+                    </div>
+                )
+            )}
+            
+            {summary && !isLoading && !error && (
+                <div className="bg-violet-50/50 p-4 rounded-lg">
+                    <SafeMarkdownRenderer content={summary} />
+                </div>
+            )}
+        </div>
+    );
+};
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -277,7 +352,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-dark">Dashboard</h1>
+            <AIExecutiveSummary />
 
             {uncategorizedTransactions.length > 0 && (
                 <div 

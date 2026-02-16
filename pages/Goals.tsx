@@ -115,10 +115,10 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
-        const plan = await getGoalAIPlan(goal);
+        const plan = await getGoalAIPlan(goal, monthlySavings);
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal]);
+    }, [goal, monthlySavings]);
     
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];

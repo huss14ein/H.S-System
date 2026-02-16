@@ -85,10 +85,12 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         setIsLoading(true);
         try {
             const response = await invokeAI({
-                // FIX: Updated to recommended model for complex chat and function calling.
                 model: 'gemini-3-pro-preview',
                 contents: chatHistory,
-                config: { tools: [{ functionDeclarations }] }
+                config: { 
+                    tools: [{ functionDeclarations }],
+                    systemInstruction: "You are HS, an expert and insightful personal financial advisor. Your goal is to provide clear, actionable advice to help users manage their wealth. Use the available tools to answer questions accurately and concisely."
+                }
             });
 
             if (response.functionCalls) {
