@@ -174,7 +174,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Owner</label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save</button>
             </form>
         </Modal>
@@ -316,6 +316,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         {isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}
                     </button>
                 </div>
+                {!isAiAvailable && data.commodityHoldings.length > 0 && (
+                    <div className="text-center text-sm text-gray-500 bg-gray-50 p-3 rounded-md -mt-2 mb-4">
+                        <p>AI features are disabled. Please configure your API key to enable live price updates.</p>
+                    </div>
+                )}
                 {groundingChunks.length > 0 && (
                     <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-md border">
                         <p className="font-semibold text-gray-700">Sources:</p>

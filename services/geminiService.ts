@@ -248,19 +248,22 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
         }).join('\n');
 
         const prompt = `
-            You are "HS", a direct and data-driven AI budget analyst. Analyze the following monthly spending summary and provide a sharp, actionable analysis in Markdown format. Be concise and do not write an essay.
+            You are "HS", a sharp and encouraging AI financial analyst. Analyze the following monthly spending data and provide a concise, actionable analysis in Markdown format.
 
-            **Data:**
+            **Spending Data for the Month:**
             ${budgetPerformance}
 
             **Your Task:**
-            Structure your response with these exact headers:
-            ### Key Insight
-            - One bullet point identifying the most significant spending observation (e.g., "Your 'Shopping' category is 45% over budget"). Be direct and use numbers.
+            Structure your response with these exact headers. Be direct, use numbers, and keep each point to a single sentence.
+            ### Key Spending Insight
+            - Identify the most significant spending observation. (e.g., "Shopping is your highest expense category at 45% over budget.")
 
-            ### Direct Recommendation
-            - One bullet point providing a single, practical tip to address the key insight (e.g., "Review your 'Shopping' transactions to find one recurring expense you can cut.").
+            ### Strategic Recommendation
+            - Provide one practical tip to address the key insight. (e.g., "Consider setting a 'no-spend' challenge for 3 days next week in the Shopping category.")
             
+            ### Positive Note
+            - Highlight one area where spending is well-managed. (e.g., "Well done on keeping your 'Utilities' spending 20% under budget.")
+
             Provide the Markdown analysis now.
         `;
 
@@ -328,23 +331,26 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
         const { projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
-            You are "HS", a sharp and concise AI planning strategist. Analyze the user's annual plan and active 'what-if' scenarios. Provide a direct, actionable analysis in Markdown format. Do not write an essay.
+            You are "HS", a forward-thinking AI financial strategist. Analyze the user's annual plan and the active 'what-if' scenarios. Provide a concise, insightful, and encouraging analysis in Markdown format.
 
             **Annual Plan Data:**
-            - Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
+            - Baseline Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
 
             **Active Scenarios:**
-            - Income Shock: ${incomeShock.percent}% change for ${incomeShock.duration} months.
-            - Expense Stress: ${expenseStress.percent}% increase for the "${expenseStress.category}" category.
+            - Income Shock: A ${incomeShock.percent}% change for ${incomeShock.duration} months.
+            - Expense Stress: A ${expenseStress.percent}% increase in the "${expenseStress.category}" category.
 
             **Your Task:**
-            Structure your response with these exact headers:
-            ### Key Observation
-            - One bullet point that quantifies the combined impact of the active scenarios on their projected savings. Be direct.
+            Structure your response with these exact headers. Be direct and use numbers.
+            ### Scenario Impact
+            - Quantify the total impact of these combined scenarios on the annual projected savings. (e.g., "These scenarios reduce your projected annual savings by 15,000 SAR, a 25% decrease.")
 
-            ### Strategic Action
-            - One bullet point providing a single, high-impact recommendation to improve the plan's resilience against these scenarios.
+            ### Resilience Tip
+            - Provide one high-impact recommendation to build resilience against these specific shocks. (e.g., "To counter the expense stress, consider building a 'discretionary buffer' by allocating 5% of your income to a separate savings account for unexpected costs.")
             
+            ### The Big Picture
+            - Offer a brief, encouraging closing thought about the value of planning. (e.g., "Stress testing your plan like this is a powerful way to prepare for uncertainty and stay on track toward your long-term goals.")
+
             Provide the Markdown analysis now.
         `;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
