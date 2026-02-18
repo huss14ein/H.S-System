@@ -83,16 +83,27 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
             body: JSON.stringify(payload),
         });
 
-        const data = await response.json();
-
         if (!response.ok) {
-            throw new Error(data.error || `Request to AI proxy failed with status ${response.status}`);
+            // If we get an error response, we can't assume the body is JSON.
+            const errorBody = await response.text();
+            let errorMessage;
+            try {
+                // Attempt to parse it as our expected JSON error format
+                const jsonError = JSON.parse(errorBody);
+                errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
+            } catch (e) {
+                // If it's not JSON, it's likely an HTML error page from the hosting provider.
+                errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+            }
+            throw new Error(errorMessage);
         }
         
-        return data;
+        // If response.ok, we assume it's valid JSON.
+        return await response.json();
+
     } catch (error) {
         console.error("Error invoking Netlify function:", error);
-        if (error instanceof TypeError) {
+        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
              const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
              throw new Error(detailedMessage);
         }
