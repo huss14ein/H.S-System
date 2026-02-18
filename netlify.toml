@@ -5,6 +5,11 @@
 [functions]
   directory = "netlify/functions"
 
+# Increase the timeout for the AI proxy function to prevent 504 errors
+# on long-running Gemini API requests. Default is 10s, max is 26s.
+[functions."gemini-proxy"]
+  timeout = 26
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
