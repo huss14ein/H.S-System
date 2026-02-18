@@ -61,7 +61,7 @@ function robustJsonParse(jsonString: string | undefined): any {
         return null;
     }
     
-    const jsonMatch = jsonString.match(/```(?:json)?\s*([\sS]*?)\s*```/);
+    const jsonMatch = jsonString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     const potentialJson = (jsonMatch && jsonMatch[1]) ? jsonMatch[1] : jsonString;
     
     try {
@@ -314,7 +314,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
     if(cached) return cached;
     
     try {
-        const { totalPlannedIncome, totalPlannedExpenses, projectedNet } = totals;
+        const { projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
             You are "HS", a sharp and concise AI planning strategist. Analyze the user's annual plan and active 'what-if' scenarios. Provide a direct, actionable analysis in Markdown format. Do not write an essay.
