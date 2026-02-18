@@ -83,27 +83,16 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
             body: JSON.stringify(payload),
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-            // If we get an error response, we can't assume the body is JSON.
-            const errorBody = await response.text();
-            let errorMessage;
-            try {
-                // Attempt to parse it as our expected JSON error format
-                const jsonError = JSON.parse(errorBody);
-                errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
-            } catch (e) {
-                // If it's not JSON, it's likely an HTML error page from the hosting provider.
-                errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
-            }
-            throw new Error(errorMessage);
+            throw new Error(data.error || `Request to AI proxy failed with status ${response.status}`);
         }
         
-        // If response.ok, we assume it's valid JSON.
-        return await response.json();
-
+        return data;
     } catch (error) {
         console.error("Error invoking Netlify function:", error);
-        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+        if (error instanceof TypeError) {
              const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
              throw new Error(detailedMessage);
         }
@@ -244,22 +233,20 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
         const budgetPerformance = budgets.map(b => {
             const spent = spending.get(b.category) || 0;
             const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
-            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
+            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}%)`;
         }).join('\n');
 
         const prompt = `
-            You are "HS", a direct and data-driven AI budget analyst. Analyze the following monthly spending summary and provide a sharp, actionable analysis in Markdown format. Be concise and do not write an essay.
+            You are a proactive Budget Adherence Analyst. Based on the following monthly spending summary, provide a sharp, actionable analysis in Markdown.
+            Your response must be in Markdown format only and contain no HTML tags.
 
-            **Data:**
+            Monthly Budget Performance:
             ${budgetPerformance}
 
-            **Your Task:**
-            Structure your response with these exact headers:
-            ### Key Insight
-            - One bullet point identifying the most significant spending observation (e.g., "Your 'Shopping' category is 45% over budget"). Be direct and use numbers.
-
-            ### Direct Recommendation
-            - One bullet point providing a single, practical tip to address the key insight (e.g., "Review your 'Shopping' transactions to find one recurring expense you can cut.").
+            Your analysis should have three sections:
+            1.  **Top Highlight:** Identify the best-managed budget category and offer encouragement.
+            2.  **Key Concern:** Pinpoint the most overspent or concerning budget category. Explain the potential long-term impact.
+            3.  **Actionable Suggestion:** Provide one specific, practical tip to help the user improve their spending in the 'Key Concern' category.
             
             Provide the Markdown analysis now.
         `;
@@ -294,7 +281,7 @@ export const getAIFinancialPersona = async (
         `;
 
         const response = await invokeAI({
-            model: FAST_MODEL,
+            model: DEEP_MODEL,
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -325,25 +312,25 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
     if(cached) return cached;
     
     try {
-        const { projectedNet } = totals;
+        const { totalPlannedIncome, totalPlannedExpenses, projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
-            You are "HS", a sharp and concise AI planning strategist. Analyze the user's annual plan and active 'what-if' scenarios. Provide a direct, actionable analysis in Markdown format. Do not write an essay.
+            You are a financial planning analyst. Based on the user's annual plan and active 'what-if' scenarios, provide a brief, insightful analysis in Markdown.
+            Your response must be in Markdown format only and contain no HTML tags.
 
-            **Annual Plan Data:**
+            Annual Plan Summary:
+            - Planned Income: ${totalPlannedIncome.toLocaleString()} SAR
+            - Planned Expenses: ${totalPlannedExpenses.toLocaleString()} SAR
             - Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
 
-            **Active Scenarios:**
+            Active Scenarios:
             - Income Shock: ${incomeShock.percent}% change for ${incomeShock.duration} months.
             - Expense Stress: ${expenseStress.percent}% increase for the "${expenseStress.category}" category.
 
-            **Your Task:**
-            Structure your response with these exact headers:
-            ### Key Observation
-            - One bullet point that quantifies the combined impact of the active scenarios on their projected savings. Be direct.
-
-            ### Strategic Action
-            - One bullet point providing a single, high-impact recommendation to improve the plan's resilience against these scenarios.
+            Your analysis should:
+            1.  Comment on the base plan's health (e.g., savings rate).
+            2.  Explain the impact of the active scenarios on their projected savings.
+            3.  Provide one strategic suggestion to improve their plan's resilience.
             
             Provide the Markdown analysis now.
         `;
