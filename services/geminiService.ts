@@ -730,7 +730,7 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
         `;
 
         const response = await invokeAI({
-            model: DEEP_MODEL,
+            model: FAST_MODEL,
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
