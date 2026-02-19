@@ -3,7 +3,7 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
-const DEEP_MODEL = 'gemini-3-pro-preview';
+
 
 // --- AI Error Formatting ---
 export function formatAiError(error: any): string {
