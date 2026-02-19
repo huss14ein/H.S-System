@@ -114,11 +114,9 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 // Unified AI invocation function. Decides whether to use client-side SDK or proxy.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     // In dev mode, use the client-side key if available.
-    if (import.meta.env.DEV) {
+    // In dev mode, use the client-side key if available. Otherwise, fall back to the proxy.
+    if (import.meta.env.DEV && import.meta.env.VITE_GEMINI_API_KEY) {
         const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        if (!clientSideApiKey) {
-            throw new Error("AI features are disabled in local development. Set VITE_GEMINI_API_KEY in your .env file.");
-        }
         try {
             const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
             const response: GenerateContentResponse = await ai.models.generateContent(payload);
@@ -131,7 +129,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
             throw new Error(formatAiError(error));
         }
     } else {
-        // In production, always use the proxy.
+        // In production, or for local dev without a specific client-side key, use the proxy.
         return invokeGeminiProxy(payload);
     }
 }
