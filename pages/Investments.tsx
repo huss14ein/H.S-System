@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIStockAnalysis } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, PlannedTrade } from '../types';
+import { getAIStockAnalysis, executeInvestmentPlanStrategy } from '../services/geminiService';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, PlannedTrade, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -27,8 +27,10 @@ import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocument
 import Card from '../components/Card';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 
-const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
+
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
+
+
 
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
@@ -42,6 +44,8 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
     { name: 'Watchlist', icon: EyeIcon },
     { name: 'Trade Advices', icon: BookOpenIcon },
 ];
+
+
 
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
@@ -565,6 +569,323 @@ const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, 
     const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); onClose(); };
     return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
 };
+
+const InvestmentPlan: React.FC = () => {
+    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
+
+    const [plan, setPlan] = useState<InvestmentPlanSettings>(data.investmentPlan);
+    const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
+    const [executionResult, setExecutionResult] = useState<InvestmentPlanExecutionResult | null>(null);
+    const [isExecuting, setIsExecuting] = useState(false);
+
+    const corePortfolioTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'Core'), [data.portfolioUniverse]);
+    const upsideSleeveTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'High-Upside'), [data.portfolioUniverse]);
+
+    useEffect(() => {
+        setPlan(data.investmentPlan);
+    }, [data.investmentPlan]);
+
+    const handlePlanChange = (field: keyof InvestmentPlanSettings, value: any) => {
+        setPlan(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleAddNewTicker = () => {
+        if (!newTicker.ticker || !newTicker.name) return;
+        addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+        setNewTicker({ ticker: '', name: '' });
+    };
+
+    const handleSave = () => {
+        saveInvestmentPlan(plan);
+        alert('Investment plan saved!');
+    };
+
+    const handleExecutePlan = async () => {
+        setIsExecuting(true);
+        setExecutionResult(null);
+        try {
+            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse);
+            setExecutionResult(result);
+        } catch (error) {
+            console.error("Error executing plan:", error);
+            alert(`Error executing plan: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        setIsExecuting(false);
+    };
+
+    const handlePortfolioWeightChange = (
+        portfolioType: 'corePortfolio' | 'upsideSleeve',
+        ticker: string,
+        weight: number
+    ) => {
+        setPlan(prev => {
+            const updatedPortfolio = [...prev[portfolioType]];
+            const tickerIndex = updatedPortfolio.findIndex(p => p.ticker === ticker);
+    
+            if (tickerIndex > -1) {
+                if (isNaN(weight) || weight <= 0) {
+                    updatedPortfolio.splice(tickerIndex, 1);
+                } else {
+                    updatedPortfolio[tickerIndex] = { ...updatedPortfolio[tickerIndex], weight };
+                }
+            } else if (weight > 0) {
+                updatedPortfolio.push({ ticker, weight });
+            }
+            
+            return { ...prev, [portfolioType]: updatedPortfolio };
+        });
+    };
+
+    const coreWeightSum = useMemo(() => {
+        return plan.corePortfolio.reduce((sum, p) => sum + (p.weight || 0), 0);
+    }, [plan.corePortfolio]);
+
+    const upsideWeightSum = useMemo(() => {
+        return plan.upsideSleeve.reduce((sum, p) => sum + (p.weight || 0), 0);
+    }, [plan.upsideSleeve]);
+
+    useEffect(() => {
+        const coreTickers = new Set(corePortfolioTickers.map(t => t.ticker));
+        const upsideTickers = new Set(upsideSleeveTickers.map(t => t.ticker));
+
+        const updatedCorePortfolio = plan.corePortfolio.filter(p => coreTickers.has(p.ticker));
+        const updatedUpsideSleeve = plan.upsideSleeve.filter(p => upsideTickers.has(p.ticker));
+
+        if (updatedCorePortfolio.length !== plan.corePortfolio.length || updatedUpsideSleeve.length !== plan.upsideSleeve.length) {
+            setPlan(prev => ({
+                ...prev,
+                corePortfolio: updatedCorePortfolio,
+                upsideSleeve: updatedUpsideSleeve,
+            }));
+        }
+    }, [corePortfolioTickers, upsideSleeveTickers, plan.corePortfolio, plan.upsideSleeve]);
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold text-dark">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
+                <div className="flex items-center space-x-2">
+                    <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors">Save Plan</button>
+                </div>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 space-y-6">
+                    {/* Allocation Settings */}
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h2 className="text-xl font-semibold text-dark mb-4">Allocation Settings</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Monthly Budget</label>
+                                <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Budget Currency</label>
+                                <input type="text" value={plan.budgetCurrency} disabled className="mt-1 w-full p-2 border rounded-md bg-gray-100" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Core Allocation (%)</label>
+                                <input type="number" value={plan.coreAllocation * 100} onChange={e => handlePlanChange('coreAllocation', parseFloat(e.target.value) / 100)} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">High-Upside Allocation (%)</label>
+                                <input type="number" value={plan.upsideAllocation * 100} onChange={e => handlePlanChange('upsideAllocation', parseFloat(e.target.value) / 100)} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700">Minimum Analyst Upside (%)</label>
+                                <input type="number" value={plan.minimumUpsidePercentage} onChange={e => handlePlanChange('minimumUpsidePercentage', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Broker & Execution Rules */}
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h2 className="text-xl font-semibold text-dark mb-4">Broker & Execution Rules</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Minimum Order Size ({plan.budgetCurrency})</label>
+                                <input type="number" value={plan.brokerConstraints.minimumOrderSize} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, minimumOrderSize: parseFloat(e.target.value)})} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div className="flex items-center">
+                                <input type="checkbox" checked={plan.brokerConstraints.allowFractionalShares} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, allowFractionalShares: e.target.checked})} id="fractional-shares" className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                <label htmlFor="fractional-shares" className="ml-2 block text-sm text-gray-900">Allow Fractional Shares</label>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Rounding Rule</label>
+                                <select value={plan.brokerConstraints.roundingRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, roundingRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
+                                    <option value="round">Round to nearest</option>
+                                    <option value="floor">Floor (round down)</option>
+                                    <option value="ceil">Ceiling (round up)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Leftover Cash Rule</label>
+                                <select value={plan.brokerConstraints.leftoverCashRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, leftoverCashRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
+                                    <option value="reinvest_core">Re-invest in Core</option>
+                                    <option value="hold">Hold in account</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Portfolio Definitions */}
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Definitions</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div>
+                                <div className="flex justify-between items-baseline mb-2">
+                                    <h3 className="font-semibold text-dark">Core Portfolio</h3>
+                                    <span className={`text-sm font-bold ${Math.round(coreWeightSum * 100) === 100 ? 'text-green-600' : 'text-red-600'}`}>
+                                        Total: {Math.round(coreWeightSum * 100)}%
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {corePortfolioTickers.length > 0 ? (
+                                        corePortfolioTickers.map(ticker => {
+                                            const definition = plan.corePortfolio.find(p => p.ticker === ticker.ticker);
+                                            return (
+                                                <div key={ticker.id} className="flex items-center justify-between gap-4">
+                                                    <label className="text-sm text-gray-600 flex-grow">{ticker.name} ({ticker.ticker})</label>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="number"
+                                                            value={definition ? definition.weight * 100 : ''}
+                                                            onChange={e => handlePortfolioWeightChange('corePortfolio', ticker.ticker, parseFloat(e.target.value) / 100)}
+                                                            className="w-24 p-1 border rounded-md text-right"
+                                                            placeholder="0"
+                                                        />
+                                                        <span className="text-sm text-gray-500">%</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <p className="text-sm text-gray-500">No tickers set to 'Core' in the universe.</p>
+                                    )}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="flex justify-between items-baseline mb-2">
+                                    <h3 className="font-semibold text-dark">High-Upside Sleeve</h3>
+                                    <span className={`text-sm font-bold ${Math.round(upsideWeightSum * 100) === 100 ? 'text-green-600' : 'text-red-600'}`}>
+                                        Total: {Math.round(upsideWeightSum * 100)}%
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {upsideSleeveTickers.length > 0 ? (
+                                        upsideSleeveTickers.map(ticker => {
+                                            const definition = plan.upsideSleeve.find(p => p.ticker === ticker.ticker);
+                                            return (
+                                                <div key={ticker.id} className="flex items-center justify-between gap-4">
+                                                    <label className="text-sm text-gray-600 flex-grow">{ticker.name} ({ticker.ticker})</label>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="number"
+                                                            value={definition ? definition.weight * 100 : ''}
+                                                            onChange={e => handlePortfolioWeightChange('upsideSleeve', ticker.ticker, parseFloat(e.target.value) / 100)}
+                                                            className="w-24 p-1 border rounded-md text-right"
+                                                            placeholder="0"
+                                                        />
+                                                        <span className="text-sm text-gray-500">%</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <p className="text-sm text-gray-500">No tickers set to 'High-Upside' in the universe.</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Portfolio Universe */}
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Universe</h2>
+                        <div className="flex gap-2 mb-4">
+                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
+                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow p-2 border rounded-md" />
+                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
+                        </div>
+                        <div className="max-h-60 overflow-y-auto">
+                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                <thead className="bg-gray-50 sticky top-0"><tr>
+                                    <th className="px-4 py-2 text-left font-medium text-gray-500">Ticker</th>
+                                    <th className="px-4 py-2 text-left font-medium text-gray-500">Name</th>
+                                    <th className="px-4 py-2 text-left font-medium text-gray-500">Status</th>
+                                    <th className="px-4 py-2 text-right font-medium text-gray-500">Actions</th>
+                                </tr></thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {data.portfolioUniverse.map(ticker => (
+                                        <tr key={ticker.id}>
+                                            <td className="px-4 py-2 font-bold text-dark">{ticker.ticker}</td>
+                                            <td className="px-4 py-2 text-gray-600">{ticker.name}</td>
+                                            <td className="px-4 py-2">
+                                                <select value={ticker.status} onChange={e => updateUniverseTickerStatus(ticker.id, e.target.value as TickerStatus)} className="p-1 border rounded-md">
+                                                    <option>Core</option>
+                                                    <option>High-Upside</option>
+                                                    <option>Watchlist</option>
+                                                    <option>Excluded</option>
+                                                </select>
+                                            </td>
+                                            <td className="px-4 py-2 text-right">
+                                                <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Execution & Results */}
+                <div className="bg-white p-6 rounded-lg shadow">
+                    <h2 className="text-xl font-semibold text-dark mb-4">Execute & View Results</h2>
+                    <button onClick={handleExecutePlan} disabled={isExecuting} className="w-full flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400">
+                        <SparklesIcon className="h-5 w-5 mr-2" />
+                        {isExecuting ? 'Executing...' : 'Execute Monthly Plan'}
+                    </button>
+
+                    {isExecuting && <div className="text-center p-4 text-sm text-gray-500">Executing plan...</div>}
+
+                    {executionResult && (
+                        <div className="mt-4 space-y-4 text-sm">
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                                <h3 className="font-semibold text-dark mb-2">Execution Summary</h3>
+                                <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                    <dt className="text-gray-600">Total Investment:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.totalInvestment)}</dd>
+                                    <dt className="text-gray-600">Core Allocation:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.coreInvestment)}</dd>
+                                    <dt className="text-gray-600">Upside Allocation:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.upsideInvestment)}</dd>
+                                    <dt className="text-gray-600">Reallocated Funds:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.unusedUpsideFunds)}</dd>
+                                </dl>
+                            </div>
+                            <div>
+                                <h3 className="font-semibold text-dark mb-2">Proposed Trades</h3>
+                                <div className="space-y-2">
+                                    {executionResult.trades.map((trade, index) => (
+                                        <div key={index} className="p-3 border rounded-lg bg-white">
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-bold text-dark">{trade.ticker}</span>
+                                                <span className="font-mono font-semibold text-primary">{formatCurrencyString(trade.amount)}</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">{trade.reason}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
 // #endregion
 
 interface InvestmentsProps {
@@ -685,17 +1006,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
       }
   };
   
-  const handleExecutePlan = (plan: PlannedTrade) => {
-      setTradeInitialData({
-          tradeType: plan.tradeType,
-          symbol: plan.symbol,
-          name: plan.name,
-          quantity: plan.quantity,
-          amount: plan.amount,
-          executedPlanId: plan.id,
-      });
-      setIsTradeModalOpen(true);
-  };
+
 
   const handleCloseTradeModal = () => {
       setIsTradeModalOpen(false);
@@ -717,7 +1028,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onHoldingClick={handleHoldingClick}
             onEditHolding={handleOpenHoldingEditModal}
         />;
-      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={handleExecutePlan} />;
+      case 'Investment Plan': return <InvestmentPlan />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;

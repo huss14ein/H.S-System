@@ -12,6 +12,26 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
   const withVariation = (value: number) => value * (0.95 + Math.random() * 0.1); // +/- 5% variation
 
   return {
+    investmentPlan: {
+        monthlyBudget: 5000,
+        budgetCurrency: 'SAR',
+        executionCurrency: 'USD',
+        fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
+        coreAllocation: 0.7,
+        upsideAllocation: 0.3,
+        minimumUpsidePercentage: 20,
+        corePortfolio: [],
+        upsideSleeve: [],
+        brokerConstraints: {
+            allowFractionalShares: true,
+            minimumOrderSize: 100,
+            roundingRule: 'floor',
+            leftoverCashRule: 'reinvest_core'
+        }
+    },
+    portfolioUniverse: [],
+    statusChangeLog: [],
+    executionLogs: [],
     accounts: [
         { id: 'acc1', name: 'Al Rajhi (Current)', type: 'Checking', balance: 25430.50 },
         { id: 'acc2', name: 'SNB (Savings)', type: 'Savings', balance: 152000 },

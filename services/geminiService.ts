@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis } from '../types';
+import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -774,3 +774,87 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { return formatAiError(error); }
 };
+
+export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings, universe: UniverseTicker[]): Promise<InvestmentPlanExecutionResult> {
+    console.log('Executing investment plan with:', { plan, universe });
+
+    const coreTickers = universe.filter(t => t.status === 'Core');
+    const upsideTickers = universe.filter(t => t.status === 'High-Upside');
+
+    const prompt = `
+    You are a sophisticated financial analyst AI. Your task is to execute a monthly investment plan based on a "Core + Analyst-Upside Sleeve" strategy.
+
+    **User's Plan:**
+    - Monthly Budget: ${plan.monthlyBudget} ${plan.budgetCurrency}
+    - Core Allocation: ${plan.coreAllocation * 100}%
+    - High-Upside Allocation: ${plan.upsideAllocation * 100}%
+    - Minimum Upside for Sleeve: ${plan.minimumUpsidePercentage}%
+
+    **Portfolio Definitions:**
+    - Core Portfolio (${coreTickers.join(', ')}): Target weights are ${JSON.stringify(plan.corePortfolio)}
+    - High-Upside Sleeve (${upsideTickers.join(', ')}): Target weights are ${JSON.stringify(plan.upsideSleeve)}
+
+    **Execution Steps:**
+    1.  **Fetch Data:** Get the current stock price and the average 12-month analyst price target for all tickers in the High-Upside Sleeve.
+    2.  **Calculate Upside:** For each sleeve ticker, calculate the potential upside: ((Analyst Target / Current Price) - 1) * 100.
+    3.  **Determine Eligibility:** Identify which sleeve tickers meet the minimum upside requirement of ${plan.minimumUpsidePercentage}%.
+    4.  **Allocate Funds:**
+        a. Calculate the total funds for each sleeve: Core gets ${plan.monthlyBudget * plan.coreAllocation} ${plan.budgetCurrency}, High-Upside gets ${plan.monthlyBudget * plan.upsideAllocation} ${plan.budgetCurrency}.
+        b. Allocate the High-Upside funds to the *eligible* tickers according to their defined weights.
+        c. **Crucially, any funds allocated to a High-Upside ticker that was *not* eligible must be reallocated back to the Core portfolio.**
+    5.  **Calculate Final Allocations:** Determine the final dollar amount to be invested in each Core ticker (initial allocation + reallocated funds) and each eligible High-Upside ticker.
+    6.  **Generate Trades:** Create a list of proposed trades (buy orders) for each stock with the final calculated investment amount.
+
+    Please provide the result as a single JSON object using the 'generate_investment_trades' function.
+    `;
+
+    const generateTradesFunction: FunctionDeclaration = {
+        name: 'generate_investment_trades',
+        description: 'Generates a list of proposed trades based on the investment plan execution.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                totalInvestment: { type: Type.NUMBER },
+                coreInvestment: { type: Type.NUMBER },
+                upsideInvestment: { type: Type.NUMBER },
+                unusedUpsideFunds: { type: Type.NUMBER },
+                trades: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            ticker: { type: Type.STRING },
+                            amount: { type: Type.NUMBER },
+                            reason: { type: Type.STRING },
+                        },
+                        required: ['ticker', 'amount', 'reason'],
+                    },
+                },
+            },
+            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'unusedUpsideFunds', 'trades'],
+        },
+    };
+
+    try {
+        const result = await invokeAI({
+            model: 'gemini-3.1-pro-preview',
+            contents: [{ parts: [{ text: prompt }] }],
+            config: {
+                tools: [{ functionDeclarations: [generateTradesFunction] }],
+            }
+        });
+
+        if (result.functionCalls && result.functionCalls.length > 0) {
+            const args = result.functionCalls[0].args;
+            return {
+                date: new Date().toISOString(),
+                ...args,
+            } as InvestmentPlanExecutionResult;
+        }
+        throw new Error('AI did not return the expected function call.');
+
+    } catch (error) {
+        console.error('Error executing investment plan strategy with AI:', error);
+        throw new Error('Failed to get investment plan execution from AI.');
+    }
+}

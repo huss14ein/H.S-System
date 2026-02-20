@@ -222,6 +222,10 @@ export interface FinancialData {
   zakatPayments: ZakatPayment[];
   priceAlerts: PriceAlert[];
   plannedTrades: PlannedTrade[];
+  investmentPlan: InvestmentPlanSettings;
+  portfolioUniverse: UniverseTicker[];
+  statusChangeLog: StatusChangeLog[];
+  executionLogs: InvestmentPlanExecutionLog[];
 }
 
 export interface KPISummary {
@@ -257,4 +261,79 @@ export interface PersonaAnalysis {
         description: string;
     };
     reportCard: ReportCardItem[];
+}
+
+// --- Investment Plan Types ---
+
+export interface CorePortfolioDefinition {
+  ticker: string;
+  weight: number; // e.g., 0.5 for 50%
+}
+
+export interface UpsideSleeveDefinition {
+  ticker: string;
+  weight: number; // e.g., 0.25 for 25%
+}
+
+export interface BrokerConstraints {
+    allowFractionalShares: boolean;
+    minimumOrderSize: number;
+    roundingRule: 'round' | 'floor' | 'ceil';
+    leftoverCashRule: 'reinvest_core' | 'hold';
+}
+
+export interface InvestmentPlanSettings {
+  user_id?: string;
+  monthlyBudget: number;
+  budgetCurrency: 'SAR';
+  executionCurrency: 'USD';
+  fxRateSource: string; // e.g., 'GoogleFinance:CURRENCY:SARUSD'
+  coreAllocation: number; // e.g., 0.7 for 70%
+  upsideAllocation: number; // e.g., 0.3 for 30%
+  minimumUpsidePercentage: number; // e.g., 25 for 25%
+  corePortfolio: CorePortfolioDefinition[];
+  upsideSleeve: UpsideSleeveDefinition[];
+  brokerConstraints: BrokerConstraints;
+}
+
+export interface ProposedTrade {
+    ticker: string;
+    amount: number;
+    reason: 'Core' | 'Upside' | 'Rebalance' | 'Unused Upside Funds';
+}
+
+export interface InvestmentPlanExecutionResult {
+    date: string;
+    totalInvestment: number;
+    coreInvestment: number;
+    upsideInvestment: number;
+    unusedUpsideFunds: number;
+    trades: ProposedTrade[];
+}
+
+export interface InvestmentPlanExecutionLog extends InvestmentPlanExecutionResult {
+    id: string;
+    user_id: string;
+    created_at: string;
+    status: 'success' | 'failure';
+    log_details: string; // Can be a stringified JSON of the result or an error message
+}
+
+export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Excluded';
+
+export interface UniverseTicker {
+  id: string;
+  user_id?: string;
+  ticker: string;
+  name: string;
+  status: TickerStatus;
+}
+
+export interface StatusChangeLog {
+    id: string;
+    user_id?: string;
+    ticker: string;
+    timestamp: string;
+    from_status: TickerStatus;
+    to_status: TickerStatus;
 }

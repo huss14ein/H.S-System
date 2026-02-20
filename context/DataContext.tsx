@@ -1,7 +1,7 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog } from '../types';
 import { getMockData } from '../data/mockData';
 
 // Define an empty state for when data is loading or for new users
@@ -9,7 +9,21 @@ const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
-    zakatPayments: [], priceAlerts: [], plannedTrades: []
+    zakatPayments: [], priceAlerts: [], plannedTrades: [],
+    investmentPlan: {
+        monthlyBudget: 6000,
+        budgetCurrency: 'SAR',
+        executionCurrency: 'USD',
+        fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
+        coreAllocation: 0.7,
+        upsideAllocation: 0.3,
+        minimumUpsidePercentage: 25,
+        corePortfolio: [],
+        upsideSleeve: []
+    },
+    portfolioUniverse: [],
+    statusChangeLog: [],
+    executionLogs: []
 };
 
 interface DataContextType {
@@ -50,6 +64,10 @@ interface DataContextType {
   addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
   deletePlannedTrade: (planId: string) => Promise<void>;
+  saveInvestmentPlan: (plan: InvestmentPlanSettings) => Promise<void>;
+  addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
+  updateUniverseTickerStatus: (tickerId: string, status: TickerStatus) => Promise<void>;
+  deleteUniverseTicker: (tickerId: string) => Promise<void>;
   addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
@@ -57,6 +75,7 @@ interface DataContextType {
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
+  saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
@@ -76,7 +95,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             const [
                 accounts, assets, liabilities, goals, transactions, investments,
-                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades
+                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
+                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs
             ] = await Promise.all([
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
                 db.from('assets').select('*').eq('user_id', auth.user.id),
@@ -91,10 +111,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('zakat_payments').select('*').eq('user_id', auth.user.id),
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
-                db.from('planned_trades').select('*').eq('user_id', auth.user.id)
+                db.from('planned_trades').select('*').eq('user_id', auth.user.id),
+                db.from('investment_plan').select('*').eq('user_id', auth.user.id).single(),
+                db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
+                db.from('status_change_log').select('*').eq('user_id', auth.user.id),
+                db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false })
             ]);
 
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades };
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs };
             Object.entries(allFetches).forEach(([key, value]) => {
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
@@ -113,7 +137,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 settings: settings.data || initialData.settings,
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
-                plannedTrades: plannedTrades.data || []
+                plannedTrades: plannedTrades.data || [],
+                investmentPlan: (investmentPlan as any).data || initialData.investmentPlan,
+                portfolioUniverse: (portfolioUniverse as any).data || [],
+                statusChangeLog: (statusChangeLog as any).data || [],
+                executionLogs: (executionLogs as any).data || []
             });
         } catch (error) {
             console.error("Error fetching financial data:", error);
@@ -625,7 +653,79 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData };
+    const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
+        if (!supabase || !auth?.user) return;
+        const planWithUser = { ...plan, user_id: auth.user.id };
+        const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
+        if (error) {
+            console.error("Error saving investment plan:", error);
+        } else {
+            setData(prev => ({ ...prev, investmentPlan: plan }));
+        }
+    };
+
+    const addUniverseTicker = async (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => {
+        if (!supabase) return;
+        const { data: newTicker, error } = await supabase.from('portfolio_universe').insert(withUser(ticker)).select().single();
+        if (error) {
+            console.error("Error adding ticker:", error);
+        } else if (newTicker) {
+            setData(prev => ({ ...prev, portfolioUniverse: [...prev.portfolioUniverse, newTicker] }));
+        }
+    };
+
+    const updateUniverseTickerStatus = async (tickerId: string, status: TickerStatus) => {
+        if (!supabase || !auth?.user) return;
+        const ticker = data.portfolioUniverse.find(t => t.id === tickerId);
+        if (!ticker) return;
+
+        const logEntry = {
+            ticker: ticker.ticker,
+            from_status: ticker.status,
+            to_status: status,
+            timestamp: new Date().toISOString(),
+        };
+
+        const { error: logError } = await supabase.from('status_change_log').insert(withUser(logEntry));
+        if (logError) {
+            console.error("Error logging status change:", logError);
+            return; // Don't update status if logging fails
+        }
+
+        const { error: updateError } = await supabase.from('portfolio_universe').update({ status }).match({ id: tickerId, user_id: auth.user.id });
+        if (updateError) {
+            console.error("Error updating ticker status:", updateError);
+        } else {
+            setData(prev => ({
+                ...prev,
+                portfolioUniverse: prev.portfolioUniverse.map(t => t.id === tickerId ? { ...t, status } : t),
+                statusChangeLog: [...prev.statusChangeLog, { ...logEntry, id: `log-${Date.now()}` }],
+            }));
+        }
+    };
+
+    const deleteUniverseTicker = async (tickerId: string) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('portfolio_universe').delete().match({ id: tickerId, user_id: auth.user.id });
+        if (error) {
+            console.error("Error deleting ticker:", error);
+        } else {
+            setData(prev => ({ ...prev, portfolioUniverse: prev.portfolioUniverse.filter(t => t.id !== tickerId) }));
+        }
+    };
+
+    const saveExecutionLog = async (log: InvestmentPlanExecutionLog) => {
+        if (!supabase || !auth?.user) return;
+        const logWithUser = { ...log, user_id: auth.user.id };
+        const { error } = await supabase.from('execution_logs').insert(logWithUser);
+        if (error) {
+            console.error("Error saving execution log:", error);
+        } else {
+            setData(prev => ({ ...prev, executionLogs: [log, ...prev.executionLogs] }));
+        }
+    };
+
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
