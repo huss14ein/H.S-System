@@ -782,35 +782,60 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
 
     const prompt = `
-    You are a sophisticated financial analyst AI. Your task is to execute a monthly investment plan based on a "Core + Analyst-Upside Sleeve" strategy.
+    You are an extremely precise, rules-based financial execution AI. Your sole task is to generate a list of trades based on a strict set of instructions. Adhere to all constraints perfectly.
 
-    **User's Plan:**
+    **Execution Date:** ${new Date().toISOString().split('T')[0]}
+
+    **1. Core Plan Details:**
     - Monthly Budget: ${plan.monthlyBudget} ${plan.budgetCurrency}
-    - Core Allocation: ${plan.coreAllocation * 100}%
-    - High-Upside Allocation: ${plan.upsideAllocation * 100}%
-    - Minimum Upside for Sleeve: ${plan.minimumUpsidePercentage}%
+    - Core Allocation: ${plan.coreAllocation * 100}% (${plan.monthlyBudget * plan.coreAllocation} ${plan.budgetCurrency})
+    - High-Upside Allocation: ${plan.upsideAllocation * 100}% (${plan.monthlyBudget * plan.upsideAllocation} ${plan.budgetCurrency})
 
-    **Portfolio Definitions:**
-    - Core Portfolio (${coreTickers.join(', ')}): Target weights are ${JSON.stringify(plan.corePortfolio)}
-    - High-Upside Sleeve (${upsideTickers.join(', ')}): Target weights are ${JSON.stringify(plan.upsideSleeve)}
+    **2. Broker & Execution Constraints:**
+    - Allow Fractional Shares: ${plan.brokerConstraints.allowFractionalShares}
+    - Minimum Order Size: ${plan.brokerConstraints.minimumOrderSize} ${plan.budgetCurrency}
+    - Rounding Rule for Shares: ${plan.brokerConstraints.roundingRule}
+    - Leftover Cash Rule: ${plan.brokerConstraints.leftoverCashRule}
 
-    **Execution Steps:**
-    1.  **Fetch Data:** Get the current stock price and the average 12-month analyst price target for all tickers in the High-Upside Sleeve.
-    2.  **Calculate Upside:** For each sleeve ticker, calculate the potential upside: ((Analyst Target / Current Price) - 1) * 100.
-    3.  **Determine Eligibility:** Identify which sleeve tickers meet the minimum upside requirement of ${plan.minimumUpsidePercentage}%.
-    4.  **Allocate Funds:**
-        a. Calculate the total funds for each sleeve: Core gets ${plan.monthlyBudget * plan.coreAllocation} ${plan.budgetCurrency}, High-Upside gets ${plan.monthlyBudget * plan.upsideAllocation} ${plan.budgetCurrency}.
-        b. Allocate the High-Upside funds to the *eligible* tickers according to their defined weights.
-        c. **Crucially, any funds allocated to a High-Upside ticker that was *not* eligible must be reallocated back to the Core portfolio.**
-    5.  **Calculate Final Allocations:** Determine the final dollar amount to be invested in each Core ticker (initial allocation + reallocated funds) and each eligible High-Upside ticker.
-    6.  **Generate Trades:** Create a list of proposed trades (buy orders) for each stock with the final calculated investment amount.
+    **3. Portfolio Universe & Definitions:**
+    - Core Portfolio (${coreTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.corePortfolio)}
+    - High-Upside Sleeve (${upsideTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.upsideSleeve)}
+    - Watchlist/Excluded: These tickers must be ignored completely.
 
-    Please provide the result as a single JSON object using the 'generate_investment_trades' function.
+    **4. Execution Logic (Strict Order):**
+
+    **Step A: Evaluate High-Upside Sleeve**
+    1.  For each ticker in the High-Upside Sleeve, you MUST use Google Search to find the current stock price and a valid, non-stale (less than 3 months old) consensus analyst price target.
+    2.  Calculate implied upside: ((Target / Price) - 1) * 100.
+    3.  A ticker is **ELIGIBLE** only if its implied upside is >= ${plan.minimumUpsidePercentage}% AND all data (price, target) was successfully found and is not stale.
+    4.  Create a detailed eligibility list in your reasoning, stating for each ticker if it was eligible and why (e.g., "AAPL: Eligible, 30% upside", "GOOG: Ineligible, upside 15% < ${plan.minimumUpsidePercentage}%", "TSLA: Ineligible, no valid consensus target found").
+
+    **Step B: Calculate Allocations**
+    1.  Sum the weights of all **ELIGIBLE** High-Upside tickers. Let's call this 'totalEligibleWeight'.
+    2.  Calculate the total funds to invest in the High-Upside sleeve: (High-Upside Allocation Budget) * totalEligibleWeight. Note: If totalEligibleWeight is not 1.0, some funds will be unused.
+    3.  For each **ELIGIBLE** ticker, calculate its portion of the investment: (ticker.weight / totalEligibleWeight) * (Total High-Upside Investment).
+    4.  Any funds from the High-Upside budget not allocated due to ineligibility are now 'Unused Upside Funds'.
+
+    **Step C: Handle Unused Upside Funds**
+    1.  Based on the 'Leftover Cash Rule' (${plan.brokerConstraints.leftoverCashRule}), either hold these funds or redirect them to the Core portfolio.
+    2.  If redirecting, add the 'Unused Upside Funds' to the Core Allocation budget for the final step.
+
+    **Step D: Calculate Core Portfolio Trades**
+    1.  The final Core budget is (Initial Core Allocation Budget) + (Redirected Unused Upside Funds).
+    2.  Allocate this final Core budget to all tickers in the Core Portfolio according to their specified weights.
+
+    **Step E: Finalize Trades & Generate Audit Log**
+    1.  For every calculated trade amount from Step B and D, apply the broker constraints (min order size, rounding, fractional shares).
+    2.  The final JSON output MUST contain a 'log_details' string. This string is a comprehensive audit log in Markdown format explaining every step: eligibility checks, calculations, re-allocations, and final trade decisions with amounts.
+    3.  The 'trades' array should only contain the final, executable trades after all rules have been applied.
+
+    **Output Schema:**
+    You must call the 'record_investment_trades' function with the results of your analysis.
     `;
 
-    const generateTradesFunction: FunctionDeclaration = {
-        name: 'generate_investment_trades',
-        description: 'Generates a list of proposed trades based on the investment plan execution.',
+    const recordTradesFunction: FunctionDeclaration = {
+        name: 'record_investment_trades',
+        description: 'Records the results of the investment plan execution, including trades and audit logs.',
         parameters: {
             type: Type.OBJECT,
             properties: {
@@ -818,6 +843,8 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
                 coreInvestment: { type: Type.NUMBER },
                 upsideInvestment: { type: Type.NUMBER },
                 unusedUpsideFunds: { type: Type.NUMBER },
+                status: { type: Type.STRING, enum: ['success', 'failure'] },
+                log_details: { type: Type.STRING, description: 'Markdown formatted audit log of the execution.' },
                 trades: {
                     type: Type.ARRAY,
                     items: {
@@ -831,7 +858,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
                     },
                 },
             },
-            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'unusedUpsideFunds', 'trades'],
+            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'unusedUpsideFunds', 'status', 'log_details', 'trades'],
         },
     };
 
@@ -840,7 +867,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
             model: 'gemini-3.1-pro-preview',
             contents: [{ parts: [{ text: prompt }] }],
             config: {
-                tools: [{ functionDeclarations: [generateTradesFunction] }],
+                tools: [{ functionDeclarations: [recordTradesFunction] }, { googleSearch: {} }],
             }
         });
 

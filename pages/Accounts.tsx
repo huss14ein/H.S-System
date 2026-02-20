@@ -35,16 +35,20 @@ const AccountModal: React.FC<{
         }
     }, [accountToEdit, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const accountData = { name, type, owner: owner || undefined };
 
-        if (accountToEdit) {
-            onSave({ ...accountToEdit, ...accountData });
-        } else {
-            onSave(accountData);
+        try {
+            if (accountToEdit) {
+                await onSave({ ...accountToEdit, ...accountData });
+            } else {
+                await onSave(accountData);
+            }
+            onClose();
+        } catch (error) {
+            // Error handled in DataContext
         }
-        onClose();
     };
 
     return (
@@ -142,11 +146,15 @@ const Accounts: React.FC = () => {
     // --- Account Handlers ---
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
     
-    const handleSaveAccount = (account: Omit<Account, 'id' | 'balance'> | Account) => {
-        if ('id' in account && account.id) {
-            updatePlatform(account as Account);
-        } else {
-            addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'>);
+    const handleSaveAccount = async (account: Omit<Account, 'id' | 'balance'> | Account) => {
+        try {
+            if ('id' in account && account.id) {
+                await updatePlatform(account as Account);
+            } else {
+                await addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'>);
+            }
+        } catch (error) {
+            // Error already alerted in DataContext
         }
     };
 

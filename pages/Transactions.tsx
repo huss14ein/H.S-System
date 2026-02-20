@@ -75,18 +75,22 @@ const TransactionModal: React.FC<{
         expenseType: type === 'expense' ? expenseType : undefined,
     });
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const transactionData = buildTransactionData();
         
-        if (type === 'expense' && budgetCategory === 'Savings & Investments') {
-            onSaveAndTrade(transactionData);
-        } else if (transactionToEdit) {
-            onSave({ ...transactionData, id: transactionToEdit.id });
-        } else {
-            onSave(transactionData);
+        try {
+            if (type === 'expense' && budgetCategory === 'Savings & Investments') {
+                await onSaveAndTrade(transactionData);
+            } else if (transactionToEdit) {
+                await onSave({ ...transactionData, id: transactionToEdit.id });
+            } else {
+                await onSave(transactionData);
+            }
+            onClose();
+        } catch (error) {
+            // Error already alerted in DataContext
         }
-        onClose();
     };
     
     const handleSuggestCategory = async () => {

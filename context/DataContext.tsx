@@ -19,7 +19,13 @@ const initialData: FinancialData = {
         upsideAllocation: 0.3,
         minimumUpsidePercentage: 25,
         corePortfolio: [],
-        upsideSleeve: []
+        upsideSleeve: [],
+        brokerConstraints: {
+            allowFractionalShares: true,
+            minimumOrderSize: 100,
+            roundingRule: 'round',
+            leftoverCashRule: 'reinvest_core'
+        }
     },
     portfolioUniverse: [],
     statusChangeLog: [],
@@ -138,7 +144,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
-                investmentPlan: (investmentPlan as any).data || initialData.investmentPlan,
+                investmentPlan: (investmentPlan as any).data 
+                    ? { 
+                        ...initialData.investmentPlan, 
+                        ...(investmentPlan as any).data,
+                        brokerConstraints: (investmentPlan as any).data.brokerConstraints || initialData.investmentPlan.brokerConstraints 
+                      }
+                    : initialData.investmentPlan,
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
                 executionLogs: (executionLogs as any).data || []
@@ -237,11 +249,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Assets ---
     const addAsset = async (asset: Asset) => {
-        if(!supabase) return;
+        if(!supabase || !auth?.user) {
+            alert("You must be logged in to add an asset.");
+            return;
+        }
         const db = supabase;
         const { id, user_id, ...insertData } = asset;
         const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
-        if (error) { console.error("Error adding asset:", error); throw error; }
+        if (error) { 
+            console.error("Error adding asset:", error); 
+            alert(`Failed to add asset: ${error.message}`);
+            throw error; 
+        }
         if (newAsset) setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
@@ -261,11 +280,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Goals ---
     const addGoal = async (goal: Goal) => {
-        if(!supabase) return;
+        if(!supabase || !auth?.user) {
+            alert("You must be logged in to add a goal.");
+            return;
+        }
         const db = supabase;
         const { id, user_id, ...insertData } = goal;
         const { data: newGoal, error } = await db.from('goals').insert(withUser(insertData)).select().single();
-        if (error) { console.error("Error adding goal:", error); throw error; }
+        if (error) { 
+            console.error("Error adding goal:", error); 
+            alert(`Failed to add goal: ${error.message}`);
+            throw error; 
+        }
         if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
     };
     const updateGoal = async (goal: Goal) => {
@@ -365,10 +391,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     // --- Transactions ---
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
-        if(!supabase) return;
+        if(!supabase || !auth?.user) {
+            alert("You must be logged in to add a transaction.");
+            return;
+        }
         const db = supabase;
         const { data: newTx, error } = await db.from('transactions').insert(withUser(transaction)).select().single();
-        if(error) console.error("Error adding transaction:", error);
+        if(error) {
+            console.error("Error adding transaction:", error);
+            alert(`Failed to add transaction: ${error.message}`);
+            throw error;
+        }
         if (newTx) setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
     };
     const updateTransaction = async (transaction: Transaction) => {
@@ -388,10 +421,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => {
-        if(!supabase) return;
+        if(!supabase || !auth?.user) {
+            alert("You must be logged in to add a platform.");
+            return;
+        }
         const db = supabase;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
-        if(error) console.error("Error adding platform:", error);
+        if(error) {
+            console.error("Error adding platform:", error);
+            alert(`Failed to add platform: ${error.message}`);
+            throw error;
+        }
         if (newPlatform) setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
     };
     const updatePlatform = async (platform: Account) => {
@@ -411,10 +451,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     // --- Investments ---
     const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => {
-        if(!supabase) return;
+        if(!supabase || !auth?.user) {
+            alert("You must be logged in to add a portfolio.");
+            return;
+        }
         const db = supabase;
         const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
-        if(error) console.error("Error adding portfolio:", error);
+        if(error) {
+            console.error("Error adding portfolio:", error);
+            alert(`Failed to add portfolio: ${error.message}`);
+            throw error;
+        }
         if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {

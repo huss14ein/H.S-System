@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, executeInvestmentPlanStrategy } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, PlannedTrade, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult } from '../types';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -33,12 +33,13 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+    { name: 'Execution History', icon: BookOpenIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
@@ -316,29 +317,36 @@ export const PortfolioModal: React.FC<{
     portfolioToEdit: InvestmentPortfolio | null;
     accountId: string | null;
     investmentAccounts: Account[];
-}> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId, investmentAccounts }) => {
+    goals: Goal[];
+}> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId, investmentAccounts, goals }) => {
     const [name, setName] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState('');
+    const [goalId, setGoalId] = useState<string | undefined>();
 
     useEffect(() => {
         if (isOpen) {
             setName(portfolioToEdit?.name || '');
             setSelectedAccountId(accountId || investmentAccounts[0]?.id || '');
+            setGoalId(portfolioToEdit?.goalId);
         }
     }, [portfolioToEdit, isOpen, accountId, investmentAccounts]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (portfolioToEdit) {
-            onSave({ ...portfolioToEdit, name });
-        } else {
-            if (!selectedAccountId) {
-                alert("Please select an account for the new portfolio.");
-                return;
+        try {
+            if (portfolioToEdit) {
+                await onSave({ ...portfolioToEdit, name, goalId });
+            } else {
+                if (!selectedAccountId) {
+                    alert("Please select an account for the new portfolio.");
+                    return;
+                }
+                await onSave({ name, accountId: selectedAccountId, goalId });
             }
-            onSave({ name, accountId: selectedAccountId });
+            onClose();
+        } catch (error) {
+            // Error handled in DataContext
         }
-        onClose();
     };
 
     return (
@@ -365,9 +373,92 @@ export const PortfolioModal: React.FC<{
                     <label htmlFor="portfolio-name" className="block text-sm font-medium text-gray-700">Portfolio Name</label>
                     <input type="text" id="portfolio-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/>
                 </div>
+                <div>
+                    <label htmlFor="portfolio-goal-link" className="block text-sm font-medium text-gray-700">Link to Goal</label>
+                    <select 
+                        id="portfolio-goal-link"
+                        value={goalId || 'none'} 
+                        onChange={e => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} 
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                    >
+                        <option value="none">-- Not Linked --</option>
+                        {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1 italic">Linking a portfolio will associate its total value with the selected goal.</p>
+                </div>
                 <button type="submit" disabled={!portfolioToEdit && investmentAccounts.length === 0} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Save Portfolio</button>
             </form>
         </Modal>
+    );
+};
+
+const ExecutionHistoryView: React.FC = () => {
+    const { data } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
+    const [selectedLog, setSelectedLog] = useState<InvestmentPlanExecutionLog | null>(null);
+
+    return (
+        <div className="space-y-6 mt-4">
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                        <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Invested</th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                        {data.executionLogs.map(log => (
+                            <tr key={log.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(log.created_at).toLocaleString()}</td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${log.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                        {log.status.toUpperCase()}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-dark">{formatCurrencyString(log.totalInvestment)}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{log.trades.length} trades</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                    <button onClick={() => setSelectedLog(log)} className="text-primary hover:text-secondary font-medium">View Details</button>
+                                </td>
+                            </tr>
+                        ))}
+                        {data.executionLogs.length === 0 && (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-10 text-center text-gray-500 italic">No execution logs found.</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {selectedLog && (
+                <Modal isOpen={!!selectedLog} onClose={() => setSelectedLog(null)} title={`Execution Log: ${new Date(selectedLog.created_at).toLocaleString()}`}>
+                    <div className="space-y-4">
+                        <div className="bg-gray-50 p-4 rounded-lg max-h-96 overflow-y-auto">
+                            <SafeMarkdownRenderer content={selectedLog.log_details} />
+                        </div>
+                        <div className="border-t pt-4">
+                            <h4 className="font-semibold text-dark mb-2">Trades Executed</h4>
+                            <div className="space-y-2">
+                                {selectedLog.trades.map((trade, i) => (
+                                    <div key={i} className="flex justify-between items-center p-2 border rounded bg-white">
+                                        <div>
+                                            <span className="font-bold">{trade.ticker}</span>
+                                            <span className="text-xs text-gray-500 ml-2">({trade.reason})</span>
+                                        </div>
+                                        <span className="font-mono">{formatCurrencyString(trade.amount)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </div>
     );
 };
 
@@ -480,7 +571,15 @@ const PlatformCard: React.FC<{
                 {portfolios.map(portfolio => (
                     <div key={portfolio.id} className="border rounded-lg p-3 bg-gray-50">
                         <div className="flex justify-between items-center mb-2">
-                            <h4 className="font-semibold text-gray-800">{portfolio.name}</h4>
+                            <div className="flex items-center gap-2">
+                                <h4 className="font-semibold text-gray-800">{portfolio.name}</h4>
+                                {portfolio.goalId && (
+                                    <span className="flex items-center text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100" title={`Linked to: ${getGoalName(portfolio.goalId)}`}>
+                                        <LinkIcon className="h-3 w-3 mr-1" />
+                                        {getGoalName(portfolio.goalId)}
+                                    </span>
+                                )}
+                            </div>
                             <div><button onClick={() => onEditPortfolio(portfolio)} className="text-gray-400 hover:text-primary p-1"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDeletePortfolio(portfolio)} className="text-gray-400 hover:text-red-500 p-1"><TrashIcon className="h-4 w-4"/></button></div>
                         </div>
                          <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
@@ -566,12 +665,20 @@ interface PlatformModalProps { isOpen: boolean; onClose: () => void; onSave: (pl
 const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, platformToEdit }) => {
     const [name, setName] = useState('');
     useEffect(() => { if (platformToEdit) setName(platformToEdit.name); else setName(''); }, [platformToEdit, isOpen]);
-    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); onClose(); };
+    const handleSubmit = async (e: React.FormEvent) => { 
+        e.preventDefault(); 
+        try {
+            await onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); 
+            onClose(); 
+        } catch (error) {
+            // Error handled in DataContext
+        }
+    };
     return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
 };
 
 const InvestmentPlan: React.FC = () => {
-    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker } = useContext(DataContext)!;
+    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
     const [plan, setPlan] = useState<InvestmentPlanSettings>(data.investmentPlan);
@@ -583,17 +690,32 @@ const InvestmentPlan: React.FC = () => {
     const upsideSleeveTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'High-Upside'), [data.portfolioUniverse]);
 
     useEffect(() => {
-        setPlan(data.investmentPlan);
+        if (data.investmentPlan) {
+            setPlan(data.investmentPlan);
+        }
     }, [data.investmentPlan]);
+
+    if (!plan || !plan.brokerConstraints) {
+        return (
+            <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                <p className="text-gray-500">Loading investment plan strategy...</p>
+            </div>
+        );
+    }
 
     const handlePlanChange = (field: keyof InvestmentPlanSettings, value: any) => {
         setPlan(prev => ({ ...prev, [field]: value }));
     };
 
-    const handleAddNewTicker = () => {
+    const handleAddNewTicker = async () => {
         if (!newTicker.ticker || !newTicker.name) return;
-        addUniverseTicker({ ...newTicker, status: 'Watchlist' });
-        setNewTicker({ ticker: '', name: '' });
+        try {
+            await addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+            setNewTicker({ ticker: '', name: '' });
+        } catch (error) {
+            // Error already alerted in DataContext
+        }
     };
 
     const handleSave = () => {
@@ -607,6 +729,16 @@ const InvestmentPlan: React.FC = () => {
         try {
             const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse);
             setExecutionResult(result);
+            
+            // Save to audit log
+            const logEntry: InvestmentPlanExecutionLog = {
+                ...result,
+                id: `log-${Date.now()}`,
+                user_id: '', // Handled by context
+                created_at: new Date().toISOString(),
+            };
+            await saveExecutionLog(logEntry);
+            
         } catch (error) {
             console.error("Error executing plan:", error);
             alert(`Error executing plan: ${error instanceof Error ? error.message : String(error)}`);
@@ -853,7 +985,12 @@ const InvestmentPlan: React.FC = () => {
                     {executionResult && (
                         <div className="mt-4 space-y-4 text-sm">
                             <div className="bg-gray-50 p-3 rounded-lg">
-                                <h3 className="font-semibold text-dark mb-2">Execution Summary</h3>
+                                <div className="flex justify-between items-center mb-2">
+                                    <h3 className="font-semibold text-dark">Execution Summary</h3>
+                                    <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${executionResult.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                        {executionResult.status.toUpperCase()}
+                                    </span>
+                                </div>
                                 <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
                                     <dt className="text-gray-600">Total Investment:</dt>
                                     <dd className="font-mono text-right">{formatCurrencyString(executionResult.totalInvestment)}</dd>
@@ -865,6 +1002,12 @@ const InvestmentPlan: React.FC = () => {
                                     <dd className="font-mono text-right">{formatCurrencyString(executionResult.unusedUpsideFunds)}</dd>
                                 </dl>
                             </div>
+
+                            <div className="bg-blue-50 p-3 rounded-lg max-h-60 overflow-y-auto">
+                                <h3 className="font-semibold text-blue-800 mb-2">Audit Log</h3>
+                                <SafeMarkdownRenderer content={executionResult.log_details} />
+                            </div>
+
                             <div>
                                 <h3 className="font-semibold text-dark mb-2">Proposed Trades</h3>
                                 <div className="space-y-2">
@@ -967,16 +1110,26 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
   
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; })) => { setSelectedHolding(holding); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
-  const handleSaveHolding = (holding: Holding) => { updateHolding(holding); };
+    const handleSaveHolding = async (holding: Holding) => { 
+        try {
+            await updateHolding(holding); 
+        } catch (error) {
+            // Error already alerted in DataContext
+        }
+    };
   
   const handleOpenPlatformModal = (platform: Account | null = null) => { setPlatformToEdit(platform); setIsPlatformModalOpen(true); };
   
-  const handleSavePlatform = (platform: Account) => {
-      if (platform.id) {
-          updatePlatform(platform);
-      } else {
-          const { id, balance, ...newPlatformData } = platform;
-          addPlatform(newPlatformData);
+  const handleSavePlatform = async (platform: Account) => {
+      try {
+          if (platform.id) {
+              await updatePlatform(platform);
+          } else {
+              const { id, balance, ...newPlatformData } = platform;
+              await addPlatform(newPlatformData);
+          }
+      } catch (error) {
+          // Error already alerted in DataContext
       }
   };
 
@@ -997,12 +1150,16 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
       setCurrentAccountId(accountId);
       setIsPortfolioModalOpen(true);
   };
-  const handleSavePortfolio = (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'> | InvestmentPortfolio) => {
-      if ('id' in portfolio && portfolio.id) {
-          const { holdings, ...portfolioToUpdate } = portfolio as InvestmentPortfolio;
-          updatePortfolio(portfolioToUpdate);
-      } else {
-          addPortfolio(portfolio as Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>);
+  const handleSavePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'> | InvestmentPortfolio) => {
+      try {
+          if ('id' in portfolio && portfolio.id) {
+              const { holdings, ...portfolioToUpdate } = portfolio as InvestmentPortfolio;
+              await updatePortfolio(portfolioToUpdate);
+          } else {
+              await addPortfolio(portfolio as Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>);
+          }
+      } catch (error) {
+          // Error already alerted in DataContext
       }
   };
   
@@ -1029,6 +1186,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onEditHolding={handleOpenHoldingEditModal}
         />;
       case 'Investment Plan': return <InvestmentPlan />;
+      case 'Execution History': return <ExecutionHistoryView />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
@@ -1082,6 +1240,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
         portfolioToEdit={portfolioToEdit} 
         accountId={currentAccountId}
         investmentAccounts={investmentAccounts}
+        goals={data.goals}
       />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
       <RecordTradeModal 

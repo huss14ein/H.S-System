@@ -121,6 +121,7 @@ export interface InvestmentPortfolio {
   name: string;
   accountId: string;
   holdings: Holding[];
+  goalId?: string;
   owner?: string;
 }
 
@@ -309,6 +310,8 @@ export interface InvestmentPlanExecutionResult {
     upsideInvestment: number;
     unusedUpsideFunds: number;
     trades: ProposedTrade[];
+    status: 'success' | 'failure';
+    log_details: string;
 }
 
 export interface InvestmentPlanExecutionLog extends InvestmentPlanExecutionResult {

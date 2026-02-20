@@ -67,7 +67,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
         }
     }, [goalToEdit, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const goalData = {
             name,
@@ -75,17 +75,21 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             deadline,
         };
 
-        if (goalToEdit) {
-            onSave({ ...goalToEdit, ...goalData });
-        } else {
-            onSave({
-                id: `goal${Date.now()}`,
-                ...goalData,
-                currentAmount: 0, // New goals start with 0, progress is from linked assets.
-                savingsAllocationPercent: 0,
-            });
+        try {
+            if (goalToEdit) {
+                await onSave({ ...goalToEdit, ...goalData });
+            } else {
+                await onSave({
+                    id: `goal${Date.now()}`,
+                    ...goalData,
+                    currentAmount: 0, // New goals start with 0, progress is from linked assets.
+                    savingsAllocationPercent: 0,
+                });
+            }
+            onClose();
+        } catch (error) {
+            // Error handled in DataContext
         }
-        onClose();
     };
 
     return (
@@ -121,9 +125,16 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         });
 
         data.investments.forEach(p => {
-            p.holdings.filter(h => h.goalId === goal.id).forEach(h => {
-                linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: h.currentValue });
-            });
+            // If the entire portfolio is linked to the goal
+            if (p.goalId === goal.id) {
+                const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
+            } else {
+                // Otherwise check individual holdings
+                p.holdings.filter(h => h.goalId === goal.id).forEach(h => {
+                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: h.currentValue });
+                });
+            }
         });
 
         const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
@@ -301,11 +312,16 @@ const Goals: React.FC = () => {
         });
 
         data.investments.forEach(p => {
-            p.holdings.forEach(h => {
-                if (h.goalId) {
-                    goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + h.currentValue);
-                }
-            });
+            if (p.goalId) {
+                const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
+            } else {
+                p.holdings.forEach(h => {
+                    if (h.goalId) {
+                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + h.currentValue);
+                    }
+                });
+            }
         });
 
         data.goals.forEach(goal => {
@@ -321,9 +337,13 @@ const Goals: React.FC = () => {
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
     
-    const handleSaveGoal = (goal: Goal) => {
-        if (data.goals.some(g => g.id === goal.id)) updateGoal(goal);
-        else addGoal(goal);
+    const handleSaveGoal = async (goal: Goal) => {
+        try {
+            if (data.goals.some(g => g.id === goal.id)) await updateGoal(goal);
+            else await addGoal(goal);
+        } catch (error) {
+            // Error already alerted in DataContext
+        }
     };
 
     const handleConfirmDelete = () => {
