@@ -106,6 +106,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const [
                 accounts, assets, liabilities, goals, transactions, investments,
                 investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
+                notifications,
                 investmentPlan, portfolioUniverse, statusChangeLog, executionLogs
             ] = await Promise.all([
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -122,13 +123,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
                 db.from('planned_trades').select('*').eq('user_id', auth.user.id),
+                db.from('notifications').select('*').eq('user_id', auth.user.id),
                 db.from('investment_plan').select('*').eq('user_id', auth.user.id).single(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false })
             ]);
 
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs };
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, notifications, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs };
             Object.entries(allFetches).forEach(([key, value]) => {
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
@@ -148,6 +150,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
+                notifications: notifications.data || [],
                 investmentPlan: (investmentPlan as any).data 
                     ? { 
                         ...initialData.investmentPlan, 
@@ -185,7 +188,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
-        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades'];
+        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades', 'notifications'];
         await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);
@@ -217,6 +220,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
                 db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
                 db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
+                db.from('notifications').insert(mock.notifications.map(({ id, ...n }) => ({ ...n, user_id: userId }))),
                 db.from('settings').insert([{ ...mock.settings, user_id: userId }]),
             ]);
 

@@ -17,6 +17,11 @@ interface Notification {
     pageLink: Page;
 }
 
+const STATIC_NOTIFICATION_IDS = {
+    budget: 'static-1',
+    goal: 'static-2',
+} as const;
+
 const NotificationIcon: React.FC<{ type: NotificationType }> = ({ type }) => {
     const iconClass = "h-6 w-6";
     switch(type) {
@@ -31,6 +36,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
     const { data } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
     const [filter, setFilter] = useState<'All' | 'Unread'>('All');
+    const [readIds, setReadIds] = useState<Set<string>>(new Set());
     
     // In a real app, notifications would come from a dedicated source.
     // Here, we generate them dynamically based on user data for demonstration.
@@ -39,8 +45,8 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
         const now = new Date();
         
         // Static notifications for demonstration
-        notifications.push({ id: 'static-1', type: 'Budget', message: 'Your "Food" budget is at 95%.', date: new Date().toISOString(), isRead: false, pageLink: 'Budgets' });
-        notifications.push({ id: 'static-2', type: 'Goal', message: 'Goal "World Trip" is at risk of not meeting its deadline.', date: new Date(Date.now() - 86400000).toISOString(), isRead: true, pageLink: 'Goals' });
+        notifications.push({ id: STATIC_NOTIFICATION_IDS.budget, type: 'Budget', message: 'Your "Food" budget is at 95%.', date: new Date().toISOString(), isRead: false, pageLink: 'Budgets' });
+        notifications.push({ id: STATIC_NOTIFICATION_IDS.goal, type: 'Goal', message: 'Goal "World Trip" is at risk of not meeting its deadline.', date: new Date(Date.now() - 86400000).toISOString(), isRead: true, pageLink: 'Goals' });
 
         // Dynamic price alerts
         data.priceAlerts.filter(a => a.status === 'triggered').forEach(alert => {
@@ -56,7 +62,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
                 const hasTriggered = (plan.tradeType === 'buy' && priceInfo.price <= plan.targetValue) || (plan.tradeType === 'sell' && priceInfo.price >= plan.targetValue);
                 if (hasTriggered) {
-                     notifications.push({
+                    notifications.push({
                         id: `plan-${plan.id}`,
                         type: 'Investment',
                         message: `Target Price Met: Your plan to ${plan.tradeType} ${plan.name} is ready to execute.`,
@@ -68,24 +74,29 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
             });
 
 
-        return notifications.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [data.priceAlerts, data.plannedTrades, simulatedPrices]);
-    
-    const [notifications, setNotifications] = useState<Notification[]>(allNotifications);
+        const readByDefault = new Set<string>([STATIC_NOTIFICATION_IDS.goal]);
+
+        return notifications
+            .map(notification => ({
+                ...notification,
+                isRead: readByDefault.has(notification.id) || readIds.has(notification.id),
+            }))
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [data.priceAlerts, data.plannedTrades, readIds, simulatedPrices]);
 
     const filteredNotifications = useMemo(() => {
         if (filter === 'Unread') {
-            return notifications.filter(n => !n.isRead);
+            return allNotifications.filter(n => !n.isRead);
         }
-        return notifications;
-    }, [notifications, filter]);
+        return allNotifications;
+    }, [allNotifications, filter]);
 
     const handleMarkAsRead = (id: string) => {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+        setReadIds(prev => new Set(prev).add(id));
     };
 
     const handleMarkAllAsRead = () => {
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+        setReadIds(new Set(allNotifications.map(n => n.id)));
     };
     
     const handleNotificationClick = (notification: Notification) => {
