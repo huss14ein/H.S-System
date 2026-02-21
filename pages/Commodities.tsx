@@ -56,9 +56,15 @@ const CommodityHoldingModal: React.FC<{
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        const parsedPurchaseValue = parseFloat(purchaseValue);
+        if (isNaN(parsedPurchaseValue) || parsedPurchaseValue <= 0) {
+            alert("Purchase Value must be a positive number.");
+            return;
+        }
+
         const holdingData = {
             name, quantity: parseFloat(quantity) || 0, unit,
-            purchaseValue: parseFloat(purchaseValue) || 0,
+            purchaseValue: parsedPurchaseValue,
             currentValue: parseFloat(currentValue) || 0,
             symbol: getSymbol(name, unit), zakahClass,
             owner: owner || undefined,

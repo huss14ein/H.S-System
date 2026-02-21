@@ -140,9 +140,13 @@ const RecordTradeModal: React.FC<{
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [goalId, setGoalId] = useState<string | undefined>(undefined);
     const [holdingName, setHoldingName] = useState('');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
+
+    const { data } = useContext(DataContext)!;
+    const availableGoals = useMemo(() => data.goals || [], [data.goals]);
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
     
@@ -210,6 +214,7 @@ const RecordTradeModal: React.FC<{
                 quantity: parseFloat(quantity) || 0,
                 price: parseFloat(price) || 0,
                 date,
+                ...(goalId && { goalId }),
             }, executedPlanId);
             onClose();
         } catch (error) {
@@ -264,6 +269,15 @@ const RecordTradeModal: React.FC<{
                 <div>
                     <label htmlFor="date" className="block text-sm font-medium text-gray-700">Transaction Date</label>
                     <input type="date" id="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                </div>
+                <div>
+                    <label htmlFor="trade-goal" className="block text-sm font-medium text-gray-700">Link to Goal (Optional)</label>
+                    <select id="trade-goal" value={goalId || ''} onChange={e => setGoalId(e.target.value || undefined)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                        <option value="">None</option>
+                        {availableGoals.map(goal => (
+                            <option key={goal.id} value={goal.id}>{goal.name}</option>
+                        ))}
+                    </select>
                 </div>
                 <button type="submit" disabled={!portfolioId} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Record Trade</button>
             </form>

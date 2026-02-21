@@ -44,7 +44,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const notificationCount = useMemo(() => {
     if (!data) return 0;
     const priceAlerts = data.priceAlerts.filter(a => a.status === 'triggered').length;
-    return priceAlerts + 3; // +3 for static alerts
+    const unreadNotifications = data.notifications.filter(n => !n.read).length;
+    return priceAlerts + unreadNotifications;
   }, [data]);
 
   const navGroups = useMemo(() => [

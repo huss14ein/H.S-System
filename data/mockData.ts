@@ -155,5 +155,6 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         enableEmails: true,
         goldPrice: 281,
     },
+    notifications: [],
   };
 };

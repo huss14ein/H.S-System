@@ -1,5 +1,5 @@
 // FIX: Import 'useMemo' from React to resolve 'Cannot find name 'useMemo'' error.
-import React, { useState, useEffect, useCallback, useContext, useMemo } from 'react';
+import React, { useState, useCallback, useContext, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { invokeAI } from '../services/geminiService';
 import { MarketDataContext } from '../context/MarketDataContext';

@@ -9,7 +9,7 @@ const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
-    zakatPayments: [], priceAlerts: [], plannedTrades: [],
+    zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
         monthlyBudget: 6000,
         budgetCurrency: 'SAR',
@@ -624,12 +624,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Commodities ---
     const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
         if (!supabase) return;
+        if (holding.purchaseValue <= 0) {
+            throw new Error("Purchase Value must be a positive number.");
+        }
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(holding)).select().single();
         if (error) console.error("Error adding commodity:", error);
         else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, newHolding] }));
     };
     const updateCommodityHolding = async (holding: CommodityHolding) => {
         if (!supabase || !auth?.user) return;
+        if (holding.purchaseValue <= 0) {
+            throw new Error("Purchase Value must be a positive number.");
+        }
         const { error } = await supabase.from('commodity_holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
         if (error) console.error(error);
         else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));

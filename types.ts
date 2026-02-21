@@ -193,6 +193,16 @@ export interface PriceAlert {
   createdAt: string;
 }
 
+export interface Notification {
+  id: string;
+  user_id?: string;
+  type: 'system' | 'alert' | 'update';
+  message: string;
+  read: boolean;
+  createdAt: string;
+  link?: string;
+}
+
 export interface PlannedTrade {
   id: string;
   user_id?: string;
@@ -227,6 +237,7 @@ export interface FinancialData {
   portfolioUniverse: UniverseTicker[];
   statusChangeLog: StatusChangeLog[];
   executionLogs: InvestmentPlanExecutionLog[];
+  notifications: Notification[];
 }
 
 export interface KPISummary {
