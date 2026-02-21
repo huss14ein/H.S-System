@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
 
 // --- Model Constants ---
@@ -776,112 +776,244 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
 };
 
 export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings, universe: UniverseTicker[]): Promise<InvestmentPlanExecutionResult> {
-    console.log('Executing investment plan with:', { plan, universe });
+    const now = new Date();
+    const minUpside = (plan.minimumUpsidePercentage || 25) / 100;
+    const minCoverage = plan.minCoverageThreshold ?? 8;
+    const staleTargetDays = plan.staleTargetDays ?? 45;
+    const fxRate = plan.fxRate && plan.fxRate > 0 ? plan.fxRate : 1;
+    const speculativeCap = plan.speculativeCapPercent ?? 0.005;
+    const maxHighUpsideTotal = plan.maxHighUpsideTotal ?? plan.upsideAllocation;
+    const maxSpeculativeTotal = plan.maxSpeculativeTotal ?? speculativeCap;
+    const minOrder = Math.max(0, plan.brokerConstraints.minimumOrderSize || 0);
 
-    const coreTickers = universe.filter(t => t.status === 'Core');
-    const upsideTickers = universe.filter(t => t.status === 'High-Upside');
-
-    const prompt = `
-    You are an extremely precise, rules-based financial execution AI. Your sole task is to generate a list of trades based on a strict set of instructions. Adhere to all constraints perfectly.
-
-    **Execution Date:** ${new Date().toISOString().split('T')[0]}
-
-    **1. Core Plan Details:**
-    - Monthly Budget: ${plan.monthlyBudget} ${plan.budgetCurrency}
-    - Core Allocation: ${plan.coreAllocation * 100}% (${plan.monthlyBudget * plan.coreAllocation} ${plan.budgetCurrency})
-    - High-Upside Allocation: ${plan.upsideAllocation * 100}% (${plan.monthlyBudget * plan.upsideAllocation} ${plan.budgetCurrency})
-
-    **2. Broker & Execution Constraints:**
-    - Allow Fractional Shares: ${plan.brokerConstraints.allowFractionalShares}
-    - Minimum Order Size: ${plan.brokerConstraints.minimumOrderSize} ${plan.budgetCurrency}
-    - Rounding Rule for Shares: ${plan.brokerConstraints.roundingRule}
-    - Leftover Cash Rule: ${plan.brokerConstraints.leftoverCashRule}
-
-    **3. Portfolio Universe & Definitions:**
-    - Core Portfolio (${coreTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.corePortfolio)}
-    - High-Upside Sleeve (${upsideTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.upsideSleeve)}
-    - Watchlist/Excluded: These tickers must be ignored completely.
-
-    **4. Execution Logic (Strict Order):**
-
-    **Step A: Evaluate High-Upside Sleeve**
-    1.  For each ticker in the High-Upside Sleeve, you MUST use Google Search to find the current stock price and a valid, non-stale (less than 3 months old) consensus analyst price target.
-    2.  Calculate implied upside: ((Target / Price) - 1) * 100.
-    3.  A ticker is **ELIGIBLE** only if its implied upside is >= ${plan.minimumUpsidePercentage}% AND all data (price, target) was successfully found and is not stale.
-    4.  Create a detailed eligibility list in your reasoning, stating for each ticker if it was eligible and why (e.g., "AAPL: Eligible, 30% upside", "GOOG: Ineligible, upside 15% < ${plan.minimumUpsidePercentage}%", "TSLA: Ineligible, no valid consensus target found").
-
-    **Step B: Calculate Allocations**
-    1.  Sum the weights of all **ELIGIBLE** High-Upside tickers. Let's call this 'totalEligibleWeight'.
-    2.  Calculate the total funds to invest in the High-Upside sleeve: (High-Upside Allocation Budget) * totalEligibleWeight. Note: If totalEligibleWeight is not 1.0, some funds will be unused.
-    3.  For each **ELIGIBLE** ticker, calculate its portion of the investment: (ticker.weight / totalEligibleWeight) * (Total High-Upside Investment).
-    4.  Any funds from the High-Upside budget not allocated due to ineligibility are now 'Unused Upside Funds'.
-
-    **Step C: Handle Unused Upside Funds**
-    1.  Based on the 'Leftover Cash Rule' (${plan.brokerConstraints.leftoverCashRule}), either hold these funds or redirect them to the Core portfolio.
-    2.  If redirecting, add the 'Unused Upside Funds' to the Core Allocation budget for the final step.
-
-    **Step D: Calculate Core Portfolio Trades**
-    1.  The final Core budget is (Initial Core Allocation Budget) + (Redirected Unused Upside Funds).
-    2.  Allocate this final Core budget to all tickers in the Core Portfolio according to their specified weights.
-
-    **Step E: Finalize Trades & Generate Audit Log**
-    1.  For every calculated trade amount from Step B and D, apply the broker constraints (min order size, rounding, fractional shares).
-    2.  The final JSON output MUST contain a 'log_details' string. This string is a comprehensive audit log in Markdown format explaining every step: eligibility checks, calculations, re-allocations, and final trade decisions with amounts.
-    3.  The 'trades' array should only contain the final, executable trades after all rules have been applied.
-
-    **Output Schema:**
-    You must call the 'record_investment_trades' function with the results of your analysis.
-    `;
-
-    const recordTradesFunction: FunctionDeclaration = {
-        name: 'record_investment_trades',
-        description: 'Records the results of the investment plan execution, including trades and audit logs.',
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                totalInvestment: { type: Type.NUMBER },
-                coreInvestment: { type: Type.NUMBER },
-                upsideInvestment: { type: Type.NUMBER },
-                unusedUpsideFunds: { type: Type.NUMBER },
-                status: { type: Type.STRING, enum: ['success', 'failure'] },
-                log_details: { type: Type.STRING, description: 'Markdown formatted audit log of the execution.' },
-                trades: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            ticker: { type: Type.STRING },
-                            amount: { type: Type.NUMBER },
-                            reason: { type: Type.STRING },
-                        },
-                        required: ['ticker', 'amount', 'reason'],
-                    },
-                },
-            },
-            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'unusedUpsideFunds', 'status', 'log_details', 'trades'],
-        },
+    const normalizeStatus = (status: UniverseTicker['status']) => {
+        const map: Record<string, string> = {
+            Core: 'CORE',
+            'High-Upside': 'HIGH_UPSIDE',
+            Watchlist: 'WATCHLIST',
+            Excluded: 'EXCLUDED',
+        };
+        return (map[status] || status || 'WATCHLIST') as 'CORE' | 'HIGH_UPSIDE' | 'WATCHLIST' | 'QUARANTINE' | 'SPECULATIVE' | 'EXCLUDED';
     };
 
-    try {
-        const result = await invokeAI({
-            model: 'gemini-3.1-pro-preview',
-            contents: [{ parts: [{ text: prompt }] }],
-            config: {
-                tools: [{ functionDeclarations: [recordTradesFunction] }, { googleSearch: {} }],
-            }
-        });
+    const coreTickers = universe.filter(t => normalizeStatus(t.status) === 'CORE');
+    const highUpsideTickers = universe.filter(t => normalizeStatus(t.status) === 'HIGH_UPSIDE');
+    const speculativeTickers = universe.filter(t => normalizeStatus(t.status) === 'SPECULATIVE');
 
-        if (result.functionCalls && result.functionCalls.length > 0) {
-            const args = result.functionCalls[0].args;
-            return {
-                date: new Date().toISOString(),
-                ...args,
-            } as InvestmentPlanExecutionResult;
+    const coreBudget = plan.monthlyBudget * plan.coreAllocation;
+    const sleeveBudget = plan.monthlyBudget * plan.upsideAllocation;
+    const coreWeights = new Map(plan.corePortfolio.map(p => [p.ticker, p.weight]));
+    const upsideWeights = new Map(plan.upsideSleeve.map(p => [p.ticker, p.weight]));
+
+    const allocations = new Map<string, { amount: number; reason: InvestmentPlanExecutionResult['trades'][number]['reason']; tags: Set<string> }>();
+    let redirectPool = 0;
+    let blockedAmount = 0;
+    let highUpsideAllocated = 0;
+    let speculativeAllocated = 0;
+    const log: string[] = ['## Monthly Core + Analyst-Upside Engine Run'];
+
+    const tickerCapValue = (ticker: UniverseTicker) => (ticker.max_portfolio_weight ? Math.max(0, plan.monthlyBudget * ticker.max_portfolio_weight) : Number.POSITIVE_INFINITY);
+
+    const addAllocation = (ticker: string, amount: number, reason: InvestmentPlanExecutionResult['trades'][number]['reason'], tag: string) => {
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const existing = allocations.get(ticker);
+        if (existing) {
+            existing.amount += amount;
+            existing.tags.add(tag);
+        } else {
+            allocations.set(ticker, { amount, reason, tags: new Set([tag]) });
         }
-        throw new Error('AI did not return the expected function call.');
+    };
 
-    } catch (error) {
-        console.error('Error executing investment plan strategy with AI:', error);
-        throw new Error('Failed to get investment plan execution from AI.');
+    for (const ticker of coreTickers) {
+        const weight = coreWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
+        const planned = coreBudget * weight;
+        addAllocation(ticker.ticker, planned, 'Core', 'core_monthly');
+        log.push(`- ${ticker.ticker}: CORE planned ${planned.toFixed(2)} ${plan.budgetCurrency}`);
     }
+
+    for (const ticker of highUpsideTickers) {
+        const weight = upsideWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
+        const planned = sleeveBudget * weight;
+        const market = ticker.marketData;
+        const target = ticker.analystTarget;
+
+        if (!market?.price || !target?.targetPrice || !target.targetTimestamp) {
+            redirectPool += planned;
+            log.push(`- ${ticker.ticker}: ineligible (missing market/target data), redirected ${planned.toFixed(2)}`);
+            continue;
+        }
+
+        const stale = target.isStale ?? (((now.getTime() - new Date(target.targetTimestamp).getTime()) / 86400000) > staleTargetDays);
+        if (stale) {
+            redirectPool += planned;
+            log.push(`- ${ticker.ticker}: ineligible (stale target), redirected ${planned.toFixed(2)}`);
+            continue;
+        }
+
+        const coverageThreshold = ticker.min_coverage_override ?? minCoverage;
+        const lowCoverage = typeof target.coverageCount === 'number' && target.coverageCount < coverageThreshold;
+        const requiredUpside = lowCoverage ? Math.max(minUpside, ticker.min_upside_override ?? 0.4) : (ticker.min_upside_override ?? minUpside);
+        const gatePrice = target.targetPrice / (1 + requiredUpside);
+
+        if (market.price > gatePrice) {
+            redirectPool += planned;
+            log.push(`- ${ticker.ticker}: ineligible (price ${market.price.toFixed(2)} > gate ${gatePrice.toFixed(2)}), redirected ${planned.toFixed(2)}`);
+            continue;
+        }
+
+        const sleeveCapValue = plan.monthlyBudget * maxHighUpsideTotal;
+        let finalAllocation = planned;
+        if (highUpsideAllocated + finalAllocation > sleeveCapValue) {
+            const allowed = Math.max(0, sleeveCapValue - highUpsideAllocated);
+            const blocked = finalAllocation - allowed;
+            finalAllocation = allowed;
+            redirectPool += blocked;
+            blockedAmount += blocked;
+            log.push(`- ${ticker.ticker}: blocked by max_high_upside_total ${blocked.toFixed(2)}`);
+        }
+
+        const capValue = tickerCapValue(ticker);
+        if (finalAllocation > capValue) {
+            const blocked = finalAllocation - capValue;
+            finalAllocation = capValue;
+            redirectPool += blocked;
+            blockedAmount += blocked;
+            log.push(`- ${ticker.ticker}: blocked by ticker max_portfolio_weight ${blocked.toFixed(2)}`);
+        }
+
+        highUpsideAllocated += finalAllocation;
+        addAllocation(ticker.ticker, finalAllocation, 'Upside', lowCoverage ? 'upside_eligible_low_coverage' : 'upside_eligible');
+    }
+
+    for (const ticker of speculativeTickers) {
+        const planned = Math.min(plan.monthlyBudget * speculativeCap, plan.monthlyBudget * (ticker.monthly_weight ?? speculativeCap));
+        if (ticker.pause) {
+            redirectPool += planned;
+            log.push(`- ${ticker.ticker}: speculative paused, redirected ${planned.toFixed(2)}`);
+            continue;
+        }
+
+        const specCapValue = plan.monthlyBudget * maxSpeculativeTotal;
+        let finalAllocation = planned;
+        if (speculativeAllocated + finalAllocation > specCapValue) {
+            const allowed = Math.max(0, specCapValue - speculativeAllocated);
+            const blocked = finalAllocation - allowed;
+            finalAllocation = allowed;
+            redirectPool += blocked;
+            blockedAmount += blocked;
+            log.push(`- ${ticker.ticker}: blocked by max_speculative_total ${blocked.toFixed(2)}`);
+        }
+
+        const capValue = tickerCapValue(ticker);
+        if (finalAllocation > capValue) {
+            const blocked = finalAllocation - capValue;
+            finalAllocation = capValue;
+            redirectPool += blocked;
+            blockedAmount += blocked;
+            log.push(`- ${ticker.ticker}: blocked by ticker max_portfolio_weight ${blocked.toFixed(2)}`);
+        }
+
+        speculativeAllocated += finalAllocation;
+        addAllocation(ticker.ticker, finalAllocation, 'Speculative', 'speculative_cap');
+    }
+
+    const allocateRedirectToCore = (pool: number): number => {
+        if (pool <= 0 || coreTickers.length === 0) return pool;
+        const redirectPolicy = plan.redirectPolicy ?? 'priority';
+        const redirectOrder = plan.redirectOrder?.length ? plan.redirectOrder : coreTickers.map(t => t.ticker);
+
+        if (redirectPolicy === 'priority') {
+            let remaining = pool;
+            for (const tickerSymbol of redirectOrder) {
+                if (remaining <= 0) break;
+                const ticker = coreTickers.find(t => t.ticker === tickerSymbol);
+                if (!ticker) continue;
+                const existing = allocations.get(ticker.ticker)?.amount ?? 0;
+                const capRoom = Math.max(0, tickerCapValue(ticker) - existing);
+                const allocation = Math.min(remaining, capRoom || remaining);
+                if (allocation > 0) {
+                    addAllocation(ticker.ticker, allocation, 'Unused Upside Funds', 'redirect_priority');
+                    remaining -= allocation;
+                }
+            }
+            return remaining;
+        }
+
+        const totalCoreWeight = coreTickers.reduce((sum, t) => sum + (coreWeights.get(t.ticker) ?? t.monthly_weight ?? 0), 0);
+        if (totalCoreWeight <= 0) return pool;
+
+        let undistributed = 0;
+        for (const ticker of coreTickers) {
+            const weight = coreWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
+            const targetAmount = pool * (weight / totalCoreWeight);
+            const existing = allocations.get(ticker.ticker)?.amount ?? 0;
+            const capRoom = Math.max(0, tickerCapValue(ticker) - existing);
+            const allocation = Math.min(targetAmount, capRoom || targetAmount);
+            if (allocation > 0) {
+                addAllocation(ticker.ticker, allocation, 'Unused Upside Funds', 'redirect_pro_rata');
+            }
+            undistributed += (targetAmount - allocation);
+        }
+        return undistributed;
+    };
+
+    redirectPool = allocateRedirectToCore(redirectPool);
+
+    let leftover = 0;
+    for (const [ticker, details] of [...allocations.entries()]) {
+        if (details.amount < minOrder) {
+            allocations.delete(ticker);
+            if (plan.brokerConstraints.leftoverCashRule === 'reinvest_core') {
+                redirectPool += details.amount;
+                log.push(`- ${ticker}: below min order (${details.amount.toFixed(2)}), re-routed to redirect pool`);
+            } else {
+                leftover += details.amount;
+                log.push(`- ${ticker}: below min order (${details.amount.toFixed(2)}), held as leftover`);
+            }
+        }
+    }
+
+    if (plan.brokerConstraints.leftoverCashRule === 'reinvest_core' && redirectPool > 0) {
+        redirectPool = allocateRedirectToCore(redirectPool);
+    }
+
+    const trades: InvestmentPlanExecutionResult['trades'] = [...allocations.entries()].map(([ticker, details]) => ({
+        ticker,
+        amount: details.amount / fxRate,
+        reason: details.reason,
+        rationaleTags: [...details.tags],
+    }));
+
+    const totalInvestment = trades.reduce((sum, t) => sum + t.amount, 0);
+    const coreInvestment = trades.filter(t => t.reason === 'Core' || t.reason === 'Unused Upside Funds').reduce((sum, t) => sum + t.amount, 0);
+    const upsideInvestment = trades.filter(t => t.reason === 'Upside' || t.reason === 'Speculative').reduce((sum, t) => sum + t.amount, 0);
+
+    if (redirectPool > 0 && plan.brokerConstraints.leftoverCashRule === 'hold') {
+        leftover += redirectPool;
+        redirectPool = 0;
+    }
+
+    log.push(`- Redirect pool (unallocated): ${redirectPool.toFixed(2)} ${plan.budgetCurrency}`);
+    log.push(`- Blocked amount: ${blockedAmount.toFixed(2)} ${plan.budgetCurrency}`);
+    log.push(`- Leftover under broker minimum: ${leftover.toFixed(2)} ${plan.budgetCurrency}`);
+
+    return {
+        date: now.toISOString(),
+        totalInvestment,
+        coreInvestment,
+        upsideInvestment,
+        unusedUpsideFunds: redirectPool / fxRate,
+        trades,
+        buyList: trades.map(t => ({ ticker: t.ticker, amountInTradeCurrency: t.amount, rationaleTags: t.rationaleTags || [t.reason] })),
+        runSummary: {
+            core: coreInvestment,
+            sleeve: upsideInvestment,
+            redirect: redirectPool / fxRate,
+            leftover: leftover / fxRate,
+        },
+        status: 'success',
+        log_details: log.join('\n'),
+    };
 }
+
