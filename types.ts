@@ -283,12 +283,41 @@ export interface BrokerConstraints {
     leftoverCashRule: 'reinvest_core' | 'hold';
 }
 
+export type PriceType = 'LAST_CLOSE' | 'REALTIME_LAST';
+
+export type RedirectPolicy = 'priority' | 'pro_rata';
+
+export type TickerLifecycleStatus = 'CORE' | 'HIGH_UPSIDE' | 'WATCHLIST' | 'QUARANTINE' | 'SPECULATIVE' | 'EXCLUDED';
+
+export interface RunMarketData {
+  price: number;
+  priceTimestamp: string;
+  priceType: PriceType;
+}
+
+export interface AnalystTargetData {
+  targetPrice?: number;
+  coverageCount?: number | null;
+  targetProvider?: string;
+  targetTimestamp?: string;
+  isStale?: boolean;
+}
+
 export interface InvestmentPlanSettings {
   user_id?: string;
   monthlyBudget: number;
   budgetCurrency: 'SAR';
   executionCurrency: 'USD';
+  tradeCurrency?: 'USD' | string;
   fxRateSource: string; // e.g., 'GoogleFinance:CURRENCY:SARUSD'
+  fxRate?: number;
+  staleTargetDays?: number;
+  minCoverageThreshold?: number;
+  redirectPolicy?: RedirectPolicy;
+  redirectOrder?: string[];
+  maxHighUpsideTotal?: number;
+  maxSpeculativeTotal?: number;
+  speculativeCapPercent?: number;
   coreAllocation: number; // e.g., 0.7 for 70%
   upsideAllocation: number; // e.g., 0.3 for 30%
   minimumUpsidePercentage: number; // e.g., 25 for 25%
@@ -300,7 +329,21 @@ export interface InvestmentPlanSettings {
 export interface ProposedTrade {
     ticker: string;
     amount: number;
-    reason: 'Core' | 'Upside' | 'Rebalance' | 'Unused Upside Funds';
+    reason: 'Core' | 'Upside' | 'Rebalance' | 'Unused Upside Funds' | 'Speculative';
+    rationaleTags?: string[];
+}
+
+export interface BuyListItem {
+  ticker: string;
+  amountInTradeCurrency: number;
+  rationaleTags: string[];
+}
+
+export interface RunSummary {
+  core: number;
+  sleeve: number;
+  redirect: number;
+  leftover: number;
 }
 
 export interface InvestmentPlanExecutionResult {
@@ -310,6 +353,8 @@ export interface InvestmentPlanExecutionResult {
     upsideInvestment: number;
     unusedUpsideFunds: number;
     trades: ProposedTrade[];
+    buyList?: BuyListItem[];
+    runSummary?: RunSummary;
     status: 'success' | 'failure';
     log_details: string;
 }
@@ -322,7 +367,7 @@ export interface InvestmentPlanExecutionLog extends InvestmentPlanExecutionResul
     log_details: string; // Can be a stringified JSON of the result or an error message
 }
 
-export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Excluded';
+export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Excluded' | TickerLifecycleStatus;
 
 export interface UniverseTicker {
   id: string;
@@ -330,6 +375,13 @@ export interface UniverseTicker {
   ticker: string;
   name: string;
   status: TickerStatus;
+  monthly_weight?: number;
+  max_portfolio_weight?: number;
+  min_upside_override?: number;
+  min_coverage_override?: number;
+  pause?: boolean;
+  marketData?: RunMarketData;
+  analystTarget?: AnalystTargetData;
 }
 
 export interface StatusChangeLog {
