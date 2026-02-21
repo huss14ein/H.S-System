@@ -686,8 +686,16 @@ const InvestmentPlan: React.FC = () => {
     const [executionResult, setExecutionResult] = useState<InvestmentPlanExecutionResult | null>(null);
     const [isExecuting, setIsExecuting] = useState(false);
 
-    const corePortfolioTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'Core'), [data.portfolioUniverse]);
-    const upsideSleeveTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'High-Upside'), [data.portfolioUniverse]);
+    const normalizeTickerStatus = (status: TickerStatus): TickerStatus => {
+        if (status === 'Core') return 'CORE';
+        if (status === 'High-Upside') return 'HIGH_UPSIDE';
+        if (status === 'Watchlist') return 'WATCHLIST';
+        if (status === 'Excluded') return 'EXCLUDED';
+        return status;
+    };
+
+    const corePortfolioTickers = useMemo(() => data.portfolioUniverse.filter(t => normalizeTickerStatus(t.status) === 'CORE'), [data.portfolioUniverse]);
+    const upsideSleeveTickers = useMemo(() => data.portfolioUniverse.filter(t => normalizeTickerStatus(t.status) === 'HIGH_UPSIDE'), [data.portfolioUniverse]);
 
     useEffect(() => {
         if (data.investmentPlan) {
@@ -711,7 +719,7 @@ const InvestmentPlan: React.FC = () => {
     const handleAddNewTicker = async () => {
         if (!newTicker.ticker || !newTicker.name) return;
         try {
-            await addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+            await addUniverseTicker({ ...newTicker, status: 'WATCHLIST' });
             setNewTicker({ ticker: '', name: '' });
         } catch (error) {
             // Error already alerted in DataContext
@@ -954,11 +962,13 @@ const InvestmentPlan: React.FC = () => {
                                             <td className="px-4 py-2 font-bold text-dark">{ticker.ticker}</td>
                                             <td className="px-4 py-2 text-gray-600">{ticker.name}</td>
                                             <td className="px-4 py-2">
-                                                <select value={ticker.status} onChange={e => updateUniverseTickerStatus(ticker.id, e.target.value as TickerStatus)} className="p-1 border rounded-md">
-                                                    <option>Core</option>
-                                                    <option>High-Upside</option>
-                                                    <option>Watchlist</option>
-                                                    <option>Excluded</option>
+                                                <select value={normalizeTickerStatus(ticker.status)} onChange={e => updateUniverseTickerStatus(ticker.id, e.target.value as TickerStatus)} className="p-1 border rounded-md">
+                                                    <option value="CORE">CORE</option>
+                                                    <option value="HIGH_UPSIDE">HIGH_UPSIDE</option>
+                                                    <option value="WATCHLIST">WATCHLIST</option>
+                                                    <option value="QUARANTINE">QUARANTINE</option>
+                                                    <option value="SPECULATIVE">SPECULATIVE</option>
+                                                    <option value="EXCLUDED">EXCLUDED</option>
                                                 </select>
                                             </td>
                                             <td className="px-4 py-2 text-right">

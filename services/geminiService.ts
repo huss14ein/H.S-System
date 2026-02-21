@@ -787,12 +787,13 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
 
     const normalizeStatus = (status: UniverseTicker['status']) => {
         const map: Record<string, string> = { Core: 'CORE', 'High-Upside': 'HIGH_UPSIDE', Watchlist: 'WATCHLIST', Excluded: 'EXCLUDED' };
-        return (map[status] || status || 'WATCHLIST') as any;
+        return (map[status] || status || 'WATCHLIST') as 'CORE' | 'HIGH_UPSIDE' | 'WATCHLIST' | 'QUARANTINE' | 'SPECULATIVE' | 'EXCLUDED';
     };
 
     const coreTickers = universe.filter(t => normalizeStatus(t.status) === 'CORE');
     const highUpsideTickers = universe.filter(t => normalizeStatus(t.status) === 'HIGH_UPSIDE');
     const speculativeTickers = universe.filter(t => normalizeStatus(t.status) === 'SPECULATIVE');
+    const marketDataByTicker = new Map(universe.map(t => [t.ticker, t.marketData]));
 
     const coreBudget = plan.monthlyBudget * plan.coreAllocation;
     const sleeveBudget = plan.monthlyBudget * plan.upsideAllocation;
@@ -800,11 +801,11 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
     const upsideWeights = new Map(plan.upsideSleeve.map(p => [p.ticker, p.weight]));
 
     const allocations = new Map<string, { amount: number; reason: InvestmentPlanExecutionResult['trades'][number]['reason']; tags: string[] }>();
+    const log: string[] = [];
     let redirectPool = 0;
     let blockedAmount = 0;
     let highUpsideAllocated = 0;
     let speculativeAllocated = 0;
-    const log: string[] = [];
 
     const addAllocation = (ticker: string, amount: number, reason: InvestmentPlanExecutionResult['trades'][number]['reason'], tag: string) => {
         if (amount <= 0) return;
@@ -817,11 +818,43 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         }
     };
 
+    const distributeRedirect = (pool: number, tag: string) => {
+        if (pool <= 0 || coreTickers.length === 0) return;
+        const redirectPolicy = plan.redirectPolicy ?? 'priority';
+        const redirectOrder = plan.redirectOrder?.length ? plan.redirectOrder : coreTickers.map(t => t.ticker);
+
+        if (redirectPolicy === 'priority') {
+            let remaining = pool;
+            for (const ticker of redirectOrder) {
+                if (remaining <= 0) break;
+                const cap = universe.find(t => t.ticker === ticker)?.max_portfolio_weight;
+                const capBudget = cap ? plan.monthlyBudget * cap : Infinity;
+                const current = allocations.get(ticker)?.amount ?? 0;
+                const room = Math.max(0, capBudget - current);
+                const chunk = Math.min(remaining, room || remaining);
+                if (chunk > 0) {
+                    addAllocation(ticker, chunk, 'Unused Upside Funds', tag);
+                    remaining -= chunk;
+                }
+            }
+            if (remaining > 0) {
+                addAllocation(redirectOrder[0], remaining, 'Unused Upside Funds', `${tag}_overflow`);
+            }
+            return;
+        }
+
+        const totalCoreWeight = coreTickers.reduce((sum, t) => sum + (coreWeights.get(t.ticker) ?? t.monthly_weight ?? 0), 0);
+        if (totalCoreWeight <= 0) return;
+        for (const ticker of coreTickers) {
+            const weight = coreWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
+            addAllocation(ticker.ticker, pool * (weight / totalCoreWeight), 'Unused Upside Funds', tag);
+        }
+    };
+
     for (const ticker of coreTickers) {
         const weight = coreWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
         const planned = coreBudget * weight;
         addAllocation(ticker.ticker, planned, 'Core', 'core_monthly');
-        log.push(`- ${ticker.ticker}: CORE planned ${planned.toFixed(2)} ${plan.budgetCurrency}`);
     }
 
     for (const ticker of highUpsideTickers) {
@@ -832,14 +865,14 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
 
         if (!market?.price || !target?.targetPrice || !target.targetTimestamp) {
             redirectPool += planned;
-            log.push(`- ${ticker.ticker}: ineligible (missing market/target data), redirected ${planned.toFixed(2)}`);
+            log.push(`- ${ticker.ticker}: ineligible (missing market/target data)`);
             continue;
         }
 
         const stale = target.isStale ?? (((now.getTime() - new Date(target.targetTimestamp).getTime()) / 86400000) > staleTargetDays);
         if (stale) {
             redirectPool += planned;
-            log.push(`- ${ticker.ticker}: ineligible (stale target), redirected ${planned.toFixed(2)}`);
+            log.push(`- ${ticker.ticker}: ineligible (stale target)`);
             continue;
         }
 
@@ -850,7 +883,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
 
         if (market.price > gatePrice) {
             redirectPool += planned;
-            log.push(`- ${ticker.ticker}: ineligible (price ${market.price.toFixed(2)} > gate ${gatePrice.toFixed(2)}), redirected ${planned.toFixed(2)}`);
+            log.push(`- ${ticker.ticker}: ineligible (price ${market.price.toFixed(2)} > ${gatePrice.toFixed(2)})`);
             continue;
         }
 
@@ -861,7 +894,6 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
             finalAllocation = tickerCap;
             redirectPool += blocked;
             blockedAmount += blocked;
-            log.push(`- ${ticker.ticker}: blocked by ticker cap ${blocked.toFixed(2)}`);
         }
 
         const sleeveCapValue = plan.monthlyBudget * maxHighUpsideTotal;
@@ -871,7 +903,6 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
             finalAllocation = allowed;
             redirectPool += blocked;
             blockedAmount += blocked;
-            log.push(`- ${ticker.ticker}: blocked by max_high_upside_total ${blocked.toFixed(2)}`);
         }
 
         highUpsideAllocated += finalAllocation;
@@ -882,7 +913,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         const planned = Math.min(plan.monthlyBudget * speculativeCap, plan.monthlyBudget * (ticker.monthly_weight ?? speculativeCap));
         if (ticker.pause) {
             redirectPool += planned;
-            log.push(`- ${ticker.ticker}: speculative paused, redirected ${planned.toFixed(2)}`);
+            log.push(`- ${ticker.ticker}: speculative paused`);
             continue;
         }
 
@@ -900,39 +931,68 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         addAllocation(ticker.ticker, finalAllocation, 'Speculative', 'speculative_cap');
     }
 
-    const redirectPolicy = plan.redirectPolicy ?? 'priority';
-    const redirectOrder = plan.redirectOrder?.length ? plan.redirectOrder : coreTickers.map(t => t.ticker);
+    distributeRedirect(redirectPool, 'redirect_initial');
 
-    if (redirectPool > 0 && redirectPolicy === 'priority') {
-        let remaining = redirectPool;
-        for (const ticker of redirectOrder) {
-            if (remaining <= 0) break;
-            addAllocation(ticker, remaining, 'Unused Upside Funds', 'redirect_priority');
-            remaining = 0;
-        }
-    } else if (redirectPool > 0) {
-        const totalCoreWeight = coreTickers.reduce((sum, t) => sum + (coreWeights.get(t.ticker) ?? t.monthly_weight ?? 0), 0);
-        if (totalCoreWeight > 0) {
-            for (const ticker of coreTickers) {
-                const weight = coreWeights.get(ticker.ticker) ?? ticker.monthly_weight ?? 0;
-                addAllocation(ticker.ticker, redirectPool * (weight / totalCoreWeight), 'Unused Upside Funds', 'redirect_pro_rata');
+    const roundingRule = plan.brokerConstraints.roundingRule;
+    const normalizeAmountForBroker = (ticker: string, amount: number) => {
+        const minimum = plan.brokerConstraints.minimumOrderSize;
+        if (amount < minimum) return { executable: false, executableAmount: 0, residual: amount, reason: 'below_min_order' };
+
+        if (!plan.brokerConstraints.allowFractionalShares) {
+            const price = marketDataByTicker.get(ticker)?.price;
+            if (price && price > 0) {
+                const rawShares = amount / price;
+                const shares = roundingRule === 'floor' ? Math.floor(rawShares) : roundingRule === 'ceil' ? Math.ceil(rawShares) : Math.round(rawShares);
+                const executableAmount = shares * price;
+                const residual = Math.max(0, amount - executableAmount);
+                if (shares < 1 || executableAmount < minimum) {
+                    return { executable: false, executableAmount: 0, residual: amount, reason: 'whole_share_below_min' };
+                }
+                return { executable: true, executableAmount, residual, reason: 'ok' };
             }
         }
-    }
 
-    let leftover = 0;
+        return { executable: true, executableAmount: amount, residual: 0, reason: 'ok' };
+    };
+
     const trades: InvestmentPlanExecutionResult['trades'] = [];
+    let failedBrokerPool = 0;
+    let leftover = 0;
+
     for (const [ticker, details] of allocations.entries()) {
-        if (details.amount < plan.brokerConstraints.minimumOrderSize) {
-            leftover += details.amount;
+        const check = normalizeAmountForBroker(ticker, details.amount);
+        if (!check.executable) {
+            failedBrokerPool += details.amount;
+            log.push(`- ${ticker}: not traded (${check.reason})`);
             continue;
         }
+
+        if (check.residual > 0) {
+            if (plan.brokerConstraints.leftoverCashRule === 'reinvest_core') {
+                failedBrokerPool += check.residual;
+            } else {
+                leftover += check.residual;
+            }
+        }
+
         trades.push({
             ticker,
-            amount: details.amount / fxRate,
+            amount: check.executableAmount / fxRate,
             reason: details.reason,
             rationaleTags: [...new Set(details.tags)]
         });
+    }
+
+    if (failedBrokerPool > 0 && plan.brokerConstraints.leftoverCashRule === 'reinvest_core' && coreTickers.length > 0) {
+        const firstCore = coreTickers[0].ticker;
+        trades.push({
+            ticker: firstCore,
+            amount: failedBrokerPool / fxRate,
+            reason: 'Unused Upside Funds',
+            rationaleTags: ['redirect_broker_failures']
+        });
+    } else if (failedBrokerPool > 0) {
+        leftover += failedBrokerPool;
     }
 
     const totalInvestment = trades.reduce((sum, t) => sum + t.amount, 0);
@@ -942,7 +1002,8 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
     log.unshift('## Monthly Core + Analyst-Upside Engine Run');
     log.push(`- Redirect pool: ${redirectPool.toFixed(2)} ${plan.budgetCurrency}`);
     log.push(`- Blocked amount: ${blockedAmount.toFixed(2)} ${plan.budgetCurrency}`);
-    log.push(`- Leftover under broker minimum: ${leftover.toFixed(2)} ${plan.budgetCurrency}`);
+    log.push(`- Broker-failed pool: ${failedBrokerPool.toFixed(2)} ${plan.budgetCurrency}`);
+    log.push(`- Leftover carry: ${leftover.toFixed(2)} ${plan.budgetCurrency}`);
 
     return {
         date: now.toISOString(),
@@ -955,10 +1016,11 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         runSummary: {
             core: coreInvestment,
             sleeve: upsideInvestment,
-            redirect: redirectPool / fxRate,
+            redirect: (redirectPool + failedBrokerPool) / fxRate,
             leftover: leftover / fxRate,
         },
         status: 'success',
         log_details: log.join('\n')
     };
 }
+
