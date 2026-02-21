@@ -148,6 +148,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
+                notifications: [],
                 investmentPlan: (investmentPlan as any).data 
                     ? { 
                         ...initialData.investmentPlan, 
@@ -185,7 +186,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
-        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades'];
+        const tables = [
+            'accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings',
+            'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist',
+            'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings',
+            'planned_trades', 'investment_plan', 'portfolio_universe', 'status_change_log',
+            'execution_logs'
+        ];
         await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);

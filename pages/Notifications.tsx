@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -72,6 +72,16 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
     }, [data.priceAlerts, data.plannedTrades, simulatedPrices]);
     
     const [notifications, setNotifications] = useState<Notification[]>(allNotifications);
+
+    useEffect(() => {
+        setNotifications(prev => {
+            const readMap = new Map(prev.map(n => [n.id, n.isRead]));
+            return allNotifications.map(n => ({
+                ...n,
+                isRead: readMap.get(n.id) ?? n.isRead,
+            }));
+        });
+    }, [allNotifications]);
 
     const filteredNotifications = useMemo(() => {
         if (filter === 'Unread') {
