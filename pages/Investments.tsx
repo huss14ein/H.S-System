@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, executeInvestmentPlanStrategy } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog } from '../types';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -47,6 +47,75 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 ];
 
 
+
+const PlanSummary: React.FC = () => {
+    const { data } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
+    
+    const investmentProgress = useMemo(() => {
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, core: 0, upside: 0 };
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        const monthlyInvested = data.investmentTransactions
+            .filter(t => {
+                const d = new Date(t.date);
+                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
+            })
+            .reduce((sum, t) => sum + t.total, 0);
+        
+        return {
+            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            amount: monthlyInvested,
+            target: data.investmentPlan.monthlyBudget,
+            core: data.investmentPlan.coreAllocation,
+            upside: data.investmentPlan.upsideAllocation
+        };
+    }, [data]);
+
+    if (!data?.investmentPlan) return null;
+
+    return (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                <div className="flex-1">
+                    <div className="flex items-center space-x-2 mb-2">
+                        <ClipboardDocumentListIcon className="h-5 w-5 text-primary" />
+                        <h3 className="text-lg font-bold text-dark">Active Investment Plan</h3>
+                    </div>
+                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target)}</span> with a {investmentProgress.core}% Core and {investmentProgress.upside}% High-Upside split.</p>
+                    
+                    <div className="space-y-2">
+                        <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
+                            <span>Monthly Progress</span>
+                            <span>{investmentProgress.percent.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+                            <div 
+                                className="h-full bg-primary transition-all duration-1000 ease-out" 
+                                style={{ width: `${investmentProgress.percent}%` }}
+                            />
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500">
+                            <span>Invested: {formatCurrencyString(investmentProgress.amount)}</span>
+                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount))}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 lg:w-72">
+                    <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Core Target</p>
+                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * (investmentProgress.core / 100))}</p>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Upside Target</p>
+                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * (investmentProgress.upside / 100))}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
@@ -509,7 +578,12 @@ const PlatformCard: React.FC<{
 
     const { totalValue, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings);
-        const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+        
+        const totalValue = allHoldings.reduce((sum, h) => {
+            const priceInfo = simulatedPrices[h.symbol];
+            const currentVal = priceInfo ? (priceInfo.price * h.quantity) : h.currentValue;
+            return sum + currentVal;
+        }, 0);
         
         // Sum all 'buy' transactions to get the total capital invested.
         const totalInvested = transactions
@@ -539,9 +613,12 @@ const PlatformCard: React.FC<{
     }, [portfolios, transactions, simulatedPrices]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
+        const priceInfo = simulatedPrices[h.symbol];
+        const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
+        const liveValue = currentMktPrice * h.quantity;
         const totalCost = h.avgCost * h.quantity;
-        const gainLoss = h.currentValue - totalCost;
-        return { ...h, totalCost, gainLoss };
+        const gainLoss = liveValue - totalCost;
+        return { ...h, currentValue: liveValue, totalCost, gainLoss };
     }).sort((a,b) => b.currentValue - a.currentValue);
     
     const getGoalName = (goalId?: string) => goalId ? goals.find(g => g.id === goalId)?.name : undefined;
@@ -686,8 +763,66 @@ const InvestmentPlan: React.FC = () => {
     const [executionResult, setExecutionResult] = useState<InvestmentPlanExecutionResult | null>(null);
     const [isExecuting, setIsExecuting] = useState(false);
 
-    const corePortfolioTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'Core'), [data.portfolioUniverse]);
-    const upsideSleeveTickers = useMemo(() => data.portfolioUniverse.filter(t => t.status === 'High-Upside'), [data.portfolioUniverse]);
+    const unifiedUniverse = useMemo(() => {
+        const universeMap = new Map<string, UniverseTicker & { source?: string }>();
+        
+        // 1. Start with explicit universe
+        data.portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
+        
+        // 2. Add holdings
+        data.investments.flatMap(p => p.holdings).forEach(h => {
+            if (!universeMap.has(h.symbol)) {
+                universeMap.set(h.symbol, {
+                    id: `holding-${h.id}`,
+                    ticker: h.symbol,
+                    name: h.name || h.symbol,
+                    status: 'Core',
+                    source: 'Holding'
+                });
+            } else {
+                const existing = universeMap.get(h.symbol)!;
+                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
+            }
+        });
+        
+        // 3. Add watchlist
+        data.watchlist.forEach(w => {
+            if (!universeMap.has(w.symbol)) {
+                universeMap.set(w.symbol, {
+                    id: `watchlist-${w.symbol}`,
+                    ticker: w.symbol,
+                    name: w.name,
+                    status: 'Watchlist',
+                    source: 'Watchlist'
+                });
+            } else {
+                const existing = universeMap.get(w.symbol)!;
+                if (!existing.source?.includes('Watchlist')) {
+                    universeMap.set(w.symbol, { ...existing, source: `${existing.source} + Watchlist` });
+                }
+            }
+        });
+        
+        // 4. Add planned trades
+        data.plannedTrades.forEach(t => {
+            if (!universeMap.has(t.symbol)) {
+                universeMap.set(t.symbol, {
+                    id: `planned-${t.id}`,
+                    ticker: t.symbol,
+                    name: t.name || t.symbol,
+                    status: 'Watchlist',
+                    source: 'Trade Request'
+                });
+            } else {
+                const existing = universeMap.get(t.symbol)!;
+                if (!existing.source?.includes('Trade Request')) {
+                    universeMap.set(t.symbol, { ...existing, source: `${existing.source} + Trade Request` });
+                }
+            }
+        });
+        
+        return Array.from(universeMap.values());
+    }, [data.portfolioUniverse, data.investments, data.watchlist, data.plannedTrades]);
 
     useEffect(() => {
         if (data.investmentPlan) {
@@ -723,6 +858,19 @@ const InvestmentPlan: React.FC = () => {
         alert('Investment plan saved!');
     };
 
+    const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
+        if (ticker.source === 'Universe' || ticker.source?.includes('Universe')) {
+            await updateUniverseTickerStatus(ticker.id, newStatus);
+        } else {
+            // Promote virtual ticker to universe
+            await addUniverseTicker({
+                ticker: ticker.ticker,
+                name: ticker.name,
+                status: newStatus
+            });
+        }
+    };
+
     const handleExecutePlan = async () => {
         setIsExecuting(true);
         setExecutionResult(null);
@@ -745,53 +893,6 @@ const InvestmentPlan: React.FC = () => {
         }
         setIsExecuting(false);
     };
-
-    const handlePortfolioWeightChange = (
-        portfolioType: 'corePortfolio' | 'upsideSleeve',
-        ticker: string,
-        weight: number
-    ) => {
-        setPlan(prev => {
-            const updatedPortfolio = [...prev[portfolioType]];
-            const tickerIndex = updatedPortfolio.findIndex(p => p.ticker === ticker);
-    
-            if (tickerIndex > -1) {
-                if (isNaN(weight) || weight <= 0) {
-                    updatedPortfolio.splice(tickerIndex, 1);
-                } else {
-                    updatedPortfolio[tickerIndex] = { ...updatedPortfolio[tickerIndex], weight };
-                }
-            } else if (weight > 0) {
-                updatedPortfolio.push({ ticker, weight });
-            }
-            
-            return { ...prev, [portfolioType]: updatedPortfolio };
-        });
-    };
-
-    const coreWeightSum = useMemo(() => {
-        return plan.corePortfolio.reduce((sum, p) => sum + (p.weight || 0), 0);
-    }, [plan.corePortfolio]);
-
-    const upsideWeightSum = useMemo(() => {
-        return plan.upsideSleeve.reduce((sum, p) => sum + (p.weight || 0), 0);
-    }, [plan.upsideSleeve]);
-
-    useEffect(() => {
-        const coreTickers = new Set(corePortfolioTickers.map(t => t.ticker));
-        const upsideTickers = new Set(upsideSleeveTickers.map(t => t.ticker));
-
-        const updatedCorePortfolio = plan.corePortfolio.filter(p => coreTickers.has(p.ticker));
-        const updatedUpsideSleeve = plan.upsideSleeve.filter(p => upsideTickers.has(p.ticker));
-
-        if (updatedCorePortfolio.length !== plan.corePortfolio.length || updatedUpsideSleeve.length !== plan.upsideSleeve.length) {
-            setPlan(prev => ({
-                ...prev,
-                corePortfolio: updatedCorePortfolio,
-                upsideSleeve: updatedUpsideSleeve,
-            }));
-        }
-    }, [corePortfolioTickers, upsideSleeveTickers, plan.corePortfolio, plan.upsideSleeve]);
 
     return (
         <div className="space-y-6">
@@ -828,6 +929,25 @@ const InvestmentPlan: React.FC = () => {
                                 <label className="block text-sm font-medium text-gray-700">Minimum Analyst Upside (%)</label>
                                 <input type="number" value={plan.minimumUpsidePercentage} onChange={e => handlePlanChange('minimumUpsidePercentage', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Stale Days (Analyst Target)</label>
+                                <input type="number" value={plan.stale_days} onChange={e => handlePlanChange('stale_days', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Min Coverage (Analysts)</label>
+                                <input type="number" value={plan.min_coverage_threshold} onChange={e => handlePlanChange('min_coverage_threshold', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Redirect Policy</label>
+                                <select value={plan.redirect_policy} onChange={e => handlePlanChange('redirect_policy', e.target.value)} className="mt-1 w-full p-2 border rounded-md">
+                                    <option value="pro-rata">Pro-rata (Balanced)</option>
+                                    <option value="priority">Priority (Sequential)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Target Provider</label>
+                                <input type="text" value={plan.target_provider} onChange={e => handlePlanChange('target_provider', e.target.value)} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g. TipRanks, Yahoo Finance" />
+                            </div>
                         </div>
                     </div>
 
@@ -861,80 +981,10 @@ const InvestmentPlan: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Portfolio Definitions */}
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Definitions</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div>
-                                <div className="flex justify-between items-baseline mb-2">
-                                    <h3 className="font-semibold text-dark">Core Portfolio</h3>
-                                    <span className={`text-sm font-bold ${Math.round(coreWeightSum * 100) === 100 ? 'text-green-600' : 'text-red-600'}`}>
-                                        Total: {Math.round(coreWeightSum * 100)}%
-                                    </span>
-                                </div>
-                                <div className="space-y-2">
-                                    {corePortfolioTickers.length > 0 ? (
-                                        corePortfolioTickers.map(ticker => {
-                                            const definition = plan.corePortfolio.find(p => p.ticker === ticker.ticker);
-                                            return (
-                                                <div key={ticker.id} className="flex items-center justify-between gap-4">
-                                                    <label className="text-sm text-gray-600 flex-grow">{ticker.name} ({ticker.ticker})</label>
-                                                    <div className="flex items-center gap-2">
-                                                        <input
-                                                            type="number"
-                                                            value={definition ? definition.weight * 100 : ''}
-                                                            onChange={e => handlePortfolioWeightChange('corePortfolio', ticker.ticker, parseFloat(e.target.value) / 100)}
-                                                            className="w-24 p-1 border rounded-md text-right"
-                                                            placeholder="0"
-                                                        />
-                                                        <span className="text-sm text-gray-500">%</span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        <p className="text-sm text-gray-500">No tickers set to 'Core' in the universe.</p>
-                                    )}
-                                </div>
-                            </div>
-                            <div>
-                                <div className="flex justify-between items-baseline mb-2">
-                                    <h3 className="font-semibold text-dark">High-Upside Sleeve</h3>
-                                    <span className={`text-sm font-bold ${Math.round(upsideWeightSum * 100) === 100 ? 'text-green-600' : 'text-red-600'}`}>
-                                        Total: {Math.round(upsideWeightSum * 100)}%
-                                    </span>
-                                </div>
-                                <div className="space-y-2">
-                                    {upsideSleeveTickers.length > 0 ? (
-                                        upsideSleeveTickers.map(ticker => {
-                                            const definition = plan.upsideSleeve.find(p => p.ticker === ticker.ticker);
-                                            return (
-                                                <div key={ticker.id} className="flex items-center justify-between gap-4">
-                                                    <label className="text-sm text-gray-600 flex-grow">{ticker.name} ({ticker.ticker})</label>
-                                                    <div className="flex items-center gap-2">
-                                                        <input
-                                                            type="number"
-                                                            value={definition ? definition.weight * 100 : ''}
-                                                            onChange={e => handlePortfolioWeightChange('upsideSleeve', ticker.ticker, parseFloat(e.target.value) / 100)}
-                                                            className="w-24 p-1 border rounded-md text-right"
-                                                            placeholder="0"
-                                                        />
-                                                        <span className="text-sm text-gray-500">%</span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        <p className="text-sm text-gray-500">No tickers set to 'High-Upside' in the universe.</p>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     {/* Portfolio Universe */}
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Universe</h2>
+                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Universe & Weights</h2>
+                        <p className="text-sm text-gray-500 mb-4">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
                         <div className="flex gap-2 mb-4">
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow p-2 border rounded-md" />
@@ -946,23 +996,52 @@ const InvestmentPlan: React.FC = () => {
                                     <th className="px-4 py-2 text-left font-medium text-gray-500">Ticker</th>
                                     <th className="px-4 py-2 text-left font-medium text-gray-500">Name</th>
                                     <th className="px-4 py-2 text-left font-medium text-gray-500">Status</th>
+                                    <th className="px-4 py-2 text-center font-medium text-gray-500">Monthly Wt</th>
+                                    <th className="px-4 py-2 text-center font-medium text-gray-500">Max Pos Wt</th>
                                     <th className="px-4 py-2 text-right font-medium text-gray-500">Actions</th>
                                 </tr></thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {data.portfolioUniverse.map(ticker => (
-                                        <tr key={ticker.id}>
-                                            <td className="px-4 py-2 font-bold text-dark">{ticker.ticker}</td>
+                                    {unifiedUniverse.map(ticker => (
+                                        <tr key={ticker.id} className="hover:bg-gray-50">
+                                            <td className="px-4 py-2 font-bold text-dark">
+                                                {ticker.ticker}
+                                                <div className="text-[10px] text-gray-400 font-normal">{ticker.source}</div>
+                                            </td>
                                             <td className="px-4 py-2 text-gray-600">{ticker.name}</td>
                                             <td className="px-4 py-2">
-                                                <select value={ticker.status} onChange={e => updateUniverseTickerStatus(ticker.id, e.target.value as TickerStatus)} className="p-1 border rounded-md">
+                                                <select value={ticker.status} onChange={e => handleStatusUpdate(ticker, e.target.value as TickerStatus)} className="p-1 border rounded-md text-xs">
                                                     <option>Core</option>
                                                     <option>High-Upside</option>
                                                     <option>Watchlist</option>
+                                                    <option>Quarantine</option>
+                                                    <option>Speculative</option>
                                                     <option>Excluded</option>
                                                 </select>
                                             </td>
+                                            <td className="px-4 py-2 text-center">
+                                                <input 
+                                                    type="number" 
+                                                    value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
+                                                    onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
+                                                    className="w-16 p-1 border rounded text-right text-xs"
+                                                    placeholder="0"
+                                                />
+                                                <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                            </td>
+                                            <td className="px-4 py-2 text-center">
+                                                <input 
+                                                    type="number" 
+                                                    value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
+                                                    onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
+                                                    className="w-16 p-1 border rounded text-right text-xs"
+                                                    placeholder="0"
+                                                />
+                                                <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                            </td>
                                             <td className="px-4 py-2 text-right">
-                                                <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
+                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) && (
+                                                    <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -998,7 +1077,11 @@ const InvestmentPlan: React.FC = () => {
                                     <dd className="font-mono text-right">{formatCurrencyString(executionResult.coreInvestment)}</dd>
                                     <dt className="text-gray-600">Upside Allocation:</dt>
                                     <dd className="font-mono text-right">{formatCurrencyString(executionResult.upsideInvestment)}</dd>
-                                    <dt className="text-gray-600">Reallocated Funds:</dt>
+                                    <dt className="text-gray-600">Speculative Allocation:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.speculativeInvestment)}</dd>
+                                    <dt className="text-gray-600">Redirected Funds:</dt>
+                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.redirectedInvestment)}</dd>
+                                    <dt className="text-gray-600">Unused Funds:</dt>
                                     <dd className="font-mono text-right">{formatCurrencyString(executionResult.unusedUpsideFunds)}</dd>
                                 </dl>
                             </div>
@@ -1067,26 +1150,36 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
     }
     
     const allHoldings = data.investments.flatMap(p => p.holdings || []);
+    const allCommodities = data.commodityHoldings || [];
     
-    const totalValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+    const totalInvestmentsValue = allHoldings.reduce((sum, h) => {
+        const priceInfo = simulatedPrices[h.symbol];
+        return sum + (priceInfo ? (priceInfo.price * h.quantity) : h.currentValue);
+    }, 0);
+    const totalCommoditiesValue = allCommodities.reduce((sum, ch) => {
+        const priceInfo = simulatedPrices[ch.symbol];
+        return sum + (priceInfo ? (priceInfo.price * ch.quantity) : ch.currentValue);
+    }, 0);
+    const totalValue = totalInvestmentsValue + totalCommoditiesValue;
 
     const totalInvested = data.investmentTransactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
+    const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
     const totalWithdrawn = Math.abs(data.investmentTransactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
-    const netCapital = totalInvested - totalWithdrawn;
+    const netCapital = totalInvested + commodityCost - totalWithdrawn;
     
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const totalDailyPnL = allHoldings.reduce((sum, h) => {
-        const priceInfo = simulatedPrices[h.symbol];
-        return priceInfo ? sum + (priceInfo.change * h.quantity) : sum;
+    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => {
+        const priceInfo = simulatedPrices[item.symbol];
+        return priceInfo ? sum + (priceInfo.change * item.quantity) : sum;
     }, 0);
 
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data.investments, data.investmentTransactions, simulatedPrices]);
+  }, [data.investments, data.investmentTransactions, data.commodityHoldings, simulatedPrices]);
 
 
   const getTrendString = (trend: number) => {
@@ -1217,6 +1310,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
                 tooltip="Total profit or loss for all investments based on today's simulated market changes."
             />
         </div>
+
+        <PlanSummary />
       
         <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">

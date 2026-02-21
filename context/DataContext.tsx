@@ -18,6 +18,10 @@ const initialData: FinancialData = {
         coreAllocation: 0.7,
         upsideAllocation: 0.3,
         minimumUpsidePercentage: 25,
+        stale_days: 30,
+        min_coverage_threshold: 3,
+        redirect_policy: 'pro-rata',
+        target_provider: 'Default',
         corePortfolio: [],
         upsideSleeve: [],
         brokerConstraints: {
@@ -72,7 +76,7 @@ interface DataContextType {
   deletePlannedTrade: (planId: string) => Promise<void>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
-  updateUniverseTickerStatus: (tickerId: string, status: TickerStatus) => Promise<void>;
+  updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
   deleteUniverseTicker: (tickerId: string) => Promise<void>;
   addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
@@ -165,6 +169,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     useEffect(() => {
         fetchData();
+        
+        // Safety timeout to ensure loading state is cleared even if Supabase hangs
+        const timeoutId = setTimeout(() => {
+            setLoading(false);
+        }, 8000);
+        
+        return () => clearTimeout(timeoutId);
     }, [auth?.user]);
     
     // Helper to add user_id to any object
@@ -721,7 +732,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const updateUniverseTickerStatus = async (tickerId: string, status: TickerStatus) => {
+    const updateUniverseTickerStatus = async (tickerId: string, status: TickerStatus, updates: Partial<UniverseTicker> = {}) => {
         if (!supabase || !auth?.user) return;
         const ticker = data.portfolioUniverse.find(t => t.id === tickerId);
         if (!ticker) return;
@@ -733,20 +744,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             timestamp: new Date().toISOString(),
         };
 
-        const { error: logError } = await supabase.from('status_change_log').insert(withUser(logEntry));
-        if (logError) {
-            console.error("Error logging status change:", logError);
-            return; // Don't update status if logging fails
+        if (ticker.status !== status) {
+            const { error: logError } = await supabase.from('status_change_log').insert(withUser(logEntry));
+            if (logError) {
+                console.error("Error logging status change:", logError);
+                // Continue anyway, status change is more important
+            }
         }
 
-        const { error: updateError } = await supabase.from('portfolio_universe').update({ status }).match({ id: tickerId, user_id: auth.user.id });
+        const { error: updateError } = await supabase.from('portfolio_universe').update({ status, ...updates }).match({ id: tickerId, user_id: auth.user.id });
         if (updateError) {
             console.error("Error updating ticker status:", updateError);
         } else {
             setData(prev => ({
                 ...prev,
-                portfolioUniverse: prev.portfolioUniverse.map(t => t.id === tickerId ? { ...t, status } : t),
-                statusChangeLog: [...prev.statusChangeLog, { ...logEntry, id: `log-${Date.now()}` }],
+                portfolioUniverse: prev.portfolioUniverse.map(t => t.id === tickerId ? { ...t, status, ...updates } : t),
+                statusChangeLog: ticker.status !== status ? [...prev.statusChangeLog, { ...logEntry, id: `log-${Date.now()}` }] : prev.statusChangeLog,
             }));
         }
     };

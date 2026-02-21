@@ -775,21 +775,73 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
     } catch (error) { return formatAiError(error); }
 };
 
+export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+    if (symbols.length === 0) return {};
+
+    try {
+        const prompt = `
+            Fetch the current real-time market prices for the following stock/crypto symbols: ${symbols.join(', ')}.
+            For each symbol, provide:
+            1. The current price.
+            2. The absolute change from the previous close.
+            3. The percentage change from the previous close.
+            
+            Return the result as a JSON object where the keys are the symbols and the values are objects with 'price', 'change', and 'changePercent' properties.
+            Example: {"AAPL": {"price": 185.20, "change": 1.50, "changePercent": 0.81}}
+        `;
+
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    additionalProperties: {
+                        type: Type.OBJECT,
+                        properties: {
+                            price: { type: Type.NUMBER },
+                            change: { type: Type.NUMBER },
+                            changePercent: { type: Type.NUMBER }
+                        },
+                        required: ["price", "change", "changePercent"]
+                    }
+                },
+                tools: [{ googleSearch: {} }],
+            }
+        });
+
+        const prices = robustJsonParse(response.text);
+        return prices || {};
+
+    } catch (error) {
+        console.error("Error fetching live prices:", error);
+        throw error;
+    }
+};
+
 export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings, universe: UniverseTicker[]): Promise<InvestmentPlanExecutionResult> {
     console.log('Executing investment plan with:', { plan, universe });
 
     const coreTickers = universe.filter(t => t.status === 'Core');
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
+    const speculativeTickers = universe.filter(t => t.status === 'Speculative');
+    const quarantineTickers = universe.filter(t => t.status === 'Quarantine');
 
     const prompt = `
     You are an extremely precise, rules-based financial execution AI. Your sole task is to generate a list of trades based on a strict set of instructions. Adhere to all constraints perfectly.
 
     **Execution Date:** ${new Date().toISOString().split('T')[0]}
 
-    **1. Core Plan Details:**
+    **1. Global Configuration:**
     - Monthly Budget: ${plan.monthlyBudget} ${plan.budgetCurrency}
     - Core Allocation: ${plan.coreAllocation * 100}% (${plan.monthlyBudget * plan.coreAllocation} ${plan.budgetCurrency})
     - High-Upside Allocation: ${plan.upsideAllocation * 100}% (${plan.monthlyBudget * plan.upsideAllocation} ${plan.budgetCurrency})
+    - Min Upside Threshold: ${plan.minimumUpsidePercentage}%
+    - Stale Days: ${plan.stale_days}
+    - Min Coverage Threshold: ${plan.min_coverage_threshold}
+    - Redirect Policy: ${plan.redirect_policy}
+    - Target Provider: ${plan.target_provider}
 
     **2. Broker & Execution Constraints:**
     - Allow Fractional Shares: ${plan.brokerConstraints.allowFractionalShares}
@@ -798,39 +850,54 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
     - Leftover Cash Rule: ${plan.brokerConstraints.leftoverCashRule}
 
     **3. Portfolio Universe & Definitions:**
-    - Core Portfolio (${coreTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.corePortfolio)}
-    - High-Upside Sleeve (${upsideTickers.map(t => t.ticker).join(', ')}): Weights ${JSON.stringify(plan.upsideSleeve)}
-    - Watchlist/Excluded: These tickers must be ignored completely.
+    - Core Portfolio: ${JSON.stringify(coreTickers.map(t => ({ ticker: t.ticker, weight: t.monthly_weight, max_weight: t.max_position_weight })))}
+    - High-Upside Sleeve: ${JSON.stringify(upsideTickers.map(t => ({ ticker: t.ticker, weight: t.monthly_weight, max_weight: t.max_position_weight, threshold_override: t.min_upside_threshold_override, coverage_override: t.min_coverage_override })))}
+    - Speculative Assets: ${JSON.stringify(speculativeTickers.map(t => ({ ticker: t.ticker, weight: t.monthly_weight, max_weight: t.max_position_weight })))}
+    - Quarantine Assets: ${JSON.stringify(quarantineTickers.map(t => ({ ticker: t.ticker })))} (Hold-only, 0 new allocation)
+    - Watchlist/Excluded: Ignore completely.
 
     **4. Execution Logic (Strict Order):**
 
-    **Step A: Evaluate High-Upside Sleeve**
-    1.  For each ticker in the High-Upside Sleeve, you MUST use Google Search to find the current stock price and a valid, non-stale (less than 3 months old) consensus analyst price target.
-    2.  Calculate implied upside: ((Target / Price) - 1) * 100.
-    3.  A ticker is **ELIGIBLE** only if its implied upside is >= ${plan.minimumUpsidePercentage}% AND all data (price, target) was successfully found and is not stale.
-    4.  Create a detailed eligibility list in your reasoning, stating for each ticker if it was eligible and why (e.g., "AAPL: Eligible, 30% upside", "GOOG: Ineligible, upside 15% < ${plan.minimumUpsidePercentage}%", "TSLA: Ineligible, no valid consensus target found").
+    **Step A: Data Retrieval & Validation**
+    1. For each tradable asset (Core, High-Upside, Speculative), use Google Search to find:
+       - Current Price
+       - Analyst Price Target (from ${plan.target_provider} if possible)
+       - Target Date/Timestamp
+       - Coverage (number of analysts)
+    2. Mark targets as STALE if older than ${plan.stale_days} days.
 
-    **Step B: Calculate Allocations**
-    1.  Sum the weights of all **ELIGIBLE** High-Upside tickers. Let's call this 'totalEligibleWeight'.
-    2.  Calculate the total funds to invest in the High-Upside sleeve: (High-Upside Allocation Budget) * totalEligibleWeight. Note: If totalEligibleWeight is not 1.0, some funds will be unused.
-    3.  For each **ELIGIBLE** ticker, calculate its portion of the investment: (ticker.weight / totalEligibleWeight) * (Total High-Upside Investment).
-    4.  Any funds from the High-Upside budget not allocated due to ineligibility are now 'Unused Upside Funds'.
+    **Step B: Eligibility Evaluation (High-Upside Gate)**
+    1. A High-Upside asset is ELIGIBLE only if:
+       - Target exists AND is not stale.
+       - Implied upside >= threshold (Threshold is ${plan.minimumUpsidePercentage}% or ticker override).
+       - Upside Rule: Eligible if CurrentPrice <= TargetPrice / (1 + (Threshold/100)).
+    2. Confidence Gate (Low Coverage):
+       - If Coverage < ${plan.min_coverage_threshold} (or ticker override), apply STRICTER conditions:
+         - Choice: Require 10% higher upside than default.
+    3. Create an eligibility list in your audit log.
 
-    **Step C: Handle Unused Upside Funds**
-    1.  Based on the 'Leftover Cash Rule' (${plan.brokerConstraints.leftoverCashRule}), either hold these funds or redirect them to the Core portfolio.
-    2.  If redirecting, add the 'Unused Upside Funds' to the Core Allocation budget for the final step.
+    **Step C: Initial Allocation**
+    1. CORE: Allocate (Budget * Core%) according to monthly_weights.
+    2. HIGH_UPSIDE: Allocate (Budget * High-Upside%) according to monthly_weights ONLY for ELIGIBLE assets.
+    3. SPECULATIVE: Allocate a tiny capped amount based on monthly_weights. Never boosted.
+    4. QUARANTINE: Allocate 0.
 
-    **Step D: Calculate Core Portfolio Trades**
-    1.  The final Core budget is (Initial Core Allocation Budget) + (Redirected Unused Upside Funds).
-    2.  Allocate this final Core budget to all tickers in the Core Portfolio according to their specified weights.
+    **Step D: Redirect Pool (No Idle Cash)**
+    1. Any uninvested amount from ineligible high-upside, stale data, missing price, blocked by caps, or speculative pauses MUST be added to a 'Redirect Pool'.
+    2. Redistribute the Redirect Pool to CORE assets using the Redirect Policy (${plan.redirect_policy}).
+       - If 'pro-rata', distribute based on core weights.
+       - If 'priority', distribute to the first core asset until its max_weight is hit, then the next.
 
-    **Step E: Finalize Trades & Generate Audit Log**
-    1.  For every calculated trade amount from Step B and D, apply the broker constraints (min order size, rounding, fractional shares).
-    2.  The final JSON output MUST contain a 'log_details' string. This string is a comprehensive audit log in Markdown format explaining every step: eligibility checks, calculations, re-allocations, and final trade decisions with amounts.
-    3.  The 'trades' array should only contain the final, executable trades after all rules have been applied.
+    **Step E: Risk Caps & Constraints**
+    1. Enforce max_position_weight for every trade. Block excess and move to Redirect Pool.
+    2. Apply broker constraints (min order size, rounding). Move leftovers to Redirect Pool and redistribute to Core.
+
+    **Step F: Finalize & Log**
+    1. The final JSON output MUST contain a 'log_details' string (Markdown).
+    2. Log: Prices used, targets used (provider/date/stale), eligibility results + reasons, planned vs final allocations, redirect pool distribution, blocked trades + reasons.
 
     **Output Schema:**
-    You must call the 'record_investment_trades' function with the results of your analysis.
+    You must call the 'record_investment_trades' function.
     `;
 
     const recordTradesFunction: FunctionDeclaration = {
@@ -842,6 +909,8 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
                 totalInvestment: { type: Type.NUMBER },
                 coreInvestment: { type: Type.NUMBER },
                 upsideInvestment: { type: Type.NUMBER },
+                speculativeInvestment: { type: Type.NUMBER },
+                redirectedInvestment: { type: Type.NUMBER },
                 unusedUpsideFunds: { type: Type.NUMBER },
                 status: { type: Type.STRING, enum: ['success', 'failure'] },
                 log_details: { type: Type.STRING, description: 'Markdown formatted audit log of the execution.' },
@@ -858,7 +927,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
                     },
                 },
             },
-            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'unusedUpsideFunds', 'status', 'log_details', 'trades'],
+            required: ['totalInvestment', 'coreInvestment', 'upsideInvestment', 'speculativeInvestment', 'redirectedInvestment', 'unusedUpsideFunds', 'status', 'log_details', 'trades'],
         },
     };
 

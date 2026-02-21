@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import Header from './Header';
-import Sidebar from './Sidebar';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
@@ -35,19 +34,14 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
 
 
   return (
-    <div className="min-h-screen bg-slate-50 text-gray-800 flex">
-      {/* Sidebar for Desktop */}
-      <Sidebar activePage={activePage} setActivePage={setActivePage} />
-
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} />
-        
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto animate-fadeIn">
-              {children}
-          </div>
-        </main>
-      </div>
+    <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
+      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} />
+      
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto animate-fadeIn">
+            {children}
+        </div>
+      </main>
       
       <QuickActionsSidebar onAction={triggerPageAction} />
       <CommandPalette 

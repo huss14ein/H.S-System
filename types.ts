@@ -292,6 +292,10 @@ export interface InvestmentPlanSettings {
   coreAllocation: number; // e.g., 0.7 for 70%
   upsideAllocation: number; // e.g., 0.3 for 30%
   minimumUpsidePercentage: number; // e.g., 25 for 25%
+  stale_days: number;
+  min_coverage_threshold: number;
+  redirect_policy: 'priority' | 'pro-rata';
+  target_provider: string;
   corePortfolio: CorePortfolioDefinition[];
   upsideSleeve: UpsideSleeveDefinition[];
   brokerConstraints: BrokerConstraints;
@@ -300,7 +304,7 @@ export interface InvestmentPlanSettings {
 export interface ProposedTrade {
     ticker: string;
     amount: number;
-    reason: 'Core' | 'Upside' | 'Rebalance' | 'Unused Upside Funds';
+    reason: 'Core' | 'Upside' | 'Speculative' | 'Redirected' | 'Rebalance' | 'Unused Upside Funds' | 'Leftover';
 }
 
 export interface InvestmentPlanExecutionResult {
@@ -308,6 +312,8 @@ export interface InvestmentPlanExecutionResult {
     totalInvestment: number;
     coreInvestment: number;
     upsideInvestment: number;
+    speculativeInvestment: number;
+    redirectedInvestment: number;
     unusedUpsideFunds: number;
     trades: ProposedTrade[];
     status: 'success' | 'failure';
@@ -322,7 +328,7 @@ export interface InvestmentPlanExecutionLog extends InvestmentPlanExecutionResul
     log_details: string; // Can be a stringified JSON of the result or an error message
 }
 
-export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Excluded';
+export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Quarantine' | 'Speculative' | 'Excluded';
 
 export interface UniverseTicker {
   id: string;
@@ -330,6 +336,10 @@ export interface UniverseTicker {
   ticker: string;
   name: string;
   status: TickerStatus;
+  monthly_weight?: number; // Used for Core, High-Upside, Speculative
+  max_position_weight?: number; // Risk cap
+  min_upside_threshold_override?: number;
+  min_coverage_override?: number;
 }
 
 export interface StatusChangeLog {

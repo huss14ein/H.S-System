@@ -64,7 +64,10 @@ const Summary: React.FC = () => {
         const monthlyPnL = monthlyIncome - monthlyExpenses;
 
         const totalDebt = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
+        const totalCommodities = data.commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
+        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + 
+                           data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
+                           totalCommodities;
         const netWorth = totalAssets - totalDebt;
         const debtToAssetRatio = totalAssets > 0 ? totalDebt / totalAssets : 0;
         
@@ -104,7 +107,7 @@ const Summary: React.FC = () => {
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle, efStatus, efTrend, netWorthTrend },
             investmentTreemapData
         };
-    }, [data]);
+    }, [data, data.commodityHoldings]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);

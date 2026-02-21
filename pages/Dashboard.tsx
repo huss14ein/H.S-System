@@ -253,92 +253,118 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
-    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
-        if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
-
-        const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-        // Current Month Calculations
-        const monthlyTransactions = data.transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
-        const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
-        const monthlyPnL = monthlyIncome - monthlyExpenses;
-        const totalBudget = data.budgets.reduce((sum, b) => sum + b.limit, 0);
-        const budgetVariance = totalBudget - monthlyExpenses;
-        
-        // Previous Month P&L for trend
-        const lastMonthTransactions = data.transactions.filter(t => {
-            const date = new Date(t.date);
-            return date >= firstDayOfLastMonth && date < firstDayOfMonth;
-        });
-        const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
-        
-        // Net Worth and Trend
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
-        const netWorth = totalAssets + totalLiabilities;
-        const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
-        const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
-        
-        // Investment data
-        const allHoldings = data.investments.flatMap(p => p.holdings || []);
-        const investmentTreemapData = allHoldings.map(h => {
-             const totalCost = h.avgCost * h.quantity;
-             const gainLoss = h.currentValue - totalCost;
-             const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-             return { ...h, gainLoss, gainLossPercent };
-        });
-        const totalInvestmentsValue = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
-        const totalInvested = data.investmentTransactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-        const totalWithdrawn = Math.abs(data.investmentTransactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
-        const netCapital = totalInvested - totalWithdrawn;
-        const totalGainLoss = totalInvestmentsValue - netCapital;
-        const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
-        
-        const monthlySpending = new Map<string, number>();
-        monthlyTransactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
-                const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
-                monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
-            });
-
-        const monthlyBudgets = data.budgets
-            .map(budget => {
-                const spent = monthlySpending.get(budget.category) || 0;
-                const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
-                return { ...budget, spent, percentage };
+    const investmentProgress = useMemo(() => {
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        const monthlyInvested = data.investmentTransactions
+            .filter(t => {
+                const d = new Date(t.date);
+                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .sort((a, b) => b.percentage - a.percentage);
+            .reduce((sum, t) => sum + t.total, 0);
         
-        // Cashflow Chart Data
-        const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
-        const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-        data.transactions.filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
-            const monthKey = t.date.slice(0, 7); // YYYY-MM
-            const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
-            if(t.type === 'income') current.income += t.amount;
-            else current.expenses += Math.abs(t.amount);
-            monthlyCashflowMap.set(monthKey, current);
-        });
-        const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
-
-        const uncategorizedTransactions = data.transactions.filter(t => t.type === 'expense' && !t.budgetCategory);
-        
-        const recentTransactions = [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
         return {
-            kpiSummary: {
-                netWorth, monthlyPnL, budgetVariance, roi, netWorthTrend,
-                pnlTrend: lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0,
-            },
-            monthlyBudgets,
-            investmentTreemapData,
-            monthlyCashflowData,
-            uncategorizedTransactions,
-            recentTransactions
+            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            amount: monthlyInvested,
+            target: data.investmentPlan.monthlyBudget
         };
     }, [data]);
+
+    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
+        try {
+            if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
+
+            const now = new Date();
+            const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+            // Current Month Calculations
+            const monthlyTransactions = (data.transactions || []).filter(t => new Date(t.date) >= firstDayOfMonth);
+            const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+            const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const monthlyPnL = monthlyIncome - monthlyExpenses;
+            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + b.limit, 0);
+            const budgetVariance = totalBudget - monthlyExpenses;
+            
+            // Previous Month P&L for trend
+            const lastMonthTransactions = (data.transactions || []).filter(t => {
+                const date = new Date(t.date);
+                return date >= firstDayOfLastMonth && date < firstDayOfMonth;
+            });
+            const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            
+            // Net Worth and Trend
+            const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
+            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) + 
+                               (data.accounts || []).filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
+                               totalCommodities;
+            const totalLiabilities = (data.liabilities || []).reduce((sum, liab) => sum + liab.amount, 0) + (data.accounts || []).filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
+            const netWorth = totalAssets + totalLiabilities;
+            const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
+            const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
+            
+            // Investment data
+            const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
+            const investmentTreemapData = allHoldings.map(h => {
+                 const totalCost = h.avgCost * h.quantity;
+                 const gainLoss = h.currentValue - totalCost;
+                 const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
+                 return { ...h, gainLoss, gainLossPercent };
+            });
+            const totalInvestmentsValue = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
+            const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
+            const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+            const netCapital = totalInvested - totalWithdrawn;
+            const totalGainLoss = totalInvestmentsValue - netCapital;
+            const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
+            
+            const monthlySpending = new Map<string, number>();
+            monthlyTransactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
+                    const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
+                    monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+                });
+
+            const monthlyBudgets = (data.budgets || [])
+                .map(budget => {
+                    const spent = monthlySpending.get(budget.category) || 0;
+                    const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
+                    return { ...budget, spent, percentage };
+                })
+                .sort((a, b) => b.percentage - a.percentage);
+            
+            // Cashflow Chart Data
+            const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
+            const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+            (data.transactions || []).filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
+                const monthKey = t.date.slice(0, 7); // YYYY-MM
+                const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
+                if(t.type === 'income') current.income += t.amount;
+                else current.expenses += Math.abs(t.amount);
+                monthlyCashflowMap.set(monthKey, current);
+            });
+            const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
+
+            const uncategorizedTransactions = (data.transactions || []).filter(t => t.type === 'expense' && !t.budgetCategory);
+            
+            const recentTransactions = [...(data.transactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+            return {
+                kpiSummary: {
+                    netWorth, monthlyPnL, budgetVariance, roi, netWorthTrend,
+                    pnlTrend: lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0,
+                },
+                monthlyBudgets,
+                investmentTreemapData,
+                monthlyCashflowData,
+                uncategorizedTransactions,
+                recentTransactions
+            };
+        } catch (e) {
+            console.error("Dashboard calculation error:", e);
+            return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
+        }
+    }, [data, data?.commodityHoldings]);
     
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     
@@ -369,11 +395,19 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                 <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />
                 <Card title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />
                 <Card title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="Total Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
+                <Card title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
+                <Card 
+                    title="Investment Plan" 
+                    value={`${investmentProgress.percent.toFixed(0)}%`} 
+                    trend={`${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })}`}
+                    tooltip="Progress towards your monthly investment goal." 
+                    onClick={() => setActivePage('Investments')} 
+                    icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} 
+                />
             </div>
 
             <AIFeed />

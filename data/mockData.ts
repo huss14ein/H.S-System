@@ -20,6 +20,10 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         coreAllocation: 0.7,
         upsideAllocation: 0.3,
         minimumUpsidePercentage: 20,
+        stale_days: 30,
+        min_coverage_threshold: 3,
+        redirect_policy: 'pro-rata',
+        target_provider: 'Default',
         corePortfolio: [],
         upsideSleeve: [],
         brokerConstraints: {
