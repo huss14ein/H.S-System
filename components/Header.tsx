@@ -44,8 +44,10 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const notificationCount = useMemo(() => {
     if (!data) return 0;
     const priceAlerts = data.priceAlerts.filter(a => a.status === 'triggered').length;
-    const unreadNotifications = data.notifications.filter(n => !n.read).length;
-    return priceAlerts + unreadNotifications;
+    const pendingTransactions = data.transactions.filter(t => (t.status ?? 'Approved') === 'Pending').length;
+    const pendingPlannedTrades = data.plannedTrades.filter(t => t.status === 'Planned').length;
+    const unreadNotifications = (data.notifications || []).filter(n => !n.read).length;
+    return priceAlerts + pendingTransactions + pendingPlannedTrades + unreadNotifications;
   }, [data]);
 
   const navGroups = useMemo(() => [
