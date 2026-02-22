@@ -2,7 +2,7 @@ import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
-import { Budget, UserRole } from '../types';
+import { Budget } from '../types';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -57,6 +57,8 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         onClose();
     };
     
+
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -89,17 +91,19 @@ const Budgets: React.FC = () => {
     const { data, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
-    const [userRole, setUserRole] = useState<UserRole>('Restricted');
+    const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
     const [requestAmount, setRequestAmount] = useState('');
+    const [requestNote, setRequestNote] = useState('');
     const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit'>('NewCategory');
     const [requestCategoryId, setRequestCategoryId] = useState('');
     const [governanceCategories, setGovernanceCategories] = useState<{ id: string; name: string }[]>([]);
-    const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+    const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
     
     const [currentDate, setCurrentDate] = useState(new Date());
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
 
     const currentYear = currentDate.getFullYear();
@@ -110,8 +114,8 @@ const Budgets: React.FC = () => {
         const loadGovernance = async () => {
             if (!supabase || !auth?.user) return;
             const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            const role = (userRecord?.role === 'Admin' ? 'Admin' : 'Restricted') as UserRole;
-            setUserRole(role);
+            const admin = userRecord?.role === 'Admin';
+            setIsAdmin(admin);
 
             const { data: categories } = await supabase
                 .from('categories')
@@ -119,7 +123,7 @@ const Budgets: React.FC = () => {
                 .order('name', { ascending: true });
             setGovernanceCategories(categories || []);
 
-            if (role === 'Restricted') {
+            if (!admin) {
                 const { data: permissions } = await supabase
                     .from('permissions')
                     .select('categories(name)')
@@ -130,16 +134,14 @@ const Budgets: React.FC = () => {
                     .from('budget_requests')
                     .select('*')
                     .eq('user_id', auth.user.id)
-                    .eq('status', 'Pending')
                     .order('created_at', { ascending: false });
-                setPendingRequests(ownRequests || []);
+                setBudgetRequests(ownRequests || []);
             } else {
                 const { data: requests } = await supabase
                     .from('budget_requests')
                     .select('*')
-                    .eq('status', 'Pending')
                     .order('created_at', { ascending: false });
-                setPendingRequests(requests || []);
+                setBudgetRequests(requests || []);
             }
         };
 
@@ -148,30 +150,91 @@ const Budgets: React.FC = () => {
 
     const budgetData = useMemo(() => {
         const spending = new Map<string, number>();
-        
+
+        const now = new Date();
+        const rangeStart = new Date(now);
+        const rangeEnd = new Date(now);
+
+        if (budgetView === 'Monthly') {
+            rangeStart.setFullYear(currentYear, currentMonth - 1, 1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setFullYear(currentYear, currentMonth, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (budgetView === 'Weekly') {
+            const day = now.getDay();
+            const diffToMonday = (day + 6) % 7;
+            rangeStart.setDate(now.getDate() - diffToMonday);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setDate(rangeStart.getDate() + 6);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (budgetView === 'Daily') {
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else {
+            rangeStart.setFullYear(currentYear, 0, 1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setFullYear(currentYear, 11, 31);
+            rangeEnd.setHours(23, 59, 59, 999);
+        }
+
+        const limitDivisor = budgetView === 'Monthly' ? 1 : budgetView === 'Weekly' ? 4.345 : budgetView === 'Daily' ? 30 : 1;
+
         data.transactions
-            .filter(t => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && new Date(t.date).getFullYear() === currentYear && new Date(t.date).getMonth() + 1 === currentMonth && t.budgetCategory)
+            .filter(t => {
+                if (t.type !== 'expense' || (t.status ?? 'Approved') !== 'Approved' || !t.budgetCategory) return false;
+                const txDate = new Date(t.date);
+                return txDate >= rangeStart && txDate <= rangeEnd;
+            })
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
 
-        return data.budgets
-            .filter(b => b.year === currentYear && b.month === currentMonth)
-            .filter(b => userRole === 'Admin' || permittedCategories.includes(b.category))
+        const scopedBudgets = data.budgets
+            .filter(b => b.year === currentYear)
+            .filter(b => budgetView === 'Yearly' || b.month === currentMonth)
+            .filter(b => isAdmin || permittedCategories.includes(b.category));
+
+        if (budgetView === 'Yearly') {
+            const yearlyLimitByCategory = new Map<string, number>();
+            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + b.limit));
+
+            return Array.from(yearlyLimitByCategory.entries())
+                .map(([category, yearlyLimit]) => {
+                    const spent = spending.get(category) || 0;
+                    const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
+                    let colorClass = 'bg-primary';
+                    if (percentage > 100) colorClass = 'bg-danger';
+                    else if (percentage > 90) colorClass = 'bg-warning';
+                    return {
+                        id: `${category}-${currentYear}`,
+                        category,
+                        month: currentMonth,
+                        year: currentYear,
+                        spent,
+                        limit: yearlyLimit,
+                        percentage,
+                        colorClass,
+                    };
+                })
+                .sort((a, b) => b.spent - a.spent);
+        }
+
+        return scopedBudgets
             .map(budget => {
                 const spent = spending.get(budget.category) || 0;
-                const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
+                const adjustedLimit = budget.limit / limitDivisor;
+                const percentage = adjustedLimit > 0 ? (spent / adjustedLimit) * 100 : 0;
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
-                
-                return { ...budget, spent, percentage, colorClass };
+
+                return { ...budget, spent, limit: adjustedLimit, percentage, colorClass };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data.transactions, data.budgets, currentYear, currentMonth, userRole, permittedCategories]);
+    }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
-        if (userRole === 'Restricted') return;
+        if (!isAdmin) return;
         setBudgetToEdit(budget);
         setIsModalOpen(true);
     };
@@ -193,7 +256,7 @@ const Budgets: React.FC = () => {
     }
 
     const handleCopyBudgets = () => {
-        if (userRole === 'Restricted') return;
+        if (!isAdmin) return;
 
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
@@ -218,7 +281,7 @@ const Budgets: React.FC = () => {
             return;
         }
 
-        const duplicateMatch = pendingRequests.some((r) =>
+        const duplicateMatch = budgetRequests.some((r) =>
             r.status === 'Pending' &&
             r.request_type === requestType &&
             (requestType === 'NewCategory'
@@ -231,14 +294,33 @@ const Budgets: React.FC = () => {
             return;
         }
 
-        const { error } = await supabase.from('budget_requests').insert({
+        const payloadBase = {
             user_id: auth.user.id,
             request_type: requestType,
             category_id: requestType === 'IncreaseLimit' ? requestCategoryId || null : null,
             category_name: requestType === 'NewCategory' ? newCategoryName.trim() : null,
             amount,
             status: 'Pending'
-        });
+        };
+
+        const payloadVariants = [
+            { ...payloadBase, note: requestNote.trim() || null },
+            { ...payloadBase, request_note: requestNote.trim() || null },
+            payloadBase,
+        ];
+
+        let createdRequest: any = null;
+        let error: any = null;
+        for (const payload of payloadVariants) {
+            const result = await supabase.from('budget_requests').insert(payload).select().single();
+            createdRequest = result.data;
+            error = result.error;
+            if (!error) break;
+            const msg = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+            const isMissingColumn = error?.code === '42703' || error?.code === 'PGRST204' || msg.includes('column') || msg.includes('schema cache');
+            if (!isMissingColumn) break;
+        }
+
         if (error) {
             alert(`Failed to submit request: ${error.message}`);
             return;
@@ -246,6 +328,8 @@ const Budgets: React.FC = () => {
         setNewCategoryName('');
         setRequestAmount('');
         setRequestCategoryId('');
+        setRequestNote('');
+        if (createdRequest) setBudgetRequests(prev => [createdRequest, ...prev]);
         alert('Request submitted for admin approval.');
     };
 
@@ -289,7 +373,7 @@ const Budgets: React.FC = () => {
             return;
         }
 
-        setPendingRequests(prev => prev.filter((r) => r.id !== request.id));
+        setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized' } : r));
     };
 
     const rejectBudgetRequest = async (requestId: string) => {
@@ -302,25 +386,38 @@ const Budgets: React.FC = () => {
             alert(`Failed to reject request: ${error.message}`);
             return;
         }
-        setPendingRequests(prev => prev.filter((r) => r.id !== requestId));
+        setBudgetRequests(prev => prev.map((r) => r.id === requestId ? { ...r, status: 'Rejected' } : r));
     };
+
+
+    const pendingRequests = useMemo(() => budgetRequests.filter((r) => r.status === 'Pending'), [budgetRequests]);
+    const respondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending'), [budgetRequests]);
 
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Monthly Budgets</h1>
-                <div className="flex items-center gap-2">
+                <h1 className="text-3xl font-bold text-dark">Budgets ({budgetView})</h1>
+                                <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">View:</span>
+                    <select value={budgetView} onChange={(e) => setBudgetView(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="px-2 py-1 border rounded text-sm">
+                        <option value="Monthly">Monthly</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Daily">Daily</option>
+                        <option value="Yearly">Yearly</option>
+                    </select>
+                </div>
+<div className="flex items-center gap-2">
                     <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon className="h-5 w-5"/></button>
                     <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                     <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
                 </div>
                  <div className="flex items-center gap-2">
-                    <button disabled={userRole === 'Restricted'} onClick={handleCopyBudgets} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
-                    <button disabled={userRole === 'Restricted'} onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm disabled:opacity-50">Add Budget</button>
+                    <button disabled={!isAdmin} onClick={handleCopyBudgets} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
+                    <button disabled={!isAdmin} onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm disabled:opacity-50">Add Budget</button>
                  </div>
             </div>
-            {userRole === 'Restricted' && (
-                <div className="bg-white rounded-lg shadow p-5 border border-primary/20">
+            {!isAdmin && (
+                <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
                     <h2 className="text-lg font-semibold mb-3">Request Budget Change</h2>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                         <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="p-2 border rounded">
@@ -338,37 +435,59 @@ const Budgets: React.FC = () => {
                             </select>
                         )}
                         <input type="number" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Proposed amount" className="p-2 border rounded" />
+                        <input value={requestNote} onChange={(e) => setRequestNote(e.target.value)} placeholder="Reason / note (optional)" className="p-2 border rounded md:col-span-2" />
                         <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded">Submit</button>
                     </div>
                 </div>
             )}
 
-            {userRole === 'Restricted' && pendingRequests.length > 0 && (
-                <div className="bg-white rounded-lg shadow p-5 border border-blue-200">
-                    <h2 className="text-lg font-semibold mb-3">My Pending Requests</h2>
+            {!isAdmin && budgetRequests.length > 0 && (
+                <div className="bg-gradient-to-br from-white via-blue-50 to-sky-50 rounded-lg shadow p-5 border border-blue-200">
+                    <h2 className="text-lg font-semibold mb-3">My Budget Requests</h2>
                     <div className="space-y-2">
-                        {pendingRequests.map((r) => (
+                        {budgetRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
                                     <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                 </div>
-                                <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800">Pending</span>
+                                <span className={`text-xs px-2 py-1 rounded ${r.status === 'Pending' ? 'bg-amber-100 text-amber-800' : r.status === 'Finalized' ? 'bg-green-100 text-green-800' : 'bg-rose-100 text-rose-800'}`}>{r.status}</span>
                             </div>
                         ))}
                     </div>
                 </div>
             )}
 
-            {userRole === 'Admin' && pendingRequests.length > 0 && (
-                <div className="bg-white rounded-lg shadow p-5 border border-amber-200">
+
+            {!isAdmin && respondedRequests.length > 0 && (
+                <div className="bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow p-5 border border-slate-200">
+                    <h2 className="text-lg font-semibold mb-3">Reviewed Requests</h2>
+                    <div className="space-y-2">
+                        {respondedRequests.map((r) => (
+                            <div key={r.id} className="p-3 border rounded flex items-center justify-between">
+                                <div>
+                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
+                                    <p className="text-xs text-gray-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                </div>
+                                <span className={`text-xs px-2 py-1 rounded ${r.status === 'Finalized' ? 'bg-green-100 text-green-800' : 'bg-rose-100 text-rose-800'}`}>{r.status}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {isAdmin && pendingRequests.length > 0 && (
+                <div className="bg-gradient-to-br from-white via-amber-50 to-orange-50 rounded-lg shadow p-5 border border-amber-200">
                     <h2 className="text-lg font-semibold mb-3">Budget Request Review</h2>
                     <div className="space-y-3">
-                        {pendingRequests.map((r) => (
+                        {budgetRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
                                     <p className="text-xs text-gray-500">Requested: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
@@ -380,9 +499,15 @@ const Budgets: React.FC = () => {
                 </div>
             )}
 
+            {budgetView === 'Yearly' && (
+                <div className="text-sm text-blue-700 bg-blue-50 border border-blue-100 rounded p-3">
+                    Yearly view aggregates all monthly budgets and spending for {currentYear}.
+                </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {budgetData.map(budget => (
-                    <div key={budget.category} className="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col">
+                    <div key={budget.category} className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100">
                         <div className="flex-grow">
                             <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
                             <div className="mt-4">
@@ -400,8 +525,8 @@ const Budgets: React.FC = () => {
                             </div>
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
-                            <button onClick={() => handleOpenModal(budget)} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                            <button disabled={userRole === 'Restricted'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
+                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal(budget)} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
+                            <button disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
                 ))}

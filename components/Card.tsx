@@ -12,9 +12,10 @@ interface CardProps {
   valueColor?: string;
   indicatorColor?: 'green' | 'yellow' | 'red';
   icon?: React.ReactNode;
+  density?: 'comfortable' | 'compact';
 }
 
-const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor, icon }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor, icon, density = 'comfortable' }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number | undefined>(undefined);
 
@@ -58,17 +59,18 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
       'border-t-transparent';
 
   const flashClass = flash === 'up' ? 'flash-green' : flash === 'down' ? 'flash-red' : '';
+  const compact = density === 'compact';
 
   return (
     <div 
-      className={`bg-gradient-to-br ${cardToneClass} p-6 rounded-lg shadow-md hover:shadow-xl transition-all duration-300 ease-in-out flex flex-col h-full min-h-[170px] border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
+      className={`bg-gradient-to-br ${cardToneClass} ${compact ? 'p-4 min-h-[135px]' : 'p-6 min-h-[170px]'} rounded-lg shadow-md hover:shadow-xl transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
       onClick={onClick}
       style={{
         backgroundImage: 'radial-gradient(circle at top right, rgba(239, 246, 255, 0.5) 0%, transparent 50%)',
       }}
     >
       <div className="flex items-start justify-between">
-        <h3 className="text-sm font-medium text-gray-500">{title}</h3>
+        <h3 className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500`}>{title}</h3>
         {icon || (tooltip && (
           <div className="relative group">
             <InformationCircleIcon className="h-5 w-5 text-gray-400" />
@@ -80,9 +82,9 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
         ))}
       </div>
       <div className="mt-2 flex-grow">
-        <p className={`text-3xl font-extrabold break-words ${valueToneClass}`}>{value}</p>
+        <p className={`${compact ? 'text-2xl' : 'text-3xl'} font-extrabold break-words ${valueToneClass}`}>{value}</p>
         {trend && (
-          <div className={`flex items-center text-sm mt-1 font-medium ${trendColor}`}>
+          <div className={`flex items-center ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-4 w-4 mr-1"/>}
             {isNegative && <ArrowTrendingDownIcon className="h-4 w-4 mr-1"/>}
             <span>{trend}</span>

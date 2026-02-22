@@ -248,11 +248,34 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 setAdminPendingTransactions([]);
                 return;
             }
-            const { data: pendingRows } = await supabase
-                .from('transactions')
-                .select('id, user_id, description, amount, budgetCategory, budget_category, date, status')
-                .eq('status', 'Pending')
-                .order('date', { ascending: false });
+            const db = supabase;
+            const fetchPendingRows = async (selectClause: string) => {
+                return db
+                    .from('transactions')
+                    .select(selectClause)
+                    .eq('status', 'Pending')
+                    .order('date', { ascending: false });
+            };
+
+            let pendingRows: any[] = [];
+            let pendingError: any = null;
+
+            const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+            pendingRows = camelCaseResult.data || [];
+            pendingError = camelCaseResult.error;
+
+            if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                pendingRows = snakeCaseResult.data || [];
+                pendingError = snakeCaseResult.error;
+            }
+
+            if (pendingError) {
+                console.error('Error loading admin pending transactions:', pendingError);
+                setAdminPendingTransactions([]);
+                return;
+            }
+
             const normalized = (pendingRows || []).map((row: any) => ({
                 ...row,
                 budgetCategory: row.budgetCategory ?? row.budget_category ?? null,

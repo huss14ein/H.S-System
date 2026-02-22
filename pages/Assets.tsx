@@ -57,6 +57,8 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         onSave(newAsset); onClose();
     };
 
+
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -91,9 +93,10 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
         }
     };
     const unrealizedGain = asset.purchasePrice ? asset.value - asset.purchasePrice : null;
+    const performanceTone = unrealizedGain === null ? 'border-gray-200' : unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
-        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
+        <div className={`bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-3">{getAssetIcon(asset.type)}<div><h3 className="font-bold text-dark text-lg">{asset.name}</h3><p className="text-sm text-gray-500">{asset.type}</p></div></div>
@@ -122,7 +125,7 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
 // --- End Physical Asset Components ---
 
 // --- Commodity Components ---
-const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => void; holdingToEdit: CommodityHolding | null; }> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
+const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; }> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -130,6 +133,10 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
     const [currentValue, setCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
+    const [formError, setFormError] = useState<string | null>(null);
+    const [diagnosticReport, setDiagnosticReport] = useState<string | null>(null);
+    const [copied, setCopied] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     
     useEffect(() => {
         if (holdingToEdit) {
@@ -139,6 +146,9 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         } else {
             setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
         }
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
     }, [holdingToEdit, isOpen]);
 
     useEffect(() => {
@@ -154,17 +164,110 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         return 'OTHER';
     }
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
+
+        const parsedQuantity = parseFloat(quantity);
+        const parsedPurchaseValue = parseFloat(purchaseValue);
+        const parsedCurrentValue = parseFloat(currentValue);
+        if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+            setFormError('Quantity must be a positive number.');
+            return;
+        }
+        if (!Number.isFinite(parsedPurchaseValue) || parsedPurchaseValue <= 0) {
+            setFormError('Purchase value must be greater than 0.');
+            return;
+        }
+        if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+            setFormError('Current value cannot be negative.');
+            return;
+        }
+
         const holdingData = {
-            name, quantity: parseFloat(quantity) || 0, unit,
-            purchaseValue: parseFloat(purchaseValue) || 0,
-            currentValue: parseFloat(currentValue) || 0,
-            symbol: getSymbol(name, unit), zakahClass, owner: owner || undefined,
+            name,
+            quantity: parsedQuantity,
+            unit,
+            purchaseValue: parsedPurchaseValue,
+            currentValue: parsedCurrentValue,
+            symbol: getSymbol(name, unit),
+            zakahClass,
+            owner: owner || undefined,
         };
-        if (holdingToEdit) onSave({ ...holdingToEdit, ...holdingData });
-        else onSave(holdingData);
-        onClose();
+
+        try {
+            setIsSubmitting(true);
+            if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
+            else await onSave(holdingData);
+            onClose();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setFormError(message);
+            const missing = message.match(/Missing column detected:\s*([a-zA-Z0-9_]+)/i)?.[1];
+            const variantCount = message.match(/Tried\s*(\d+)\s*payload variants?/i)?.[1];
+            const reportLines = [
+                `Commodity save failed at ${new Date().toISOString()}`,
+                `Operation: ${holdingToEdit ? 'Update' : 'Insert'}`,
+                `Commodity: ${name}`,
+                `Symbol: ${getSymbol(name, unit)}`,
+                `Message: ${message}`,
+            ];
+            if (missing) reportLines.push(`Likely missing DB column: ${missing}`);
+            if (variantCount) reportLines.push(`Attempted payload variants: ${variantCount}`);
+            setDiagnosticReport(reportLines.join('\n'));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+
+
+    const recoveryHints = useMemo(() => {
+        if (!formError) return [] as string[];
+        const message = formError.toLowerCase();
+        const hints: string[] = [];
+        if (message.includes('missing column')) {
+            hints.push('Apply the latest unified DB migration file and refresh Supabase schema cache.');
+        }
+        if (message.includes('owner')) {
+            hints.push('Your commodity table may not include the owner column. Keep Owner blank or add the column in DB.');
+        }
+        if (message.includes('purchase_value') || message.includes('current_value') || message.includes('zakah_class')) {
+            hints.push('Schema naming mismatch detected. Ensure snake_case and/or camelCase variants exist per your deployment strategy.');
+        }
+        if (message.includes('payload variants')) {
+            hints.push('Multiple fallback payloads were attempted. Use the copied diagnostic report to identify unsupported column names.');
+        }
+        if (hints.length === 0) {
+            hints.push('Retry after refreshing data. If it fails again, share the diagnostic report with support.');
+        }
+        return hints;
+    }, [formError]);
+
+
+    const canAutoFixOwnerIssue = useMemo(() => {
+        if (!formError) return false;
+        return formError.toLowerCase().includes('owner');
+    }, [formError]);
+
+    const handleClearOwnerForRetry = () => {
+        setOwner('');
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
+    };
+
+    const handleCopyDiagnosticReport = async () => {
+        if (!diagnosticReport) return;
+        try {
+            await navigator.clipboard.writeText(diagnosticReport);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } catch {
+            setCopied(false);
+        }
     };
 
     return (
@@ -175,7 +278,33 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Owner</label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save</button>
+                {formError && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
+                {diagnosticReport && (
+                    <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="font-semibold">Diagnostic Report</p>
+                            <button type="button" onClick={handleCopyDiagnosticReport} className="px-2 py-1 border rounded text-amber-800 border-amber-300 hover:border-amber-500">{copied ? 'Copied' : 'Copy report'}</button>
+                        </div>
+                        <pre className="whitespace-pre-wrap font-mono">{diagnosticReport}</pre>
+                    </div>
+                )}
+                {recoveryHints.length > 0 && (
+                    <div className="text-xs bg-blue-50 border border-blue-200 rounded p-3 text-blue-900">
+                        <ul className="list-disc pl-5 space-y-1">
+                            {recoveryHints.map((hint, i) => <li key={i}>{hint}</li>)}
+                        </ul>
+                        {canAutoFixOwnerIssue && (
+                            <button
+                                type="button"
+                                onClick={handleClearOwnerForRetry}
+                                className="mt-2 px-2 py-1 border rounded text-blue-800 border-blue-300 hover:border-blue-500"
+                            >
+                                Apply owner-safe retry
+                            </button>
+                        )}
+                    </div>
+                )}
+                <button type="submit" disabled={isSubmitting} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Saving...' : 'Save'}</button>
             </form>
         </Modal>
     );
@@ -183,6 +312,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; }> = ({ holding, onEdit, onDelete }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
+    const performanceTone = unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
     const getIcon = (type: CommodityHolding['name']) => {
         const iconClass = "h-10 w-10";
         switch (type) {
@@ -193,7 +323,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
         }
     };
     return (
-        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
+        <div className={`bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-4">
@@ -251,7 +381,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     
     // Commodity Handlers
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
-    const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => { 'id' in holding ? updateCommodityHolding(holding) : addCommodityHolding(holding); };
+    const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
+        if ('id' in holding) await updateCommodityHolding(holding);
+        else await addCommodityHolding(holding);
+    };
 
     // Generic Delete Handlers
     const handleOpenDeleteModal = (item: Asset | CommodityHolding) => { setItemToDelete(item); };

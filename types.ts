@@ -17,6 +17,7 @@ export interface Goal {
   currentAmount: number;
   deadline: string;
   savingsAllocationPercent?: number;
+  priority?: 'High' | 'Medium' | 'Low';
 }
 
 export interface Account {
@@ -179,6 +180,7 @@ export interface BudgetRequest {
   categoryId?: string;
   categoryName?: string;
   amount: number;
+  note?: string;
   status: 'Pending' | 'Finalized' | 'Rejected';
 }
 

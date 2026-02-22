@@ -64,7 +64,7 @@ const Zakat: React.FC = () => {
     const zakatableAssets = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
         
-        const investments = data.investments.flatMap(p => p.holdings)
+        const investments = data.investments.flatMap(p => p.holdings || [])
             .filter(h => h.zakahClass === 'Zakatable')
             .reduce((sum, h) => sum + h.currentValue, 0);
             
@@ -78,9 +78,12 @@ const Zakat: React.FC = () => {
 
     const deductibleLiabilities = useMemo(() => {
         const shortTermDebts = data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const total = shortTermDebts + otherDebts;
-        return { shortTermDebts, otherDebts, total };
-    }, [otherDebts, data.accounts]);
+        const trackedLiabilities = data.liabilities
+            .filter(l => l.status === 'Active')
+            .reduce((sum, liability) => sum + Math.abs(liability.amount), 0);
+        const total = shortTermDebts + trackedLiabilities + otherDebts;
+        return { shortTermDebts, trackedLiabilities, otherDebts, total };
+    }, [otherDebts, data.accounts, data.liabilities]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
@@ -132,6 +135,7 @@ const Zakat: React.FC = () => {
                         <h3 className="font-semibold text-dark mb-4">Deductible Liabilities</h3>
                         <div className="space-y-3">
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Credit Card Debt</span><span>{formatCurrencyString(deductibleLiabilities.shortTermDebts)}</span></div>
+                            <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities)}</span></div>
                             <div>
                                 <label htmlFor="other-debts" className="block text-sm font-medium text-gray-700">Other Short-Term Debts</label>
                                 <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />

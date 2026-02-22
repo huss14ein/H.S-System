@@ -1,9 +1,9 @@
-import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useContext, useCallback, useEffect, useRef, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
-import { getAIResearchNews } from '../services/geminiService';
+import { getAIResearchNews, formatAiError } from '../services/geminiService';
 import { MegaphoneIcon } from '../components/icons/MegaphoneIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import Modal from '../components/Modal';
@@ -121,6 +121,19 @@ const WatchlistView: React.FC = () => {
     const [isNewsLoading, setIsNewsLoading] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
 
+
+    const watchlistInsights = useMemo(() => {
+        const rows = data.watchlist.map((item) => ({
+            ...item,
+            priceInfo: simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 },
+            activeAlert: data.priceAlerts.find(a => a.symbol === item.symbol && a.status === 'active') || null,
+        }));
+        const positiveMovers = rows.filter(r => r.priceInfo.changePercent > 0).length;
+        const negativeMovers = rows.filter(r => r.priceInfo.changePercent < 0).length;
+        const alertCoverage = rows.filter(r => r.activeAlert).length;
+        return { positiveMovers, negativeMovers, alertCoverage, total: rows.length };
+    }, [data.watchlist, data.priceAlerts, simulatedPrices]);
+
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => { if (itemToDelete) { deleteWatchlistItem(itemToDelete.symbol); setIsDeleteModalOpen(false); setItemToDelete(null); } };
     const handleGetNews = useCallback(async () => { 
@@ -130,10 +143,21 @@ const WatchlistView: React.FC = () => {
         } 
         setIsNewsLoading(true);
         setGroundingChunks([]);
-        const { content, groundingChunks } = await getAIResearchNews(data.watchlist); 
-        setAiResearch(content); 
-        setGroundingChunks(groundingChunks);
-        setIsNewsLoading(false); 
+        try {
+            const { content, groundingChunks } = await getAIResearchNews(data.watchlist); 
+            setAiResearch(content); 
+            setGroundingChunks(groundingChunks);
+        } catch (error) {
+            const message = formatAiError(error);
+            if (message.toLowerCase().includes('quota') || message.includes('503') || message.toLowerCase().includes('unavailable')) {
+                setAiResearch('AI research is temporarily unavailable due to provider limits. Please retry shortly.');
+            } else {
+                setAiResearch(`Unable to fetch AI watchlist research right now. ${message}`);
+            }
+            setGroundingChunks([]);
+        } finally {
+            setIsNewsLoading(false); 
+        }
     }, [data.watchlist]);
     const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
     const handleSaveAlert = (symbol: string, targetPrice: number) => { const existing = data.priceAlerts.find(a => a.symbol === symbol); if (existing) { updatePriceAlert({ ...existing, targetPrice, status: 'active' }); } else { addPriceAlert({ symbol, targetPrice }); } };
@@ -141,6 +165,13 @@ const WatchlistView: React.FC = () => {
 
     return (
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:col-span-3">
+                <div className="bg-gradient-to-br from-white to-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-xs text-gray-500">Positive Movers</p><p className="text-xl font-semibold text-emerald-700">{watchlistInsights.positiveMovers}</p></div>
+                <div className="bg-gradient-to-br from-white to-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-xs text-gray-500">Negative Movers</p><p className="text-xl font-semibold text-rose-700">{watchlistInsights.negativeMovers}</p></div>
+                <div className="bg-gradient-to-br from-white to-amber-50 border border-amber-100 rounded-lg p-3"><p className="text-xs text-gray-500">Active Alerts</p><p className="text-xl font-semibold text-amber-700">{watchlistInsights.alertCoverage}/{watchlistInsights.total}</p></div>
+            </div>
+
             <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow">
                 <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-semibold text-dark">My Watchlist</h2><button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm">Add Stock</button></div>
                 <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200">

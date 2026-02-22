@@ -32,7 +32,7 @@ const InvestmentOverview: React.FC = () => {
         
         // Data for Portfolio Allocation Pie Chart
         const portfolioAllocation = data.investments.map(p => {
-            const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+            const portfolioValue = (p.holdings || []).reduce((sum, h) => sum + h.currentValue, 0);
             return { name: p.name, value: portfolioValue };
         }).sort((a,b) => b.value - a.value);
 
@@ -70,12 +70,12 @@ const InvestmentOverview: React.FC = () => {
                 <div className="bg-white p-6 rounded-lg shadow h-[450px]">
                     <h3 className="text-lg font-semibold text-dark mb-4">Portfolio Allocation</h3>
                      <p className="text-sm text-gray-500 -mt-4 mb-4">How your total investment value is distributed across portfolios.</p>
-                    <AllocationPieChart data={portfolioAllocation} />
+                    <div className="h-[350px] flex items-center justify-center"><AllocationPieChart data={portfolioAllocation} /></div>
                 </div>
                 <div className="bg-white p-6 rounded-lg shadow h-[450px]">
                     <h3 className="text-lg font-semibold text-dark mb-4">Allocation by Asset Class</h3>
                     <p className="text-sm text-gray-500 -mt-4 mb-4">The mix of asset types across all your investments.</p>
-                    <AllocationBarChart data={assetClassAllocation} />
+                    <div className="h-[350px]"><AllocationBarChart data={assetClassAllocation} /></div>
                 </div>
             </div>
              <div className="bg-white p-6 rounded-lg shadow h-[450px]">
