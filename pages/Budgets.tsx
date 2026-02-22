@@ -106,6 +106,14 @@ const Budgets: React.FC = () => {
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
 
+    type BudgetRow = Budget & {
+        spent: number;
+        percentage: number;
+        colorClass: string;
+        displayLimit: number;
+        monthlyLimit: number;
+    };
+
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
 
@@ -148,7 +156,7 @@ const Budgets: React.FC = () => {
         loadGovernance();
     }, [auth?.user?.id]);
 
-    const budgetData = useMemo(() => {
+    const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
 
         const now = new Date();
@@ -213,6 +221,8 @@ const Budgets: React.FC = () => {
                         year: currentYear,
                         spent,
                         limit: yearlyLimit,
+                        displayLimit: yearlyLimit,
+                        monthlyLimit: yearlyLimit,
                         percentage,
                         colorClass,
                     };
@@ -229,7 +239,7 @@ const Budgets: React.FC = () => {
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
 
-                return { ...budget, spent, limit: adjustedLimit, percentage, colorClass };
+                return { ...budget, spent, displayLimit: adjustedLimit, monthlyLimit: budget.limit, percentage, colorClass };
             }).sort((a,b) => b.spent - a.spent);
     }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
@@ -513,19 +523,19 @@ const Budgets: React.FC = () => {
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.limit, { digits: 0 })}</span>
+                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.displayLimit, { digits: 0 })}</span>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budget.limit} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${budget.limit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                    {budget.limit - budget.spent >= 0 
-                                        ? `${formatCurrencyString(budget.limit - budget.spent, { digits: 0 })} remaining`
-                                        : `${formatCurrencyString(Math.abs(budget.limit - budget.spent), { digits: 0 })} over`
+                                <ProgressBar value={budget.spent} max={budget.displayLimit} color={budget.colorClass} />
+                                <p className={`text-right text-sm mt-1 ${budget.displayLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                    {budget.displayLimit - budget.spent >= 0 
+                                        ? `${formatCurrencyString(budget.displayLimit - budget.spent, { digits: 0 })} remaining`
+                                        : `${formatCurrencyString(Math.abs(budget.displayLimit - budget.spent), { digits: 0 })} over`
                                     }
                                 </p>
                             </div>
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
-                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal(budget)} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
+                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.monthlyLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
                             <button disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
