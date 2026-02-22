@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Transaction, Account, Page } from '../types';
+import { Transaction, Account, Page, UserRole } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { PencilIcon } from '../components/icons/PencilIcon';
@@ -11,6 +11,8 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from '../context/AuthContext';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -54,7 +56,7 @@ const TransactionModal: React.FC<{
             setAmount('');
             setCategory(allCategories[0] || 'Groceries');
             setSubcategory('');
-            setBudgetCategory(budgetCategories[0] || 'Food and Groceries');
+            setBudgetCategory(budgetCategories[0] || '');
             setType('expense');
             setAccountId(accounts[0]?.id || '');
             setTransactionNature('Variable');
@@ -187,7 +189,11 @@ interface TransactionsProps {
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+    const [userRole, setUserRole] = useState<UserRole>('Restricted');
+    const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
+    const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
@@ -207,6 +213,56 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
     }, [pageAction, clearPageAction]);
 
+    useEffect(() => {
+        const loadGovernanceData = async () => {
+            if (!supabase || !auth?.user) return;
+
+            const { data: userRecord } = await supabase
+                .from('users')
+                .select('role')
+                .eq('id', auth.user.id)
+                .maybeSingle();
+
+            const role = (userRecord?.role === 'Admin' ? 'Admin' : 'Restricted') as UserRole;
+            setUserRole(role);
+
+            if (role === 'Restricted') {
+                const { data: permissions } = await supabase
+                    .from('permissions')
+                    .select('category_id, categories(name)')
+                    .eq('user_id', auth.user.id);
+
+                const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
+                setPermittedBudgetCategories(allowed);
+            } else {
+                setPermittedBudgetCategories([]);
+            }
+        };
+
+        loadGovernanceData();
+    }, [auth?.user?.id]);
+
+    useEffect(() => {
+        const loadPendingTransactions = async () => {
+            if (!supabase || userRole !== 'Admin') {
+                setAdminPendingTransactions([]);
+                return;
+            }
+            const { data: pendingRows } = await supabase
+                .from('transactions')
+                .select('id, user_id, description, amount, budgetCategory, budget_category, date, status')
+                .eq('status', 'Pending')
+                .order('date', { ascending: false });
+            const normalized = (pendingRows || []).map((row: any) => ({
+                ...row,
+                budgetCategory: row.budgetCategory ?? row.budget_category ?? null,
+            }));
+            setAdminPendingTransactions(normalized);
+        };
+
+        loadPendingTransactions();
+    }, [userRole, data.transactions.length]);
+
     const filteredTransactions = useMemo(() => {
         const [year, month] = filters.month.split('-').map(Number);
         const startDate = new Date(year, month - 1, 1);
@@ -218,17 +274,19 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch;
+            const isPermitted = userRole === 'Admin' || !t.budgetCategory || permittedBudgetCategories.includes(t.budgetCategory);
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
-    }, [data.transactions, filters]);
+    }, [data.transactions, filters, userRole, permittedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
-        const monthlyIncome = filteredTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = filteredTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
+        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
-        filteredTransactions
+        approvedTransactions
             .filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
@@ -241,7 +299,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filteredTransactions]);
     
     const allCategories = useMemo(() => Array.from(new Set(data.transactions.map(t => t.category))), [data.transactions]);
-    const budgetCategories = useMemo(() => data.budgets.map(b => b.category), [data.budgets]);
+    const budgetCategories = useMemo(() => {
+        const categories = data.budgets.map(b => b.category);
+        if (userRole === 'Admin') return categories;
+        return categories.filter(c => permittedBudgetCategories.includes(c));
+    }, [data.budgets, userRole, permittedBudgetCategories]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -249,15 +311,26 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
+        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+            alert('You can only submit expenses under your assigned budget categories.');
+            return;
+        }
+
         if ('id' in transaction) {
             updateTransaction(transaction);
         } else {
-            addTransaction(transaction);
+            const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
+            addTransaction({ ...transaction, status: nextStatus });
         }
     };
     
     const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
-        addTransaction(transaction); // This is async but we don't need to wait
+        if (userRole === 'Restricted' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+            alert('You can only submit expenses under your assigned budget categories.');
+            return;
+        }
+        const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
+        addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
         triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
@@ -272,12 +345,79 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { day: 'numeric', month: 'long', year: 'numeric', numberingSystem: 'latn' }).format(date);
     };
 
+    const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
+        if (!supabase) return;
+
+        if (status === 'Approved') {
+            const { error: approveError } = await supabase.rpc('approve_pending_transaction', {
+                p_transaction_id: transactionId,
+            });
+
+            if (approveError) {
+                // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
+                const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
+                if (statusError) {
+                    alert(`Failed to approve transaction: ${approveError.message}`);
+                    return;
+                }
+
+                const row = adminPendingTransactions.find((t) => t.id === transactionId);
+                if (row?.budgetCategory && row.amount) {
+                    const { error: applyError } = await supabase.rpc('apply_approved_transaction_to_category', {
+                        p_category_name: row.budgetCategory,
+                        p_amount: Math.abs(Number(row.amount))
+                    });
+                    if (applyError) {
+                        alert(`Transaction approved but category balance update failed: ${applyError.message}`);
+                    }
+                }
+            }
+        } else {
+            const reason = window.prompt('Optional rejection reason for audit/history:') || '';
+            const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
+                p_transaction_id: transactionId,
+                p_reason: reason,
+            });
+
+            if (rejectError) {
+                const { error } = await supabase.from('transactions').update({ status, rejection_reason: reason || null }).eq('id', transactionId);
+                if (error) {
+                    alert(`Failed to reject transaction: ${rejectError.message}`);
+                    return;
+                }
+            }
+        }
+
+        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+    };
+
     return (
         <div className="space-y-8">
             <div className="flex flex-wrap justify-between items-center gap-4">
                 <h1 className="text-3xl font-bold text-dark">Cash Flow</h1>
                 <button onClick={() => handleOpenTransactionModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Transaction</button>
             </div>
+
+            {userRole === 'Admin' && adminPendingTransactions.length > 0 && (
+                <div className="bg-white p-5 rounded-xl shadow-md border border-amber-200">
+                    <h2 className="text-xl font-semibold text-dark mb-3">Admin Review Queue</h2>
+                    <div className="space-y-3">
+                        {adminPendingTransactions.map((pending) => (
+                            <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                <div>
+                                    <p className="font-semibold">{pending.description}</p>
+                                    <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
+                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
+                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <Card title="Income" value={formatCurrencyString(monthlyIncome)} />
@@ -333,6 +473,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                             <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
                                             <span className="text-gray-300">|</span>
                                             <span className="px-2 py-0.5 bg-gray-100 rounded-full text-xs">{transaction.category}</span>
+                                            {transaction.status && (
+                                                <span className={`px-2 py-0.5 rounded-full text-xs ${transaction.status === 'Approved' ? 'bg-green-100 text-green-700' : transaction.status === 'Rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{transaction.status}</span>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="flex items-center space-x-4">

@@ -2,7 +2,7 @@ import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
-import { Budget } from '../types';
+import { Budget, UserRole } from '../types';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -10,6 +10,8 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
 import Combobox from '../components/Combobox';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from '../context/AuthContext';
 
 interface BudgetModalProps {
     isOpen: boolean;
@@ -85,7 +87,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
 const Budgets: React.FC = () => {
     const { data, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
+    const [userRole, setUserRole] = useState<UserRole>('Restricted');
+    const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
+    const [newCategoryName, setNewCategoryName] = useState('');
+    const [requestAmount, setRequestAmount] = useState('');
+    const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit'>('NewCategory');
+    const [requestCategoryId, setRequestCategoryId] = useState('');
+    const [governanceCategories, setGovernanceCategories] = useState<{ id: string; name: string }[]>([]);
+    const [pendingRequests, setPendingRequests] = useState<any[]>([]);
     
     const [currentDate, setCurrentDate] = useState(new Date());
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -94,11 +105,52 @@ const Budgets: React.FC = () => {
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
 
+
+    React.useEffect(() => {
+        const loadGovernance = async () => {
+            if (!supabase || !auth?.user) return;
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            const role = (userRecord?.role === 'Admin' ? 'Admin' : 'Restricted') as UserRole;
+            setUserRole(role);
+
+            const { data: categories } = await supabase
+                .from('categories')
+                .select('id, name')
+                .order('name', { ascending: true });
+            setGovernanceCategories(categories || []);
+
+            if (role === 'Restricted') {
+                const { data: permissions } = await supabase
+                    .from('permissions')
+                    .select('categories(name)')
+                    .eq('user_id', auth.user.id);
+                setPermittedCategories((permissions || []).map((p: any) => p.categories?.name).filter(Boolean));
+
+                const { data: ownRequests } = await supabase
+                    .from('budget_requests')
+                    .select('*')
+                    .eq('user_id', auth.user.id)
+                    .eq('status', 'Pending')
+                    .order('created_at', { ascending: false });
+                setPendingRequests(ownRequests || []);
+            } else {
+                const { data: requests } = await supabase
+                    .from('budget_requests')
+                    .select('*')
+                    .eq('status', 'Pending')
+                    .order('created_at', { ascending: false });
+                setPendingRequests(requests || []);
+            }
+        };
+
+        loadGovernance();
+    }, [auth?.user?.id]);
+
     const budgetData = useMemo(() => {
         const spending = new Map<string, number>();
         
         data.transactions
-            .filter(t => t.type === 'expense' && new Date(t.date).getFullYear() === currentYear && new Date(t.date).getMonth() + 1 === currentMonth && t.budgetCategory)
+            .filter(t => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && new Date(t.date).getFullYear() === currentYear && new Date(t.date).getMonth() + 1 === currentMonth && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
@@ -106,6 +158,7 @@ const Budgets: React.FC = () => {
 
         return data.budgets
             .filter(b => b.year === currentYear && b.month === currentMonth)
+            .filter(b => userRole === 'Admin' || permittedCategories.includes(b.category))
             .map(budget => {
                 const spent = spending.get(budget.category) || 0;
                 const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
@@ -115,9 +168,10 @@ const Budgets: React.FC = () => {
                 
                 return { ...budget, spent, percentage, colorClass };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data.transactions, data.budgets, currentYear, currentMonth]);
+    }, [data.transactions, data.budgets, currentYear, currentMonth, userRole, permittedCategories]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
+        if (userRole === 'Restricted') return;
         setBudgetToEdit(budget);
         setIsModalOpen(true);
     };
@@ -139,9 +193,116 @@ const Budgets: React.FC = () => {
     }
 
     const handleCopyBudgets = () => {
+        if (userRole === 'Restricted') return;
+
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
         }
+    };
+    const submitBudgetRequest = async () => {
+        if (!supabase || !auth?.user) return;
+
+        const amount = Number(requestAmount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Please enter a valid proposed amount greater than 0.');
+            return;
+        }
+
+        if (requestType === 'NewCategory' && !newCategoryName.trim()) {
+            alert('Please provide a category name for a new category request.');
+            return;
+        }
+
+        if (requestType === 'IncreaseLimit' && !requestCategoryId) {
+            alert('Please select a category for an increase request.');
+            return;
+        }
+
+        const duplicateMatch = pendingRequests.some((r) =>
+            r.status === 'Pending' &&
+            r.request_type === requestType &&
+            (requestType === 'NewCategory'
+                ? String(r.category_name || '').trim().toLowerCase() === newCategoryName.trim().toLowerCase()
+                : r.category_id === requestCategoryId)
+        );
+
+        if (duplicateMatch) {
+            alert('A similar pending request already exists. Please wait for admin review.');
+            return;
+        }
+
+        const { error } = await supabase.from('budget_requests').insert({
+            user_id: auth.user.id,
+            request_type: requestType,
+            category_id: requestType === 'IncreaseLimit' ? requestCategoryId || null : null,
+            category_name: requestType === 'NewCategory' ? newCategoryName.trim() : null,
+            amount,
+            status: 'Pending'
+        });
+        if (error) {
+            alert(`Failed to submit request: ${error.message}`);
+            return;
+        }
+        setNewCategoryName('');
+        setRequestAmount('');
+        setRequestCategoryId('');
+        alert('Request submitted for admin approval.');
+    };
+
+    const finalizeBudgetRequest = async (request: any) => {
+        if (!supabase) return;
+        const amount = Number(request.amount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Request amount is invalid; please reject or correct the request.');
+            return;
+        }
+        if (request.request_type === 'NewCategory') {
+            const { error: insertError } = await supabase
+                .from('categories')
+                .insert({ name: request.category_name, monthly_limit: amount, total_spent: 0 });
+            if (insertError) {
+                alert(`Failed to create category: ${insertError.message}`);
+                return;
+            }
+        }
+        if (request.request_type === 'IncreaseLimit') {
+            if (!request.category_id) {
+                alert('Increase-limit request is missing a target category.');
+                return;
+            }
+            const { error: updateError } = await supabase
+                .from('categories')
+                .update({ monthly_limit: amount })
+                .eq('id', request.category_id);
+            if (updateError) {
+                alert(`Failed to update category limit: ${updateError.message}`);
+                return;
+            }
+        }
+
+        const { error: requestUpdateError } = await supabase
+            .from('budget_requests')
+            .update({ status: 'Finalized' })
+            .eq('id', request.id);
+        if (requestUpdateError) {
+            alert(`Failed to finalize request: ${requestUpdateError.message}`);
+            return;
+        }
+
+        setPendingRequests(prev => prev.filter((r) => r.id !== request.id));
+    };
+
+    const rejectBudgetRequest = async (requestId: string) => {
+        if (!supabase) return;
+        const { error } = await supabase
+            .from('budget_requests')
+            .update({ status: 'Rejected' })
+            .eq('id', requestId);
+        if (error) {
+            alert(`Failed to reject request: ${error.message}`);
+            return;
+        }
+        setPendingRequests(prev => prev.filter((r) => r.id !== requestId));
     };
 
     return (
@@ -154,10 +315,71 @@ const Budgets: React.FC = () => {
                     <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
                 </div>
                  <div className="flex items-center gap-2">
-                    <button onClick={handleCopyBudgets} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center gap-2"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
-                    <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Budget</button>
+                    <button disabled={userRole === 'Restricted'} onClick={handleCopyBudgets} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
+                    <button disabled={userRole === 'Restricted'} onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm disabled:opacity-50">Add Budget</button>
                  </div>
             </div>
+            {userRole === 'Restricted' && (
+                <div className="bg-white rounded-lg shadow p-5 border border-primary/20">
+                    <h2 className="text-lg font-semibold mb-3">Request Budget Change</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="p-2 border rounded">
+                            <option value="NewCategory">New Category</option>
+                            <option value="IncreaseLimit">Increase Limit</option>
+                        </select>
+                        {requestType === 'NewCategory' ? (
+                            <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Category name" className="p-2 border rounded" />
+                        ) : (
+                            <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="p-2 border rounded">
+                                <option value="">Select category</option>
+                                {governanceCategories
+                                    .filter((c) => permittedCategories.includes(c.name))
+                                    .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        )}
+                        <input type="number" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Proposed amount" className="p-2 border rounded" />
+                        <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded">Submit</button>
+                    </div>
+                </div>
+            )}
+
+            {userRole === 'Restricted' && pendingRequests.length > 0 && (
+                <div className="bg-white rounded-lg shadow p-5 border border-blue-200">
+                    <h2 className="text-lg font-semibold mb-3">My Pending Requests</h2>
+                    <div className="space-y-2">
+                        {pendingRequests.map((r) => (
+                            <div key={r.id} className="p-3 border rounded flex items-center justify-between">
+                                <div>
+                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
+                                    <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                </div>
+                                <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800">Pending</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {userRole === 'Admin' && pendingRequests.length > 0 && (
+                <div className="bg-white rounded-lg shadow p-5 border border-amber-200">
+                    <h2 className="text-lg font-semibold mb-3">Budget Request Review</h2>
+                    <div className="space-y-3">
+                        {pendingRequests.map((r) => (
+                            <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
+                                <div>
+                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
+                                    <p className="text-xs text-gray-500">Requested: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
+                                    <button onClick={() => rejectBudgetRequest(r.id)} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {budgetData.map(budget => (
                     <div key={budget.category} className="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col">
@@ -179,7 +401,7 @@ const Budgets: React.FC = () => {
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
                             <button onClick={() => handleOpenModal(budget)} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                            <button onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                            <button disabled={userRole === 'Restricted'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
                 ))}

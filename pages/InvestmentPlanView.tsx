@@ -129,6 +129,35 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     };
     
     const priorityClass = (p: PlannedTrade['priority']) => ({ High: 'bg-red-100 text-red-800', Medium: 'bg-yellow-100 text-yellow-800', Low: 'bg-blue-100 text-blue-800' }[p]);
+    const getPlannedExecutionPrice = (plan: PlannedTrade): number | null => {
+        if (plan.quantity && plan.amount && plan.quantity > 0) return plan.amount / plan.quantity;
+        return plan.conditionType === 'price' ? plan.targetValue : null;
+    };
+
+    const getPriceSignalClass = (plan: PlannedTrade): string => {
+        const plannedPrice = getPlannedExecutionPrice(plan);
+        const currentPrice = simulatedPrices[plan.symbol]?.price;
+        if (!plannedPrice || !currentPrice) return 'bg-gray-100 text-gray-600';
+
+        const ratio = (currentPrice - plannedPrice) / plannedPrice;
+        if (Math.abs(ratio) <= 0.01) return 'bg-yellow-100 text-yellow-800';
+        if (plan.tradeType === 'buy') {
+            return currentPrice <= plannedPrice ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+        }
+        return currentPrice >= plannedPrice ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+    };
+
+    const getPriceSignalLabel = (plan: PlannedTrade): string => {
+        const plannedPrice = getPlannedExecutionPrice(plan);
+        const currentPrice = simulatedPrices[plan.symbol]?.price;
+        if (!plannedPrice || !currentPrice) return 'Waiting price';
+
+        const ratio = Math.abs((currentPrice - plannedPrice) / plannedPrice);
+        if (ratio <= 0.01) return 'Near plan';
+        if (plan.tradeType === 'buy') return currentPrice <= plannedPrice ? 'Favorable' : 'Expensive';
+        return currentPrice >= plannedPrice ? 'Favorable' : 'Below plan';
+    };
+
     
     const renderCondition = (plan: PlannedTrade) => {
         if (plan.conditionType === 'date') {
@@ -163,11 +192,26 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 <button onClick={() => { setPlanToEdit(null); setIsModalOpen(true); }} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center gap-2"><PlusIcon className="h-5 w-5"/>Add Plan</button>
             </div>
             
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                    <p className="text-xs uppercase text-gray-500">Planned Trades</p>
+                    <p className="text-2xl font-bold text-dark mt-1">{data.plannedTrades.length}</p>
+                </div>
+                <div className="bg-white border border-yellow-200 rounded-lg p-4">
+                    <p className="text-xs uppercase text-yellow-700">Triggered</p>
+                    <p className="text-2xl font-bold text-yellow-700 mt-1">{data.plannedTrades.filter(isTriggered).length}</p>
+                </div>
+                <div className="bg-white border border-green-200 rounded-lg p-4">
+                    <p className="text-xs uppercase text-green-700">Executed</p>
+                    <p className="text-2xl font-bold text-green-700 mt-1">{data.plannedTrades.filter(p => p.status === 'Executed').length}</p>
+                </div>
+            </div>
+
             <div className="bg-white shadow rounded-lg overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                     <thead className="bg-gray-50"><tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         <th className="px-4 py-3">Asset</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Trigger Condition</th>
-                        <th className="px-4 py-3">Priority</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Actions</th>
+                        <th className="px-4 py-3">Planned Price</th><th className="px-4 py-3">Signal</th><th className="px-4 py-3">Priority</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Actions</th>
                     </tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.plannedTrades.map(plan => (
@@ -175,6 +219,12 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                                 <td className="px-4 py-3 whitespace-nowrap"><div className="font-medium text-dark">{plan.symbol}</div><div className="text-xs text-gray-500">{plan.name}</div></td>
                                 <td className="px-4 py-3"><span className={`font-semibold ${plan.tradeType === 'buy' ? 'text-green-600' : 'text-red-600'}`}>{plan.tradeType.toUpperCase()}</span></td>
                                 <td className="px-4 py-3">{renderCondition(plan)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap">{getPlannedExecutionPrice(plan) ? formatCurrencyString(getPlannedExecutionPrice(plan)!) : '--'}</td>
+                                <td className="px-4 py-3">
+                                    <span className={`px-2 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}>
+                                        {getPriceSignalLabel(plan)}
+                                    </span>
+                                </td>
                                 <td className="px-4 py-3"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${priorityClass(plan.priority)}`}>{plan.priority}</span></td>
                                 <td className="px-4 py-3">
                                     {plan.status === 'Executed' ? <span className="flex items-center gap-1 text-green-600 font-semibold"><CheckCircleIcon className="h-4 w-4"/>Executed</span> :

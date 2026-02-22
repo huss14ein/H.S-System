@@ -21,8 +21,20 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   const isPositive = trend?.includes('+') || (trend && /(surplus|under|healthy)/i.test(trend));
   const isNegative = trend?.includes('-') || (trend && /(deficit|over|critical|low)/i.test(trend));
   let trendColor = 'text-gray-500';
-  if (isPositive) trendColor = 'text-success';
-  if (isNegative) trendColor = 'text-danger';
+  if (isPositive) trendColor = 'text-green-700';
+  if (isNegative) trendColor = 'text-red-700';
+
+  const valueToneClass = isPositive
+    ? 'text-green-700'
+    : isNegative
+      ? 'text-red-700'
+      : (valueColor || 'text-dark');
+
+  const cardToneClass = isPositive
+    ? 'from-green-50 via-white to-green-100 border-green-200'
+    : isNegative
+      ? 'from-red-50 via-white to-red-100 border-red-200'
+      : 'from-sky-50 via-white to-indigo-50 border-slate-200';
 
   useEffect(() => {
     const isNumeric = typeof value === 'number' || (typeof value === 'string' && !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, ""))));
@@ -40,16 +52,16 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
   }, [value]);
   
   const indicatorClass = 
-      indicatorColor === 'green' ? 'border-green-500' :
-      indicatorColor === 'yellow' ? 'border-yellow-500' :
-      indicatorColor === 'red' ? 'border-red-500' :
-      'border-transparent';
+      indicatorColor === 'green' ? 'border-t-green-500' :
+      indicatorColor === 'yellow' ? 'border-t-yellow-500' :
+      indicatorColor === 'red' ? 'border-t-red-500' :
+      'border-t-transparent';
 
   const flashClass = flash === 'up' ? 'flash-green' : flash === 'down' ? 'flash-red' : '';
 
   return (
     <div 
-      className={`bg-gradient-to-br from-white to-slate-50 p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 ease-in-out flex flex-col border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
+      className={`bg-gradient-to-br ${cardToneClass} p-6 rounded-lg shadow-md hover:shadow-xl transition-all duration-300 ease-in-out flex flex-col h-full min-h-[170px] border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer' : ''} ${flashClass}`}
       onClick={onClick}
       style={{
         backgroundImage: 'radial-gradient(circle at top right, rgba(239, 246, 255, 0.5) 0%, transparent 50%)',
@@ -68,7 +80,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valu
         ))}
       </div>
       <div className="mt-2 flex-grow">
-        <p className={`text-3xl font-extrabold break-words ${valueColor || 'text-dark'}`}>{value}</p>
+        <p className={`text-3xl font-extrabold break-words ${valueToneClass}`}>{value}</p>
         {trend && (
           <div className={`flex items-center text-sm mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-4 w-4 mr-1"/>}

@@ -6,6 +6,9 @@
 
 export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings';
 
+export type UserRole = 'Admin' | 'Restricted';
+export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
+
 export interface Goal {
   id: string;
   user_id?: string;
@@ -80,6 +83,10 @@ export interface Transaction {
   type: 'income' | 'expense';
   transactionNature?: 'Fixed' | 'Variable';
   expenseType?: 'Core' | 'Discretionary';
+  status?: ApprovalStatus;
+  categoryId?: string;
+  note?: string;
+  rejectionReason?: string;
 }
 
 export type HoldingAssetClass =
@@ -144,6 +151,35 @@ export interface Budget {
   limit: number;
   month: number; // 1-12
   year: number;
+}
+
+
+export interface GovernanceUser {
+  id: string;
+  name: string;
+  role: UserRole;
+}
+
+export interface BudgetCategory {
+  id: string;
+  name: string;
+  monthlyLimit: number;
+  totalSpent: number;
+}
+
+export interface CategoryPermission {
+  userId: string;
+  categoryId: string;
+}
+
+export interface BudgetRequest {
+  id: string;
+  userId: string;
+  requestType: 'NewCategory' | 'IncreaseLimit';
+  categoryId?: string;
+  categoryName?: string;
+  amount: number;
+  status: 'Pending' | 'Finalized' | 'Rejected';
 }
 
 export interface CommodityHolding {

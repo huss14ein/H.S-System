@@ -13,8 +13,25 @@ const MarketSimulator: React.FC = () => {
 
     const previousPricesRef = useRef<Record<string, number>>({});
 
+    const investmentSymbolsSignature = (dataContext?.data?.investments || [])
+        .flatMap(p => p.holdings.map(h => h.symbol))
+        .sort()
+        .join('|');
+    const watchlistSymbolsSignature = (dataContext?.data?.watchlist || [])
+        .map(w => w.symbol)
+        .sort()
+        .join('|');
+    const plannedTradeSymbolsSignature = (dataContext?.data?.plannedTrades || [])
+        .map(t => t.symbol)
+        .sort()
+        .join('|');
+    const commoditySymbolsSignature = (dataContext?.data?.commodityHoldings || [])
+        .map(c => c.symbol)
+        .sort()
+        .join('|');
+
     useEffect(() => {
-        const { refreshTrigger } = marketContext as any;
+        if (!marketContext) return;
         
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
@@ -155,13 +172,9 @@ const MarketSimulator: React.FC = () => {
             }
         };
 
-        if (refreshTrigger > 0) {
-            runSimulationTick(true); // Real fetch on manual refresh
-        } else {
-            runSimulationTick(false); // Initial load can be simulation to save tokens
-        }
+        runSimulationTick(true);
 
-    }, [(marketContext as any).refreshTrigger]);
+    }, [marketContext?.refreshTrigger, investmentSymbolsSignature, watchlistSymbolsSignature, plannedTradeSymbolsSignature, commoditySymbolsSignature]);
 
     return null;
 };

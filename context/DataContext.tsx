@@ -95,6 +95,98 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
     const auth = useContext(AuthContext);
 
+    const normalizeHolding = (holding: any): Holding => ({
+        ...holding,
+        portfolio_id: holding.portfolio_id || holding.portfolioId,
+        avgCost: holding.avgCost ?? holding.avg_cost ?? 0,
+        currentValue: holding.currentValue ?? holding.current_value ?? 0,
+        goalId: holding.goalId ?? holding.goal_id,
+        assetClass: holding.assetClass ?? holding.asset_class,
+        realizedPnL: holding.realizedPnL ?? holding.realized_pnl ?? 0,
+        dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
+        dividendYield: holding.dividendYield ?? holding.dividend_yield,
+        zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
+    });
+
+    const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => ({
+        ...transaction,
+        accountId: transaction.accountId || transaction.account_id,
+    });
+
+    const normalizeCommodityHolding = (holding: any): CommodityHolding => ({
+        ...holding,
+        purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
+        currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+        zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+    });
+
+    const normalizeTransaction = (transaction: any): Transaction => ({
+        ...transaction,
+        accountId: transaction.accountId ?? transaction.account_id ?? '',
+        budgetCategory: transaction.budgetCategory ?? transaction.budget_category,
+        categoryId: transaction.categoryId ?? transaction.category_id,
+        rejectionReason: transaction.rejectionReason ?? transaction.rejection_reason,
+    });
+
+    const isMissingColumnError = (error: any) => {
+        const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+        return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
+    };
+
+    const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => ([
+        {
+            account_id: trade.accountId,
+            date: trade.date,
+            type: trade.type,
+            symbol: trade.symbol,
+            quantity: trade.quantity,
+            price: trade.price,
+            total: trade.total,
+        },
+        {
+            accountId: trade.accountId,
+            date: trade.date,
+            type: trade.type,
+            symbol: trade.symbol,
+            quantity: trade.quantity,
+            price: trade.price,
+            total: trade.total,
+        }
+    ]);
+
+    const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => ([
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchase_value: holding.purchaseValue,
+            currentValue: holding.currentValue,
+            zakahClass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchaseValue: holding.purchaseValue,
+            currentValue: holding.currentValue,
+            zakahClass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchasevalue: holding.purchaseValue,
+            currentvalue: holding.currentValue,
+            zakahclass: holding.zakahClass,
+        }
+    ]);
+
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
             setLoading(false);
@@ -138,16 +230,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 assets: assets.data || [],
                 liabilities: liabilities.data || [],
                 goals: goals.data || [],
-                transactions: transactions.data || [],
-                investments: (investments.data as any) || [],
-                investmentTransactions: investmentTransactions.data || [],
+                transactions: (transactions.data || []).map(normalizeTransaction),
+                investments: ((investments.data as any) || []).map((portfolio: any) => ({
+                    ...portfolio,
+                    accountId: portfolio.accountId || portfolio.account_id,
+                    holdings: (portfolio.holdings || []).map(normalizeHolding)
+                })),
+                investmentTransactions: (investmentTransactions.data || []).map(normalizeInvestmentTransaction),
                 budgets: budgets.data || [],
-                commodityHoldings: commodityHoldings.data || [],
+                commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
                 settings: settings.data || initialData.settings,
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
+                notifications: [],
                 investmentPlan: (investmentPlan as any).data 
                     ? { 
                         ...initialData.investmentPlan, 
@@ -413,14 +510,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert(`Failed to add transaction: ${error.message}`);
             throw error;
         }
-        if (newTx) setData(prev => ({ ...prev, transactions: [newTx, ...prev.transactions] }));
+        if (newTx) setData(prev => ({ ...prev, transactions: [normalizeTransaction(newTx), ...prev.transactions] }));
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('transactions').update(transaction).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
-        else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? transaction : t) }));
+        else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalizeTransaction({ ...t, ...transaction }) : t) }));
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
@@ -540,16 +637,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const { portfolioId, name, ...tradeData } = trade;
 
-        // 1. Log the transaction to the database
-        const tradeTotal = tradeData.quantity * tradeData.price;
-        const { data: newTransaction, error: txError } = await supabase.from('investment_transactions').insert(withUser({ ...tradeData, total: tradeTotal })).select().single();
-        if (txError) { console.error("Error recording transaction:", txError); throw txError; }
-        if (newTransaction) setData(prev => ({ ...prev, investmentTransactions: [newTransaction, ...prev.investmentTransactions] }));
-
-        // 2. Find portfolio and holding from state
+        // 1. Validate portfolio/holding state before persisting transaction
         const portfolio = data.investments.find(p => p.id === portfolioId);
         if (!portfolio) throw new Error("Portfolio not found");
         const existingHolding = portfolio.holdings.find(h => h.symbol === tradeData.symbol);
+        if (tradeData.type === 'sell') {
+            if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
+            if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
+        }
+
+        // 2. Log the transaction to the database
+        const tradeTotal = tradeData.quantity * tradeData.price;
+        let newTransaction: any = null;
+        let txError: any = null;
+        const tradePayload = { ...tradeData, total: tradeTotal };
+        for (const payload of tradePayloadVariants(tradePayload)) {
+            const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
+            newTransaction = result.data;
+            txError = result.error;
+            if (!txError) break;
+            if (!isMissingColumnError(txError)) break;
+        }
+        if (txError) { console.error("Error recording transaction:", txError); throw txError; }
+        if (newTransaction) {
+            setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
+        }
 
         // 3. Process trade logic
         try {
@@ -574,16 +686,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             } else { // 'sell'
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
-                if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
-
-                const newQuantity = existingHolding.quantity - tradeData.quantity;
-                const realizedGain = (tradeData.price - existingHolding.avgCost) * tradeData.quantity;
-                const newRealizedPnL = existingHolding.realizedPnL + realizedGain;
+                const holdingForSell = existingHolding;
+                const newQuantity = holdingForSell.quantity - tradeData.quantity;
+                const realizedGain = (tradeData.price - holdingForSell.avgCost) * tradeData.quantity;
+                const newRealizedPnL = holdingForSell.realizedPnL + realizedGain;
 
                 if (newQuantity > 0.00001) { // Use a small epsilon for floating point comparison
-                    await updateHolding({ ...existingHolding, quantity: newQuantity, realizedPnL: newRealizedPnL });
+                    await updateHolding({ ...holdingForSell, quantity: newQuantity, realizedPnL: newRealizedPnL });
                 } else {
-                    await deleteHolding(existingHolding.id);
+                    await deleteHolding(holdingForSell.id);
                 }
             }
         } catch (error) {
@@ -627,17 +738,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (holding.purchaseValue <= 0) {
             throw new Error("Purchase Value must be a positive number.");
         }
-        const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(holding)).select().single();
-        if (error) console.error("Error adding commodity:", error);
-        else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, newHolding] }));
+        let newHolding: any = null;
+        let error: any = null;
+        for (const payload of commodityPayloadVariants(holding)) {
+            const result = await supabase.from('commodity_holdings').insert(withUser(payload)).select().single();
+            newHolding = result.data;
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
+        }
+        if (error) {
+            console.error("Error adding commodity:", error);
+            throw error;
+        }
+        else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
     };
     const updateCommodityHolding = async (holding: CommodityHolding) => {
         if (!supabase || !auth?.user) return;
         if (holding.purchaseValue <= 0) {
             throw new Error("Purchase Value must be a positive number.");
         }
-        const { error } = await supabase.from('commodity_holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
-        if (error) console.error(error);
+        let error: any = null;
+        for (const payload of commodityPayloadVariants(holding)) {
+            const result = await supabase.from('commodity_holdings').update(payload).match({ id: holding.id, user_id: auth.user.id });
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
+        }
+        if (error) {
+            console.error(error);
+            throw error;
+        }
         else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
     };
     const deleteCommodityHolding = async (holdingId: string) => {
@@ -648,7 +779,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
-        const upsertData = updates.map(u => ({ id: u.id, currentValue: u.currentValue, user_id: auth.user!.id }));
+        const upsertData = updates.map(u => ({
+            id: u.id,
+            currentValue: u.currentValue,
+            currentvalue: u.currentValue,
+            user_id: auth.user!.id
+        }));
         const { error } = await supabase.from('commodity_holdings').upsert(upsertData, { onConflict: 'id' });
         if (error) {
             console.error("Error batch updating commodity values:", error);
