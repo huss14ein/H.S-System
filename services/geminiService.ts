@@ -3,6 +3,11 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_SYSTEM_INSTRUCTION = `You are HS, an elite financial AI assistant. Responses must be accurate, direct, and brief.
+- Lead with a one-sentence answer.
+- Then provide a short bulleted summary (max 3 bullets).
+- Use concrete numbers from provided data when available.
+- Never use HTML.`;
 
 
 // --- AI Error Formatting ---
@@ -113,13 +118,22 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 
 // Unified AI invocation function. Decides whether to use client-side SDK or proxy.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    const hasJsonSchema = payload.config?.responseMimeType === 'application/json';
+    const mergedPayload = {
+        ...payload,
+        config: {
+            ...payload.config,
+            ...(hasJsonSchema ? {} : { systemInstruction: payload.config?.systemInstruction || DEFAULT_SYSTEM_INSTRUCTION }),
+        },
+    };
+
     // In dev mode, use the client-side key if available.
     // In dev mode, use the client-side key if available. Otherwise, fall back to the proxy.
     if (import.meta.env.DEV && import.meta.env.VITE_GEMINI_API_KEY) {
         const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
         try {
             const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-            const response: GenerateContentResponse = await ai.models.generateContent(payload);
+            const response: GenerateContentResponse = await ai.models.generateContent(mergedPayload);
             return {
                 text: response.text,
                 candidates: response.candidates,
@@ -130,7 +144,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
         }
     } else {
         // In production, or for local dev without a specific client-side key, use the proxy.
-        return invokeGeminiProxy(payload);
+        return invokeGeminiProxy(mergedPayload);
     }
 }
 
@@ -310,7 +324,7 @@ export const getAIFinancialPersona = async (
         });
         const result = robustJsonParse(response.text);
         if (result) {
-            setToCache(cacheKey, JSON.stringify(result));
+            setToCache(cacheKey, result);
         }
         return result;
 
@@ -749,8 +763,13 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
 
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         const prices = robustJsonParse(response.text);
-        
-        return { prices: prices || [], groundingChunks };
+        const normalizedPrices = Array.isArray(prices)
+            ? prices
+                .filter((p: any) => p && typeof p.symbol === 'string' && Number.isFinite(Number(p.price)))
+                .map((p: any) => ({ symbol: p.symbol.toUpperCase(), price: Number(p.price) }))
+            : [];
+
+        return { prices: normalizedPrices, groundingChunks };
 
     } catch (error) {
         console.error("Error fetching AI commodity prices:", error);
@@ -812,7 +831,19 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         });
 
         const prices = robustJsonParse(response.text);
-        return prices || {};
+        if (!prices || typeof prices !== 'object') return {};
+
+        const normalized: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+        for (const [symbol, value] of Object.entries(prices)) {
+            const candidate = value as any;
+            const price = Number(candidate?.price);
+            const change = Number(candidate?.change);
+            const changePercent = Number(candidate?.changePercent);
+            if (!Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
+            normalized[symbol.toUpperCase()] = { price, change, changePercent };
+        }
+
+        return normalized;
 
     } catch (error) {
         console.error("Error fetching live prices:", error);
@@ -933,7 +964,7 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
 
     try {
         const result = await invokeAI({
-            model: 'gemini-3.1-pro-preview',
+            model: FAST_MODEL,
             contents: [{ parts: [{ text: prompt }] }],
             config: {
                 tools: [{ functionDeclarations: [recordTradesFunction] }, { googleSearch: {} }],

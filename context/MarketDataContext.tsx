@@ -13,6 +13,7 @@ interface MarketDataContextType {
   lastUpdated: Date | null;
   isLive: boolean;
   setIsLive: (isLive: boolean) => void;
+  refreshTrigger: number;
 }
 
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
@@ -40,7 +41,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setIsRefreshing(false);
     };
 
-    const value = {
+    const value: MarketDataContextType = {
         simulatedPrices,
         setSimulatedPrices,
         isRefreshing,
@@ -52,7 +53,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     };
 
     return (
-        <MarketDataContext.Provider value={value as any}>
+        <MarketDataContext.Provider value={value}>
             {children}
         </MarketDataContext.Provider>
     );

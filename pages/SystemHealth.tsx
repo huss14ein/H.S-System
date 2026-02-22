@@ -1,5 +1,4 @@
-// FIX: Import 'useMemo' from React to resolve 'Cannot find name 'useMemo'' error.
-import React, { useState, useCallback, useContext, useMemo } from 'react';
+import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { invokeAI } from '../services/geminiService';
 import { MarketDataContext } from '../context/MarketDataContext';
@@ -52,10 +51,12 @@ const SystemHealth: React.FC = () => {
         ));
 
         const checkSupabaseAuth = async (): Promise<Partial<Service>> => {
+            if (!supabase) {
+                return { status: 'Outage', error: 'Supabase client is not configured.' };
+            }
             try {
                 const start = performance.now();
-                // FIX: `getUser()` does not exist in older Supabase versions. Replaced with `refreshSession()` which provides a reliable async check.
-                const { error } = await supabase!.auth.refreshSession();
+                const { error } = await supabase.auth.getSession();
                 if (error) throw error;
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
@@ -63,9 +64,12 @@ const SystemHealth: React.FC = () => {
         };
 
         const checkSupabaseDB = async (): Promise<Partial<Service>> => {
+            if (!supabase) {
+                return { status: 'Outage', error: 'Supabase client is not configured.' };
+            }
             try {
                 const start = performance.now();
-                const { error } = await supabase!.from('accounts').select('id', { count: 'exact', head: true });
+                const { error } = await supabase.from('accounts').select('id', { count: 'exact', head: true });
                 if (error) throw error;
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
@@ -85,8 +89,17 @@ const SystemHealth: React.FC = () => {
         };
         
         const checkMarketData = (): Partial<Service> => {
-            const isRunning = marketContext && Object.keys(marketContext.simulatedPrices).length > 0;
-            return { status: isRunning ? 'Operational' : 'Degraded Performance' };
+            if (!marketContext) {
+                return { status: 'Outage', error: 'Market data context is unavailable.' };
+            }
+            const hasPrices = Object.keys(marketContext.simulatedPrices).length > 0;
+            if (!hasPrices) {
+                return { status: 'Degraded Performance', error: 'No market prices loaded yet. Click refresh in the header.' };
+            }
+            return {
+                status: marketContext.isLive ? 'Operational' : 'Degraded Performance',
+                error: marketContext.isLive ? undefined : 'Running with simulated prices. Trigger a refresh to retry live data.'
+            };
         };
 
         const [auth, db, ai] = await Promise.all([
@@ -105,12 +118,13 @@ const SystemHealth: React.FC = () => {
         }));
 
         setIsLoading(false);
-    }, [marketContext]);
+    }, [marketContext?.isLive, marketContext ? Object.keys(marketContext.simulatedPrices).length : 0]);
 
-    // Removed automatic health check on mount
-    // useEffect(() => {
-    //     runHealthChecks();
-    // }, [runHealthChecks]);
+    useEffect(() => {
+        runHealthChecks();
+        // Run once on entry; users can re-run manually with the button.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const overallStatus = useMemo((): ServiceStatus => {
         if (services.some(s => s.status === 'Outage')) return 'Outage';

@@ -1,6 +1,6 @@
 import React, { useState, useContext, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { WatchlistItem } from '../types';
+import { PriceAlert, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { getAIResearchNews } from '../services/geminiService';
@@ -33,13 +33,30 @@ const AddWatchlistItemModal: React.FC<{ isOpen: boolean, onClose: () => void, on
 const WatchlistItemRow: React.FC<{
     item: WatchlistItem,
     priceInfo: { price: number; change: number; changePercent: number },
-    hasAlert: boolean,
+    activeAlert: PriceAlert | null,
     onOpenAlertModal: (item: WatchlistItem) => void,
     onOpenDeleteModal: (item: WatchlistItem) => void
-}> = ({ item, priceInfo, hasAlert, onOpenAlertModal, onOpenDeleteModal }) => {
+}> = ({ item, priceInfo, activeAlert, onOpenAlertModal, onOpenDeleteModal }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number | undefined>(undefined);
+
+    const targetPrice = activeAlert?.targetPrice ?? null;
+    const targetDistancePercent = targetPrice && targetPrice > 0 ? ((priceInfo.price - targetPrice) / targetPrice) * 100 : null;
+    const targetStatusClass = !targetPrice
+        ? 'bg-gray-100 text-gray-600'
+        : Math.abs(targetDistancePercent || 0) <= 1
+            ? 'bg-yellow-100 text-yellow-800'
+            : (targetDistancePercent || 0) >= 0
+                ? 'bg-green-100 text-green-700'
+                : 'bg-red-100 text-red-700';
+    const targetStatusLabel = !targetPrice
+        ? 'No alert'
+        : Math.abs(targetDistancePercent || 0) <= 1
+            ? 'Near target'
+            : (targetDistancePercent || 0) >= 0
+                ? 'Above target'
+                : 'Below target';
 
     useEffect(() => {
         if (priceInfo) {
@@ -68,10 +85,19 @@ const WatchlistItemRow: React.FC<{
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {priceInfo.change >= 0 ? '+' : ''}{formatCurrencyString(priceInfo.change)} ({priceInfo.changePercent.toFixed(2)}%)
             </td>
+            <td className="px-4 py-2 text-right whitespace-nowrap">
+                <div className="flex flex-col items-end gap-1">
+                    <span className="text-xs text-gray-500">{targetPrice ? formatCurrencyString(targetPrice) : '--'}</span>
+                    <span className={`px-2 py-0.5 text-[11px] font-semibold rounded-full ${targetStatusClass}`}>
+                        {targetStatusLabel}
+                        {targetDistancePercent !== null && ` (${targetDistancePercent >= 0 ? '+' : ''}${targetDistancePercent.toFixed(1)}%)`}
+                    </span>
+                </div>
+            </td>
             <td className="px-4 py-2 text-center">
                 <div className="flex justify-center items-center space-x-1">
                     <button onClick={() => onOpenAlertModal(item)} className="text-gray-400 hover:text-yellow-500 p-1" title="Set Price Alert">
-                        {hasAlert ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
+                        {activeAlert ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
                     </button>
                     <button onClick={() => onOpenDeleteModal(item)} className="text-gray-400 hover:text-red-500 p-1" title="Delete">
                         <TrashIcon className="h-5 w-5" />
@@ -118,17 +144,17 @@ const WatchlistView: React.FC = () => {
             <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow">
                 <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-semibold text-dark">My Watchlist</h2><button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm">Add Stock</button></div>
                 <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">30-Day Trend</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">30-Day Trend</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
-                            const hasAlert = data.priceAlerts.some(a => a.symbol === item.symbol && a.status === 'active');
+                            const activeAlert = data.priceAlerts.find(a => a.symbol === item.symbol && a.status === 'active') || null;
                             return (
                                <WatchlistItemRow
                                   key={item.symbol}
                                   item={item}
                                   priceInfo={priceInfo}
-                                  hasAlert={hasAlert}
+                                  activeAlert={activeAlert}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                />

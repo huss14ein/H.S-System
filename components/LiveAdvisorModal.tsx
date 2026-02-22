@@ -81,19 +81,25 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         addWatchlistItem: handleAddWatchlistItem_,
     };
 
-    const processTurn = async (chatHistory: Content[]) => {
+    const processTurn = async (chatHistory: Content[], remainingToolRounds = 4) => {
         setIsLoading(true);
         try {
             const response = await invokeAI({
-                model: 'gemini-3-pro-preview',
+                model: 'gemini-3-flash-preview',
                 contents: chatHistory,
                 config: { 
                     tools: [{ functionDeclarations }],
-                    systemInstruction: "You are HS, an expert and insightful personal financial advisor. Your goal is to provide clear, actionable advice to help users manage their wealth. Use the available tools to answer questions accurately and concisely."
+                    systemInstruction: "You are HS, an expert personal financial advisor. Always answer directly, then provide a concise summary (max 3 bullets). Use tools when data is needed and include specific numbers from tool results."
                 }
             });
 
             if (response.functionCalls) {
+                if (remainingToolRounds <= 0) {
+                    setHistory(prev => [...prev, { role: 'model', parts: [{ text: "I reached my tool-call limit for this request. Please ask again with a narrower question." }] }]);
+                    setIsLoading(false);
+                    return;
+                }
+
                 const calls = response.functionCalls;
                 const toolResponseParts: Part[] = [];
 
@@ -112,7 +118,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 const toolResponse: Content = { role: 'tool', parts: toolResponseParts };
 
                 // Recurse with the function response
-                processTurn([...chatHistory, modelResponseWithFunctionCall, toolResponse]);
+                await processTurn([...chatHistory, modelResponseWithFunctionCall, toolResponse], remainingToolRounds - 1);
+                return;
 
             } else if (response.text) {
                 setHistory(prev => [...prev, { role: 'model', parts: [{ text: response.text }] }]);
