@@ -32,7 +32,7 @@ const InvestmentOverview: React.FC = () => {
         
         // Data for Portfolio Allocation Pie Chart
         const portfolioAllocation = data.investments.map(p => {
-            const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+            const portfolioValue = (p.holdings || []).reduce((sum, h) => sum + h.currentValue, 0);
             return { name: p.name, value: portfolioValue };
         }).sort((a,b) => b.value - a.value);
 

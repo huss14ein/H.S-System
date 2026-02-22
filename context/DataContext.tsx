@@ -184,6 +184,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             purchasevalue: holding.purchaseValue,
             currentvalue: holding.currentValue,
             zakahclass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchase_value: holding.purchaseValue,
+            currentValue: holding.currentValue,
+            zakahClass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchaseValue: holding.purchaseValue,
+            current_value: holding.currentValue,
+            zakah_class: holding.zakahClass,
         }
     ]);
 
@@ -640,7 +660,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 1. Validate portfolio/holding state before persisting transaction
         const portfolio = data.investments.find(p => p.id === portfolioId);
         if (!portfolio) throw new Error("Portfolio not found");
-        const existingHolding = portfolio.holdings.find(h => h.symbol === tradeData.symbol);
+        const normalizedSymbol = tradeData.symbol.trim().toUpperCase();
+        const existingHolding = portfolio.holdings.find(h => h.symbol.trim().toUpperCase() === normalizedSymbol);
         if (tradeData.type === 'sell') {
             if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
             if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
@@ -650,7 +671,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const tradeTotal = tradeData.quantity * tradeData.price;
         let newTransaction: any = null;
         let txError: any = null;
-        const tradePayload = { ...tradeData, total: tradeTotal };
+        const tradePayload = { ...tradeData, symbol: normalizedSymbol, total: tradeTotal };
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
@@ -674,7 +695,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 } else {
                     const newHoldingData = {
                         portfolio_id: portfolioId,
-                        symbol: tradeData.symbol,
+                        symbol: normalizedSymbol,
                         name: name || tradeData.symbol,
                         quantity: tradeData.quantity,
                         avgCost: tradeData.price,
