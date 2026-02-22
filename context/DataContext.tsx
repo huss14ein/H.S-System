@@ -180,61 +180,62 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     ]);
 
     const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
+        const payloadBase = {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+        };
+
         const baseVariants = [
             {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
+                ...payloadBase,
                 purchase_value: holding.purchaseValue,
                 current_value: holding.currentValue,
                 zakah_class: holding.zakahClass,
             },
             {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
+                ...payloadBase,
                 purchaseValue: holding.purchaseValue,
                 currentValue: holding.currentValue,
                 zakahClass: holding.zakahClass,
             },
             {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
+                ...payloadBase,
                 purchasevalue: holding.purchaseValue,
                 currentvalue: holding.currentValue,
                 zakahclass: holding.zakahClass,
             },
             {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
+                ...payloadBase,
                 purchase_value: holding.purchaseValue,
                 currentValue: holding.currentValue,
                 zakahClass: holding.zakahClass,
             },
             {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
+                ...payloadBase,
                 purchaseValue: holding.purchaseValue,
                 current_value: holding.currentValue,
                 zakah_class: holding.zakahClass,
             },
         ];
 
-        const variantsWithoutOwner = baseVariants.map(({ owner, ...payload }) => payload);
-        return [...baseVariants, ...variantsWithoutOwner];
+        const allVariants = [
+            ...baseVariants,
+            ...baseVariants.map(({ owner, ...payload }) => payload),
+        ];
+
+        const dedupedVariants: Record<string, unknown>[] = [];
+        const seen = new Set<string>();
+        for (const payload of allVariants) {
+            const signature = payloadSignature(payload as Record<string, unknown>);
+            if (seen.has(signature)) continue;
+            seen.add(signature);
+            dedupedVariants.push(payload as Record<string, unknown>);
+        }
+
+        return dedupedVariants;
     };
 
     const fetchData = async () => {
