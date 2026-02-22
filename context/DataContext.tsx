@@ -162,8 +162,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             symbol: holding.symbol,
             owner: holding.owner,
             purchase_value: holding.purchaseValue,
-            currentValue: holding.currentValue,
-            zakahClass: holding.zakahClass,
+            current_value: holding.currentValue,
+            zakah_class: holding.zakahClass,
         },
         {
             name: holding.name,
@@ -779,17 +779,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
-        const upsertData = updates.map(u => ({
-            id: u.id,
-            currentValue: u.currentValue,
-            currentvalue: u.currentValue,
-            user_id: auth.user!.id
-        }));
-        const { error } = await supabase.from('commodity_holdings').upsert(upsertData, { onConflict: 'id' });
+        const valuePayloadVariants = [
+            updates.map(u => ({
+                id: u.id,
+                currentValue: u.currentValue,
+                user_id: auth.user!.id,
+            })),
+            updates.map(u => ({
+                id: u.id,
+                current_value: u.currentValue,
+                user_id: auth.user!.id,
+            })),
+            updates.map(u => ({
+                id: u.id,
+                currentvalue: u.currentValue,
+                user_id: auth.user!.id,
+            })),
+        ];
+
+        let error: any = null;
+        for (const payload of valuePayloadVariants) {
+            const result = await supabase.from('commodity_holdings').upsert(payload, { onConflict: 'id' });
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
+        }
+
         if (error) {
             console.error("Error batch updating commodity values:", error);
             return;
         }
+
         setData(prevData => {
             const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
             return {
