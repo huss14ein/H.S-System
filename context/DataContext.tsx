@@ -181,6 +181,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         const payloadBase = {
+    const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => ([
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchase_value: holding.purchaseValue,
+            current_value: holding.currentValue,
+            zakah_class: holding.zakahClass,
+        },
+        {
             name: holding.name,
             quantity: holding.quantity,
             unit: holding.unit,
@@ -233,6 +245,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (seen.has(signature)) continue;
             seen.add(signature);
             dedupedVariants.push(payload as Record<string, unknown>);
+            purchaseValue: holding.purchaseValue,
+            currentValue: holding.currentValue,
+            zakahClass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchasevalue: holding.purchaseValue,
+            currentvalue: holding.currentValue,
+            zakahclass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchase_value: holding.purchaseValue,
+            currentValue: holding.currentValue,
+            zakahClass: holding.zakahClass,
+        },
+        {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+            purchaseValue: holding.purchaseValue,
+            current_value: holding.currentValue,
+            zakah_class: holding.zakahClass,
         }
 
         return dedupedVariants;
