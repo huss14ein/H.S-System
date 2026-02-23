@@ -23,7 +23,9 @@ const initialServices: Service[] = [
   { name: 'Authentication Service (Supabase)', status: 'Operational' },
   { name: 'Database Service (Supabase)', status: 'Operational' },
   { name: 'AI Services API (Gemini)', status: 'Operational' },
+  { name: 'Market Data API (Finnhub)', status: 'Operational' },
   { name: 'Market Data Simulator', status: 'Operational' },
+  { name: 'Multi-user Access', status: 'Operational' },
   { name: 'Bank Connection APIs', status: 'Simulated' },
   { name: 'Notification Service', status: 'Simulated' },
 ];
@@ -88,6 +90,42 @@ const SystemHealth: React.FC = () => {
             }
         };
         
+
+        const checkFinnhubService = async (): Promise<Partial<Service>> => {
+            const finnhubApiKey = import.meta.env.VITE_FINNHUB_API_KEY;
+            if (!finnhubApiKey) {
+                return { status: 'Outage', error: 'Finnhub API key missing. Set VITE_FINNHUB_API_KEY.' };
+            }
+            try {
+                const start = performance.now();
+                const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(finnhubApiKey)}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const quote = await response.json();
+                const price = Number(quote?.c);
+                if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid Finnhub quote payload.');
+                const duration = Math.round(performance.now() - start);
+                return { status: duration > 2000 ? 'Degraded Performance' : 'Operational', responseTime: duration };
+            } catch (e) {
+                return { status: 'Outage', error: 'Could not connect to Finnhub Market Data API.' };
+            }
+        };
+
+        const checkMultiUserAccess = async (): Promise<Partial<Service>> => {
+            if (!supabase) return { status: 'Outage', error: 'Supabase client is not configured.' };
+            try {
+                const start = performance.now();
+                const { count, error } = await supabase.from('users').select('id', { count: 'exact', head: true });
+                if (error) throw error;
+                const duration = Math.round(performance.now() - start);
+                if (!count || count < 2) {
+                    return { status: 'Degraded Performance', responseTime: duration, error: 'System is active but only one user profile is currently detected.' };
+                }
+                return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
+            } catch {
+                return { status: 'Outage', error: 'Could not verify multi-user access from users table.' };
+            }
+        };
+
         const checkMarketData = (): Partial<Service> => {
             if (!marketContext) {
                 return { status: 'Outage', error: 'Market data context is unavailable.' };
@@ -102,10 +140,12 @@ const SystemHealth: React.FC = () => {
             };
         };
 
-        const [auth, db, ai] = await Promise.all([
+        const [auth, db, ai, finnhub, multiUser] = await Promise.all([
             checkSupabaseAuth(),
             checkSupabaseDB(),
             checkAIService(),
+            checkFinnhubService(),
+            checkMultiUserAccess(),
         ]);
         const market = checkMarketData();
 
@@ -113,7 +153,9 @@ const SystemHealth: React.FC = () => {
             if (s.name.includes('Authentication')) return { ...s, ...auth };
             if (s.name.includes('Database')) return { ...s, ...db };
             if (s.name.includes('AI Services')) return { ...s, ...ai };
-            if (s.name.includes('Market Data')) return { ...s, ...market };
+            if (s.name.includes('Market Data API (Finnhub)')) return { ...s, ...finnhub };
+            if (s.name.includes('Market Data Simulator')) return { ...s, ...market };
+            if (s.name.includes('Multi-user Access')) return { ...s, ...multiUser };
             return s;
         }));
 
@@ -178,7 +220,7 @@ const SystemHealth: React.FC = () => {
                     <div className="py-1"><LightBulbIcon className="h-6 w-6 text-blue-500 mr-3"/></div>
                     <div>
                         <p className="font-bold">AI Service Troubleshooting</p>
-                        <p className="text-sm mt-1">For AI features to work, a Netlify Function acts as a secure proxy. An "Outage" status usually means this function isn't deployed or the `GEMINI_API_KEY` is missing in your Netlify environment variables.</p>
+                        <p className="text-sm mt-1">For AI features to work, a Netlify Function acts as a secure proxy. An "Outage" status usually means this function isn't deployed or the `GEMINI_API_KEY` is missing. Live market API outages are commonly due to a missing/invalid `VITE_FINNHUB_API_KEY`.</p>
                         <a href="https://docs.netlify.com/functions/overview/" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mt-2 inline-block">
                             Learn about Netlify Functions &rarr;
                         </a>

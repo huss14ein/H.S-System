@@ -12,6 +12,7 @@ import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import AddButton from '../components/AddButton';
+import CardLayoutControls from '../components/CardLayoutControls';
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -74,10 +75,11 @@ const AccountCardComponent: React.FC<{
     onDeleteAccount: (acc: Account) => void;
     onMoveUp?: (id: string) => void;
     onMoveDown?: (id: string) => void;
-    canMoveUp?: boolean;
-    canMoveDown?: boolean;
     compact?: boolean;
-}> = ({ account, onEditAccount, onDeleteAccount, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false, compact = false }) => {
+    index?: number;
+    total?: number;
+    onToggleDensity?: () => void;
+}> = ({ account, onEditAccount, onDeleteAccount, onMoveUp, onMoveDown, compact = false, index = 0, total = 1, onToggleDensity }) => {
     const { formatCurrencyString } = useFormatCurrency();
 
     const getAccountIcon = (type: Account['type']) => {
@@ -104,9 +106,8 @@ const AccountCardComponent: React.FC<{
                             <p className="text-sm text-gray-500">{account.type}</p>
                         </div>
                     </div>
-                    <div className="flex space-x-1">
-                        <button disabled={!canMoveUp} onClick={() => onMoveUp?.(account.id)} title="Move up" className="p-1 text-gray-400 hover:text-primary disabled:opacity-30">↑</button>
-                        <button disabled={!canMoveDown} onClick={() => onMoveDown?.(account.id)} title="Move down" className="p-1 text-gray-400 hover:text-primary disabled:opacity-30">↓</button>
+                    <div className="flex items-center gap-2">
+                        <CardLayoutControls index={index} total={total} isExpanded={!compact} onMove={(direction) => direction === 'up' ? onMoveUp?.(account.id) : onMoveDown?.(account.id)} onToggleSize={() => onToggleDensity?.()} />
                         <button onClick={() => onEditAccount(account)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
                         <button onClick={() => onDeleteAccount(account)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
                     </div>
@@ -279,21 +280,21 @@ const Accounts: React.FC = () => {
             <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Cash Accounts</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedCashAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder cash account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'cash', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('cash', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'down') }))} canMoveUp={index > 0} canMoveDown={index < orderedCashAccounts.length - 1} /></div>)}
+                    {orderedCashAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder cash account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'cash', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('cash', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCashAccounts.length} onToggleDensity={() => setCardDensity(prev => prev === 'Compact' ? 'Comfortable' : 'Compact')} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'down') }))} /></div>)}
                 </div>
             </section>
 
             <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Credit Cards</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedCreditAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder credit account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'credit', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('credit', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'down') }))} canMoveUp={index > 0} canMoveDown={index < orderedCreditAccounts.length - 1} /></div>)}
+                    {orderedCreditAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder credit account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'credit', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('credit', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCreditAccounts.length} onToggleDensity={() => setCardDensity(prev => prev === 'Compact' ? 'Comfortable' : 'Compact')} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'down') }))} /></div>)}
                 </div>
             </section>
 
             <section>
                 <h2 className="text-2xl font-semibold text-dark mb-4">Investment Platforms</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedInvestmentAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder investment account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'investment', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('investment', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, investment: reorderIds(prev.investment, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, investment: reorderIds(prev.investment, id, 'down') }))} canMoveUp={index > 0} canMoveDown={index < orderedInvestmentAccounts.length - 1} /></div>)}
+                    {orderedInvestmentAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder investment account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'investment', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('investment', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedInvestmentAccounts.length} onToggleDensity={() => setCardDensity(prev => prev === 'Compact' ? 'Comfortable' : 'Compact')} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, investment: reorderIds(prev.investment, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, investment: reorderIds(prev.investment, id, 'down') }))} /></div>)}
                 </div>
             </section>
 
