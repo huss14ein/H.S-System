@@ -150,6 +150,14 @@ const Budgets: React.FC = () => {
         utilizationLabel: 'Healthy' | 'Watch' | 'Critical';
     };
 
+    type BudgetRow = Budget & {
+        spent: number;
+        percentage: number;
+        colorClass: string;
+        displayLimit: number;
+        monthlyLimit: number;
+    };
+
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
 
@@ -267,60 +275,43 @@ const Budgets: React.FC = () => {
             });
 
         const scopedBudgets = data.budgets
-            .filter((b) => b.year === currentYear)
-            .filter((b) => budgetView === 'Yearly' || b.month === currentMonth)
-            .filter((b) => isAdmin || permittedCategories.includes(b.category));
+            .filter(b => b.year === currentYear)
+            .filter(b => budgetView === 'Yearly' || b.month === currentMonth)
+            .filter(b => isAdmin || permittedCategories.includes(b.category));
 
-        const baseRows = budgetView === 'Yearly'
-            ? Array.from(scopedBudgets.reduce((acc, b) => {
-                acc.set(b.category, (acc.get(b.category) || 0) + b.limit);
-                return acc;
-            }, new Map<string, number>()).entries()).map(([category, yearlyLimit]) => ({
-                id: `${category}-${currentYear}`,
-                category,
-                month: currentMonth,
-                year: currentYear,
-                limit: yearlyLimit,
-                monthlyLimit: yearlyLimit,
-                displayLimit: yearlyLimit,
-            }))
-            : scopedBudgets.map((budget) => ({
-                ...budget,
-                monthlyLimit: budget.limit,
-                displayLimit: budget.limit / limitDivisor,
-            }));
+        if (budgetView === 'Yearly') {
+            const yearlyLimitByCategory = new Map<string, number>();
+            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + b.limit));
 
-        const totalDisplayLimit = baseRows.reduce((sum, row) => sum + row.displayLimit, 0);
-
-        return baseRows
-            .map((row) => {
-                const spent = spending.get(row.category) || 0;
-                const previousPeriodSpent = previousSpending.get(row.category) || 0;
-                const percentage = row.displayLimit > 0 ? (spent / row.displayLimit) * 100 : 0;
-                const trendDelta = spent - previousPeriodSpent;
-                const trendDirection: BudgetRow['trendDirection'] = trendDelta > 0 ? 'up' : trendDelta < 0 ? 'down' : 'flat';
+            return Array.from(yearlyLimitByCategory.entries())
+                .map(([category, yearlyLimit]) => {
+                    const spent = spending.get(category) || 0;
+                    const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
+                    let colorClass = 'bg-primary';
+                    if (percentage > 100) colorClass = 'bg-danger';
+                    else if (percentage > 90) colorClass = 'bg-warning';
+                    return {
+                        id: `${category}-${currentYear}`,
+                        category,
+                        month: currentMonth,
+                        year: currentYear,
+                        spent,
+                        limit: yearlyLimit,
+                        displayLimit: yearlyLimit,
+                        monthlyLimit: yearlyLimit,
+                        percentage,
+                        colorClass,
+                    };
+                })
+                .sort((a, b) => b.spent - a.spent);
+        }
 
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
 
-                const share = totalDisplayLimit > 0 ? row.displayLimit / totalDisplayLimit : 0;
-                const budgetTier: BudgetTier = share >= 0.2 ? 'Core' : share >= 0.08 ? 'Supporting' : 'Optional';
-                const utilizationLabel: BudgetRow['utilizationLabel'] = percentage > 100 ? 'Critical' : percentage > 80 ? 'Watch' : 'Healthy';
-
-                return {
-                    ...row,
-                    spent,
-                    previousPeriodSpent,
-                    trendDelta,
-                    trendDirection,
-                    percentage,
-                    colorClass,
-                    budgetTier,
-                    utilizationLabel,
-                } as BudgetRow;
-            })
-            .sort((a, b) => b.spent - a.spent);
+                return { ...budget, spent, displayLimit: adjustedLimit, monthlyLimit: budget.limit, percentage, colorClass };
+            }).sort((a,b) => b.spent - a.spent);
     }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
     React.useEffect(() => {
@@ -804,12 +795,7 @@ const Budgets: React.FC = () => {
                                 </div>
                             </div>
                         </div>
-                         <div className="border-t mt-4 pt-2 flex justify-between items-center gap-2">
-                            <div className="flex items-center gap-1">
-                                <button onClick={() => moveBudgetCard(budget.id, 'up')} disabled={index === 0} className="px-2 py-1 text-xs border rounded disabled:opacity-40" title="Move card up">↑</button>
-                                <button onClick={() => moveBudgetCard(budget.id, 'down')} disabled={index === orderedBudgetData.length - 1} className="px-2 py-1 text-xs border rounded disabled:opacity-40" title="Move card down">↓</button>
-                                <button onClick={() => toggleBudgetCardSize(budget.id)} className="px-2 py-1 text-xs border rounded" title="Resize card">{expandedCards[budget.id] ? 'Compact' : 'Expand'}</button>
-                            </div>
+                         <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
                             <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.monthlyLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
                             <button disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
