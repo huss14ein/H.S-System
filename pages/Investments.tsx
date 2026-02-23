@@ -144,6 +144,8 @@ const RecordTradeModal: React.FC<{
     const [holdingName, setHoldingName] = useState('');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data.goals || [], [data.goals]);
@@ -164,11 +166,15 @@ const RecordTradeModal: React.FC<{
         setHoldingName('');
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
+        setSubmitError(null);
+        setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
     };
 
     useEffect(() => {
         if (isOpen) {
+            setSubmitError(null);
+            setIsSubmitting(false);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
                 setSymbol(initialData.symbol || '');
@@ -204,9 +210,35 @@ const RecordTradeModal: React.FC<{
         }
     }, [amountToInvest, price, type]);
 
+
+    const validationError = useMemo(() => {
+        if (!portfolioId) return 'Please select a portfolio.';
+        const parsedQuantity = parseFloat(quantity);
+        const parsedPrice = parseFloat(price);
+        if (!symbol.trim()) return 'Symbol is required.';
+        if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
+        if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
+        if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
+        if (type === 'sell' && portfolioId) {
+            const portfolio = portfolios.find(p => p.id === portfolioId);
+            const normalized = symbol.toUpperCase().trim();
+            const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
+            if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
+            if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
+        }
+        return null;
+    }, [portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isSubmitting) return;
+        setSubmitError(null);
+        if (validationError) {
+            setSubmitError(validationError);
+            return;
+        }
         try {
+            setIsSubmitting(true);
             await onSave({
                 accountId, portfolioId, type,
                 symbol: symbol.toUpperCase().trim(),
@@ -218,7 +250,9 @@ const RecordTradeModal: React.FC<{
             }, executedPlanId);
             onClose();
         } catch (error) {
-            alert(`Error recording trade: ${error instanceof Error ? error.message : String(error)}`);
+            setSubmitError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -279,7 +313,8 @@ const RecordTradeModal: React.FC<{
                         ))}
                     </select>
                 </div>
-                <button type="submit" disabled={!portfolioId} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Record Trade</button>
+                {(submitError || validationError) && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{submitError || validationError}</p>}
+                <button type="submit" disabled={!!validationError || isSubmitting} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : 'Record Trade'}</button>
             </form>
         </Modal>
     );
@@ -591,7 +626,7 @@ const PlatformCard: React.FC<{
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
     const { totalValue, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi } = useMemo(() => {
-        const allHoldings = portfolios.flatMap(p => p.holdings);
+        const allHoldings = portfolios.flatMap(p => p.holdings || []);
         
         const totalValue = allHoldings.reduce((sum, h) => {
             const priceInfo = simulatedPrices[h.symbol];
@@ -681,7 +716,7 @@ const PlatformCard: React.FC<{
                                 <div className="w-24 text-right">Unrealized P/L</div>
                                 <div className="w-24 text-right">Daily P/L</div>
                             </div>
-                            {holdingsWithGains(portfolio.holdings).map(h => (
+                            {holdingsWithGains(portfolio.holdings || []).map(h => (
                                  <div key={h.id} className="group rounded-md hover:bg-gray-100 border bg-white p-2">
                                     <div className="flex items-center text-sm">
                                         <div className="flex-grow flex items-center gap-2 truncate">
@@ -784,7 +819,7 @@ const InvestmentPlan: React.FC = () => {
         data.portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
         
         // 2. Add holdings
-        data.investments.flatMap(p => p.holdings).forEach(h => {
+        data.investments.flatMap(p => p.holdings || []).forEach(h => {
             if (!universeMap.has(h.symbol)) {
                 universeMap.set(h.symbol, {
                     id: `holding-${h.id}`,
@@ -837,6 +872,21 @@ const InvestmentPlan: React.FC = () => {
         
         return Array.from(universeMap.values());
     }, [data.portfolioUniverse, data.investments, data.watchlist, data.plannedTrades]);
+
+
+    const universeHealth = useMemo(() => {
+        const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
+        const monthlyWeightTotal = actionable.reduce((sum, t) => sum + (t.monthly_weight || 0), 0);
+        const overMaxCount = actionable.filter(t => (t.monthly_weight || 0) > (t.max_position_weight || 1)).length;
+        const unmappedCount = unifiedUniverse.filter(t => !t.source?.includes('Universe')).length;
+        return {
+            totalCount: unifiedUniverse.length,
+            actionableCount: actionable.length,
+            monthlyWeightTotal,
+            overMaxCount,
+            unmappedCount,
+        };
+    }, [unifiedUniverse]);
 
     useEffect(() => {
         if (data.investmentPlan) {
@@ -999,6 +1049,16 @@ const InvestmentPlan: React.FC = () => {
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Universe & Weights</h2>
                         <p className="text-sm text-gray-500 mb-4">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-xs">
+                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Tickers</p><p className="font-semibold text-dark">{universeHealth.totalCount}</p></div>
+                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Actionable</p><p className="font-semibold text-dark">{universeHealth.actionableCount}</p></div>
+                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Weight total</p><p className={`font-semibold ${Math.abs(universeHealth.monthlyWeightTotal - 1) <= 0.01 ? 'text-green-700' : 'text-amber-700'}`}>{(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%</p></div>
+                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Over max</p><p className={`font-semibold ${universeHealth.overMaxCount === 0 ? 'text-green-700' : 'text-rose-700'}`}>{universeHealth.overMaxCount}</p></div>
+                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Needs mapping</p><p className={`font-semibold ${universeHealth.unmappedCount === 0 ? 'text-green-700' : 'text-amber-700'}`}>{universeHealth.unmappedCount}</p></div>
+                        </div>
+                        {Math.abs(universeHealth.monthlyWeightTotal - 1) > 0.01 && (
+                            <p className="text-xs mb-4 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Actionable monthly weights should usually sum close to 100% for predictable allocation behavior.</p>
+                        )}
                         <div className="flex gap-2 mb-4">
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow p-2 border rounded-md" />

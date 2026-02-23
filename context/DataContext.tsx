@@ -1,4 +1,4 @@
-import React, { createContext, useState, ReactNode, useEffect, useContext } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useContext, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog } from '../types';
@@ -94,6 +94,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
     const auth = useContext(AuthContext);
+    const tradeSubmissionInFlightRef = useRef(false);
 
     const normalizeHolding = (holding: any): Holding => ({
         ...holding,
@@ -133,6 +134,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
 
+    const extractMissingColumnName = (error: any): string | null => {
+        const source = `${error?.message || ''} ${error?.details || ''}`;
+        const quoted = source.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
+        if (quoted?.[1]) return quoted[1];
+        const pgrst = source.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i);
+        return pgrst?.[1] || null;
+    };
+
+    const payloadSignature = (payload: Record<string, unknown>) => Object.keys(payload).sort().join(', ');
+
+    const goalPayloadVariants = (goal: Goal) => {
+        const base = {
+            name: goal.name,
+            targetAmount: goal.targetAmount,
+            currentAmount: goal.currentAmount,
+            deadline: goal.deadline,
+            savingsAllocationPercent: goal.savingsAllocationPercent,
+        };
+        return [
+            { ...base, priority: goal.priority ?? 'Medium' },
+            base,
+        ];
+    };
+
     const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => ([
         {
             account_id: trade.accountId,
@@ -154,6 +179,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     ]);
 
+    const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
+        const payloadBase = {
     const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => ([
         {
             name: holding.name,
@@ -171,6 +198,53 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             unit: holding.unit,
             symbol: holding.symbol,
             owner: holding.owner,
+        };
+
+        const baseVariants = [
+            {
+                ...payloadBase,
+                purchase_value: holding.purchaseValue,
+                current_value: holding.currentValue,
+                zakah_class: holding.zakahClass,
+            },
+            {
+                ...payloadBase,
+                purchaseValue: holding.purchaseValue,
+                currentValue: holding.currentValue,
+                zakahClass: holding.zakahClass,
+            },
+            {
+                ...payloadBase,
+                purchasevalue: holding.purchaseValue,
+                currentvalue: holding.currentValue,
+                zakahclass: holding.zakahClass,
+            },
+            {
+                ...payloadBase,
+                purchase_value: holding.purchaseValue,
+                currentValue: holding.currentValue,
+                zakahClass: holding.zakahClass,
+            },
+            {
+                ...payloadBase,
+                purchaseValue: holding.purchaseValue,
+                current_value: holding.currentValue,
+                zakah_class: holding.zakahClass,
+            },
+        ];
+
+        const allVariants = [
+            ...baseVariants,
+            ...baseVariants.map(({ owner, ...payload }) => payload),
+        ];
+
+        const dedupedVariants: Record<string, unknown>[] = [];
+        const seen = new Set<string>();
+        for (const payload of allVariants) {
+            const signature = payloadSignature(payload as Record<string, unknown>);
+            if (seen.has(signature)) continue;
+            seen.add(signature);
+            dedupedVariants.push(payload as Record<string, unknown>);
             purchaseValue: holding.purchaseValue,
             currentValue: holding.currentValue,
             zakahClass: holding.zakahClass,
@@ -205,7 +279,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             current_value: holding.currentValue,
             zakah_class: holding.zakahClass,
         }
-    ]);
+
+        return dedupedVariants;
+    };
 
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
@@ -413,19 +489,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { id, user_id, ...insertData } = goal;
-        const { data: newGoal, error } = await db.from('goals').insert(withUser(insertData)).select().single();
-        if (error) { 
-            console.error("Error adding goal:", error); 
-            alert(`Failed to add goal: ${error.message}`);
-            throw error; 
+        let newGoal: any = null;
+        let error: any = null;
+        for (const payload of goalPayloadVariants(goal)) {
+            const result = await db.from('goals').insert(withUser(payload)).select().single();
+            newGoal = result.data;
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
         }
-        if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
+        if (error) {
+            console.error("Error adding goal:", error);
+            alert(`Failed to add goal: ${error.message}`);
+            throw error;
+        }
+        if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, { ...newGoal, priority: newGoal.priority ?? goal.priority ?? 'Medium' }] }));
     };
     const updateGoal = async (goal: Goal) => {
       if(!supabase || !auth?.user) return;
       const db = supabase;
-      const { error } = await db.from('goals').update(goal).match({ id: goal.id, user_id: auth.user.id });
+      let error: any = null;
+      for (const payload of goalPayloadVariants(goal)) {
+        const result = await db.from('goals').update(payload).match({ id: goal.id, user_id: auth.user.id });
+        error = result.error;
+        if (!error) break;
+        if (!isMissingColumnError(error)) break;
+      }
       if (error) console.error("Error updating goal:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
     };
@@ -654,8 +743,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const recordTrade = async (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>, executedPlanId?: string) => {
         if (!supabase || !auth?.user) return;
+        if (tradeSubmissionInFlightRef.current) {
+            throw new Error('A trade submission is already in progress. Please wait.');
+        }
 
-        const { portfolioId, name, ...tradeData } = trade;
+        tradeSubmissionInFlightRef.current = true;
+        try {
+            const { portfolioId, name, ...tradeData } = trade;
 
         // 1. Validate portfolio/holding state before persisting transaction
         const portfolio = data.investments.find(p => p.id === portfolioId);
@@ -720,8 +814,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
+            let rollbackSucceeded = false;
+            if (newTransaction?.id) {
+                const rollback = await supabase
+                    .from('investment_transactions')
+                    .delete()
+                    .match({ id: newTransaction.id, user_id: auth.user.id });
+                if (rollback.error) {
+                    console.error("Failed to rollback recorded transaction after holding update failure:", rollback.error);
+                } else {
+                    rollbackSucceeded = true;
+                    setData(prev => ({ ...prev, investmentTransactions: prev.investmentTransactions.filter(t => t.id !== newTransaction.id) }));
+                }
+            }
             await fetchData();
-            throw error; // Re-throw to inform caller of failure
+            const rollbackNote = rollbackSucceeded ? 'and was rolled back' : 'and rollback failed';
+            throw new Error(`Trade recorded but holding update failed ${rollbackNote}: ${error instanceof Error ? error.message : String(error)}`);
         }
         
         // 4. If trade came from a plan, update the plan's status
@@ -730,6 +838,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (plan) {
                 await updatePlannedTrade({ ...plan, status: 'Executed' });
             }
+        }
+        } finally {
+            tradeSubmissionInFlightRef.current = false;
         }
     };
 
@@ -761,7 +872,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         let newHolding: any = null;
         let error: any = null;
+        const attemptedPayloadSignatures: string[] = [];
         for (const payload of commodityPayloadVariants(holding)) {
+            attemptedPayloadSignatures.push(payloadSignature(payload as Record<string, unknown>));
             const result = await supabase.from('commodity_holdings').insert(withUser(payload)).select().single();
             newHolding = result.data;
             error = result.error;
@@ -769,8 +882,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!isMissingColumnError(error)) break;
         }
         if (error) {
-            console.error("Error adding commodity:", error);
-            throw error;
+            const missingColumn = extractMissingColumnName(error);
+            console.error("Error adding commodity:", error, { attemptedPayloadSignatures });
+            const diagnostics = missingColumn
+                ? ` Missing column detected: ${missingColumn}.`
+                : '';
+            throw new Error(`Failed to add commodity holding.${diagnostics} Tried ${attemptedPayloadSignatures.length} payload variants. Last error: ${error.message || error.details || "Unknown error"}`);
         }
         else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
     };

@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useState, useCallback } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
 import Card from '../components/Card';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
@@ -248,10 +248,18 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     );
 };
 
+type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+    const [draggingKpiCard, setDraggingKpiCard] = useState<KpiCardKey | null>(null);
+    const [kpiDensity, setKpiDensity] = useState<'comfortable' | 'compact'>(() => {
+        if (typeof window === 'undefined') return 'comfortable';
+        const saved = window.localStorage.getItem('dashboard-kpi-density');
+        return saved === 'compact' ? 'compact' : 'comfortable';
+    });
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
@@ -270,6 +278,121 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             target: data.investmentPlan.monthlyBudget
         };
     }, [data]);
+
+
+    const [kpiCardOrder, setKpiCardOrder] = useState<Array<KpiCardKey>>(() => {
+        const defaultOrder: Array<KpiCardKey> = [
+            'netWorth',
+            'monthlyPnL',
+            'budgetVariance',
+            'investmentRoi',
+            'investmentPlan',
+        ];
+        if (typeof window === 'undefined') return defaultOrder;
+        try {
+            const raw = window.localStorage.getItem('dashboard-kpi-card-order');
+            if (!raw) return defaultOrder;
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return defaultOrder;
+            const retained = parsed.filter((key: string) => defaultOrder.includes(key as any)) as typeof defaultOrder;
+            const missing = defaultOrder.filter(key => !retained.includes(key));
+            return [...retained, ...missing];
+        } catch {
+            return defaultOrder;
+        }
+    });
+
+
+    const [kpiCardSize, setKpiCardSize] = useState<Record<KpiCardKey, 'normal' | 'wide'>>(() => {
+        const defaults: Record<KpiCardKey, 'normal' | 'wide'> = {
+            netWorth: 'normal',
+            monthlyPnL: 'normal',
+            budgetVariance: 'normal',
+            investmentRoi: 'normal',
+            investmentPlan: 'normal',
+        };
+        if (typeof window === 'undefined') return defaults;
+        try {
+            const raw = window.localStorage.getItem('dashboard-kpi-card-size');
+            if (!raw) return defaults;
+            const parsed = JSON.parse(raw);
+            return { ...defaults, ...(parsed || {}) };
+        } catch {
+            return defaults;
+        }
+    });
+
+    useEffect(() => {
+        const defaultOrder: Array<KpiCardKey> = [
+            'netWorth',
+            'monthlyPnL',
+            'budgetVariance',
+            'investmentRoi',
+            'investmentPlan',
+        ];
+        setKpiCardOrder(prev => {
+            const retained = prev.filter(key => defaultOrder.includes(key));
+            const missing = defaultOrder.filter(key => !retained.includes(key));
+            return [...retained, ...missing];
+        });
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem('dashboard-kpi-card-order', JSON.stringify(kpiCardOrder));
+    }, [kpiCardOrder]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem('dashboard-kpi-density', kpiDensity);
+    }, [kpiDensity]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem('dashboard-kpi-card-size', JSON.stringify(kpiCardSize));
+    }, [kpiCardSize]);
+
+    const resetKpiCardOrder = () => {
+        const defaults: Array<KpiCardKey> = ['netWorth', 'monthlyPnL', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
+        setKpiCardOrder(defaults);
+        setKpiCardSize({
+            netWorth: 'normal',
+            monthlyPnL: 'normal',
+            budgetVariance: 'normal',
+            investmentRoi: 'normal',
+            investmentPlan: 'normal',
+        });
+    };
+
+    const moveKpiCard = (id: KpiCardKey, direction: 'up' | 'down') => {
+        setKpiCardOrder(prev => {
+            const index = prev.indexOf(id);
+            if (index < 0) return prev;
+            const nextIndex = direction === 'up' ? index - 1 : index + 1;
+            if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+            const next = [...prev];
+            [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+            return next;
+        });
+    };
+
+    const handleKpiDragStart = (cardKey: KpiCardKey) => {
+        setDraggingKpiCard(cardKey);
+    };
+
+    const handleKpiDrop = (targetKey: KpiCardKey) => {
+        if (!draggingKpiCard || draggingKpiCard === targetKey) return;
+        setKpiCardOrder(prev => {
+            const sourceIndex = prev.indexOf(draggingKpiCard);
+            const targetIndex = prev.indexOf(targetKey);
+            if (sourceIndex < 0 || targetIndex < 0) return prev;
+            const next = [...prev];
+            const [moved] = next.splice(sourceIndex, 1);
+            next.splice(targetIndex, 0, moved);
+            return next;
+        });
+        setDraggingKpiCard(null);
+    };
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
         try {
@@ -366,7 +489,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         }
     }, [data, data?.commodityHoldings]);
     
+
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
+
+    const kpiCards = useMemo(() => ({
+        netWorth: <Card density={kpiDensity} title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />,
+        monthlyPnL: <Card density={kpiDensity} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />,
+        budgetVariance: <Card density={kpiDensity} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />,
+        investmentRoi: <Card density={kpiDensity} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />,
+        investmentPlan: <Card density={kpiDensity} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={`${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })}`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip="Progress towards your monthly investment goal." onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+    }), [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, setActivePage, kpiDensity]);
     
     if (loading) {
         return (
@@ -395,20 +527,34 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
             
+            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+                <div className="flex border rounded bg-white self-stretch sm:self-auto">
+                    {(['comfortable', 'compact'] as const).map((density) => (
+                        <button
+                            key={density}
+                            type="button"
+                            onClick={() => setKpiDensity(density)}
+                            className={`px-3 py-2 text-xs capitalize ${kpiDensity === density ? 'bg-primary text-white' : 'text-gray-600 bg-white'}`}
+                        >
+                            {density}
+                        </button>
+                    ))}
+                </div>
+                <button type="button" onClick={resetKpiCardOrder} className="w-full sm:w-auto px-3 py-2 text-sm border rounded text-gray-600 hover:text-primary hover:border-primary">Reset KPI card layout</button>
+            </div>
+            <p className="text-xs text-gray-500 -mt-1">Tip: drag KPI cards to reorder, use ↑/↓ to move, and L/S to resize each card.</p>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
-                <Card title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />
-                <Card title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />
-                <Card 
-                    title="Investment Plan" 
-                    value={`${investmentProgress.percent.toFixed(0)}%`} 
-                    trend={`${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })}`}
-                    indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'}
-                    tooltip="Progress towards your monthly investment goal." 
-                    onClick={() => setActivePage('Investments')} 
-                    icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} 
-                />
+                {kpiCardOrder.map((cardKey, index) => (
+                    <div key={cardKey} className={`relative ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`} draggable onDragStart={() => handleKpiDragStart(cardKey)} onDragOver={(e) => e.preventDefault()} onDrop={() => handleKpiDrop(cardKey)} onDragEnd={() => setDraggingKpiCard(null)}>
+                        <div className="flex justify-end gap-1 mb-2 sm:absolute sm:top-2 sm:right-2 sm:mb-0 sm:z-10">
+                            <button type="button" onClick={() => setKpiCardSize(prev => ({ ...prev, [cardKey]: prev[cardKey] === 'wide' ? 'normal' : 'wide' }))} title="Resize card" aria-label="Resize KPI card" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary">{kpiCardSize[cardKey] === 'wide' ? 'S' : 'L'}</button>
+                            <button disabled={index === 0} onClick={() => moveKpiCard(cardKey, 'up')} title="Move card left/up" aria-label="Move KPI card up" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary disabled:opacity-30">↑</button>
+                            <button disabled={index === kpiCardOrder.length - 1} onClick={() => moveKpiCard(cardKey, 'down')} title="Move card right/down" aria-label="Move KPI card down" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary disabled:opacity-30">↓</button>
+                        </div>
+                        {kpiCards[cardKey]}
+                    </div>
+                ))}
             </div>
 
             <AIFeed />

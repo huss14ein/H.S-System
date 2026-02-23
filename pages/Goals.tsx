@@ -54,16 +54,19 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
     const [name, setName] = useState('');
     const [targetAmount, setTargetAmount] = useState('');
     const [deadline, setDeadline] = useState('');
+    const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
 
     useEffect(() => {
         if (goalToEdit) {
             setName(goalToEdit.name);
             setTargetAmount(String(goalToEdit.targetAmount));
             setDeadline(new Date(goalToEdit.deadline).toISOString().split('T')[0]);
+            setPriority(goalToEdit.priority || 'Medium');
         } else {
             setName('');
             setTargetAmount('');
             setDeadline('');
+            setPriority('Medium');
         }
     }, [goalToEdit, isOpen]);
 
@@ -73,6 +76,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             name,
             targetAmount: parseFloat(targetAmount) || 0,
             deadline,
+            priority,
         };
 
         try {
@@ -98,6 +102,11 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
                 <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
+                    <option value="High">High Priority</option>
+                    <option value="Medium">Medium Priority</option>
+                    <option value="Low">Low Priority</option>
+                </select>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Goal</button>
             </form>
         </Modal>
@@ -178,12 +187,12 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     }, [goal, monthlySavings, calculatedCurrentAmount]);
 
     return (
-        <div className={`bg-white p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border-t-4 ${borderColor}`}>
+        <div className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border-t-4 ${borderColor}`}>
             {/* Header */}
             <div>
                 <div className="flex justify-between items-start">
                     <div>
-                        <h3 className="text-xl font-semibold text-dark">{goal.name}</h3>
+                        <div className="flex items-center gap-2"><h3 className="text-xl font-semibold text-dark">{goal.name}</h3><span className={`text-xs px-2 py-0.5 rounded-full ${goal.priority === 'High' ? 'bg-red-100 text-red-700' : goal.priority === 'Low' ? 'bg-slate-100 text-slate-700' : 'bg-amber-100 text-amber-700'}`}>{goal.priority || 'Medium'}</span></div>
                         <p className="text-sm text-gray-500">
                             Target: <span className="font-medium text-dark">{formatCurrencyString(goal.targetAmount)}</span> by {new Date(goal.deadline).toLocaleDateString()}
                         </p>
@@ -333,6 +342,11 @@ const Goals: React.FC = () => {
     }, [data.goals, data.assets, data.investments]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
+
+    const goalsByPriority = useMemo(() => {
+        const rank = { High: 0, Medium: 1, Low: 2 } as const;
+        return [...data.goals].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || a.name.localeCompare(b.name));
+    }, [data.goals]);
     
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
@@ -371,7 +385,7 @@ const Goals: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center"><h1 className="text-3xl font-bold text-dark">Goal Command Center</h1><button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center gap-2"><PlusCircleIcon className="h-5 w-5"/>Add New Goal</button></div>
       
-       <div className="bg-white p-6 rounded-lg shadow">
+       <div className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow border border-slate-100">
         <h3 className="text-lg font-semibold text-dark mb-4">Overall Goal Progress</h3>
         <GoalProgressBar progress={overallProgress} colorClass="bg-primary" />
         <div className="flex justify-between items-baseline text-sm mt-2">
@@ -386,11 +400,11 @@ const Goals: React.FC = () => {
         </div>
       </div>
       
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow border border-slate-100">
         <h3 className="text-lg font-semibold text-dark mb-2">Savings Allocation Strategy</h3>
         <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
-            {data.goals.map(goal => (
+            {goalsByPriority.map(goal => (
                  <div key={goal.id} className="grid grid-cols-5 items-center gap-4">
                      <label htmlFor={`alloc-${goal.id}`} className="col-span-2 font-medium text-sm">{goal.name}</label>
                      <div className="col-span-2"><ProgressBar value={allocations[goal.id] || 0} max={100} /></div>
@@ -407,7 +421,7 @@ const Goals: React.FC = () => {
       <AIAdvisor pageContext="goals" contextData={{ goals: data.goals, monthlySavings: averageMonthlySavings }}/>
       
        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {data.goals.map(goal => (
+        {goalsByPriority.map(goal => (
             <GoalCard 
                 key={goal.id} 
                 goal={goal} 

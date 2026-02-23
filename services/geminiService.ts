@@ -79,6 +79,39 @@ function robustJsonParse(jsonString: string | undefined): any {
 }
 // --- End Robust JSON Parsing ---
 
+const normalizePriceMap = (prices: any): { [symbol: string]: { price: number; change: number; changePercent: number } } => {
+    if (!prices || typeof prices !== 'object') return {};
+    const normalized: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+    for (const [symbol, value] of Object.entries(prices)) {
+        const candidate = value as any;
+        const price = Number(candidate?.price);
+        const change = Number(candidate?.change);
+        const changePercent = Number(candidate?.changePercent);
+        if (!Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
+        normalized[symbol.toUpperCase()] = { price, change, changePercent };
+    }
+    return normalized;
+};
+
+const getYahooLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+    if (symbols.length === 0) return {};
+    const query = encodeURIComponent(symbols.join(','));
+    const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${query}`);
+    if (!response.ok) throw new Error(`Yahoo quote endpoint failed (${response.status})`);
+    const json = await response.json();
+    const rows = json?.quoteResponse?.result || [];
+    const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+    for (const row of rows) {
+        const symbol = String(row?.symbol || '').toUpperCase();
+        const price = Number(row?.regularMarketPrice);
+        const change = Number(row?.regularMarketChange);
+        const changePercent = Number(row?.regularMarketChangePercent);
+        if (!symbol || !Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
+        mapped[symbol] = { price, change, changePercent };
+    }
+    return mapped;
+};
+
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
     try {
@@ -571,14 +604,34 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
 };
 
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
-    try {
-        const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. 
+    const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. 
         Focus on identifying patterns (e.g., frequent trading, selling winners, buying losers) and explain the potential portfolio impact. 
         Conclude with a key concept the user could research (e.g., 'dollar-cost averaging', 'portfolio diversification').
         Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
+
+    const execute = async () => {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
-    } catch (error) { return formatAiError(error); }
+    };
+
+    try {
+        return await execute();
+    } catch (error) {
+        const details = formatAiError(error);
+        const transient = details.includes('503') || details.toLowerCase().includes('unavailable') || details.toLowerCase().includes('high demand');
+        if (transient) {
+            try {
+                await new Promise(resolve => setTimeout(resolve, 800));
+                return await execute();
+            } catch (retryError) {
+                const retryDetails = formatAiError(retryError);
+                return `AI Educational Feedback is temporarily unavailable due to high provider demand. Please try again shortly.
+
+Details: ${retryDetails}`;
+            }
+        }
+        return details;
+    }
 };
 
 export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculatedCurrentAmount: number): Promise<string> => {
@@ -797,7 +850,7 @@ export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: 
 export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
     if (symbols.length === 0) return {};
 
-    try {
+    const aiFetch = async () => {
         const prompt = `
             Fetch the current real-time market prices for the following stock/crypto symbols: ${symbols.join(', ')}.
             For each symbol, provide:
@@ -829,27 +882,34 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 tools: [{ googleSearch: {} }],
             }
         });
+        return normalizePriceMap(robustJsonParse(response.text));
+    };
 
-        const prices = robustJsonParse(response.text);
-        if (!prices || typeof prices !== 'object') return {};
+    const provider = (import.meta.env.VITE_LIVE_PRICE_PROVIDER || 'auto').toLowerCase();
+    const tryYahoo = async () => {
+        const yahoo = await getYahooLivePrices(symbols);
+        if (Object.keys(yahoo).length > 0) return yahoo;
+        throw new Error('Yahoo returned no symbols');
+    };
 
-        const normalized: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
-        for (const [symbol, value] of Object.entries(prices)) {
-            const candidate = value as any;
-            const price = Number(candidate?.price);
-            const change = Number(candidate?.change);
-            const changePercent = Number(candidate?.changePercent);
-            if (!Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
-            normalized[symbol.toUpperCase()] = { price, change, changePercent };
+    try {
+        if (provider === 'yahoo') return await tryYahoo();
+        if (provider === 'ai') return await aiFetch();
+
+        try {
+            const aiPrices = await aiFetch();
+            if (Object.keys(aiPrices).length > 0) return aiPrices;
+        } catch (aiError) {
+            console.warn('AI live prices failed, falling back to Yahoo provider:', aiError);
         }
 
-        return normalized;
-
+        return await tryYahoo();
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;
     }
 };
+
 
 export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings, universe: UniverseTicker[]): Promise<InvestmentPlanExecutionResult> {
     console.log('Executing investment plan with:', { plan, universe });
@@ -962,15 +1022,14 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         },
     };
 
-    try {
+    const executeWithModel = async (model: string) => {
         const result = await invokeAI({
-            model: FAST_MODEL,
+            model,
             contents: [{ parts: [{ text: prompt }] }],
             config: {
                 tools: [{ functionDeclarations: [recordTradesFunction] }, { googleSearch: {} }],
             }
         });
-
         if (result.functionCalls && result.functionCalls.length > 0) {
             const args = result.functionCalls[0].args;
             return {
@@ -979,9 +1038,23 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
             } as InvestmentPlanExecutionResult;
         }
         throw new Error('AI did not return the expected function call.');
+    };
 
+    try {
+        return await executeWithModel(FAST_MODEL);
     } catch (error) {
+        const details = formatAiError(error);
+        const shouldRetry = details.includes('503') || details.toLowerCase().includes('unavailable') || details.toLowerCase().includes('high demand');
+        if (shouldRetry) {
+            try {
+                await new Promise(resolve => setTimeout(resolve, 800));
+                return await executeWithModel(FAST_MODEL);
+            } catch (retryError) {
+                console.error('Error executing investment plan strategy with AI (retry failed):', retryError);
+                throw new Error(`Failed to get investment plan execution from AI after retry: ${formatAiError(retryError)}`);
+            }
+        }
         console.error('Error executing investment plan strategy with AI:', error);
-        throw new Error('Failed to get investment plan execution from AI.');
+        throw new Error(`Failed to get investment plan execution from AI: ${details}`);
     }
 }

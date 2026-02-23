@@ -303,3 +303,11 @@ commit;
 -- where schemaname='public'
 --   and tablename in ('permissions','budget_requests','transactions','planned_trades','price_alerts','trade_execution_audit')
 -- order by tablename, indexname;
+
+
+-- ===== Budget Request Note/Reason Enhancement =====
+alter table if exists public.budget_requests
+  add column if not exists note text;
+
+alter table if exists public.budget_requests
+  add column if not exists request_note text;
