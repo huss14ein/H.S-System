@@ -10,7 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_GEMINI_API_KEY?: string;
   // FIX: Add DEV property for Vite's dev mode flag, used in geminiService.ts.
   readonly DEV: boolean;
-  readonly VITE_LIVE_PRICE_PROVIDER?: "auto" | "ai" | "yahoo";
+  readonly VITE_FINNHUB_API_KEY?: string;
+  readonly VITE_LIVE_PRICE_PROVIDER?: "auto" | "ai" | "finnhub" | "stooq";
 }
 
 interface ImportMeta {

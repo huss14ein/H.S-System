@@ -12,6 +12,7 @@ import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
+import InfoHint from '../components/InfoHint';
 
 interface BudgetModalProps {
     isOpen: boolean;
@@ -26,6 +27,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const { data } = useContext(DataContext)!;
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
+    const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
 
     const existingCategories = useMemo(() => new Set(data.budgets.filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data.budgets, currentYear, currentMonth]);
     
@@ -40,17 +42,28 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         if (budgetToEdit) {
             setCategory(budgetToEdit.category);
             setLimit(String(budgetToEdit.limit));
+            setLimitPeriod('Monthly');
         } else {
             setCategory('');
             setLimit('');
+            setLimitPeriod('Monthly');
         }
     }, [budgetToEdit, isOpen]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        const rawLimit = parseFloat(limit) || 0;
+        const monthlyLimit = limitPeriod === 'Monthly'
+            ? rawLimit
+            : limitPeriod === 'Weekly'
+                ? rawLimit * 4.345
+                : limitPeriod === 'Daily'
+                    ? rawLimit * 30
+                    : rawLimit / 12;
+
         onSave({
             category,
-            limit: parseFloat(limit) || 0,
+            limit: monthlyLimit,
             month: budgetToEdit ? budgetToEdit.month : currentMonth,
             year: budgetToEdit ? budgetToEdit.year : currentYear,
         }, !!budgetToEdit);
@@ -78,8 +91,17 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     )}
                 </div>
                  <div>
-                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700">Monthly Limit</label>
+                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose a period; we normalize and store it as a monthly limit to keep reports consistent." /></label>
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
+                </div>
+                <div>
+                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700">Amount Period</label>
+                    <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                        <option value="Monthly">Monthly</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Daily">Daily</option>
+                        <option value="Yearly">Yearly</option>
+                    </select>
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Budget</button>
             </form>
@@ -95,16 +117,38 @@ const Budgets: React.FC = () => {
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
     const [requestAmount, setRequestAmount] = useState('');
+    const [requestAmountPeriod, setRequestAmountPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [requestNote, setRequestNote] = useState('');
     const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit'>('NewCategory');
     const [requestCategoryId, setRequestCategoryId] = useState('');
     const [governanceCategories, setGovernanceCategories] = useState<{ id: string; name: string }[]>([]);
     const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
+    const [requestSearch, setRequestSearch] = useState('');
+    const [requestSort, setRequestSort] = useState<'Newest' | 'Oldest' | 'AmountHigh' | 'AmountLow'>('Newest');
+    const [requestStatusFilter, setRequestStatusFilter] = useState<'All' | 'Pending' | 'Finalized' | 'Rejected'>('All');
+    const [historyItemsToShow, setHistoryItemsToShow] = useState(6);
     
     const [currentDate, setCurrentDate] = useState(new Date());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
+    const [cardOrder, setCardOrder] = useState<string[]>([]);
+    const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
+
+    type BudgetTier = 'Core' | 'Supporting' | 'Optional';
+
+    type BudgetRow = Budget & {
+        spent: number;
+        percentage: number;
+        colorClass: string;
+        displayLimit: number;
+        monthlyLimit: number;
+        previousPeriodSpent: number;
+        trendDelta: number;
+        trendDirection: 'up' | 'down' | 'flat';
+        budgetTier: BudgetTier;
+        utilizationLabel: 'Healthy' | 'Watch' | 'Critical';
+    };
 
     type BudgetRow = Budget & {
         spent: number;
@@ -117,6 +161,13 @@ const Budgets: React.FC = () => {
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
 
+    const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
+    const resolveRequestCategory = (request: any) => request.category_name || categoryNameById.get(request.category_id) || request.category_id || 'N/A';
+    const requestStatusClasses: Record<string, string> = {
+        Pending: 'bg-amber-100 text-amber-800',
+        Finalized: 'bg-green-100 text-green-800',
+        Rejected: 'bg-rose-100 text-rose-800',
+    };
 
     React.useEffect(() => {
         const loadGovernance = async () => {
@@ -158,16 +209,24 @@ const Budgets: React.FC = () => {
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
+        const previousSpending = new Map<string, number>();
 
         const now = new Date();
         const rangeStart = new Date(now);
         const rangeEnd = new Date(now);
+        const previousRangeStart = new Date(now);
+        const previousRangeEnd = new Date(now);
 
         if (budgetView === 'Monthly') {
             rangeStart.setFullYear(currentYear, currentMonth - 1, 1);
             rangeStart.setHours(0, 0, 0, 0);
             rangeEnd.setFullYear(currentYear, currentMonth, 0);
             rangeEnd.setHours(23, 59, 59, 999);
+
+            previousRangeStart.setFullYear(currentYear, currentMonth - 2, 1);
+            previousRangeStart.setHours(0, 0, 0, 0);
+            previousRangeEnd.setFullYear(currentYear, currentMonth - 1, 0);
+            previousRangeEnd.setHours(23, 59, 59, 999);
         } else if (budgetView === 'Weekly') {
             const day = now.getDay();
             const diffToMonday = (day + 6) % 7;
@@ -175,27 +234,44 @@ const Budgets: React.FC = () => {
             rangeStart.setHours(0, 0, 0, 0);
             rangeEnd.setDate(rangeStart.getDate() + 6);
             rangeEnd.setHours(23, 59, 59, 999);
+
+            previousRangeStart.setDate(rangeStart.getDate() - 7);
+            previousRangeStart.setHours(0, 0, 0, 0);
+            previousRangeEnd.setDate(rangeStart.getDate() - 1);
+            previousRangeEnd.setHours(23, 59, 59, 999);
         } else if (budgetView === 'Daily') {
             rangeStart.setHours(0, 0, 0, 0);
             rangeEnd.setHours(23, 59, 59, 999);
+
+            previousRangeStart.setDate(now.getDate() - 1);
+            previousRangeStart.setHours(0, 0, 0, 0);
+            previousRangeEnd.setDate(now.getDate() - 1);
+            previousRangeEnd.setHours(23, 59, 59, 999);
         } else {
             rangeStart.setFullYear(currentYear, 0, 1);
             rangeStart.setHours(0, 0, 0, 0);
             rangeEnd.setFullYear(currentYear, 11, 31);
             rangeEnd.setHours(23, 59, 59, 999);
+
+            previousRangeStart.setFullYear(currentYear - 1, 0, 1);
+            previousRangeStart.setHours(0, 0, 0, 0);
+            previousRangeEnd.setFullYear(currentYear - 1, 11, 31);
+            previousRangeEnd.setHours(23, 59, 59, 999);
         }
 
         const limitDivisor = budgetView === 'Monthly' ? 1 : budgetView === 'Weekly' ? 4.345 : budgetView === 'Daily' ? 30 : 1;
 
         data.transactions
-            .filter(t => {
-                if (t.type !== 'expense' || (t.status ?? 'Approved') !== 'Approved' || !t.budgetCategory) return false;
+            .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
+            .forEach((t) => {
                 const txDate = new Date(t.date);
-                return txDate >= rangeStart && txDate <= rangeEnd;
-            })
-            .forEach(t => {
-                const currentSpend = spending.get(t.budgetCategory!) || 0;
-                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+                const amount = Math.abs(t.amount);
+                if (txDate >= rangeStart && txDate <= rangeEnd) {
+                    spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
+                }
+                if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                    previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
+                }
             });
 
         const scopedBudgets = data.budgets
@@ -230,11 +306,6 @@ const Budgets: React.FC = () => {
                 .sort((a, b) => b.spent - a.spent);
         }
 
-        return scopedBudgets
-            .map(budget => {
-                const spent = spending.get(budget.category) || 0;
-                const adjustedLimit = budget.limit / limitDivisor;
-                const percentage = adjustedLimit > 0 ? (spent / adjustedLimit) * 100 : 0;
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
@@ -242,6 +313,44 @@ const Budgets: React.FC = () => {
                 return { ...budget, spent, displayLimit: adjustedLimit, monthlyLimit: budget.limit, percentage, colorClass };
             }).sort((a,b) => b.spent - a.spent);
     }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
+
+    React.useEffect(() => {
+        setCardOrder((prev) => {
+            const ids = budgetData.map((b) => b.id);
+            const retained = prev.filter((id) => ids.includes(id));
+            const appended = ids.filter((id) => !retained.includes(id));
+            return [...retained, ...appended];
+        });
+    }, [budgetData]);
+
+    const orderedBudgetData = useMemo(() => {
+        const map = new Map(budgetData.map((b) => [b.id, b]));
+        return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
+    }, [budgetData, cardOrder]);
+
+    const moveBudgetCard = (id: string, direction: 'up' | 'down') => {
+        setCardOrder((prev) => {
+            const index = prev.indexOf(id);
+            if (index < 0) return prev;
+            const target = direction === 'up' ? index - 1 : index + 1;
+            if (target < 0 || target >= prev.length) return prev;
+            const next = [...prev];
+            [next[index], next[target]] = [next[target], next[index]];
+            return next;
+        });
+    };
+
+    const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
+
+    const budgetInsights = useMemo(() => {
+        const totalLimit = budgetData.reduce((sum, b) => sum + b.displayLimit, 0);
+        const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
+        const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
+        const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
+        const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
+        const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta) - Math.abs(a.trendDelta))[0];
+        return { totalLimit, totalSpent, healthyCount, watchCount, criticalCount, topChange };
+    }, [budgetData]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
         if (!isAdmin) return;
@@ -265,6 +374,14 @@ const Budgets: React.FC = () => {
         });
     }
 
+
+    const normalizeToMonthly = (amount: number, period: 'Monthly' | 'Weekly' | 'Daily' | 'Yearly') => {
+        if (period === 'Weekly') return amount * 4.345;
+        if (period === 'Daily') return amount * 30;
+        if (period === 'Yearly') return amount / 12;
+        return amount;
+    };
+
     const handleCopyBudgets = () => {
         if (!isAdmin) return;
 
@@ -275,8 +392,8 @@ const Budgets: React.FC = () => {
     const submitBudgetRequest = async () => {
         if (!supabase || !auth?.user) return;
 
-        const amount = Number(requestAmount || 0);
-        if (!Number.isFinite(amount) || amount <= 0) {
+        const enteredAmount = Number(requestAmount || 0);
+        if (!Number.isFinite(enteredAmount) || enteredAmount <= 0) {
             alert('Please enter a valid proposed amount greater than 0.');
             return;
         }
@@ -304,6 +421,11 @@ const Budgets: React.FC = () => {
             return;
         }
 
+        const amount = normalizeToMonthly(enteredAmount, requestAmountPeriod);
+
+        const periodTag = requestAmountPeriod === 'Monthly' ? '' : `[Requested period: ${requestAmountPeriod}]`;
+        const mergedNote = [periodTag, requestNote.trim()].filter(Boolean).join(' ').trim() || null;
+
         const payloadBase = {
             user_id: auth.user.id,
             request_type: requestType,
@@ -314,8 +436,8 @@ const Budgets: React.FC = () => {
         };
 
         const payloadVariants = [
-            { ...payloadBase, note: requestNote.trim() || null },
-            { ...payloadBase, request_note: requestNote.trim() || null },
+            { ...payloadBase, note: mergedNote },
+            { ...payloadBase, request_note: mergedNote },
             payloadBase,
         ];
 
@@ -343,13 +465,19 @@ const Budgets: React.FC = () => {
         alert('Request submitted for admin approval.');
     };
 
-    const finalizeBudgetRequest = async (request: any) => {
+    const finalizeBudgetRequest = async (request: any, approvedAmount?: number) => {
         if (!supabase) return;
-        const amount = Number(request.amount || 0);
+        const amount = Number(approvedAmount ?? request.amount ?? 0);
         if (!Number.isFinite(amount) || amount <= 0) {
             alert('Request amount is invalid; please reject or correct the request.');
             return;
         }
+
+        const categoryLabel = resolveRequestCategory(request);
+        if (!window.confirm(`Finalize ${request.request_type} for ${categoryLabel} with ${formatCurrencyString(amount, { digits: 0 })}?`)) {
+            return;
+        }
+
         if (request.request_type === 'NewCategory') {
             const { error: insertError } = await supabase
                 .from('categories')
@@ -376,18 +504,19 @@ const Budgets: React.FC = () => {
 
         const { error: requestUpdateError } = await supabase
             .from('budget_requests')
-            .update({ status: 'Finalized' })
+            .update({ status: 'Finalized', amount })
             .eq('id', request.id);
         if (requestUpdateError) {
             alert(`Failed to finalize request: ${requestUpdateError.message}`);
             return;
         }
 
-        setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized' } : r));
+        setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
     };
 
     const rejectBudgetRequest = async (requestId: string) => {
         if (!supabase) return;
+        if (!window.confirm('Reject this budget request?')) return;
         const { error } = await supabase
             .from('budget_requests')
             .update({ status: 'Rejected' })
@@ -400,8 +529,30 @@ const Budgets: React.FC = () => {
     };
 
 
-    const pendingRequests = useMemo(() => budgetRequests.filter((r) => r.status === 'Pending'), [budgetRequests]);
-    const respondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending'), [budgetRequests]);
+    const sortedFilteredRequests = useMemo(() => {
+        const normalizedQuery = requestSearch.trim().toLowerCase();
+        const filtered = budgetRequests.filter((r) => {
+            const matchesStatus = requestStatusFilter === 'All' || r.status === requestStatusFilter;
+            if (!matchesStatus) return false;
+            if (!normalizedQuery) return true;
+            const combinedText = `${r.request_type} ${resolveRequestCategory(r)} ${r.note || ''} ${r.request_note || ''}`.toLowerCase();
+            return combinedText.includes(normalizedQuery);
+        });
+
+        const sorted = [...filtered].sort((a, b) => {
+            if (requestSort === 'Oldest') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+            if (requestSort === 'AmountHigh') return Number(b.amount || 0) - Number(a.amount || 0);
+            if (requestSort === 'AmountLow') return Number(a.amount || 0) - Number(b.amount || 0);
+            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+        });
+
+        return sorted;
+    }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, governanceCategories]);
+
+    const pendingRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status === 'Pending'), [sortedFilteredRequests]);
+    const respondedRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status !== 'Pending'), [sortedFilteredRequests]);
+    const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
+    const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
 
     return (
         <div className="space-y-6">
@@ -426,9 +577,65 @@ const Budgets: React.FC = () => {
                     <button disabled={!isAdmin} onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm disabled:opacity-50">Add Budget</button>
                  </div>
             </div>
+            <div className="bg-white rounded-lg shadow p-4 border border-slate-200">
+                <div className="flex flex-wrap gap-3 items-center">
+                    <input
+                        value={requestSearch}
+                        onChange={(e) => setRequestSearch(e.target.value)}
+                        placeholder="Search requests by type, category, or note..."
+                        className="flex-1 min-w-[220px] p-2 border rounded"
+                    />
+                    <select value={requestStatusFilter} onChange={(e) => setRequestStatusFilter(e.target.value as any)} className="p-2 border rounded">
+                        <option value="All">All statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Finalized">Finalized</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
+                    <select value={requestSort} onChange={(e) => setRequestSort(e.target.value as any)} className="p-2 border rounded">
+                        <option value="Newest">Newest first</option>
+                        <option value="Oldest">Oldest first</option>
+                        <option value="AmountHigh">Highest amount</option>
+                        <option value="AmountLow">Lowest amount</option>
+                    </select>
+                </div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div className="rounded border p-2 bg-amber-50">Pending: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Pending').length}</span></div>
+                    <div className="rounded border p-2 bg-green-50">Finalized: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Finalized').length}</span></div>
+                    <div className="rounded border p-2 bg-rose-50">Rejected: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Rejected').length}</span></div>
+                    <div className="rounded border p-2 bg-slate-50">Shown: <span className="font-semibold">{sortedFilteredRequests.length}</span></div>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-4 border border-slate-200">
+                <h2 className="text-lg font-semibold mb-3">Budget Intelligence</h2>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                        <p className="text-gray-500">Portfolio Budget</p>
+                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
+                    </div>
+                    <div className="rounded-lg border bg-indigo-50 p-3">
+                        <p className="text-gray-500">Current Spend</p>
+                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
+                    </div>
+                    <div className="rounded-lg border bg-amber-50 p-3">
+                        <p className="text-gray-500">Needs Attention</p>
+                        <p className="text-lg font-semibold">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
+                    </div>
+                    <div className="rounded-lg border bg-emerald-50 p-3">
+                        <p className="text-gray-500">Healthy Budgets</p>
+                        <p className="text-lg font-semibold">{budgetInsights.healthyCount}</p>
+                    </div>
+                </div>
+                {budgetInsights.topChange && (
+                    <p className="mt-3 text-xs text-gray-600">
+                        Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta, { digits: 0 })} vs previous period).
+                    </p>
+                )}
+            </div>
+
             {!isAdmin && (
                 <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
-                    <h2 className="text-lg font-semibold mb-3">Request Budget Change</h2>
+                    <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit new-category or limit-increase proposals with context notes for admin approval." /></h2>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                         <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="p-2 border rounded">
                             <option value="NewCategory">New Category</option>
@@ -445,24 +652,32 @@ const Budgets: React.FC = () => {
                             </select>
                         )}
                         <input type="number" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Proposed amount" className="p-2 border rounded" />
+                        <select value={requestAmountPeriod} onChange={(e) => setRequestAmountPeriod(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="p-2 border rounded">
+                            <option value="Monthly">Monthly</option>
+                            <option value="Weekly">Weekly</option>
+                            <option value="Daily">Daily</option>
+                            <option value="Yearly">Yearly</option>
+                        </select>
                         <input value={requestNote} onChange={(e) => setRequestNote(e.target.value)} placeholder="Reason / note (optional)" className="p-2 border rounded md:col-span-2" />
                         <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded">Submit</button>
                     </div>
+                    <p className="mt-2 text-xs text-gray-500">Supports Monthly, Weekly, Daily, and Yearly inputs. All requests are normalized to a monthly limit for approval consistency.</p>
                 </div>
             )}
 
-            {!isAdmin && budgetRequests.length > 0 && (
+            {!isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-blue-50 to-sky-50 rounded-lg shadow p-5 border border-blue-200">
-                    <h2 className="text-lg font-semibold mb-3">My Budget Requests</h2>
+                    <h2 className="text-lg font-semibold mb-3">My Pending Budget Requests</h2>
                     <div className="space-y-2">
-                        {budgetRequests.map((r) => (
+                        {pendingRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
-                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
+                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
                                     <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
-                                <span className={`text-xs px-2 py-1 rounded ${r.status === 'Pending' ? 'bg-amber-100 text-amber-800' : r.status === 'Finalized' ? 'bg-green-100 text-green-800' : 'bg-rose-100 text-rose-800'}`}>{r.status}</span>
+                                <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
                             </div>
                         ))}
                     </div>
@@ -477,11 +692,12 @@ const Budgets: React.FC = () => {
                         {respondedRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
-                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
+                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
                                     <p className="text-xs text-gray-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
-                                <span className={`text-xs px-2 py-1 rounded ${r.status === 'Finalized' ? 'bg-green-100 text-green-800' : 'bg-rose-100 text-rose-800'}`}>{r.status}</span>
+                                <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
                             </div>
                         ))}
                     </div>
@@ -490,22 +706,58 @@ const Budgets: React.FC = () => {
 
             {isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-amber-50 to-orange-50 rounded-lg shadow p-5 border border-amber-200">
-                    <h2 className="text-lg font-semibold mb-3">Budget Request Review</h2>
+                    <h2 className="text-lg font-semibold mb-3 flex items-center">Budget Request Review <InfoHint text="Finalize directly or adjust amount before finalizing. Rejections remain in history timeline." /></h2>
                     <div className="space-y-3">
-                        {budgetRequests.map((r) => (
+                        {pendingRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
-                                    <p className="font-medium">{r.request_type} • {r.category_name || r.category_id || 'N/A'}</p>
-                                    <p className="text-xs text-gray-500">Requested: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                    <p className="text-xs text-gray-500">Requested (monthly normalized): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
+                                    <button onClick={() => {
+                                        const nextAmount = window.prompt('Approve with custom monthly limit amount:', String(r.amount || ''));
+                                        if (nextAmount == null) return;
+                                        const parsed = Number(nextAmount);
+                                        if (!Number.isFinite(parsed) || parsed <= 0) {
+                                            alert('Please enter a valid amount greater than 0.');
+                                            return;
+                                        }
+                                        finalizeBudgetRequest(r, parsed);
+                                    }} className="px-3 py-1 text-xs rounded bg-emerald-700 text-white">Adjust & Finalize</button>
                                     <button onClick={() => rejectBudgetRequest(r.id)} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
                                 </div>
                             </div>
                         ))}
                     </div>
+                </div>
+            )}
+
+            {allRespondedRequests.length > 0 && (
+                <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                        <h2 className="text-lg font-semibold">Request History Timeline</h2>
+                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded">{allRespondedRequests.length} total decisions</span>
+                    </div>
+                    <div className="space-y-2">
+                        {visibleHistoryRequests.map((r) => (
+                            <div key={`history-${r.id}`} className="p-3 border rounded-lg bg-white/80">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="font-medium text-sm">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                    <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                            </div>
+                        ))}
+                    </div>
+                    {historyItemsToShow < allRespondedRequests.length && (
+                        <button onClick={() => setHistoryItemsToShow((prev) => prev + 6)} className="mt-3 px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load more history</button>
+                    )}
                 </div>
             )}
 
@@ -516,10 +768,13 @@ const Budgets: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {budgetData.map(budget => (
-                    <div key={budget.category} className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100">
+                {orderedBudgetData.map((budget, index) => (
+                    <div key={budget.id} className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}">
                         <div className="flex-grow">
-                            <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
+                            <div className="flex items-center justify-between gap-2">
+                                <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
+                                <span className={`text-[11px] px-2 py-1 rounded ${budget.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : budget.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>{budget.budgetTier}</span>
+                            </div>
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
@@ -532,6 +787,12 @@ const Budgets: React.FC = () => {
                                         : `${formatCurrencyString(Math.abs(budget.displayLimit - budget.spent), { digits: 0 })} over`
                                     }
                                 </p>
+                                <div className="mt-2 flex items-center justify-between text-xs">
+                                    <span className={`px-2 py-1 rounded ${budget.utilizationLabel === 'Critical' ? 'bg-rose-100 text-rose-800' : budget.utilizationLabel === 'Watch' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{budget.utilizationLabel}</span>
+                                    <span className={budget.trendDirection === 'up' ? 'text-rose-600' : budget.trendDirection === 'down' ? 'text-emerald-600' : 'text-gray-500'}>
+                                        {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'} {formatCurrencyString(Math.abs(budget.trendDelta), { digits: 0 })} vs previous
+                                    </span>
+                                </div>
                             </div>
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">

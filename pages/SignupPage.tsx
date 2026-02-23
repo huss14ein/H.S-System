@@ -47,7 +47,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
                 ) : (
                     <>
                         <h2 className="text-center text-3xl font-bold text-dark mb-2">Create Account</h2>
-                        <p className="text-center text-gray-500 mb-6">Start managing your finances with H.S.</p>
+                        <p className="text-center text-gray-500 mb-6">Start managing your finances with Finova.</p>
                         {success ? (
                             <div className="text-center p-4 bg-green-50 text-green-800 rounded-md">
                                 <h3 className="font-semibold">Success!</h3>

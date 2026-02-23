@@ -119,6 +119,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
         currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
         zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+        goalId: holding.goalId ?? holding.goal_id,
     });
 
     const normalizeTransaction = (transaction: any): Transaction => ({

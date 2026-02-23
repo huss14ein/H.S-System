@@ -16,8 +16,10 @@ import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import InfoHint from '../components/InfoHint';
 import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
+import CardLayoutControls from '../components/CardLayoutControls';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -62,15 +64,15 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md"/>
-                <select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border rounded-md">
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border rounded-md">
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
                     <option value="Other">Other</option>
                 </select>
-                <input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border rounded-md"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border rounded-md"/>
                 <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="w-full p-2 border rounded-md"/>
-                <input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border rounded-md" />
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Useful for family-level, multi-user governance and Zakat attribution." /></label><input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border rounded-md" />
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
@@ -82,7 +84,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         </Modal>
     );
 };
-const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset | CommodityHolding) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
+const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset | CommodityHolding) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[]; compact?: boolean; controls?: React.ReactNode; }> = ({ asset, onEdit, onDelete, onLinkGoal, goals, compact = false, controls }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
         const iconClass = "h-8 w-8";
@@ -96,11 +98,11 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
     const performanceTone = unrealizedGain === null ? 'border-gray-200' : unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
-        <div className={`bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
+        <div className={`bg-white rounded-lg shadow ${compact ? 'p-4' : 'p-5'} flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-3">{getAssetIcon(asset.type)}<div><h3 className="font-bold text-dark text-lg">{asset.name}</h3><p className="text-sm text-gray-500">{asset.type}</p></div></div>
-                    <div className="flex space-x-1"><button onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
+                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div></div>
                 </div>
                 {asset.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
                 <div className="mt-4 space-y-3">
@@ -125,7 +127,7 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
 // --- End Physical Asset Components ---
 
 // --- Commodity Components ---
-const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; }> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
+const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals }) => {
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -133,6 +135,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
     const [currentValue, setCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
+    const [goalId, setGoalId] = useState<string | undefined>(undefined);
     const [formError, setFormError] = useState<string | null>(null);
     const [diagnosticReport, setDiagnosticReport] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
@@ -142,9 +145,9 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         if (holdingToEdit) {
             setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
             setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
-            setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || '');
+            setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || ''); setGoalId(holdingToEdit.goalId);
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
+            setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
         }
         setFormError(null);
         setDiagnosticReport(null);
@@ -195,6 +198,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             symbol: getSymbol(name, unit),
             zakahClass,
             owner: owner || undefined,
+            goalId,
         };
 
         try {
@@ -276,8 +280,9 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                 <select value={name} onChange={e => setName(e.target.value as any)} className="w-full p-2 border rounded-md"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium text-gray-700">Owner</label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Optional ownership label for shared/family tracking." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <div><label className="block text-sm font-medium text-gray-700">Link to Goal <InfoHint text="Connect this commodity to a goal so goal progress includes it." /></label><select value={goalId || 'none'} onChange={(e) => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} className="mt-1 w-full p-2 border rounded-md"><option value="none">Not linked</option>{goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
                 {formError && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
                 {diagnosticReport && (
                     <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
@@ -309,9 +314,10 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         </Modal>
     );
 };
-const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; }> = ({ holding, onEdit, onDelete }) => {
+const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void; compact?: boolean; controls?: React.ReactNode; }> = ({ holding, onEdit, onDelete, goals, onLinkGoal, compact = false, controls }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
+    const linkedGoal = holding.goalId ? goals.find(g => g.id === holding.goalId) : null;
     const performanceTone = unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
     const getIcon = (type: CommodityHolding['name']) => {
         const iconClass = "h-10 w-10";
@@ -323,16 +329,23 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
         }
     };
     return (
-        <div className={`bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
+        <div className={`bg-white rounded-lg shadow ${compact ? 'p-4' : 'p-5'} flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-4">
                         {getIcon(holding.name)}
                         <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}</p></div>
                     </div>
-                    <div className="flex space-x-1"><button onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
+                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div></div>
                 </div>
                 {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
+                <div className="mt-2">
+                    {linkedGoal ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">Linked goal: {linkedGoal.name}</span> : <span className="text-xs text-gray-400">Not linked to goal</span>}
+                    <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="mt-2 w-full text-xs border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary py-1.5">
+                        <option value="none">No goal link</option>
+                        {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                </div>
                 <div className="mt-4 space-y-3">
                     <div><dt className="text-sm text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
                     <div className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">Purchase Value</dt><dd className="font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
@@ -360,6 +373,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
 
+    const [assetCardOrder, setAssetCardOrder] = useState<string[]>([]);
+    const [commodityCardOrder, setCommodityCardOrder] = useState<string[]>([]);
+    const [expandedAssetCards, setExpandedAssetCards] = useState<Set<string>>(new Set());
+    const [expandedCommodityCards, setExpandedCommodityCards] = useState<Set<string>>(new Set());
+
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
             handleOpenAssetModal();
@@ -378,6 +396,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleOpenAssetModal = (asset: Asset | null = null) => { setAssetToEdit(asset); setIsAssetModalOpen(true); };
     const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
     const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
+    const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
+        const holding = data.commodityHoldings.find((h) => h.id === holdingId);
+        if (holding) updateCommodityHolding({ ...holding, goalId: goalId === 'none' ? undefined : goalId });
+    };
     
     // Commodity Handlers
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
@@ -410,6 +432,49 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         finally { setIsUpdatingPrices(false); }
     };
 
+
+    const orderedAssets = useMemo(() => {
+        const ids = new Set(data.assets.map(a => a.id));
+        const validOrder = assetCardOrder.filter(id => ids.has(id));
+        const missing = data.assets.map(a => a.id).filter(id => !validOrder.includes(id));
+        return [...validOrder, ...missing].map(id => data.assets.find(a => a.id === id)).filter((a): a is Asset => Boolean(a));
+    }, [data.assets, assetCardOrder]);
+
+    const orderedCommodities = useMemo(() => {
+        const ids = new Set(data.commodityHoldings.map(h => h.id));
+        const validOrder = commodityCardOrder.filter(id => ids.has(id));
+        const missing = data.commodityHoldings.map(h => h.id).filter(id => !validOrder.includes(id));
+        return [...validOrder, ...missing].map(id => data.commodityHoldings.find(h => h.id === id)).filter((h): h is CommodityHolding => Boolean(h));
+    }, [data.commodityHoldings, commodityCardOrder]);
+
+    const moveCard = (type: 'asset' | 'commodity', id: string, direction: 'up' | 'down') => {
+        const currentOrder = type === 'asset' ? orderedAssets.map(a => a.id) : orderedCommodities.map(h => h.id);
+        const index = currentOrder.indexOf(id);
+        if (index < 0) return;
+        const target = direction === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= currentOrder.length) return;
+        const next = [...currentOrder];
+        [next[index], next[target]] = [next[target], next[index]];
+        if (type === 'asset') setAssetCardOrder(next);
+        else setCommodityCardOrder(next);
+    };
+
+    const toggleCardSize = (type: 'asset' | 'commodity', id: string) => {
+        if (type === 'asset') {
+            setExpandedAssetCards(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+            });
+        } else {
+            setExpandedCommodityCards(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+            });
+        }
+    };
+
     const addActions = [
         { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal() },
         { label: 'Commodity', icon: CubeIcon, onClick: () => handleOpenCommodityModal() }
@@ -432,21 +497,21 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <section className="bg-white p-6 rounded-lg shadow">
                 <h2 className="text-xl font-semibold text-dark mb-4">Physical Assets</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {data.assets.map(asset => (<AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />))}
+                    {orderedAssets.map((asset, index) => (<AssetCardComponent key={asset.id} asset={asset} compact={!expandedAssetCards.has(asset.id)} controls={<CardLayoutControls index={index} total={orderedAssets.length} isExpanded={expandedAssetCards.has(asset.id)} onMove={(direction) => moveCard('asset', asset.id, direction)} onToggleSize={() => toggleCardSize('asset', asset.id)} />} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />))}
                     {data.assets.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No physical assets added yet.</p>}
                 </div>
             </section>
             
             <section className="bg-white p-6 rounded-lg shadow">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                    <h2 className="text-xl font-semibold text-dark">Metals & Crypto</h2>
+                    <h2 className="text-xl font-semibold text-dark flex items-center">Metals & Crypto <InfoHint text="Use AI or fallback APIs (Finnhub/Stooq) for latest commodity pricing. If one provider fails, retries use alternatives." /></h2>
                     <button 
                         onClick={handleUpdatePrices} 
                         disabled={isUpdatingPrices || !isAiAvailable || data.commodityHoldings.length === 0}
                         title={!isAiAvailable ? "AI features are disabled" : (data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices")}
                         className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed">
                         <SparklesIcon className="h-4 w-4 mr-2" />
-                        {isUpdatingPrices ? 'Updating...' : 'Update Prices via AI'}
+                        {isUpdatingPrices ? 'Updating...' : 'Update Prices'}
                     </button>
                 </div>
                 {!isAiAvailable && data.commodityHoldings.length > 0 && (
@@ -465,13 +530,13 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     </div>
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {data.commodityHoldings.map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
+                    {orderedCommodities.map((h, index) => <CommodityHoldingCard key={h.id} holding={h} compact={!expandedCommodityCards.has(h.id)} controls={<CardLayoutControls index={index} total={orderedCommodities.length} isExpanded={expandedCommodityCards.has(h.id)} onMove={(direction) => moveCard('commodity', h.id, direction)} onToggleSize={() => toggleCardSize('commodity', h.id)} />} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
                     {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </section>
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
-            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data.goals} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </div>
     );
