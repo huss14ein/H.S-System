@@ -119,6 +119,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
         currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
         zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+        goalId: holding.goalId ?? holding.goal_id,
     });
 
     const normalizeTransaction = (transaction: any): Transaction => ({
@@ -180,61 +181,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     ]);
 
     const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
-        const baseVariants = [
-            {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
-                purchase_value: holding.purchaseValue,
-                current_value: holding.currentValue,
-                zakah_class: holding.zakahClass,
-            },
-            {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
-                purchaseValue: holding.purchaseValue,
-                currentValue: holding.currentValue,
-                zakahClass: holding.zakahClass,
-            },
-            {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
-                purchasevalue: holding.purchaseValue,
-                currentvalue: holding.currentValue,
-                zakahclass: holding.zakahClass,
-            },
-            {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
-                purchase_value: holding.purchaseValue,
-                currentValue: holding.currentValue,
-                zakahClass: holding.zakahClass,
-            },
-            {
-                name: holding.name,
-                quantity: holding.quantity,
-                unit: holding.unit,
-                symbol: holding.symbol,
-                owner: holding.owner,
-                purchaseValue: holding.purchaseValue,
-                current_value: holding.currentValue,
-                zakah_class: holding.zakahClass,
-            },
+        const identityFields = {
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            symbol: holding.symbol,
+            owner: holding.owner,
+        };
+
+        const valueKeyVariants = [
+            { purchase_value: holding.purchaseValue, current_value: holding.currentValue, zakah_class: holding.zakahClass, goal_id: holding.goalId },
+            { purchaseValue: holding.purchaseValue, currentValue: holding.currentValue, zakahClass: holding.zakahClass, goalId: holding.goalId },
+            { purchasevalue: holding.purchaseValue, currentvalue: holding.currentValue, zakahclass: holding.zakahClass, goalid: holding.goalId },
+            { purchase_value: holding.purchaseValue, currentValue: holding.currentValue, zakahClass: holding.zakahClass, goalId: holding.goalId },
+            { purchaseValue: holding.purchaseValue, current_value: holding.currentValue, zakah_class: holding.zakahClass, goal_id: holding.goalId },
         ];
 
-        const variantsWithoutOwner = baseVariants.map(({ owner, ...payload }) => payload);
-        return [...baseVariants, ...variantsWithoutOwner];
+        const baseVariants = valueKeyVariants.map((variant) => ({ ...identityFields, ...variant }));
+        const allVariants = [...baseVariants, ...baseVariants.map(({ owner, ...payload }) => payload)];
+
+        const dedupedVariants: Record<string, unknown>[] = [];
+        const seen = new Set<string>();
+        for (const payload of allVariants) {
+            const signature = payloadSignature(payload as Record<string, unknown>);
+            if (seen.has(signature)) continue;
+            seen.add(signature);
+            dedupedVariants.push(payload as Record<string, unknown>);
+        }
+
+        return dedupedVariants;
     };
 
     const fetchData = async () => {

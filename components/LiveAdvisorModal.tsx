@@ -26,7 +26,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         if (isOpen && view === 'chat' && history.length === 0) {
             // Set initial message
             setHistory([
-                { role: 'model', parts: [{ text: "Hello! I'm HS, your AI financial assistant. How can I help you today? You can ask me about your net worth, budgets, or recent transactions." }] }
+                { role: 'model', parts: [{ text: "Hello! I'm Finova AI, your financial assistant. How can I help you today? You can ask me about your net worth, budgets, or recent transactions." }] }
             ]);
         }
     }, [isOpen, view, history]);
@@ -89,7 +89,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 contents: chatHistory,
                 config: { 
                     tools: [{ functionDeclarations }],
-                    systemInstruction: "You are HS, an expert personal financial advisor. Always answer directly, then provide a concise summary (max 3 bullets). Use tools when data is needed and include specific numbers from tool results."
+                    systemInstruction: "You are Finova AI, an expert personal financial advisor. Always answer directly, then provide a concise summary (max 3 bullets). Use tools when data is needed and include specific numbers from tool results."
                 }
             });
 

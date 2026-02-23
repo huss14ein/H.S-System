@@ -195,6 +195,7 @@ export interface CommodityHolding {
   symbol: string; // e.g., GOLD_GRAM, BTC_USD
   zakahClass: 'Zakatable' | 'Non-Zakatable';
   owner?: string;
+  goalId?: string;
 }
 
 export interface WatchlistItem {

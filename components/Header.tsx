@@ -83,7 +83,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
           <div className="flex items-center space-x-8">
             <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setActivePage('Dashboard')}>
               <HSLogo className="h-8 w-8 text-primary" />
-              <h1 className="text-lg sm:text-xl font-bold text-dark tracking-tight">H.S Wealth</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-dark tracking-tight">Finova</h1>
             </div>
 
             {/* Desktop Navigation */}
@@ -248,7 +248,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             <div className="px-4 pt-4 flex justify-between items-center border-b border-gray-100 pb-4">
                 <div className="flex items-center space-x-2">
                     <HSLogo className="h-8 w-8 text-primary" />
-                    <h1 className="text-xl font-bold text-dark">H.S Wealth</h1>
+                    <h1 className="text-xl font-bold text-dark">Finova</h1>
                 </div>
                 <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 text-gray-500 hover:bg-gray-50 rounded-xl transition-colors">
                     <XMarkIcon className="h-6 w-6" />

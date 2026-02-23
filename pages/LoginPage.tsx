@@ -42,7 +42,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
         ) : (
             <>
                 <h2 className="text-center text-3xl font-bold text-dark mb-2">Welcome Back</h2>
-                <p className="text-center text-gray-500 mb-6">Log in to your H.S account.</p>
+                <p className="text-center text-gray-500 mb-6">Log in to your Finova account.</p>
                 <form onSubmit={handleSubmit} className="space-y-6">
                 {error && <p className="text-red-500 text-sm text-center bg-red-50 p-3 rounded-md">{error}</p>}
                 <div>

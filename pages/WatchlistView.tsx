@@ -197,10 +197,10 @@ const WatchlistView: React.FC = () => {
             </div>
 
             <div className="lg:col-span-1 bg-green-50 p-4 rounded-lg border border-green-200 h-full">
-                <div className="flex items-center justify-between"><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>AI Research</h4><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
+                <div className="flex items-center justify-between"><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>Market Research</h4><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
                 {isNewsLoading && <div className="text-center p-4 text-sm text-gray-500">Fetching latest market info...</div>}
                 {aiResearch && !isNewsLoading && (<div className="mt-2"><SafeMarkdownRenderer content={aiResearch} /></div>)}
-                {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for AI-generated news on your watchlist items.</div>)}
+                {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for AI + Finnhub news and calendar insights on your watchlist items.</div>)}
                  {groundingChunks.length > 0 && (
                     <div className="text-xs text-gray-500 mt-4 pt-2 border-t">
                         <p className="font-semibold text-gray-700">Sources:</p>

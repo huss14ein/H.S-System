@@ -3,7 +3,7 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
-const DEFAULT_SYSTEM_INSTRUCTION = `You are HS, an elite financial AI assistant. Responses must be accurate, direct, and brief.
+const DEFAULT_SYSTEM_INSTRUCTION = `You are Finova AI, an elite financial assistant. Responses must be accurate, direct, and brief.
 - Lead with a one-sentence answer.
 - Then provide a short bulleted summary (max 3 bullets).
 - Use concrete numbers from provided data when available.
@@ -93,22 +93,154 @@ const normalizePriceMap = (prices: any): { [symbol: string]: { price: number; ch
     return normalized;
 };
 
-const getYahooLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+const getFinnhubApiKey = (): string => {
+    const apiKey = import.meta.env.VITE_FINNHUB_API_KEY;
+    if (!apiKey) throw new Error('Finnhub API key is missing. Set VITE_FINNHUB_API_KEY.');
+    return apiKey;
+};
+
+const toFinnhubSymbol = (symbol: string): string => {
+    const upper = symbol.toUpperCase().trim();
+    if (!upper) return upper;
+    if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
+    if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+    return upper;
+};
+
+const fromFinnhubSymbol = (symbol: string): string => {
+    const upper = symbol.toUpperCase();
+    if (upper === 'BINANCE:BTCUSDT') return 'BTC';
+    if (upper === 'BINANCE:ETHUSDT') return 'ETH';
+    return upper;
+};
+
+const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
     if (symbols.length === 0) return {};
-    const query = encodeURIComponent(symbols.join(','));
-    const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${query}`);
-    if (!response.ok) throw new Error(`Yahoo quote endpoint failed (${response.status})`);
-    const json = await response.json();
-    const rows = json?.quoteResponse?.result || [];
+    const token = getFinnhubApiKey();
     const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
-    for (const row of rows) {
-        const symbol = String(row?.symbol || '').toUpperCase();
-        const price = Number(row?.regularMarketPrice);
-        const change = Number(row?.regularMarketChange);
-        const changePercent = Number(row?.regularMarketChangePercent);
-        if (!symbol || !Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
-        mapped[symbol] = { price, change, changePercent };
+
+    for (const rawSymbol of symbols) {
+        try {
+            const finnhubSymbol = toFinnhubSymbol(rawSymbol);
+            const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
+            if (!response.ok) continue;
+            const row = await response.json();
+            const price = Number(row?.c);
+            const change = Number(row?.d);
+            const changePercent = Number(row?.dp);
+            if (!Number.isFinite(price) || !Number.isFinite(change) || !Number.isFinite(changePercent)) continue;
+            mapped[fromFinnhubSymbol(finnhubSymbol)] = { price, change, changePercent };
+        } catch (error) {
+            console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+        }
     }
+
+    return mapped;
+};
+
+const getFinnhubCompanyNews = async (symbols: string[]): Promise<Array<{ symbol: string; headline: string; source: string; url: string; datetime: number }>> => {
+    if (symbols.length === 0) return [];
+    const token = getFinnhubApiKey();
+    const to = new Date();
+    const from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const toDate = to.toISOString().split('T')[0];
+    const fromDate = from.toISOString().split('T')[0];
+    const rows: Array<{ symbol: string; headline: string; source: string; url: string; datetime: number }> = [];
+
+    for (const rawSymbol of symbols.slice(0, 6)) {
+        const symbol = toFinnhubSymbol(rawSymbol);
+        if (symbol.includes(':')) continue;
+        try {
+            const response = await fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
+            if (!response.ok) continue;
+            const news = await response.json();
+            if (!Array.isArray(news)) continue;
+            news.slice(0, 2).forEach((item: any) => {
+                if (!item?.headline || !item?.url) return;
+                rows.push({
+                    symbol: fromFinnhubSymbol(symbol),
+                    headline: String(item.headline),
+                    source: String(item.source || 'Unknown'),
+                    url: String(item.url),
+                    datetime: Number(item.datetime || 0),
+                });
+            });
+        } catch (error) {
+            console.warn(`Finnhub company news failed for ${rawSymbol}:`, error);
+        }
+    }
+
+    return rows.sort((a, b) => b.datetime - a.datetime).slice(0, 8);
+};
+
+const getFinnhubEconomicCalendar = async (): Promise<Array<{ date: string; country: string; event: string; actual?: string; estimate?: string }>> => {
+    const token = getFinnhubApiKey();
+    const from = new Date();
+    const to = new Date(from.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const fromDate = from.toISOString().split('T')[0];
+    const toDate = to.toISOString().split('T')[0];
+    const response = await fetch(`https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
+    if (!response.ok) return [];
+    const json = await response.json();
+    const events = Array.isArray(json?.economicCalendar) ? json.economicCalendar : [];
+    return events.slice(0, 6).map((item: any) => ({
+        date: String(item?.date || ''),
+        country: String(item?.country || 'Global'),
+        event: String(item?.event || 'Market event'),
+        actual: item?.actual ? String(item.actual) : undefined,
+        estimate: item?.estimate ? String(item.estimate) : undefined,
+    }));
+};
+
+const buildFinnhubResearchBrief = async (symbols: string[]): Promise<string> => {
+    try {
+        const [news, calendar] = await Promise.all([
+            getFinnhubCompanyNews(symbols),
+            getFinnhubEconomicCalendar().catch(() => []),
+        ]);
+
+        const newsSection = news.length === 0
+            ? '- No recent Finnhub headlines available for the selected symbols.'
+            : news.map(item => `- **${item.symbol}** (${item.source}): ${item.headline} (${item.url})`).join('\n');
+        const calendarSection = calendar.length === 0
+            ? '- No near-term economic calendar events available.'
+            : calendar.map(item => `- ${item.date} | ${item.country}: ${item.event}${item.estimate ? ` (Est: ${item.estimate})` : ''}${item.actual ? ` (Actual: ${item.actual})` : ''}`).join('\n');
+
+        return `### Finnhub Headlines\n${newsSection}\n\n### Finnhub Economic Calendar\n${calendarSection}`;
+    } catch (error) {
+        console.warn('Unable to build Finnhub research brief:', error);
+        return '';
+    }
+};
+
+
+const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+    if (symbols.length === 0) return {};
+
+    const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+
+    const normalize = (symbol: string) => symbol.toLowerCase().replace(/\./g, '-');
+
+    for (const rawSymbol of symbols) {
+        try {
+            const symbol = rawSymbol.toUpperCase();
+            const stooqCode = normalize(symbol);
+            const response = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(stooqCode)}&f=sd2t2ohlcvcp&h&e=csv`);
+            if (!response.ok) continue;
+            const csv = await response.text();
+            const lines = csv.trim().split('\n');
+            if (lines.length < 2) continue;
+            const values = lines[1].split(',');
+            const close = Number(values[6]);
+            const changePercent = Number(values[9]);
+            if (!Number.isFinite(close) || !Number.isFinite(changePercent)) continue;
+            const change = (close * changePercent) / 100;
+            mapped[symbol] = { price: close, change, changePercent };
+        } catch (error) {
+            console.warn(`Stooq quote failed for ${rawSymbol}:`, error);
+        }
+    }
+
     return mapped;
 };
 
@@ -202,7 +334,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
 
     try {
         const prompt = `
-            You are a proactive financial analyst for the Wealth Ultra platform. 
+            You are a proactive financial analyst for the Finova platform. 
             Analyze the user's complete financial data and generate a prioritized list of 4-5 insightful, encouraging, and actionable feed items.
             Financial Data Snapshot:
             - Net Worth: Calculate from assets, accounts, and liabilities.
@@ -293,7 +425,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
         }).join('\n');
 
         const prompt = `
-            You are "HS", a sharp and encouraging AI financial analyst. Analyze the following monthly spending data and provide a concise, actionable analysis in Markdown format.
+            You are "Finova AI", a sharp and encouraging financial analyst. Analyze the following monthly spending data and provide a concise, actionable analysis in Markdown format.
 
             **Spending Data for the Month:**
             ${budgetPerformance}
@@ -376,7 +508,7 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
         const { projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
         const prompt = `
-            You are "HS", a forward-thinking AI financial strategist. Analyze the user's annual plan and the active 'what-if' scenarios. Provide a concise, insightful, and encouraging analysis in Markdown format.
+            You are "Finova AI", a forward-thinking financial strategist. Analyze the user's annual plan and the active 'what-if' scenarios. Provide a concise, insightful, and encouraging analysis in Markdown format.
 
             **Annual Plan Data:**
             - Baseline Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
@@ -522,7 +654,7 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
     }).join(', ');
 
     const prompt = `
-        You are "HS", a senior personal financial advisor for a sophisticated wealth management platform. Your tone is professional, insightful, and encouraging.
+        You are "Finova AI", a senior personal financial advisor for a sophisticated wealth management platform. Your tone is professional, insightful, and encouraging.
         Analyze the user's key financial data and provide a concise executive summary in Markdown format.
         Your response must be in Markdown format only and contain no HTML tags.
         
@@ -589,17 +721,28 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
 
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<{ content: string, groundingChunks: any[] }> => {
     try {
-        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), use Google Search to generate a concise summary of the latest market news and analyst sentiment for each. Respond in markdown, using a '###' header for each stock symbol. Do not use any HTML tags in your response.`;
+        const finnhubBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol));
+        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), use Google Search and the provided Finnhub digest to generate a concise summary of the latest market news and analyst sentiment for each. Respond in markdown, using a '###' header for each stock symbol. Add a short section named "### Calendar Watch" for major upcoming macro events. Do not use any HTML tags in your response.\n\n${finnhubBrief ? `Reference data:\n${finnhubBrief}` : ''}`;
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
             config: { tools: [{ googleSearch: {} }] }
         });
-        const content = response.text || "Could not retrieve news.";
+        const aiContent = response.text || "Could not retrieve news.";
+        const content = finnhubBrief
+            ? `${aiContent}\n\n---\n\n${finnhubBrief}`
+            : aiContent;
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         return { content, groundingChunks };
     } catch (error) {
-        return { content: formatAiError(error), groundingChunks: [] };
+        const fallbackBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol));
+        const errorMessage = formatAiError(error);
+        return {
+            content: fallbackBrief
+                ? `AI research is unavailable right now. Showing Finnhub market data instead.\n\n${fallbackBrief}`
+                : errorMessage,
+            groundingChunks: [],
+        };
     }
 };
 
@@ -647,7 +790,7 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
         const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
 
         const prompt = `
-            You are "HS", a smart and encouraging AI financial coach. Analyze this goal and provide a direct, concise plan in Markdown.
+            You are "Finova AI", a smart and encouraging financial coach. Analyze this goal and provide a direct, concise plan in Markdown.
             
             **Goal Data:**
             - **Name:** ${goal.name}
@@ -701,7 +844,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);
 
         const prompt = `
-            You are "HS", a sharp and encouraging AI strategist. Analyze the user's overall goal portfolio based on the following data. Your response must be direct, concise, and in Markdown format.
+            You are "Finova AI", a sharp and encouraging strategist. Analyze the user's overall goal portfolio based on the following data. Your response must be direct, concise, and in Markdown format.
 
             **Strategic Overview:**
             - **Total Monthly Savings Capacity:** ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR
@@ -886,24 +1029,36 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     const provider = (import.meta.env.VITE_LIVE_PRICE_PROVIDER || 'auto').toLowerCase();
-    const tryYahoo = async () => {
-        const yahoo = await getYahooLivePrices(symbols);
-        if (Object.keys(yahoo).length > 0) return yahoo;
-        throw new Error('Yahoo returned no symbols');
+    const tryFinnhub = async () => {
+        const finnhub = await getFinnhubLivePrices(symbols);
+        if (Object.keys(finnhub).length > 0) return finnhub;
+        throw new Error('Finnhub returned no symbols');
+    };
+    const tryStooq = async () => {
+        const stooq = await getStooqLivePrices(symbols);
+        if (Object.keys(stooq).length > 0) return stooq;
+        throw new Error('Stooq returned no symbols');
     };
 
     try {
-        if (provider === 'yahoo') return await tryYahoo();
+        if (provider === 'finnhub') return await tryFinnhub();
+        if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
+
+        try {
+            return await tryFinnhub();
+        } catch (finnhubError) {
+            console.warn('Finnhub provider failed, trying AI fallback:', finnhubError);
+        }
 
         try {
             const aiPrices = await aiFetch();
             if (Object.keys(aiPrices).length > 0) return aiPrices;
+            throw new Error('AI returned no symbols');
         } catch (aiError) {
-            console.warn('AI live prices failed, falling back to Yahoo provider:', aiError);
+            console.warn('AI live prices failed, trying Stooq fallback:', aiError);
+            return await tryStooq();
         }
-
-        return await tryYahoo();
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;
