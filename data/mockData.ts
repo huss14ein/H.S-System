@@ -56,6 +56,7 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         { id: 'goal1', name: 'World Trip', targetAmount: 75000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 2, 5, 1).toISOString(), savingsAllocationPercent: 30 },
         { id: 'goal2', name: 'Rental Property Downpayment', targetAmount: 300000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 3, 11, 1).toISOString(), savingsAllocationPercent: 70 },
     ],
+    recurringTransactions: [],
     transactions: [
         { id: 't1', date: firstDayOfMonth, description: 'Monthly Salary', amount: 30000, category: 'Salary', accountId: 'acc1', type: 'income' },
         { id: 't2', date: new Date(new Date().setDate(2)).toISOString().split('T')[0], description: 'Hyper Panda Groceries', amount: -1250.75, category: 'Groceries', budgetCategory: 'Food', accountId: 'acc3', type: 'expense', transactionNature: 'Variable', expenseType: 'Core' },

@@ -229,15 +229,6 @@ function normalizePriceAlert(raw: any): PriceAlert {
     };
 }
 
-function priceAlertToRow(alert: Partial<PriceAlert>): Record<string, unknown> {
-    const row: Record<string, unknown> = {};
-    if (alert.symbol != null) row.symbol = alert.symbol;
-    if (alert.targetPrice != null) row.target_price = alert.targetPrice;
-    if (alert.status != null) row.status = alert.status;
-    if (alert.createdAt != null) row.created_at = alert.createdAt;
-    return row;
-}
-
 function resolveAccountId(candidate: string | undefined, accounts: Account[]): string | undefined {
     const c = (candidate ?? '').trim();
     if (!c) return undefined;
@@ -287,7 +278,7 @@ function normalizeHoldingFromRow(row: any): Holding {
 
 /** Map commodity holding to DB row (snake_case). Schema uses purchase_value, current_value, zakah_class. name must be non-null. */
 function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: string; quantity: number }): Record<string, unknown> {
-    const name = holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim() || 'Other';
+    const name = (holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim()) || 'Other';
     return {
         name: name as string,
         quantity: Number(holding.quantity ?? 0),
@@ -382,16 +373,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
-
-    const extractMissingColumnName = (error: any): string | null => {
-        const source = `${error?.message || ''} ${error?.details || ''}`;
-        const quoted = source.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
-        if (quoted?.[1]) return quoted[1];
-        const pgrst = source.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i);
-        return pgrst?.[1] || null;
-    };
-
-    const payloadSignature = (payload: Record<string, unknown>) => Object.keys(payload).sort().join(', ');
 
     const goalPayloadVariants = (goal: Goal) => {
         const base = {
@@ -577,7 +558,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await db.from('price_alerts').insert([
                 { user_id: userId, symbol: 'AAPL', target_price: 200, status: 'active', created_at: new Date().toISOString() },
                 { user_id: userId, symbol: '7010.SR', target_price: 45, status: 'active', created_at: new Date().toISOString() },
-            ]).then(() => {}).catch(() => {});
+            ]).then(() => {}, () => {});
 
             // Accounts
             const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(({ id, ...a }) => ({...a, user_id: userId}))).select();

@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Account, Page } from '../types';
+
+interface AccountsProps {
+    setActivePage?: (page: Page) => void;
+}
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -90,7 +94,8 @@ const AccountCardComponent: React.FC<{
     index?: number;
     total?: number;
     onToggleDensity?: () => void;
-}> = ({ account, onEditAccount, onDeleteAccount, onMoveUp, onMoveDown, compact = false, index = 0, total = 1, onToggleDensity }) => {
+    linkedPortfoliosCount?: number;
+}> = ({ account, onEditAccount, onDeleteAccount, onMoveUp, onMoveDown, compact = false, index = 0, total = 1, onToggleDensity, linkedPortfoliosCount }) => {
     const { formatCurrencyString } = useFormatCurrency();
 
     const getAccountIcon = (type: Account['type']) => {
@@ -114,7 +119,7 @@ const AccountCardComponent: React.FC<{
                                 <h3 className={`font-bold text-dark ${compact ? 'text-base' : 'text-lg'}`}>{account.name}</h3>
                                 {account.owner && <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{account.owner}</span>}
                             </div>
-                            <p className="text-sm text-gray-500">{account.type}{linkedPortfoliosCount != null && linkedPortfoliosCount > 0 && <span className="ml-1 text-xs text-indigo-600">· {linkedPortfoliosCount} portfolio{linkedPortfoliosCount !== 1 ? 's' : ''}</span>}</p>
+                            <p className="text-sm text-gray-500">{account.type}{linkedPortfoliosCount != null && linkedPortfoliosCount > 0 ? <span className="ml-1 text-xs text-indigo-600">· {linkedPortfoliosCount} portfolio{linkedPortfoliosCount !== 1 ? 's' : ''}</span> : null}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -132,7 +137,7 @@ const AccountCardComponent: React.FC<{
     );
 };
 
-const Accounts: React.FC = () => {
+const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
@@ -279,14 +284,14 @@ const Accounts: React.FC = () => {
             <section>
                 <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedCashAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder cash account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'cash', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('cash', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCashAccounts.length} onToggleDensity={undefined} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'down') }))} /></div>)}
+                    {orderedCashAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder cash account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'cash', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('cash', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCashAccounts.length} onToggleDensity={undefined} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, cash: reorderIds(prev.cash, id, 'down') }))} linkedPortfoliosCount={0} /></div>)}
                 </div>
             </section>
 
             <section>
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedCreditAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder credit account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'credit', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('credit', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCreditAccounts.length} onToggleDensity={undefined} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'down') }))} /></div>)}
+                    {orderedCreditAccounts.map((acc, index) => <div key={acc.id} draggable aria-label={`Reorder credit account ${acc.name}`} onDragStart={() => setDraggingAccount({ section: 'credit', id: acc.id })} onDragOver={(e) => e.preventDefault()} onDrop={() => handleAccountDrop('credit', acc.id)} onDragEnd={() => setDraggingAccount(null)} className={draggingAccount?.id === acc.id ? 'opacity-70' : ''}><AccountCardComponent account={acc} compact={cardDensity === 'Compact'} index={index} total={orderedCreditAccounts.length} onToggleDensity={undefined} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onMoveUp={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'up') }))} onMoveDown={(id) => setSectionOrder(prev => ({ ...prev, credit: reorderIds(prev.credit, id, 'down') }))} linkedPortfoliosCount={0} /></div>)}
                 </div>
             </section>
 

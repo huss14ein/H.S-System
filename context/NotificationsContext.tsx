@@ -70,7 +70,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         list.push({
           id: `budget-${b.id}`,
           category: 'Budget',
-          message: `"${b.category ?? b.name ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
+          message: `"${b.category ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
           date: now.toISOString(),
           isRead: false,
           pageLink: 'Budgets',

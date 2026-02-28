@@ -10,11 +10,9 @@ import { PlusIcon } from '../components/icons/PlusIcon';
 import Modal from '../components/Modal';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
-import SectionCard from '../components/SectionCard';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
-import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -229,7 +227,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return { totalPlannedIncome, totalPlannedExpenses, totalActualIncome, totalActualExpenses, projectedNet, actualNet, variancePct };
     }, [processedPlanData]);
 
-    const insights = useMemo(() => {
+    const insights = useMemo((): { monthsOverBudget: number; worst: { category: string; month: string; pct: number } | null; ytdPlannedIncome: number; ytdActualIncome: number } => {
         const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
         let monthsOverBudget = 0;
         let worst: { category: string; month: string; pct: number } | null = null;

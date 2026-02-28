@@ -14,7 +14,6 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
-import SectionCard from '../components/SectionCard';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {

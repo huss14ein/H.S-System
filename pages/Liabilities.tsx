@@ -13,7 +13,6 @@ import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
-import SectionCard from '../components/SectionCard';
 
 const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null; }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
     const [name, setName] = useState('');

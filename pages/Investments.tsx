@@ -157,6 +157,7 @@ const RecordTradeModal: React.FC<{
         reason?: string;
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+    const { formatCurrencyString } = useFormatCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
     const [type, setType] = useState<'buy' | 'sell' | 'deposit' | 'withdrawal'>('buy');

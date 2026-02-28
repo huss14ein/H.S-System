@@ -219,7 +219,6 @@ const RecurringModal: React.FC<{
     accounts: Account[];
     budgetCategories: string[];
 }> = ({ isOpen, onClose, onSave, recurring, accounts, budgetCategories }) => {
-    const { formatCurrencyString } = useFormatCurrency();
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
     const [type, setType] = useState<'income' | 'expense'>('expense');

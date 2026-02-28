@@ -302,7 +302,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     });
 
 
-    const [kpiCardSize, setKpiCardSize] = useState<Record<KpiCardKey, 'normal' | 'wide'>>(() => {
+    const [kpiCardSize, _setKpiCardSize] = useState<Record<KpiCardKey, 'normal' | 'wide'>>(() => {
         const defaults: Record<KpiCardKey, 'normal' | 'wide'> = {
             netWorth: 'normal',
             monthlyPnL: 'normal',
@@ -345,18 +345,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         if (typeof window === 'undefined') return;
         window.localStorage.setItem('dashboard-kpi-card-size', JSON.stringify(kpiCardSize));
     }, [kpiCardSize]);
-
-    const moveKpiCard = (id: KpiCardKey, direction: 'up' | 'down') => {
-        setKpiCardOrder(prev => {
-            const index = prev.indexOf(id);
-            if (index < 0) return prev;
-            const nextIndex = direction === 'up' ? index - 1 : index + 1;
-            if (nextIndex < 0 || nextIndex >= prev.length) return prev;
-            const next = [...prev];
-            [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-            return next;
-        });
-    };
 
     const handleKpiDragStart = (cardKey: KpiCardKey) => {
         setDraggingKpiCard(cardKey);
@@ -532,7 +520,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             <p className="text-xs text-gray-500">Drag the ⋮⋮ handle to reorder; use the ⋮ menu for move or resize.</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
-                {kpiCardOrder.map((cardKey, index) => (
+                {kpiCardOrder.map((cardKey) => (
                     <div
                         key={cardKey}
                         className={`relative flex gap-1 ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`}
