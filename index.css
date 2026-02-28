@@ -180,4 +180,10 @@
     .alert-info {
         @apply bg-blue-50 border-l-4 border-primary text-blue-800 p-4 rounded-r-xl;
     }
+
+    /* Chart containers: consistent layout so ResponsiveContainer can size correctly */
+    .chart-container {
+        @apply w-full overflow-hidden rounded-lg;
+        min-height: 200px;
+    }
 }

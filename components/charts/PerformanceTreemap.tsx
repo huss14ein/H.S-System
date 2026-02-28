@@ -1,5 +1,6 @@
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
+import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
 const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, gainLossPercent, color }) => {
     const textColor = 'white';

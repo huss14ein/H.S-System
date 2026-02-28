@@ -214,8 +214,8 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                         </p>
                     </div>
                      <div className="flex-shrink-0 flex items-center -mt-2 -mr-2">
-                        <button onClick={onEdit} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                        <button onClick={onDelete} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={onEdit} className="p-2 text-gray-400 hover:text-primary" aria-label="Edit goal"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={onDelete} className="p-2 text-gray-400 hover:text-danger" aria-label="Delete goal"><TrashIcon className="h-4 w-4"/></button>
                     </div>
                 </div>
             </div>
@@ -423,6 +423,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
   return (
     <PageLayout
       title="Goal Command Center"
+      description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
       action={
         <div className="flex items-center gap-2">
           {setActivePage && (

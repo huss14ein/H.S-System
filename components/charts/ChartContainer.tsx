@@ -23,7 +23,12 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   isEmpty = false,
   className = '',
 }) => {
-  const style = typeof height === 'number' ? { minHeight: height } : { minHeight: height };
+  const style =
+    typeof height === 'number'
+      ? { minHeight: height }
+      : height === '100%'
+        ? { minHeight: 200, height: '100%' }
+        : { minHeight: height };
 
   if (isEmpty) {
     return (

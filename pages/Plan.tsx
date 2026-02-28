@@ -12,6 +12,7 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -285,8 +286,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             };
         });
     }, [goals, totals, processedPlanData]);
-
-    const planChartData = useMemo(() => {
+    
+     const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
             const expenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, r: PlanRow) => sum + r.monthly_planned[index], 0);
@@ -487,20 +488,25 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 )}
             </div>
             
-             <div className="bg-white p-6 rounded-lg shadow h-[400px]">
-                <h3 className="text-lg font-semibold text-dark mb-4">Annual Plan Overview</h3>
-                <ResponsiveContainer width="100%" height="90%">
-                    <ComposedChart data={planChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis tickFormatter={(val) => new Intl.NumberFormat('en-US', { notation: 'compact' }).format(val as number)} />
-                        <Tooltip formatter={(val: number) => formatCurrencyString(val, { digits: 0 })} />
-                        <Legend />
-                        <Bar dataKey="Expenses" fill="#f43f5e" name="Planned Expenses" />
-                        <Line type="monotone" dataKey="Income" stroke="#10b981" strokeWidth={2} name="Planned Income" />
-                        <Line type="monotone" dataKey="Net Savings" stroke="#3b82f6" strokeWidth={2} name="Projected Net Savings" />
-                    </ComposedChart>
-                </ResponsiveContainer>
+             <div className="section-card flex flex-col h-[400px]">
+                <h3 className="section-title mb-4">Annual Plan Overview</h3>
+                <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={planChartData} margin={{ ...CHART_MARGIN, right: 20, left: 10, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                            <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                            <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={48} />
+                            <Tooltip
+                                formatter={(val: number) => formatCurrencyString(val, { digits: 0 })}
+                                contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
+                            />
+                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                            <Bar dataKey="Expenses" fill={CHART_COLORS.negative} name="Planned Expenses" radius={[4, 4, 0, 0]} />
+                            <Line type="monotone" dataKey="Income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Planned Income" dot={false} />
+                            <Line type="monotone" dataKey="Net Savings" stroke={CHART_COLORS.primary} strokeWidth={2} name="Projected Net Savings" dot={false} />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                </div>
             </div>
             
             {/* Plan vs actual summary */}
@@ -515,8 +521,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             )}
 
             {/* Scenario Controls */}
-            <div className="bg-white p-4 rounded-lg shadow">
-                 <h3 className="text-lg font-semibold text-dark mb-2 flex items-center gap-2">
+            <div className="section-card">
+                 <h3 className="section-title mb-2 flex items-center gap-2">
                      <ScaleIcon className="h-5 w-5 text-primary" /> Scenario Planning Tools
                      <InfoHint text="Apply presets or custom shocks to see how your annual plan would change. Use the grid and chart to compare." />
                  </h3>

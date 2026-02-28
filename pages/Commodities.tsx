@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { CommodityHolding } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
+import PageLayout from '../components/PageLayout';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
@@ -80,19 +81,19 @@ const CommodityHoldingModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Commodity <InfoHint text="Gold, Silver, Bitcoin, or Other; affects unit options and Zakat treatment." /></label>
-                    <select value={name} onChange={e => setName(e.target.value as any)} className="w-full p-2 border rounded-md"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
+                    <select value={name} onChange={e => setName(e.target.value as any)} className="select-base w-full"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Quantity & Unit <InfoHint text="Amount you hold; unit (grams/ounces/BTC) for correct valuation and Zakat." /></label>
-                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="input-base w-full" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="select-base w-full">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase & Current Value <InfoHint text="Cost basis and current market value; use Update Prices to refresh current value from APIs." /></label>
-                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
+                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" /></div>
                 </div>
-                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="For shared/family tracking (e.g. Spouse, Son)." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Zakat Classification <InfoHint text="Zakatable: included in Zakat calculation. Non-Zakatable: excluded (e.g. personal use)." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save</button>
+                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="For shared/family tracking (e.g. Spouse, Son)." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="input-base mt-1 w-full" /></div>
+                <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Zakat Classification <InfoHint text="Zakatable: included in Zakat calculation. Non-Zakatable: excluded (e.g. personal use)." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="select-base mt-1 w-full"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <button type="submit" className="w-full btn-primary">Save</button>
             </form>
         </Modal>
     );
@@ -111,14 +112,14 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
         }
     };
     return (
-        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
+        <div className="section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300">
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-4">
                         {getIcon(holding.name)}
                         <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}</p></div>
                     </div>
-                    <div className="flex space-x-1"><button onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div>
+                    <div className="flex space-x-1"><button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button></div>
                 </div>
                 {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
                 <div className="mt-4 space-y-3">
@@ -186,18 +187,14 @@ const Commodities: React.FC = () => {
     };
     
     return (
+        <PageLayout title="Metals & Crypto" description="Gold, silver, Bitcoin, and other commodities. Use Update Prices to refresh values; Zakat classification affects Zakat page." action={<button type="button" onClick={() => handleOpenCommodityModal()} className="btn-primary">Add Commodity</button>}>
         <div className="space-y-6">
-            <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Metals & Crypto</h1>
-                <button onClick={() => handleOpenCommodityModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Commodity</button>
-            </div>
-
             <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} />
 
-            <div className="bg-white p-6 rounded-lg shadow">
+            <div className="section-card">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                    <h3 className="text-xl font-semibold text-dark">Holdings</h3>
-                    <button onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">
+                    <h3 className="section-title mb-0">Holdings</h3>
+                    <button type="button" onClick={handleUpdatePrices} disabled={isUpdatingPrices} className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         <SparklesIcon className="h-4 w-4 mr-2" />
                         {isUpdatingPrices ? 'Updating Prices...' : 'Update Prices via AI'}
                     </button>
@@ -211,6 +208,7 @@ const Commodities: React.FC = () => {
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
+        </PageLayout>
     );
 };
 

@@ -95,8 +95,8 @@ const LiabilityCardComponent: React.FC<{ liability: Liability, onEdit: (l: Liabi
                     </div>
                 </div>
                  <div className="flex space-x-1">
-                    <button onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                    <button onClick={() => onDelete(liability)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit liability"><PencilIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onDelete(liability)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete liability"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
             <div className="mt-4 text-right">
@@ -155,6 +155,7 @@ const Liabilities: React.FC = () => {
     return (
         <PageLayout
             title="Liabilities"
+            description="Track loans, mortgages, and credit card debt. Balances are included in net worth and Zakat calculations."
             action={<button type="button" onClick={() => handleOpenModal()} className="btn-primary">Add New Liability</button>}
         >
 

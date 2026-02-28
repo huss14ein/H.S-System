@@ -563,24 +563,26 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             <AIFeed />
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-3 section-card h-[400px]">
+                <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
                     <h3 className="section-title mb-4">Net Worth Composition</h3>
-                    <NetWorthCompositionChart title="Net Worth Composition" />
+                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                        <NetWorthCompositionChart title="Net Worth Composition" />
+                    </div>
                 </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                 <div className="lg:col-span-3 section-card-hover" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
+                 <div className="lg:col-span-3 section-card-hover flex flex-col" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
-                    <div className="h-80"><CashflowChart data={monthlyCashflowData} /></div>
+                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
                  </div>
-                 <div className="lg:col-span-2 section-card-hover" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
+                 <div className="lg:col-span-2 section-card-hover flex flex-col" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
                     <h3 className="section-title">Investment Allocation & Performance</h3>
-                    <div className="h-80">
+                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
-                            <div className="empty-state">No investment data available.</div>
+                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
                         )}
                     </div>
                  </div>
@@ -595,6 +597,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
                 <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
+
+            {setActivePage && (
+                <div className="section-card border border-slate-200/80 bg-slate-50/50">
+                    <h3 className="section-title text-base mb-2">Quick next steps</h3>
+                    <ul className="flex flex-wrap gap-3 text-sm text-slate-600">
+                        <li><button type="button" onClick={() => setActivePage('Transactions')} className="text-primary hover:underline font-medium">Categorize transactions</button> to keep budgets accurate</li>
+                        <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium">Update your Plan</button> to reflect income and expenses</li>
+                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium">View Summary</button> for AI persona and report card</li>
+                    </ul>
+                </div>
+            )}
             
             <TransactionReviewModal 
                 isOpen={isReviewModalOpen}

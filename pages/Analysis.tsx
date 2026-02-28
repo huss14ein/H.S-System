@@ -183,14 +183,20 @@ const Analysis: React.FC = () => {
             <AIAdvisor pageContext="analysis" contextData={contextData} />
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <SectionCard title="Spending by Budget Category">
-                    <SpendingByCategoryChart />
+                <SectionCard title="Spending by Budget Category" className="min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <SpendingByCategoryChart />
+                    </div>
                 </SectionCard>
-                <SectionCard title="Monthly Income vs. Expense">
-                    <IncomeExpenseTrendChart />
+                <SectionCard title="Monthly Income vs. Expense" className="min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <IncomeExpenseTrendChart />
+                    </div>
                 </SectionCard>
-                <SectionCard title="Current Financial Position" className="lg:col-span-2">
-                    <AssetLiabilityChart />
+                <SectionCard title="Current Financial Position" className="lg:col-span-2 min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <AssetLiabilityChart />
+                    </div>
                 </SectionCard>
             </div>
         </PageLayout>

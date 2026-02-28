@@ -23,7 +23,6 @@ import { useAI } from '../context/AiContext';
 import CardLayoutControls from '../components/CardLayoutControls';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
-import SectionCard from '../components/SectionCard';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -106,7 +105,7 @@ const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => voi
             <div>
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-3">{getAssetIcon(asset.type)}<div><h3 className="font-bold text-dark text-lg">{asset.name}</h3><p className="text-sm text-gray-500">{asset.type}</p></div></div>
-                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div></div>
+                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button type="button" onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit asset"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button></div></div>
                 </div>
                 {asset.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
                 <div className="mt-4 space-y-3">
@@ -486,7 +485,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     ];
 
     return (
-        <PageLayout title="Assets" action={<AddMenu actions={addActions} />}>
+        <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} />

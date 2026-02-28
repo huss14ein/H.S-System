@@ -196,7 +196,7 @@ const Zakat: React.FC = () => {
                         {isNisabMet ? ( <><CheckCircleIcon className="h-6 w-6 text-green-500" /><span className="font-semibold text-green-600">Nisab Threshold Met</span></> ) : ( <><XCircleIcon className="h-6 w-6 text-red-500" /><span className="font-semibold text-red-500">Nisab Threshold Not Met</span></> )}
                     </div>
                     <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue)} />
-                </div>
+                </SectionCard>
                 
                  {/* Column 3: Payment Ledger */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
@@ -235,7 +235,7 @@ const Zakat: React.FC = () => {
                         ))}
                         {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
                     </div>
-                </SectionCard>
+                </div>
             </div>
 
             <ZakatPaymentModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSave={addZakatPayment} />

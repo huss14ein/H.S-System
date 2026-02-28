@@ -109,21 +109,21 @@ function RecoveryPlanViewContent() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-gray-500">Losing positions</p>
+        <div className="section-card">
+          <p className="text-slate-500 text-sm">Losing positions</p>
           <p className="text-lg font-semibold text-dark">{losingPositions.length}</p>
         </div>
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
-          <p className="text-gray-600">Recovery eligible</p>
+        <div className="section-card border-l-4 border-emerald-400">
+          <p className="text-slate-600 text-sm">Recovery eligible</p>
           <p className="text-lg font-semibold text-emerald-700">{qualifiedPositions.length}</p>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-gray-500">Deployable cash</p>
+        <div className="section-card">
+          <p className="text-slate-500 text-sm">Deployable cash</p>
           <p className="text-lg font-semibold text-dark">{formatCurrencyString(deployableCash)}</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+      <div className="section-card overflow-hidden p-0">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>

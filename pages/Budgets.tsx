@@ -570,6 +570,7 @@ const Budgets: React.FC = () => {
     return (
         <PageLayout
             title={`Budgets (${budgetView})`}
+            description="Set limits by category and track spending. Core, Supporting, and Optional tiers help prioritize."
             action={
                 <div className="flex flex-wrap items-center justify-end gap-3">
                     <div className="flex items-center gap-2">
@@ -582,9 +583,9 @@ const Budgets: React.FC = () => {
                         </select>
                     </div>
                     <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronLeftIcon className="h-5 w-5"/></button>
+                        <button type="button" onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Previous month"><ChevronLeftIcon className="h-5 w-5"/></button>
                         <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
-                        <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronRightIcon className="h-5 w-5"/></button>
+                        <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
                     <button type="button" disabled={!isAdmin} onClick={handleCopyBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
                     <button type="button" disabled={!isAdmin} onClick={() => handleOpenModal()} className="btn-primary disabled:opacity-50">Add Budget</button>

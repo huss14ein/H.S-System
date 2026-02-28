@@ -144,7 +144,7 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <PageLayout title="Financial Summary">
+        <PageLayout title="Financial Summary" description="Net worth, key metrics, and AI-generated financial persona with report card and suggestions.">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
                     <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
@@ -169,12 +169,12 @@ const Summary: React.FC = () => {
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="section-card h-[450px]">
+                <div className="section-card flex flex-col h-[450px]">
                     <NetWorthCompositionChart title="Historical Net Worth" />
                 </div>
-                <div className="section-card h-[450px]">
+                <div className="section-card flex flex-col h-[450px]">
                     <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
-                    <div className="h-[380px]">
+                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
@@ -234,7 +234,7 @@ const Summary: React.FC = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

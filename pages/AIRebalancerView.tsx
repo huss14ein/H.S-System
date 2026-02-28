@@ -52,7 +52,7 @@ const AIRebalancerView: React.FC = () => {
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Configuration Panel */}
-                <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow space-y-6">
+                <div className="lg:col-span-1 section-card space-y-6">
                     <div>
                         <label htmlFor="portfolio-select" className="block text-sm font-medium text-gray-700">1. Select Portfolio</label>
                         <select
@@ -67,9 +67,11 @@ const AIRebalancerView: React.FC = () => {
                         </select>
                     </div>
 
-                    <div className="h-64">
-                         <h4 className="text-sm font-medium text-gray-700 mb-2">Current Allocation</h4>
-                         <AllocationPieChart data={currentAllocation} />
+                    <div className="min-h-[260px] flex flex-col">
+                         <h4 className="section-title text-base mb-2">Current Allocation</h4>
+                         <div className="flex-1 min-h-[200px] rounded-lg overflow-hidden">
+                             <AllocationPieChart data={currentAllocation} />
+                         </div>
                     </div>
 
                     <div>

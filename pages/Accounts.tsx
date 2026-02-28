@@ -119,8 +119,8 @@ const AccountCardComponent: React.FC<{
                     </div>
                     <div className="flex items-center gap-2">
                         <CardLayoutControls index={index} total={total} isExpanded={!compact} onMove={(direction) => direction === 'up' ? onMoveUp?.(account.id) : onMoveDown?.(account.id)} onToggleSize={() => onToggleDensity?.()} />
-                        <button onClick={() => onEditAccount(account)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                        <button onClick={() => onDeleteAccount(account)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onEditAccount(account)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit account"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onDeleteAccount(account)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
                     </div>
                 </div>
                 <div className="mt-4 text-right">
@@ -256,7 +256,7 @@ const Accounts: React.FC = () => {
     return (
         <PageLayout
             title="Accounts"
-            description="Drag cards to reorder within each section, or use ↑/↓ controls."
+            description="Track checking, savings, credit, and investment accounts. Drag cards to reorder within each section."
             action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
         >
 

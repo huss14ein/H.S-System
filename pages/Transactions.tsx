@@ -636,7 +636,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         ))}
                     </ul>
                 )}
-            </div>
+            </SectionCard>
 
             {userRole === 'Admin' && adminPendingTransactions.length > 0 && (
                 <div className="bg-white p-5 rounded-xl shadow-md border border-amber-200">
@@ -656,7 +656,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             </div>
                         ))}
                     </div>
-                </SectionCard>
+                </div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

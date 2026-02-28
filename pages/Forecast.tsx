@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line, ReferenceLine } from 'recharts';
+import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import Card from '../components/Card';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -302,30 +303,33 @@ const Forecast: React.FC = () => {
                     )}
 
                     {forecastData.length > 0 && !isLoading ? (
-                        <div className="bg-white p-6 rounded-lg shadow h-[600px]">
-                            <h3 className="text-lg font-semibold text-dark mb-4">Financial Projections</h3>
-                            <ResponsiveContainer width="100%" height="90%">
-                                <ComposedChart data={forecastData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="name" fontSize={12} />
-                                    <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
-                                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}/>
-                                    <Legend />
-                                    <defs>
-                                        <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/><stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1}/></linearGradient>
-                                    </defs>
-                                    {goalReferenceLines.map(line => (
-                                         <ReferenceLine key={line.label} y={line.y} stroke="#e11d48" strokeDasharray="4 4" >
-                                             <Legend payload={[{ value: line.label, type: 'line', color: '#e11d48' }]} />
-                                         </ReferenceLine>
-                                    ))}
-                                    <Area type="monotone" dataKey="Investment Value" stackId="1" stroke="#8b5cf6" fill="url(#colorInvest)" name="Total Investments" />
-                                    <Line type="monotone" dataKey="Net Worth" stroke="#1e3a8a" strokeWidth={3} name="Net Worth" dot={false} />
-                                </ComposedChart>
-                            </ResponsiveContainer>
+                        <div className="section-card flex flex-col h-[500px] sm:h-[600px]">
+                            <h3 className="section-title mb-4">Financial Projections</h3>
+                            <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={forecastData} margin={{ ...CHART_MARGIN, right: 24, left: 20, bottom: 5 }}>
+                                        <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={56} />
+                                        <Tooltip
+                                            formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}
+                                            contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
+                                        />
+                                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                                        <defs>
+                                            <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={CHART_COLORS.secondary} stopOpacity={0.4}/><stop offset="95%" stopColor={CHART_COLORS.secondary} stopOpacity={0.1}/></linearGradient>
+                                        </defs>
+                                        {goalReferenceLines.map(line => (
+                                             <ReferenceLine key={line.label} y={line.y} stroke={CHART_COLORS.negative} strokeDasharray="4 4" label={{ value: line.label, position: 'right', fill: CHART_COLORS.axis, fontSize: 11 }} />
+                                        ))}
+                                        <Area type="monotone" dataKey="Investment Value" stackId="1" stroke={CHART_COLORS.secondary} fill="url(#colorInvest)" name="Total Investments" />
+                                        <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={3} name="Net Worth" dot={false} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
                     ) : (
-                         !isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><p className="text-gray-500">Configure assumptions, run a base case, then adjust growth/savings to compare conservative vs aggressive scenarios.</p></div>
+                         !isLoading && <div className="section-card text-center py-12"><p className="text-slate-500 text-sm">Configure assumptions, run a base case, then adjust growth/savings to compare conservative vs aggressive scenarios.</p></div>
                     )}
                 </div>
             </div>
