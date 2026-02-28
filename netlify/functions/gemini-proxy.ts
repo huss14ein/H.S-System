@@ -22,7 +22,8 @@ function extractText(response: GenerateContentResponse): string | undefined {
   if (typeof (response as { text?: string }).text === 'string') {
     return (response as { text: string }).text;
   }
-  const candidates = (response as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>).candidates;
+  const data = response as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  const candidates = data.candidates;
   const part = candidates?.[0]?.content?.parts?.[0];
   return part && 'text' in part ? String(part.text) : undefined;
 }
