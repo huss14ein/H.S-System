@@ -53,17 +53,29 @@ const Zakat: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     
     const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
+    const defaultNisab = (data?.settings as any)?.nisabAmount ?? (data?.settings as any)?.nisab_amount;
     const [localGoldPrice, setLocalGoldPrice] = useState(String(defaultGold));
+    const [useNisabAmount, setUseNisabAmount] = useState(!!defaultNisab);
+    const [localNisabAmount, setLocalNisabAmount] = useState(String(defaultNisab ?? (275 * 85)));
     const [otherDebts, setOtherDebts] = useState(0);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     
     useEffect(() => {
         const g = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
         setLocalGoldPrice(String(g));
+        const nisabVal = (data?.settings as any)?.nisabAmount ?? (data?.settings as any)?.nisab_amount;
+        if (nisabVal != null) {
+            setUseNisabAmount(true);
+            setLocalNisabAmount(String(nisabVal));
+        }
     }, [data?.settings]);
 
     const goldPrice = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
-    const nisab = useMemo(() => goldPrice * 85, [goldPrice]);
+    const nisabAmountSetting = (data?.settings as any)?.nisabAmount ?? (data?.settings as any)?.nisab_amount;
+    const nisab = useMemo(() => {
+        if (nisabAmountSetting != null && Number.isFinite(Number(nisabAmountSetting))) return Number(nisabAmountSetting);
+        return goldPrice * 85;
+    }, [goldPrice, nisabAmountSetting]);
 
     const zakatableAssets = useMemo(() => {
         const accounts = data?.accounts ?? [];
@@ -156,9 +168,22 @@ const Zakat: React.FC = () => {
                 {/* Column 2: Calculation & Summary */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
                     <h3 className="font-semibold text-dark mb-4">Calculation</h3>
-                     <div>
-                        <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: if your net zakatable wealth is below the value of 85 grams of gold, you do not owe Zakat. Update this to your local/current gold price per gram." /></label>
-                        <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => updateSettings({ goldPrice: parseFloat(localGoldPrice) || 275 })} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                     <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            <input type="checkbox" id="use-nisab-amount" checked={useNisabAmount} onChange={(e) => { const checked = e.target.checked; setUseNisabAmount(checked); if (!checked) updateSettings({ nisabAmount: undefined }); }} className="h-4 w-4 text-primary rounded border-gray-300" />
+                            <label htmlFor="use-nisab-amount" className="text-sm font-medium text-gray-700">Set Nisab amount directly (instead of gold price)</label>
+                        </div>
+                        {useNisabAmount ? (
+                            <div>
+                                <label htmlFor="nisab-amount" className="block text-sm font-medium text-gray-700 flex items-center">Nisab amount <InfoHint text="Minimum wealth threshold in your currency. If your net zakatable wealth is below this, you do not owe Zakat. Can be set directly (e.g. from local authority) instead of using gold price × 85 grams." /></label>
+                                <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { const v = parseFloat(localNisabAmount); if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); }} className="mt-1 w-full p-2 border border-gray-300 rounded-md" min="0" step="1" />
+                            </div>
+                        ) : (
+                            <div>
+                                <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700 flex items-center">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: Nisab = price × 85 grams. If your net zakatable wealth is below that value, you do not owe Zakat." /></label>
+                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                            </div>
+                        )}
                     </div>
                     <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab)}</span></div>
                     <hr/>

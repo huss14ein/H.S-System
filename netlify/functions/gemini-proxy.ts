@@ -1,18 +1,35 @@
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
-const corsHeaders = {
+const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+/** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
+const FALLBACK_MODEL = 'gemini-2.0-flash';
+
+function isModelError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /model|404|not found|invalid model|unsupported/i.test(msg) ||
+    (msg.includes('400') && /model|name/i.test(msg))
+  );
+}
+
+function extractText(response: GenerateContentResponse): string | undefined {
+  if (typeof (response as { text?: string }).text === 'string') {
+    return (response as { text: string }).text;
+  }
+  const candidates = (response as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>).candidates;
+  const part = candidates?.[0]?.content?.parts?.[0];
+  return part && 'text' in part ? String(part.text) : undefined;
+}
+
 const handler: Handler = async (event: HandlerEvent) => {
   if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers: corsHeaders,
-    };
+    return { statusCode: 200, headers: corsHeaders };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -25,24 +42,40 @@ const handler: Handler = async (event: HandlerEvent) => {
 
   try {
     if (!event.body) {
-        throw new Error("Request body is missing.");
+      throw new Error("Request body is missing.");
     }
-    const { model, contents, config } = JSON.parse(event.body);
+    const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown };
+    const { model: requestedModel, contents, config } = body;
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY not set in Netlify environment variables.");
     }
 
+    if (!requestedModel || !contents) {
+      throw new Error("Request body must include 'model' and 'contents'.");
+    }
+
     const ai = new GoogleGenAI({ apiKey });
+    const payload = { model: requestedModel, contents, config };
 
-    const response: GenerateContentResponse = await ai.models.generateContent({ model, contents, config });
+    let response: GenerateContentResponse;
+    try {
+      response = await ai.models.generateContent(payload);
+    } catch (firstError) {
+      if (isModelError(firstError) && requestedModel !== FALLBACK_MODEL) {
+        console.warn("Gemini proxy: primary model failed, retrying with fallback:", (firstError as Error).message);
+        response = await ai.models.generateContent({ ...payload, model: FALLBACK_MODEL });
+      } else {
+        throw firstError;
+      }
+    }
 
-    // Build a plain JSON object to ensure all data is serialized correctly.
+    const text = extractText(response);
     const result = {
-        text: response.text,
-        candidates: response.candidates,
-        functionCalls: response.functionCalls,
+      text: text ?? null,
+      candidates: response.candidates ?? [],
+      functionCalls: response.functionCalls ?? undefined,
     };
 
     return {
@@ -51,11 +84,12 @@ const handler: Handler = async (event: HandlerEvent) => {
       body: JSON.stringify(result),
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error("Error in Gemini proxy function:", error);
     return {
       statusCode: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: message }),
     };
   }
 };
