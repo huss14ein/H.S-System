@@ -570,7 +570,7 @@ const Budgets: React.FC = () => {
     return (
         <PageLayout
             title={`Budgets (${budgetView})`}
-            description="Set limits by category and track spending. Core, Supporting, and Optional tiers help prioritize."
+            description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
             action={
                 <div className="flex flex-wrap items-center justify-end gap-3">
                     <div className="flex items-center gap-2">

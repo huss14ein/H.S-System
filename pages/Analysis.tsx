@@ -92,16 +92,18 @@ const AssetLiabilityChart: React.FC = () => {
         const totalInvestments = inv.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance), 0);
         const totalPhysicalAssets = ast.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = liab.reduce((sum, l) => sum + Math.abs(l.amount), 0) + acc.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, a) => sum + Math.abs(a.balance), 0);
+        const totalDebt = liab.filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, l: { amount: number }) => sum + Math.abs(l.amount), 0) + acc.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, a) => sum + Math.abs(a.balance), 0);
+        const totalReceivable = liab.filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, l: { amount: number }) => sum + l.amount, 0);
         return [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
             { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Liabilities', value: totalLiabilities },
+            { name: 'Receivables', value: totalReceivable },
+            { name: 'Debt', value: totalDebt },
         ];
     }, [data]);
     const isEmpty = !chartData?.length;
-    const getBarColor = (name: string) => name === 'Liabilities' ? CHART_COLORS.liability : CHART_COLORS.primary;
+    const getBarColor = (name: string) => name === 'Debt' ? CHART_COLORS.liability : name === 'Receivables' ? CHART_COLORS.positive : CHART_COLORS.primary;
 
     return (
         <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No asset/liability data.">
@@ -159,12 +161,14 @@ const Analysis: React.FC = () => {
         const totalInvestments = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
         const totalPhysicalAssets = assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const totalDebt = liabilities.filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, liab: { amount: number }) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum: number, acc: { balance: number }) => sum + Math.abs(acc.balance), 0);
+        const totalReceivable = liabilities.filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, liab: { amount: number }) => sum + liab.amount, 0);
         const compositionData = [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
             { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Liabilities', value: totalLiabilities },
+            { name: 'Receivables', value: totalReceivable },
+            { name: 'Debt', value: totalDebt },
         ];
         
         return { spendingData, trendData, compositionData };

@@ -73,8 +73,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
             <SectionCard title="Default Parameters">
                 <p className="text-sm text-gray-600 mb-3 flex items-center">
-                    <InfoHint text="These values drive Investment Plan, Wealth Ultra, and Recovery Plan. Source: database (wealth_ultra_config) when present, otherwise code defaults. Sleeve targets and tickers are set in Investment Plan; exit targets and risk weights here or in DB." />
-                    Source: {data.wealthUltraConfig ? 'Database (wealth_ultra_config)' : 'Code defaults'}
+                    <InfoHint text="These values drive Investment Plan, Wealth Ultra, and Recovery Plan. Sleeve targets and tickers are set in Investment Plan." />
+                    Source: App defaults (front-end config)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                     <div className="rounded-lg bg-slate-50 p-3">

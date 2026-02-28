@@ -1,8 +1,9 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, WealthUltraSystemConfig, SleeveDefinition, RecurringTransaction } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction } from '../types';
 import { getMockData } from '../data/mockData';
+import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 
 // Define an empty state for when data is loading or for new users
 const initialData: FinancialData = {
@@ -133,22 +134,6 @@ function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
     return arr.length ? arr : undefined;
 }
 
-function normalizeWealthUltraConfig(raw: any): WealthUltraSystemConfig | null {
-    if (!raw || typeof raw !== 'object') return null;
-    return {
-        fxRate: Number(raw.fx_rate ?? raw.fxRate ?? 0.27),
-        cashReservePct: Number(raw.cash_reserve_pct ?? raw.cashReservePct ?? 10),
-        maxPerTickerPct: Number(raw.max_per_ticker_pct ?? raw.maxPerTickerPct ?? 20),
-        riskWeightLow: Number(raw.risk_weight_low ?? raw.riskWeightLow ?? 1),
-        riskWeightMed: Number(raw.risk_weight_med ?? raw.riskWeightMed ?? 1.25),
-        riskWeightHigh: Number(raw.risk_weight_high ?? raw.riskWeightHigh ?? 1.5),
-        riskWeightSpec: Number(raw.risk_weight_spec ?? raw.riskWeightSpec ?? 2),
-        defaultTarget1Pct: Number(raw.default_target_1_pct ?? raw.defaultTarget1Pct ?? 15),
-        defaultTarget2Pct: Number(raw.default_target_2_pct ?? raw.defaultTarget2Pct ?? 25),
-        defaultTrailingPct: Number(raw.default_trailing_pct ?? raw.defaultTrailingPct ?? 10),
-    };
-}
-
 function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
     if (!raw) return initialData.investmentPlan;
     const bc = raw.broker_constraints || raw.brokerConstraints || initialData.investmentPlan.brokerConstraints;
@@ -219,11 +204,15 @@ function normalizeAccount(raw: any): Account {
 
 function normalizePriceAlert(raw: any): PriceAlert {
     if (!raw) return {} as PriceAlert;
+    const currency = raw.currency ?? raw.target_currency;
+    const targetPriceRaw = raw.target_price ?? raw.targetPrice ?? 0;
+    const targetPrice = typeof targetPriceRaw === 'string' ? parseFloat(targetPriceRaw) : Number(targetPriceRaw);
     return {
-        id: raw.id,
+        id: String(raw.id ?? ''),
         user_id: raw.user_id,
         symbol: String(raw.symbol ?? ''),
-        targetPrice: Number(raw.target_price ?? raw.targetPrice ?? 0),
+        targetPrice: Number.isFinite(targetPrice) ? targetPrice : 0,
+        currency: currency === 'SAR' || currency === 'USD' ? currency : undefined,
         status: (raw.status === 'triggered' ? 'triggered' : 'active') as 'active' | 'triggered',
         createdAt: raw.created_at ?? raw.createdAt ?? new Date().toISOString(),
     };
@@ -278,9 +267,10 @@ function normalizeHoldingFromRow(row: any): Holding {
 
 /** Map commodity holding to DB row (snake_case). Schema uses purchase_value, current_value, zakah_class. name must be non-null. */
 function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: string; quantity: number }): Record<string, unknown> {
-    const name = (holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim()) || 'Other';
+    const raw = holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim();
+    const name = (raw && String(raw).trim()) ? String(raw).trim() : 'Other';
     return {
-        name: name as string,
+        name,
         quantity: Number(holding.quantity ?? 0),
         unit: holding.unit ?? 'unit',
         symbol: holding.symbol,
@@ -339,13 +329,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         accountId: transaction.accountId || transaction.account_id,
     });
 
-    const normalizeCommodityHolding = (holding: any): CommodityHolding => ({
-        ...holding,
-        purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
-        currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
-        zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
-        goalId: holding.goalId ?? holding.goal_id,
-    });
+    const normalizeCommodityHolding = (holding: any): CommodityHolding => {
+        const name = holding.name ?? holding.Name;
+        const trimmed = String(name ?? '').trim();
+        if (!trimmed) {
+            return {
+                ...holding,
+                name: 'Other' as CommodityHolding['name'],
+                purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
+                currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+                zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+                goalId: holding.goalId ?? holding.goal_id,
+            };
+        }
+        const allowedNames = ['Gold', 'Silver', 'Bitcoin'] as const;
+        const validName = allowedNames.find(a => a.toLowerCase() === trimmed.toLowerCase()) ?? 'Other';
+        return {
+            ...holding,
+            name: validName as CommodityHolding['name'],
+            purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
+            currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+            zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+            goalId: holding.goalId ?? holding.goal_id,
+        };
+    };
+
+    const normalizeLiability = (raw: any): Liability => {
+        const type = (raw.type === 'Receivable' ? 'Receivable' : raw.type) as Liability['type'];
+        const rawAmount = Number(raw.amount ?? 0);
+        const amount = type === 'Receivable' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
+        return { ...raw, type, amount, goalId: raw.goalId ?? raw.goal_id };
+    };
 
     const normalizeTransaction = (transaction: any): Transaction => ({
         ...transaction,
@@ -420,7 +434,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const [
                 accounts, assets, liabilities, goals, transactions, investments,
                 investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
-                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig,
+                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs,
                 recurringTransactions
             ] = await Promise.all([
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -441,11 +455,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
-                db.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle(),
                 db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
             ]);
 
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig, recurringTransactions };
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions };
             Object.entries(allFetches).forEach(([key, value]) => {
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
@@ -455,7 +468,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData({
                 accounts: normalizedAccounts,
                 assets: assets.data || [],
-                liabilities: liabilities.data || [],
+                liabilities: ((liabilities.data as any[]) || []).map(normalizeLiability),
                 goals: goals.data || [],
                 transactions: (transactions.data || []).map(normalizeTransaction),
                 investments: ((investments.data as any) || []).map((portfolio: any) => {
@@ -481,7 +494,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 plannedTrades: plannedTrades.data || [],
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
-                wealthUltraConfig: normalizeWealthUltraConfig((wealthUltraConfig as any).data),
+                wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
                 executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog),
@@ -568,6 +581,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             // Transactions
             await db.from('transactions').insert(mock.transactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
+
+            // Recurring transactions (demo data for Transactions page)
+            if (mock.recurringTransactions?.length) {
+                await db.from('recurring_transactions').insert(mock.recurringTransactions.map(({ id, accountId, ...r }) => ({
+                    user_id: userId,
+                    description: r.description,
+                    amount: r.amount,
+                    type: r.type,
+                    account_id: accountIdMap.get(accountId)!,
+                    budget_category: r.budgetCategory ?? null,
+                    category: r.category,
+                    day_of_month: r.dayOfMonth,
+                    enabled: r.enabled,
+                }))).then(() => {}, () => {});
+            }
 
             // Portfolios
             const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, account_id: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
@@ -1195,7 +1223,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
-        const payload = updates.map(u => ({ id: u.id, current_value: u.currentValue, user_id: auth.user!.id }));
+        // Only update current_value; do not include name to avoid overwriting DB names with 'Other' when holding isn't in client cache
+        const payload = updates.map(u => ({
+            id: u.id,
+            current_value: u.currentValue,
+            user_id: auth.user!.id,
+        }));
         const { error } = await supabase.from('commodity_holdings').upsert(payload, { onConflict: 'id' });
         if (error) {
             console.error("Error batch updating commodity values:", error);
@@ -1230,7 +1263,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return;
         const db = supabase;
         const createdAt = new Date().toISOString();
-        const row = { ...withUser({}), symbol: alert.symbol, target_price: alert.targetPrice, status: 'active', created_at: createdAt };
+        const targetPrice = typeof alert.targetPrice === 'number' && Number.isFinite(alert.targetPrice) ? alert.targetPrice : parseFloat(String(alert.targetPrice)) || 0;
+        const row: Record<string, unknown> = { ...withUser({}), symbol: alert.symbol, target_price: targetPrice, status: 'active', created_at: createdAt };
+        if (alert.currency) row.currency = alert.currency;
         const { data: created, error } = await db.from('price_alerts').insert(row).select().single();
         if(error) console.error(error);
         else if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, normalizePriceAlert(created)] }));
@@ -1240,6 +1275,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const row: Record<string, unknown> = { status: alert.status };
         if (alert.targetPrice != null) row.target_price = alert.targetPrice;
+        if (alert.currency != null) row.currency = alert.currency;
         await db.from('price_alerts').update(row).match({ id: alert.id, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.map(a => a.id === alert.id ? alert : a) }));
     };

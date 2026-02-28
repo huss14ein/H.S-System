@@ -82,6 +82,14 @@ function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   });
 }
 
+/** Saudi Tadawul symbols use .SR suffix. Returns exchange and currency for display. */
+export function getExchangeAndCurrencyForSymbol(symbol: string): { exchange: string; currency: string } | null {
+  const s = (symbol || '').trim().toUpperCase();
+  if (/\.SR$/i.test(s)) return { exchange: 'Tadawul', currency: 'SAR' };
+  if (/\.SA$/i.test(s)) return { exchange: 'Saudi', currency: 'SAR' };
+  return null;
+}
+
 // --- Market status (exchange open/closed) ---
 export interface MarketStatusItem {
   exchange: string;
@@ -182,9 +190,11 @@ export interface QuoteWith52W {
 
 export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
   try {
-    const data = await get<QuoteWith52W>('/quote', { symbol: symbol.toUpperCase() });
-    if (data && Number.isFinite(data.c)) return data;
-    return null;
+    const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: symbol.toUpperCase() });
+    if (!data) return null;
+    const price = Number(data.c ?? data.pc ?? data.p);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    return { ...data, c: price, d: Number(data.d ?? 0), dp: Number(data.dp ?? 0), h: Number(data.h ?? price), l: Number(data.l ?? price), o: Number(data.o ?? price), pc: Number(data.pc ?? price) };
   } catch {
     return null;
   }

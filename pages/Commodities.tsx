@@ -13,7 +13,7 @@ import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
-import { getAICommodityPrices } from '../services/geminiService';
+import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -180,7 +180,7 @@ const Commodities: React.FC = () => {
             }
         } catch (error) {
             console.error("Failed to update commodity prices:", error);
-            alert("Failed to update prices. Check console for details. Ensure Finnhub API key is set for crypto/metals fallback.");
+            alert(`Failed to update prices.\n\n${formatAiError(error)}`);
         } finally {
             setIsUpdatingPrices(false);
         }

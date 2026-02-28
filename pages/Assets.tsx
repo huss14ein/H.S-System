@@ -20,7 +20,6 @@ import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import InfoHint from '../components/InfoHint';
 import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
-import CardLayoutControls from '../components/CardLayoutControls';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
 
@@ -87,40 +86,46 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         </Modal>
     );
 };
-const AssetCardComponent: React.FC<{ asset: Asset, onEdit: (asset: Asset) => void, onDelete: (asset: Asset | CommodityHolding) => void, onLinkGoal: (assetId: string, goalId: string) => void, goals: Goal[]; compact?: boolean; controls?: React.ReactNode; }> = ({ asset, onEdit, onDelete, onLinkGoal, goals, compact = false, controls }) => {
+const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => void; onDelete: (asset: Asset | CommodityHolding) => void; onLinkGoal: (assetId: string, goalId: string) => void; goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
-        const iconClass = "h-8 w-8";
         switch (type) {
-            case 'Property': return <HomeModernIcon className={`${iconClass} text-blue-500`} />;
-            case 'Vehicle': return <TruckIcon className={`${iconClass} text-green-500`} />;
-            default: return <QuestionMarkCircleIcon className={`${iconClass} text-gray-500`} />;
+            case 'Property': return <HomeModernIcon className="h-8 w-8 text-indigo-500" />;
+            case 'Vehicle': return <TruckIcon className="h-8 w-8 text-emerald-500" />;
+            default: return <QuestionMarkCircleIcon className="h-8 w-8 text-slate-500" />;
         }
     };
-    const unrealizedGain = asset.purchasePrice ? asset.value - asset.purchasePrice : null;
-    const performanceTone = unrealizedGain === null ? 'border-gray-200' : unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
+    const unrealizedGain = asset.purchasePrice != null ? asset.value - asset.purchasePrice : null;
+    const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
-        <div className={`bg-white rounded-lg shadow ${compact ? 'p-4' : 'p-5'} flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
-            <div>
-                <div className="flex justify-between items-start">
-                    <div className="flex items-center space-x-3">{getAssetIcon(asset.type)}<div><h3 className="font-bold text-dark text-lg">{asset.name}</h3><p className="text-sm text-gray-500">{asset.type}</p></div></div>
-                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button type="button" onClick={() => onEdit(asset)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit asset"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(asset)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button></div></div>
-                </div>
-                {asset.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
-                <div className="mt-4 space-y-3">
-                     <div><dt className="text-xs text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-xl">{formatCurrencyString(asset.value)}</dd></div>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div><dt className="text-gray-500">Purchase Price</dt><dd className="font-medium text-gray-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : 'N/A'}</dd></div>
-                        <div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? formatCurrency(unrealizedGain, { colorize: true }) : 'N/A'}</dd></div>
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow`}>
+            <div className="flex items-start justify-between gap-2 min-h-[32px]">
+                <div className="flex items-center gap-3 min-w-0">
+                    {getAssetIcon(asset.type)}
+                    <div className="min-w-0">
+                        <h3 className="font-semibold text-dark truncate">{asset.name}</h3>
+                        <p className="text-xs text-slate-500">{asset.type}</p>
                     </div>
-                    {asset.isRental && asset.monthlyRent && (<div><dt className="text-gray-500">Monthly Rent</dt><dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>)}
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    <button type="button" onClick={() => onEdit(asset)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit asset"><PencilIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onDelete(asset)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-             <div className="border-t mt-4 pt-4 flex items-center justify-between">
-                {linkedGoal ? (<span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />Linked to: {linkedGoal.name}</span>) : <span className="text-xs text-gray-400">Not linked to a goal</span>}
-                <select value={asset.goalId || 'none'} onChange={(e) => onLinkGoal(asset.id, e.target.value)} className="text-xs border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary py-1 pl-2 pr-7" aria-label={`Link ${asset.name} to a goal`}>
-                    <option value="none">Link to Goal...</option>
+            {asset.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                <div><dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div><dt className="text-slate-500">Purchase Price</dt><dd className="font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
+                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? formatCurrency(unrealizedGain, { colorize: true }) : '—'}</dd></div>
+                </div>
+                {asset.isRental && asset.monthlyRent != null && <div><dt className="text-slate-500">Monthly Rent</dt><dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
+            </div>
+            <div className="border-t mt-4 pt-4 flex items-center justify-between gap-2 flex-wrap">
+                {linkedGoal ? <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />{linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
+                <select value={asset.goalId || 'none'} onChange={(e) => onLinkGoal(asset.id, e.target.value)} className="text-xs border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-1.5 pl-2 pr-7" aria-label={`Link ${asset.name} to a goal`}>
+                    <option value="none">Link to goal...</option>
                     {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
             </div>
@@ -317,44 +322,50 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         </Modal>
     );
 };
-const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void; compact?: boolean; controls?: React.ReactNode; }> = ({ holding, onEdit, onDelete, goals, onLinkGoal, compact = false, controls }) => {
+const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void }> = ({ holding, onEdit, onDelete, goals, onLinkGoal }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
     const linkedGoal = holding.goalId ? goals.find(g => g.id === holding.goalId) : null;
-    const performanceTone = unrealizedGain >= 0 ? 'border-emerald-200' : 'border-rose-200';
+    const borderTone = unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const getIcon = (type: CommodityHolding['name']) => {
-        const iconClass = "h-10 w-10";
         switch (type) {
-            case 'Gold': return <GoldBarIcon className={`${iconClass} text-yellow-500`} />;
-            case 'Silver': return <GoldBarIcon className={`${iconClass} text-gray-400`} />;
-            case 'Bitcoin': return <BitcoinIcon className={`${iconClass} text-orange-500`} />;
-            default: return <CubeIcon className={`${iconClass} text-gray-500`} />;
+            case 'Gold': return <GoldBarIcon className="h-8 w-8 text-amber-500" />;
+            case 'Silver': return <GoldBarIcon className="h-8 w-8 text-slate-400" />;
+            case 'Bitcoin': return <BitcoinIcon className="h-8 w-8 text-orange-500" />;
+            default: return <CubeIcon className="h-8 w-8 text-slate-500" />;
         }
     };
     return (
-        <div className={`bg-white rounded-lg shadow ${compact ? 'p-4' : 'p-5'} flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border ${performanceTone}`}>
-            <div>
-                <div className="flex justify-between items-start">
-                    <div className="flex items-center space-x-4">
-                        {getIcon(holding.name)}
-                        <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}</p></div>
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow`}>
+            <div className="flex items-start justify-between gap-2 min-h-[32px]">
+                <div className="flex items-center gap-3 min-w-0">
+                    {getIcon(holding.name)}
+                    <div className="min-w-0">
+                        <h3 className="font-semibold text-dark truncate">{holding.name}</h3>
+                        <p className="text-xs text-slate-500">{holding.quantity} {holding.unit}</p>
                     </div>
-                    <div className="flex items-center gap-2">{controls}<div className="flex space-x-1"><button onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button></div></div>
                 </div>
-                {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
-                <div className="mt-2">
-                    {linkedGoal ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">Linked goal: {linkedGoal.name}</span> : <span className="text-xs text-gray-400">Not linked to goal</span>}
-                    <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="mt-2 w-full text-xs border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary py-1.5">
-                        <option value="none">No goal link</option>
-                        {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
-                </div>
-                <div className="mt-4 space-y-3">
-                    <div><dt className="text-sm text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
-                    <div className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">Purchase Value</dt><dd className="font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    <button type="button" onClick={() => onEdit(holding)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onDelete(holding)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-            <div className="border-t mt-4 pt-4"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>{holding.zakahClass}</span></div>
+            {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
+            <div className="mt-2">
+                {linkedGoal ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">Linked: {linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
+                <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="mt-2 w-full text-xs border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-1.5" aria-label={`Link ${holding.name} to goal`}>
+                    <option value="none">Link to goal...</option>
+                    {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                <div><dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(holding.currentValue)}</dd></div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div><dt className="text-slate-500">Purchase Value</dt><dd className="font-medium text-slate-700">{formatCurrencyString(holding.purchaseValue)}</dd></div>
+                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div>
+                </div>
+            </div>
+            <div className="border-t mt-4 pt-4"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{holding.zakahClass}</span></div>
         </div>
     );
 };
@@ -375,11 +386,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
-
-    const [assetCardOrder, setAssetCardOrder] = useState<string[]>([]);
-    const [commodityCardOrder, setCommodityCardOrder] = useState<string[]>([]);
-    const [expandedAssetCards, setExpandedAssetCards] = useState<Set<string>>(new Set());
-    const [expandedCommodityCards, setExpandedCommodityCards] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -437,47 +443,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     };
 
 
-    const orderedAssets = useMemo(() => {
-        const ids = new Set(data.assets.map(a => a.id));
-        const validOrder = assetCardOrder.filter(id => ids.has(id));
-        const missing = data.assets.map(a => a.id).filter(id => !validOrder.includes(id));
-        return [...validOrder, ...missing].map(id => data.assets.find(a => a.id === id)).filter((a): a is Asset => Boolean(a));
-    }, [data.assets, assetCardOrder]);
-
-    const orderedCommodities = useMemo(() => {
-        const ids = new Set(data.commodityHoldings.map(h => h.id));
-        const validOrder = commodityCardOrder.filter(id => ids.has(id));
-        const missing = data.commodityHoldings.map(h => h.id).filter(id => !validOrder.includes(id));
-        return [...validOrder, ...missing].map(id => data.commodityHoldings.find(h => h.id === id)).filter((h): h is CommodityHolding => Boolean(h));
-    }, [data.commodityHoldings, commodityCardOrder]);
-
-    const moveCard = (type: 'asset' | 'commodity', id: string, direction: 'up' | 'down') => {
-        const currentOrder = type === 'asset' ? orderedAssets.map(a => a.id) : orderedCommodities.map(h => h.id);
-        const index = currentOrder.indexOf(id);
-        if (index < 0) return;
-        const target = direction === 'up' ? index - 1 : index + 1;
-        if (target < 0 || target >= currentOrder.length) return;
-        const next = [...currentOrder];
-        [next[index], next[target]] = [next[target], next[index]];
-        if (type === 'asset') setAssetCardOrder(next);
-        else setCommodityCardOrder(next);
-    };
-
-    const toggleCardSize = (type: 'asset' | 'commodity', id: string) => {
-        if (type === 'asset') {
-            setExpandedAssetCards(prev => {
-                const next = new Set(prev);
-                if (next.has(id)) next.delete(id); else next.add(id);
-                return next;
-            });
-        } else {
-            setExpandedCommodityCards(prev => {
-                const next = new Set(prev);
-                if (next.has(id)) next.delete(id); else next.add(id);
-                return next;
-            });
-        }
-    };
+    const orderedAssets = useMemo(() => [...data.assets].sort((a, b) => a.name.localeCompare(b.name)), [data.assets]);
+    const orderedCommodities = useMemo(() => [...data.commodityHoldings].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data.commodityHoldings]);
 
     const addActions = [
         { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal() },
@@ -488,15 +455,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} />
-                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} />
-                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} />
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
             </div>
 
             <SectionCard title="Physical Assets">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedAssets.map((asset, index) => (<AssetCardComponent key={asset.id} asset={asset} compact={!expandedAssetCards.has(asset.id)} controls={<CardLayoutControls index={index} total={orderedAssets.length} isExpanded={expandedAssetCards.has(asset.id)} onMove={(direction) => moveCard('asset', asset.id, direction)} onToggleSize={() => toggleCardSize('asset', asset.id)} />} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />))}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {orderedAssets.map((asset) => (
+                        <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />
+                    ))}
                     {data.assets.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
                 </div>
             </SectionCard>
@@ -532,8 +501,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         </ul>
                     </div>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {orderedCommodities.map((h, index) => <CommodityHoldingCard key={h.id} holding={h} compact={!expandedCommodityCards.has(h.id)} controls={<CardLayoutControls index={index} total={orderedCommodities.length} isExpanded={expandedCommodityCards.has(h.id)} onMove={(direction) => moveCard('commodity', h.id, direction)} onToggleSize={() => toggleCardSize('commodity', h.id)} />} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {orderedCommodities.map((h) => (
+                        <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
+                    ))}
                     {data.commodityHoldings.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No commodities added yet.</p>}
                 </div>
             </SectionCard>

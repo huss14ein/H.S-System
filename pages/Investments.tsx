@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIStockAnalysis, executeInvestmentPlanStrategy } from '../services/geminiService';
+import { getAIStockAnalysis, executeInvestmentPlanStrategy, formatAiError } from '../services/geminiService';
 import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
@@ -11,7 +11,6 @@ import { EyeIcon } from '../components/icons/EyeIcon';
 import AIRebalancerView from './AIRebalancerView';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import WatchlistView from './WatchlistView';
-import TradeAdvicesView from './TradeAdvicesView';
 import RecoveryPlanView from './RecoveryPlanView';
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
@@ -29,6 +28,8 @@ import InfoHint from '../components/InfoHint';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
+import LoadingSpinner from '../components/LoadingSpinner';
+import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 
 
@@ -37,7 +38,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
@@ -48,7 +49,6 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
-    { name: 'Trade Advices', icon: BookOpenIcon },
 ];
 
 
@@ -332,8 +332,9 @@ const RecordTradeModal: React.FC<{
             ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
                  {accountId && !isCashFlow && (
-                    <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
-                        Available cash in this platform: <span className="font-semibold">{formatCurrencyString(availableCash, { digits: 0 })}</span>
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-1">
+                        <p>Available cash in this platform: <span className="font-semibold">{formatCurrencyString(availableCash, { digits: 0 })}</span></p>
+                        <p className="text-xs text-slate-600">You can record buys/sells for <strong>record-keeping</strong> even when cash is zero (e.g. after a deposit, transfer, or margin). Available cash is for reference only.</p>
                     </div>
                  )}
                  {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} SAR</span></div>}
@@ -726,14 +727,13 @@ const PlatformCard: React.FC<{
     availableCash?: number;
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
-    onAddPortfolio: (accountId: string) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, goals, availableCash = 0, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, transactions, goals, availableCash = 0, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
@@ -801,53 +801,61 @@ const PlatformCard: React.FC<{
     };
 
     return (
-        <div className="bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-100 hover:shadow-lg transition-shadow duration-300 ease-in-out">
+        <div className="bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-100 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
             {/* Platform Header */}
-            <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-5 border-b border-slate-200">
-                <div className="flex flex-wrap justify-between items-start gap-3">
-                    <div className="flex items-center gap-2">
+            <div className="bg-gradient-to-r from-slate-50 to-white px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start gap-3">
+                    <div className="flex items-start gap-2 min-w-0 flex-1">
                         <div className="w-1 h-10 rounded-full bg-primary shrink-0" />
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <h3 className="text-xl font-bold text-slate-800">{platform.name}</h3>
-                                <button onClick={() => onEditPlatform(platform)} className="p-1 rounded text-slate-400 hover:text-primary hover:bg-primary/5" title="Edit platform"><PencilIcon className="h-4 w-4" /></button>
-                                <button onClick={() => onDeletePlatform(platform)} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Remove platform"><TrashIcon className="h-4 w-4" /></button>
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-lg sm:text-xl font-bold text-slate-800 truncate" title={platform.name}>{platform.name}</h3>
+                                <span className="flex items-center gap-0.5 shrink-0">
+                                    <button onClick={() => onEditPlatform(platform)} className="p-1 rounded text-slate-400 hover:text-primary hover:bg-primary/5" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
+                                    <button onClick={() => onDeletePlatform(platform)} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
+                                </span>
                             </div>
-                            <p className="text-2xl font-bold text-primary mt-0.5">{formatCurrencyString(totalValue)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-primary mt-0.5 truncate" title={formatCurrencyString(totalValue)}>{formatCurrencyString(totalValue)}</p>
                         </div>
                     </div>
-                    <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary rounded-lg border border-primary/30 hover:bg-primary/5"><ArrowsRightLeftIcon className="h-4 w-4"/>Transaction Log</button>
+                    <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary rounded-lg border border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto"><ArrowsRightLeftIcon className="h-4 w-4"/>Transaction Log</button>
                 </div>
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Available Cash</dt>
-                        <dd className="font-semibold text-slate-800 text-sm mt-0.5">{formatCurrencyString(availableCash, { digits: 0 })}</dd>
+                <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Available Cash">Available Cash</dt>
+                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(availableCash, { digits: 0 })}>{formatCurrencyString(availableCash, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Unrealized P/L</dt>
-                        <dd className="font-semibold text-sm mt-0.5">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Unrealized P/L">Unrealized P/L</dt>
+                        <dd className="font-semibold text-xs sm:text-sm mt-0.5 truncate">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Daily P/L</dt>
-                        <dd className="font-semibold text-sm mt-0.5">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Daily P/L">Daily P/L</dt>
+                        <dd className="font-semibold text-xs sm:text-sm mt-0.5 truncate">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total ROI</dt>
-                        <dd className={`font-semibold text-sm mt-0.5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Total ROI">Total ROI</dt>
+                        <dd className={`font-semibold text-xs sm:text-sm mt-0.5 truncate ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total Invested</dt>
-                        <dd className="font-semibold text-slate-800 text-sm mt-0.5">{formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Total Invested">Total Invested</dt>
+                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(totalInvested, { digits: 0 })}>{formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-3 py-2 text-center">
-                        <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Withdrawn</dt>
-                        <dd className="font-semibold text-slate-800 text-sm mt-0.5">{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
+                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Withdrawn">Withdrawn</dt>
+                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(totalWithdrawn, { digits: 0 })}>{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </div>
             </div>
             
             {/* Portfolios Section */}
             <div className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">Portfolios ({portfolios.length})</h4>
+                </div>
+                {portfolios.length === 0 ? (
+                    <p className="text-sm text-slate-500 py-4 text-center rounded-lg bg-slate-50 border border-dashed border-slate-200">No portfolios yet. Use <strong>Add Portfolio</strong> above to create one and choose this platform.</p>
+                ) : null}
                 {portfolios.map(portfolio => (
                     <div key={portfolio.id} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50/80 to-white p-4 shadow-sm">
                         <div className="flex justify-between items-center mb-3">
@@ -902,9 +910,6 @@ const PlatformCard: React.FC<{
                          </div>
                     </div>
                 ))}
-                 <button onClick={() => onAddPortfolio(platform.id)} className="w-full mt-3 text-sm flex items-center justify-center gap-2 text-primary font-medium hover:bg-primary/5 py-3 rounded-xl border-2 border-dashed border-primary/30 hover:border-primary/50 transition-colors">
-                    <PlusIcon className="h-5 w-5"/> Add Portfolio
-                </button>
             </div>
             
             <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
@@ -915,10 +920,10 @@ const PlatformCard: React.FC<{
 
 const PlatformView: React.FC<{
     onAddPlatform: () => void;
+    onOpenAddPortfolio: () => void;
     setActivePage?: (page: Page) => void;
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
-    onAddPortfolio: (accountId: string) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
@@ -926,7 +931,7 @@ const PlatformView: React.FC<{
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { setActivePage } = props;
+    const { setActivePage, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
         const investmentAccounts = data.accounts.filter(acc => acc.type === 'Investment').sort((a,b) => a.name.localeCompare(b.name));
@@ -940,14 +945,32 @@ const PlatformView: React.FC<{
 
     return (
         <div className="space-y-6 mt-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm text-gray-600">Platforms and portfolios are managed here. Add a new platform from <strong>Accounts</strong> (Investment account), then add portfolios under each platform.</p>
-                {setActivePage && <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm text-primary hover:underline">Go to Accounts</button>}
-                <button onClick={props.onAddPlatform} className="px-3 py-1.5 text-sm border border-primary/40 text-primary rounded-lg hover:bg-primary/5">Add platform (here)</button>
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
+                <p className="text-sm text-gray-600">Platforms (Investment accounts) and their portfolios. Add a platform from <strong>Accounts</strong>, then add portfolios below.</p>
+                <div className="flex flex-wrap gap-2">
+                    {setActivePage && <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm text-primary hover:underline py-1">Go to Accounts</button>
+                    }
+                    <button type="button" onClick={onOpenAddPortfolio} className="btn-primary text-sm inline-flex items-center gap-1.5"><PlusIcon className="h-4 w-4"/> Add Portfolio</button>
+                    <button type="button" onClick={props.onAddPlatform} className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-700">Add platform</button>
+                </div>
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
                 {platformsData.map(p => (
-                    <PlatformCard key={p.account.id} platform={p.account} portfolios={p.portfolios} transactions={p.transactions} goals={data.goals} availableCash={p.availableCash} {...props} />
+                    <PlatformCard
+                        key={p.account.id}
+                        platform={p.account}
+                        portfolios={p.portfolios}
+                        transactions={p.transactions}
+                        goals={data.goals}
+                        availableCash={p.availableCash}
+                        onEditPlatform={props.onEditPlatform}
+                        onDeletePlatform={props.onDeletePlatform}
+                        onEditPortfolio={props.onEditPortfolio}
+                        onDeletePortfolio={props.onDeletePortfolio}
+                        onHoldingClick={props.onHoldingClick}
+                        onEditHolding={props.onEditHolding}
+                        simulatedPrices={props.simulatedPrices}
+                    />
                 ))}
             </div>
         </div>
@@ -1079,11 +1102,41 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         }
     }, [data.investmentPlan]);
 
+    // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
+    const suggestedMonthlyBudget = useMemo(() => {
+        const buys = (data.investmentTransactions || []).filter(t => t.type === 'buy');
+        if (buys.length === 0) return 0;
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const recent = buys.filter(t => new Date(t.date) >= sixMonthsAgo);
+        const byMonth = new Map<string, number>();
+        recent.forEach(t => {
+            const d = new Date(t.date);
+            const key = `${d.getFullYear()}-${d.getMonth()}`;
+            const amt = t.total ?? (t.quantity * (t.price ?? 0));
+            byMonth.set(key, (byMonth.get(key) ?? 0) + amt);
+        });
+        const amounts = Array.from(byMonth.values());
+        if (amounts.length === 0) return 0;
+        return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
+    }, [data.investmentTransactions]);
+
+    const addWatchlistAndHoldingsToUniverse = async () => {
+        const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
+        for (const t of toAdd) {
+            try {
+                await addUniverseTicker({ ticker: t.ticker, name: t.name, status: t.status });
+            } catch (_) {
+                // Skip duplicates or errors
+            }
+        }
+    };
+    const canAddWatchlistHoldings = unifiedUniverse.some(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
+
     if (!plan || !plan.brokerConstraints) {
         return (
             <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
-                <p className="text-gray-500">Loading investment plan strategy...</p>
+                <LoadingSpinner message="Loading investment plan strategy..." size="md" className="py-8" />
             </div>
         );
     }
@@ -1163,15 +1216,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             
         } catch (error) {
             console.error("Error executing plan:", error);
-            const message = error instanceof Error ? error.message : String(error);
-            const isQuota = /quota|RESOURCE_EXHAUSTED|429/i.test(message);
-            if (isQuota) {
-                setExecutionError(
-                    "AI quota exceeded. Please try again later, or use Wealth Ultra for rule-based allocation without AI."
-                );
-            } else {
-                setExecutionError(message);
-            }
+            setExecutionError(formatAiError(error));
         }
         setIsExecuting(false);
     };
@@ -1192,7 +1237,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             )}
             {(onNavigateToTab || onOpenWealthUltra) && (
                 <p className="text-sm text-gray-600">
-                    Tied to: <button type="button" onClick={() => onNavigateToTab?.('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button> (add tickers) · <button type="button" onClick={() => onNavigateToTab?.('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button> (run allocation) · <button type="button" onClick={() => onNavigateToTab?.('Trade Advices')} className="text-primary font-medium hover:underline">Trade Advices</button> (review trades)
+                    Tied to: <button type="button" onClick={() => onNavigateToTab?.('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button> (add tickers, trade insights & AI tips) · <button type="button" onClick={() => onNavigateToTab?.('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button> (run allocation)
                     {onOpenWealthUltra && <> · <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> (allocation & orders)</>}
                 </p>
             )}
@@ -1224,11 +1269,16 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                         )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below." /></label>
-                                <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. You can use the suggested value from your recent buy activity." /></label>
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                    <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2 border rounded-md" />
+                                    {suggestedMonthlyBudget > 0 && (
+                                        <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="text-sm text-primary hover:underline whitespace-nowrap">Use suggested ({formatCurrencyString(suggestedMonthlyBudget, { digits: 0 })})</button>
+                                    )}
+                                </div>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from settings." /></label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from app defaults." /></label>
                                 <input type="text" value={plan.budgetCurrency} disabled className="mt-1 w-full p-2 border rounded-md bg-gray-100" />
                             </div>
                             <div>
@@ -1311,11 +1361,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
                     {/* Portfolio Universe */}
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4 flex items-center gap-2">
-                            Portfolio Universe & Weights
-                            <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." />
-                        </h2>
-                        <p className="text-sm text-gray-500 mb-4">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
+                        <div className="mb-4">
+                            <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
+                                <span>Portfolio Universe & Weights</span>
+                                <span className="inline-flex items-center flex-shrink-0">
+                                    <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." />
+                                </span>
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-1">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
+                        </div>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-xs">
                             <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Tickers</p><p className="font-semibold text-dark">{universeHealth.totalCount}</p></div>
                             <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Actionable</p><p className="font-semibold text-dark">{universeHealth.actionableCount}</p></div>
@@ -1327,6 +1381,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <p className="text-xs mb-4 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Actionable monthly weights should usually sum close to 100% for predictable allocation behavior.</p>
                         )}
                         <div className="flex flex-wrap gap-2 mb-4">
+                            {canAddWatchlistHoldings && (
+                                <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
+                            )}
                             <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
@@ -1335,12 +1392,18 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                         <div className="max-h-60 overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200 text-sm">
                                 <thead className="bg-gray-50 sticky top-0"><tr>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-baseline">Ticker</th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-baseline">Name</th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-baseline"><span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." /></span></th>
-                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-baseline"><span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve&#39;s budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." /></span></th>
-                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-baseline"><span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Max Pos Wt <InfoHint text="Cap on a single ticker&#39;s share of the sleeve (e.g. 0.25 = max 25%)." /></span></th>
-                                    <th className="px-3 py-2 text-right font-medium text-gray-500 align-baseline">Actions</th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Ticker</th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Name</th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">
+                                        <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." /></span>
+                                    </th>
+                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
+                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve's budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." /></span>
+                                    </th>
+                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
+                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Max Pos Wt <InfoHint text="Cap on a single ticker's share of the sleeve (e.g. 0.25 = max 25%)." /></span>
+                                    </th>
+                                    <th className="px-3 py-2 text-right font-medium text-gray-500 align-middle">Actions</th>
                                 </tr></thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {unifiedUniverse.map(ticker => (
@@ -1651,10 +1714,10 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         return <PlatformView 
             simulatedPrices={simulatedPrices}
             onAddPlatform={() => handleOpenPlatformModal()}
+            onOpenAddPortfolio={() => handleOpenPortfolioModal(null, null)}
             setActivePage={setActivePage}
             onEditPlatform={handleOpenPlatformModal} 
             onDeletePlatform={(p) => handleOpenDeleteModal(p)}
-            onAddPortfolio={(accountId) => handleOpenPortfolioModal(null, accountId)}
             onEditPortfolio={(p) => handleOpenPortfolioModal(p, p.accountId)}
             onDeletePortfolio={(p) => handleOpenDeleteModal(p)}
             onHoldingClick={handleHoldingClick}
@@ -1672,15 +1735,17 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       case 'Recovery Plan': return <RecoveryPlanView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
-      case 'Trade Advices': return <TradeAdvicesView />;
       default: return null;
     }
   };
 
   return (
     <div className="space-y-6">
-        <div className="flex justify-between items-center flex-wrap gap-4">
-             <h1 className="text-3xl font-bold text-dark">Investments</h1>
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center flex-wrap gap-3">
+             <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-3xl font-bold text-dark">Investments</h1>
+                <LivePricesStatus variant="inline" className="flex-shrink-0" />
+             </div>
              <div className="flex items-center space-x-2">
                 <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
              </div>
@@ -1708,7 +1773,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             </nav>
         </div>
       
-      <Suspense fallback={<div className="text-center p-8">Loading...</div>}>
+      <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem]" />}>
         {renderContent()}
       </Suspense>
 

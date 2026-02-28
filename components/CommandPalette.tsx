@@ -108,7 +108,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                     <input
                         type="text"
                         placeholder="Search for pages or actions..."
-                        className="w-full bg-transparent border-0 focus:ring-0 text-lg placeholder-gray-400"
+                        className="w-full bg-transparent border-0 focus:ring-2 focus:ring-primary focus:outline-none rounded text-lg placeholder-gray-400"
                         value={query}
                         onChange={e => setQuery(e.target.value)}
                         autoFocus

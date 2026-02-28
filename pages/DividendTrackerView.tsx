@@ -5,7 +5,7 @@ import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, fo
 import ChartContainer from '../components/charts/ChartContainer';
 import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { getAIDividendAnalysis } from '../services/geminiService';
+import { getAIDividendAnalysis, formatAiError } from '../services/geminiService';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -17,6 +17,7 @@ const DividendTrackerView: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
+    const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
     const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
@@ -57,9 +58,16 @@ const DividendTrackerView: React.FC = () => {
 
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);
-        const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
-        setAiAnalysis(analysis);
-        setIsLoading(false);
+        setAiError(null);
+        try {
+            const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
+            setAiAnalysis(analysis);
+        } catch (err) {
+            setAiError(formatAiError(err));
+            setAiAnalysis('');
+        } finally {
+            setIsLoading(false);
+        }
     }, [dividendIncomeYTD, projectedAnnualIncome, topPayers]);
 
     return (
@@ -82,9 +90,10 @@ const DividendTrackerView: React.FC = () => {
                         {isLoading ? 'Analyzing...' : 'Generate Analysis'}
                     </button>
                 </div>
+                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGetAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                  {isLoading && <p className="text-sm text-center text-gray-500 py-4">Analyzing your dividend strategy...</p>}
                  {!isLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                 {!isLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an expert summary of your dividend income.</p>}
+                 {!isLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an expert summary of your dividend income.</p>}
             </div>
 
             <div className="section-card flex flex-col h-[400px]">

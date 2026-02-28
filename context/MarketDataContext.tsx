@@ -11,6 +11,8 @@ interface MarketDataContextType {
   isRefreshing: boolean;
   refreshPrices: () => Promise<void>;
   lastUpdated: Date | null;
+  /** Set last updated time (e.g. when live fetch completes). */
+  setLastUpdated: (date: Date | null) => void;
   isLive: boolean;
   setIsLive: (isLive: boolean) => void;
   refreshTrigger: number;
@@ -47,6 +49,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         isRefreshing,
         refreshPrices,
         lastUpdated,
+        setLastUpdated,
         isLive,
         setIsLive,
         refreshTrigger

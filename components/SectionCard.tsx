@@ -33,9 +33,9 @@ const SectionCard: React.FC<SectionCardProps> = ({
   const content = (
     <>
       {(title || headerAction) && (
-        <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 mb-4 min-w-0">
           {title && (
-            <h2 className="section-title">
+            <h2 className="section-title flex-1 min-w-0">
               {icon}
               {title}
             </h2>
@@ -53,7 +53,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
         role="button"
         tabIndex={0}
         onClick={onClick}
-        onKeyDown={(e) => e.key === 'Enter' && onClick()}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onClick())}
         className={`${cardClass} ${className}`}
       >
         {content}

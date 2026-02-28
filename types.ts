@@ -64,7 +64,7 @@ export interface Liability {
   id: string;
   user_id?: string;
   name: string;
-  type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan';
+  type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan' | 'Receivable';
   amount: number;
   status: 'Active' | 'Paid';
   goalId?: string;
@@ -234,11 +234,15 @@ export interface ZakatPayment {
     notes?: string;
 }
 
+export type PriceAlertCurrency = 'USD' | 'SAR';
+
 export interface PriceAlert {
   id: string;
   user_id?: string;
   symbol: string;
   targetPrice: number;
+  /** Currency for the target price (selected when adding the alert). */
+  currency?: PriceAlertCurrency;
   status: 'active' | 'triggered';
   createdAt: string;
 }

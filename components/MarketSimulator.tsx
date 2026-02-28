@@ -38,7 +38,7 @@ const MarketSimulator: React.FC = () => {
             if (!dataContext || !marketContext || !dataContext.data) return;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
-            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive } = marketContext;
+            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated } = marketContext;
             
             const allHoldings = data.investments.flatMap(p => p.holdings);
             const allWatchlistItems = data.watchlist;
@@ -75,6 +75,7 @@ const MarketSimulator: React.FC = () => {
                     });
 
                     liveStatus = Object.keys(newPrices).length > 0;
+                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
                 } catch (error) {
                     console.error("Failed to fetch real prices, falling back to simulation:", error);
                     isRealFetch = false; // Fallback

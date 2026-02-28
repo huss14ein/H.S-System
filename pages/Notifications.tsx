@@ -10,6 +10,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 function formatRelativeTime(dateStr: string): string {
   const d = new Date(dateStr);
@@ -78,7 +79,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
   if (!ctx) {
     return (
       <PageLayout title="Notifications">
-        <p className="text-slate-500">Loading…</p>
+        <LoadingSpinner message="Loading…" />
       </PageLayout>
     );
   }

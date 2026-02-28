@@ -9,6 +9,7 @@ import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -236,14 +237,14 @@ const Forecast: React.FC = () => {
                 </SectionCard>
 
                 <div className="lg:col-span-3 space-y-6">
-                    {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><p className="text-gray-500">Generating your financial forecast...</p></div>}
+                    {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><LoadingSpinner message="Generating your financial forecast..." /></div>}
 
                     {summary && !isLoading && (
                         <>
                         <p className="text-sm text-gray-600">Scenario preset used: <span className="font-semibold text-dark">{scenarioPreset}</span></p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} />
-                            <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} />
+                            <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} tooltip="Estimated total net worth at the end of the forecast period." />
+                            <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} tooltip="Estimated investment portfolio value at the end of the forecast period." />
                         </div>
                         </>
                     )}

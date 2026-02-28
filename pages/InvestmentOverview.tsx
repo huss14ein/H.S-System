@@ -4,7 +4,7 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { Holding } from '../types';
 import AllocationBarChart from '../components/charts/AllocationBarChart';
-import { getAIInvestmentOverviewAnalysis } from '../services/geminiService';
+import { getAIInvestmentOverviewAnalysis, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
@@ -41,14 +41,22 @@ const InvestmentOverview: React.FC = () => {
     }, [data]);
 
     const [aiAnalysis, setAiAnalysis] = useState('');
+    const [aiError, setAiError] = useState<string | null>(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
-        const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
-        const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
-        setAiAnalysis(result);
-        setIsAiLoading(false);
+        setAiError(null);
+        try {
+            const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
+            const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
+            setAiAnalysis(result);
+        } catch (err) {
+            setAiError(formatAiError(err));
+            setAiAnalysis('');
+        } finally {
+            setIsAiLoading(false);
+        }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation]);
 
     return (
@@ -61,9 +69,10 @@ const InvestmentOverview: React.FC = () => {
                         {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
                     </button>
                 </div>
+                {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                 {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {!isAiLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                {!isAiLoading && !aiAnalysis && <p className="text-sm text-center text-slate-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
+                {!isAiLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

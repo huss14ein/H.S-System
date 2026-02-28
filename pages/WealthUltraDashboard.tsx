@@ -16,27 +16,135 @@ const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Spec: 'bg-rose-500',
 };
 
-function buildEngineConfigFromSystem(data: { investmentPlan?: any; wealthUltraConfig?: any; accounts?: any[] }, totalDeployableCash?: number) {
+/** Build full Wealth Ultra config from app data. Auto-derives sleeve tickers from Portfolio Universe or holdings when plan lists are empty. */
+function buildEngineConfigFromSystem(
+  data: {
+    investmentPlan?: any;
+    wealthUltraConfig?: any;
+    accounts?: any[];
+    portfolioUniverse?: Array<{ ticker: string; status?: string }>;
+    investments?: Array<{ holdings?: Array<{ symbol: string }> }>;
+  },
+  totalDeployableCash?: number
+) {
   const plan = data.investmentPlan;
   const systemConfig = data.wealthUltraConfig;
   const defaults = getDefaultWealthUltraConfig();
   const base = { ...defaults, ...systemConfig } as typeof defaults;
-  if (!plan) return undefined;
-  const cashAvailable = totalDeployableCash ?? (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
-  const sleeves = plan.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
-  const core = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
-  const upside = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
-  const spec = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
+
+  const cashAvailable =
+    totalDeployableCash ??
+    (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
+
+  const allHoldingTickers =
+    (data.investments || [])
+      .flatMap((p: { holdings?: Array<{ symbol: string }> }) => p.holdings || [])
+      .map((h: { symbol: string }) => (h.symbol || '').toUpperCase())
+      .filter(Boolean) || [];
+
+  const universe = data.portfolioUniverse || [];
+
+  let coreTickers: string[] = [];
+  let upsideTickers: string[] = [];
+  let specTickers: string[] = [];
+
+  if (plan) {
+    const sleeves = plan.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
+    const core = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
+    const upside = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
+    const spec = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
+
+    coreTickers = sleeves && core
+      ? (core.tickers || [])
+      : (plan.corePortfolio ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean);
+    upsideTickers = sleeves && upside
+      ? (upside.tickers || [])
+      : (plan.upsideSleeve ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean);
+    specTickers = sleeves && spec ? (spec.tickers || []) : [];
+  }
+
+  if (coreTickers.length === 0 && upsideTickers.length === 0 && specTickers.length === 0 && universe.length > 0) {
+    universe.forEach((t: { ticker: string; status?: string }) => {
+      const sym = (t.ticker || '').toUpperCase();
+      if (!sym) return;
+      const status = (t.status || '').toLowerCase();
+      if (status === 'core') coreTickers.push(sym);
+      else if (status === 'high-upside' || status === 'highupside') upsideTickers.push(sym);
+      else if (status === 'speculative' || status === 'spec') specTickers.push(sym);
+    });
+  }
+
+  if (coreTickers.length === 0 && upsideTickers.length === 0 && specTickers.length === 0 && allHoldingTickers.length > 0) {
+    coreTickers = [...new Set(allHoldingTickers)];
+  }
+
+  const coreSet = new Set(coreTickers.map(t => t.toUpperCase()));
+  const upsideSet = new Set(upsideTickers.map(t => t.toUpperCase()));
+  const specSet = new Set(specTickers.map(t => t.toUpperCase()));
+  const universeByTicker = new Map(universe.map((t: { ticker: string; status?: string }) => [(t.ticker || '').toUpperCase(), (t.status || '').toLowerCase()]));
+  allHoldingTickers.forEach(sym => {
+    if (coreSet.has(sym) || upsideSet.has(sym) || specSet.has(sym)) return;
+    const status = universeByTicker.get(sym);
+    if (status === 'core') coreSet.add(sym);
+    else if (status === 'high-upside' || status === 'highupside') upsideSet.add(sym);
+    else if (status === 'speculative' || status === 'spec') specSet.add(sym);
+    else coreSet.add(sym);
+  });
+  coreTickers = Array.from(coreSet);
+  upsideTickers = Array.from(upsideSet);
+  specTickers = Array.from(specSet);
+
+  const hasSleeves = plan?.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
+  const coreSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
+  const upsideSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
+  const specSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
+  const coreExplicit = coreSleeve && typeof coreSleeve.targetPct === 'number';
+  const upsideExplicit = upsideSleeve && typeof upsideSleeve.targetPct === 'number';
+  const specExplicit = specSleeve && typeof specSleeve.targetPct === 'number';
+
+  let targetCorePct: number;
+  let targetUpsidePct: number;
+  let targetSpecPct: number;
+
+  if (!plan) {
+    targetCorePct = base.targetCorePct;
+    targetUpsidePct = base.targetUpsidePct;
+    targetSpecPct = base.targetSpecPct;
+  } else if (hasSleeves && coreExplicit && upsideExplicit && specExplicit) {
+    targetCorePct = coreSleeve.targetPct;
+    targetUpsidePct = upsideSleeve.targetPct;
+    targetSpecPct = specSleeve.targetPct;
+  } else if (hasSleeves && (coreExplicit || upsideExplicit || specExplicit)) {
+    targetCorePct = coreExplicit ? coreSleeve.targetPct : base.targetCorePct;
+    targetUpsidePct = upsideExplicit ? upsideSleeve.targetPct : base.targetUpsidePct;
+    targetSpecPct = specExplicit ? specSleeve.targetPct : base.targetSpecPct;
+    const sum = targetCorePct + targetUpsidePct + targetSpecPct;
+    if (Math.abs(sum - 100) > 0.01) {
+      const scale = 100 / sum;
+      targetCorePct *= scale;
+      targetUpsidePct *= scale;
+      targetSpecPct *= scale;
+    }
+  } else {
+    const specDefault = (plan.specAllocation ?? 0.05) * 100;
+    const remainder = 100 - specDefault;
+    const coreRatio = (plan.coreAllocation ?? 0.7) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
+    const upsideRatio = (plan.upsideAllocation ?? 0.3) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
+    targetSpecPct = specDefault;
+    targetCorePct = remainder * coreRatio;
+    targetUpsidePct = remainder * upsideRatio;
+  }
+
   return {
     ...base,
-    monthlyDeposit: plan.monthlyBudget ?? base.monthlyDeposit,
+    monthlyDeposit: plan?.monthlyBudget ?? base.monthlyDeposit,
     cashAvailable,
-    targetCorePct: sleeves && core ? core.targetPct : (plan.coreAllocation ?? 0.7) * 100,
-    targetUpsidePct: sleeves && upside ? upside.targetPct : (plan.upsideAllocation ?? 0.3) * 100,
-    targetSpecPct: sleeves && spec ? spec.targetPct : Math.max(0, 100 - (plan.coreAllocation ?? 0.7) * 100 - (plan.upsideAllocation ?? 0.3) * 100),
-    coreTickers: sleeves && core ? (core.tickers || []) : (plan.corePortfolio ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
-    upsideTickers: sleeves && upside ? (upside.tickers || []) : (plan.upsideSleeve ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
-    specTickers: sleeves && spec ? (spec.tickers || []) : [],
+    targetCorePct,
+    targetUpsidePct,
+    targetSpecPct,
+    coreTickers,
+    upsideTickers,
+    specTickers,
   };
 }
 
@@ -60,13 +168,22 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       const sym = (h.symbol || '').toUpperCase();
       if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
     });
-    const config = buildEngineConfigFromSystem(data, totalDeployableCash);
+    const config = buildEngineConfigFromSystem(
+      {
+        investmentPlan: data.investmentPlan,
+        wealthUltraConfig: data.wealthUltraConfig,
+        accounts: data.accounts,
+        portfolioUniverse: data.portfolioUniverse,
+        investments: data.investments,
+      },
+      totalDeployableCash
+    );
     return runWealthUltraEngine({
       holdings: allHoldings,
       priceMap,
       config,
     });
-  }, [data.investments, data.investmentPlan, data?.accounts, data.wealthUltraConfig, simulatedPrices, totalDeployableCash]);
+  }, [data.investments, data.investmentPlan, data.accounts, data.wealthUltraConfig, data.portfolioUniverse, simulatedPrices, totalDeployableCash]);
 
   const {
     totalPortfolioValue,
@@ -117,12 +234,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-dark flex items-center gap-2">
-          <ChartPieIcon className="h-8 w-8 text-primary" />
-          Wealth Ultra Portfolio Engine
-        </h1>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h1 className="text-2xl font-bold text-dark flex items-center gap-2">
+            <ChartPieIcon className="h-8 w-8 text-primary" />
+            Wealth Ultra Portfolio Engine
+          </h1>
+          <div className="flex items-center gap-2">
           {triggerPageAction && (
             <button
               type="button"
@@ -141,11 +259,15 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             Export orders (JSON)
           </button>
         </div>
+        </div>
+        <p className="text-sm text-slate-600">
+          Budget, targets, and Core/Upside/Spec sleeves are derived automatically from your Investment Plan and Portfolio Universe. No manual ticker lists needed—holdings are classified from the plan or universe, or default to Core.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card title="Total Portfolio Value" value={totalPortfolioValue.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 })} trend={totalSAR.toLocaleString('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 0 }) + ' (SAR)'} density="comfortable" />
-        <Card title="Cash Planner" value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'WITHIN LIMIT' : 'OVER BUDGET'} trend={`Deployable: ${formatCurrencyString(deployableCash)} · Planned: ${formatCurrencyString(totalPlannedBuyCost)}`} density="comfortable" indicatorColor={cashPlannerStatus === 'OVER_BUDGET' ? 'red' : 'green'} />
+        <Card title="Total Portfolio Value" value={formatCurrencyString(totalPortfolioValue)} trend={totalSAR.toLocaleString('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 0 }) + ' (SAR)'} density="comfortable" tooltip="Total value of all portfolio positions in your base currency." />
+        <Card title="Cash Planner" value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'WITHIN LIMIT' : 'OVER BUDGET'} trend={`Deployable: ${formatCurrencyString(deployableCash)} · Planned: ${formatCurrencyString(totalPlannedBuyCost)}`} density="comfortable" indicatorColor={cashPlannerStatus === 'OVER_BUDGET' ? 'red' : 'green'} tooltip="Compares deployable cash to planned buy cost; stay within limit to avoid over-deployment." />
       </div>
 
       <div className="bg-white p-6 rounded-lg shadow-md border border-gray-100">
@@ -191,7 +313,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 <span className="text-success">+{p.plPct.toFixed(1)}%</span>
               </li>
             ))}
-            {top5Winners.length === 0 && <p className="text-gray-500 text-sm">No positions</p>}
+            {top5Winners.length === 0 && <p className="empty-state text-sm">No positions</p>}
           </ul>
         </div>
         <div className="bg-white p-6 rounded-lg shadow-md border border-gray-100">
@@ -203,7 +325,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 <span className="text-danger">{p.plPct.toFixed(1)}%</span>
               </li>
             ))}
-            {top5Losers.length === 0 && <p className="text-gray-500 text-sm">No positions</p>}
+            {top5Losers.length === 0 && <p className="empty-state text-sm">No positions</p>}
           </ul>
         </div>
       </div>
@@ -219,7 +341,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               </span>
             </li>
           ))}
-          {capitalEfficiencyRanked.length === 0 && <p className="text-gray-500 text-sm">No positions</p>}
+          {capitalEfficiencyRanked.length === 0 && <p className="empty-state text-sm">No positions</p>}
         </ul>
       </div>
 

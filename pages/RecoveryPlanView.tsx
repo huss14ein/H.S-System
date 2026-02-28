@@ -137,7 +137,7 @@ function RecoveryPlanViewContent() {
           <tbody className="divide-y divide-gray-100">
             {losingPositions.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-500">No losing positions. Recovery plan applies only when a position is in loss.</td>
+                <td colSpan={5} className="px-4 py-8 text-center empty-state">No losing positions. Recovery plan applies only when a position is in loss.</td>
               </tr>
             ) : (
               losingPositions.map(({ holding, plan }) => (

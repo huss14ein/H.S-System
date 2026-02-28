@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
+import React, { useMemo, useContext, useState, useCallback } from 'react';
 import Card from '../components/Card';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
@@ -21,6 +21,8 @@ import { useAI } from '../context/AiContext';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -75,6 +77,7 @@ const AIExecutiveSummary: React.FC = () => {
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
                     <h4 className="font-bold">Summary Error</h4>
                     <SafeMarkdownRenderer content={error} />
+                    <button type="button" onClick={handleGenerate} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                 </div>
             )}
 
@@ -251,13 +254,15 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     );
 };
 
-type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+
+const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
+    const emergencyFund = useEmergencyFund(data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-    const [draggingKpiCard, setDraggingKpiCard] = useState<KpiCardKey | null>(null);
     const kpiDensity = 'compact' as const;
 
     const investmentProgress = useMemo(() => {
@@ -278,91 +283,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         };
     }, [data]);
 
-
-    const [kpiCardOrder, setKpiCardOrder] = useState<Array<KpiCardKey>>(() => {
-        const defaultOrder: Array<KpiCardKey> = [
-            'netWorth',
-            'monthlyPnL',
-            'budgetVariance',
-            'investmentRoi',
-            'investmentPlan',
-        ];
-        if (typeof window === 'undefined') return defaultOrder;
-        try {
-            const raw = window.localStorage.getItem('dashboard-kpi-card-order');
-            if (!raw) return defaultOrder;
-            const parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) return defaultOrder;
-            const retained = parsed.filter((key: string) => defaultOrder.includes(key as any)) as typeof defaultOrder;
-            const missing = defaultOrder.filter(key => !retained.includes(key));
-            return [...retained, ...missing];
-        } catch {
-            return defaultOrder;
-        }
-    });
-
-
-    const [kpiCardSize, _setKpiCardSize] = useState<Record<KpiCardKey, 'normal' | 'wide'>>(() => {
-        const defaults: Record<KpiCardKey, 'normal' | 'wide'> = {
-            netWorth: 'normal',
-            monthlyPnL: 'normal',
-            budgetVariance: 'normal',
-            investmentRoi: 'normal',
-            investmentPlan: 'normal',
-        };
-        if (typeof window === 'undefined') return defaults;
-        try {
-            const raw = window.localStorage.getItem('dashboard-kpi-card-size');
-            if (!raw) return defaults;
-            const parsed = JSON.parse(raw);
-            return { ...defaults, ...(parsed || {}) };
-        } catch {
-            return defaults;
-        }
-    });
-
-    useEffect(() => {
-        const defaultOrder: Array<KpiCardKey> = [
-            'netWorth',
-            'monthlyPnL',
-            'budgetVariance',
-            'investmentRoi',
-            'investmentPlan',
-        ];
-        setKpiCardOrder(prev => {
-            const retained = prev.filter(key => defaultOrder.includes(key));
-            const missing = defaultOrder.filter(key => !retained.includes(key));
-            return [...retained, ...missing];
-        });
-    }, []);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        window.localStorage.setItem('dashboard-kpi-card-order', JSON.stringify(kpiCardOrder));
-    }, [kpiCardOrder]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        window.localStorage.setItem('dashboard-kpi-card-size', JSON.stringify(kpiCardSize));
-    }, [kpiCardSize]);
-
-    const handleKpiDragStart = (cardKey: KpiCardKey) => {
-        setDraggingKpiCard(cardKey);
-    };
-
-    const handleKpiDrop = (targetKey: KpiCardKey) => {
-        if (!draggingKpiCard || draggingKpiCard === targetKey) return;
-        setKpiCardOrder(prev => {
-            const sourceIndex = prev.indexOf(draggingKpiCard);
-            const targetIndex = prev.indexOf(targetKey);
-            if (sourceIndex < 0 || targetIndex < 0) return prev;
-            const next = [...prev];
-            const [moved] = next.splice(sourceIndex, 1);
-            next.splice(targetIndex, 0, moved);
-            return next;
-        });
-        setDraggingKpiCard(null);
-    };
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
@@ -387,13 +307,19 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             });
             const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
             
-            // Net Worth and Trend
+            // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
             const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) + 
-                               (data.accounts || []).filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
-                               totalCommodities;
-            const totalLiabilities = (data.liabilities || []).reduce((sum, liab) => sum + liab.amount, 0) + (data.accounts || []).filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
-            const netWorth = totalAssets + totalLiabilities;
+            const totalInvestmentsValue = (data.investments || []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+            const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) +
+                               cashAndSavingsPositive +
+                               totalCommodities +
+                               totalInvestmentsValue;
+            const totalDebt = (data.liabilities || []).filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, liab: { amount: number }) => sum + Math.abs(liab.amount), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+            const totalReceivable = (data.liabilities || []).filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, liab: { amount: number }) => sum + liab.amount, 0);
+            const netWorth = totalAssets - totalDebt + totalReceivable;
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
             
@@ -405,7 +331,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const totalInvestmentsValue = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
             const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
             const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
             const netCapital = totalInvested - totalWithdrawn;
@@ -479,13 +404,19 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
 
-    const kpiCards = useMemo(() => ({
-        netWorth: <Card density={kpiDensity} title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />,
-        monthlyPnL: <Card density={kpiDensity} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />,
-        budgetVariance: <Card density={kpiDensity} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). This amount stays in your accounts and is part of your cash flow for goals or investments. Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />,
-        investmentRoi: <Card density={kpiDensity} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />,
-        investmentPlan: <Card density={kpiDensity} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={`${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })}`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip="Progress towards your monthly investment goal." onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
-    }), [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, setActivePage, kpiDensity]);
+    const kpiCards = useMemo(() => {
+        const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
+        const efTrend = emergencyFund.status === 'healthy' ? `${EMERGENCY_FUND_TARGET_MONTHS} mo target met` : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Build more' : 'Critical';
+        const efColor = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
+        return {
+            netWorth: <Card {...cardProps} title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-slate-400" />} />,
+            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
+            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={`${emergencyFund.monthsCovered.toFixed(1)} mo`} trend={efTrend} indicatorColor={efColor} tooltip={`Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+        };
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity]);
     
     if (loading) {
         return (
@@ -517,34 +448,22 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
             
-            <p className="text-xs text-gray-500">Drag the ⋮⋮ handle to reorder; use the ⋮ menu for move or resize.</p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
-                {kpiCardOrder.map((cardKey) => (
-                    <div
-                        key={cardKey}
-                        className={`relative flex gap-1 ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`}
-                        draggable
-                        onDragStart={() => handleKpiDragStart(cardKey)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={() => handleKpiDrop(cardKey)}
-                        onDragEnd={() => setDraggingKpiCard(null)}
-                    >
-                        <div className="flex-shrink-0 cursor-grab active:cursor-grabbing pt-2 text-gray-400 hover:text-gray-600 touch-none" title="Drag to reorder" aria-hidden>
-                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0V9a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm6-12a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1z" /></svg>
-                        </div>
-                        <div className="flex-1 min-w-0 relative">
-                            {kpiCards[cardKey]}
-                        </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
+                {KPI_CARD_ORDER.map((cardKey) => (
+                    <div key={cardKey} className="min-h-[132px] flex flex-col">
+                        {kpiCards[cardKey]}
                     </div>
                 ))}
             </div>
 
             {data?.accounts?.length > 0 && (
                 <div className="section-card border-l-4 border-primary/40">
-                    <h3 className="section-title text-base">Projected cash in 30 days</h3>
+                    <h3 className="section-title text-base">Cash & emergency fund</h3>
                     <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(projectedCash30d ?? currentCash ?? 0)}</p>
-                    <p className="text-xs text-slate-500 mt-1">Current cash + average monthly flow (last 6 months). Use Forecast for long-term projection.</p>
+                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current + average monthly flow).</p>
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {formatCurrencyString(emergencyFund.emergencyCash)} liquid cash = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : 'Target met.'}</p>
+                    </div>
                 </div>
             )}
 

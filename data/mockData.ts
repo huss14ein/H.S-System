@@ -51,12 +51,17 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
     liabilities: [
         { id: 'liab1', name: 'Home Mortgage', type: 'Mortgage', amount: -1250000, status: 'Active' },
         { id: 'liab2', name: 'Car Loan', type: 'Loan', amount: -65000, status: 'Active' },
+        { id: 'rec1', name: 'Ahmad - Personal loan', type: 'Receivable', amount: 15000, status: 'Active' },
+        { id: 'rec2', name: 'Freelance client (outstanding)', type: 'Receivable', amount: 8500, status: 'Active' },
     ],
     goals: [
         { id: 'goal1', name: 'World Trip', targetAmount: 75000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 2, 5, 1).toISOString(), savingsAllocationPercent: 30 },
         { id: 'goal2', name: 'Rental Property Downpayment', targetAmount: 300000, currentAmount: 0, deadline: new Date(new Date().getFullYear() + 3, 11, 1).toISOString(), savingsAllocationPercent: 70 },
     ],
-    recurringTransactions: [],
+    recurringTransactions: [
+        { id: 'rt1', description: 'Monthly salary', amount: 30000, category: 'Salary', budgetCategory: 'Income', dayOfMonth: 1, accountId: 'acc1', type: 'income' as const, enabled: true },
+        { id: 'rt2', description: 'Netflix', amount: 59.99, category: 'Entertainment', budgetCategory: 'Entertainment', dayOfMonth: 15, accountId: 'acc3', type: 'expense' as const, enabled: true },
+    ],
     transactions: [
         { id: 't1', date: firstDayOfMonth, description: 'Monthly Salary', amount: 30000, category: 'Salary', accountId: 'acc1', type: 'income' },
         { id: 't2', date: new Date(new Date().setDate(2)).toISOString().split('T')[0], description: 'Hyper Panda Groceries', amount: -1250.75, category: 'Groceries', budgetCategory: 'Food', accountId: 'acc3', type: 'expense', transactionNature: 'Variable', expenseType: 'Core' },

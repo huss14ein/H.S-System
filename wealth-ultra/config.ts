@@ -1,6 +1,6 @@
-import type { WealthUltraConfig } from '../types';
+import type { WealthUltraConfig, WealthUltraSystemConfig } from '../types';
 
-/** Fallback defaults only when system has no wealth_ultra_config row. Primary config is in DB (wealth_ultra_config + investment_plan). */
+/** Front-end only: Wealth Ultra defaults (no database). Used by Settings, Wealth Ultra dashboard, and Recovery Plan. */
 const DEFAULT_CONFIG: Omit<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 'specTickers'> = {
   fxRate: 0.27,
   targetCorePct: 70,
@@ -21,6 +21,22 @@ const DEFAULT_CONFIG: Omit<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 
 
 export function getDefaultWealthUltraConfig(): WealthUltraConfig {
   return { ...DEFAULT_CONFIG };
+}
+
+/** Front-end Wealth Ultra system config (no DB). Use this everywhere instead of fetching wealth_ultra_config. */
+export function getDefaultWealthUltraSystemConfig(): WealthUltraSystemConfig {
+  return {
+    fxRate: DEFAULT_CONFIG.fxRate,
+    cashReservePct: DEFAULT_CONFIG.cashReservePct,
+    maxPerTickerPct: DEFAULT_CONFIG.maxPerTickerPct,
+    riskWeightLow: DEFAULT_CONFIG.riskWeightLow,
+    riskWeightMed: DEFAULT_CONFIG.riskWeightMed,
+    riskWeightHigh: DEFAULT_CONFIG.riskWeightHigh,
+    riskWeightSpec: DEFAULT_CONFIG.riskWeightSpec,
+    defaultTarget1Pct: DEFAULT_CONFIG.defaultTarget1Pct,
+    defaultTarget2Pct: DEFAULT_CONFIG.defaultTarget2Pct,
+    defaultTrailingPct: DEFAULT_CONFIG.defaultTrailingPct,
+  };
 }
 
 export function validateWealthUltraConfig(c: WealthUltraConfig): { valid: boolean; error?: string } {

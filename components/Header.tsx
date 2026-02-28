@@ -36,6 +36,26 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const { currency, setCurrency } = useCurrency();
   const { isAiAvailable } = useAI();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
+  const [pricesStatusLabel, setPricesStatusLabel] = useState('');
+  const lastUpdatedRef = useRef(lastUpdated);
+  lastUpdatedRef.current = lastUpdated;
+  useEffect(() => {
+    if (!lastUpdated) {
+      setPricesStatusLabel(isLive ? 'Live prices' : 'Simulated prices');
+      return;
+    }
+    const formatRel = (at: Date) => {
+      const s = Math.floor((Date.now() - at.getTime()) / 1000);
+      return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+    setPricesStatusLabel(isLive ? `Live · ${formatRel(lastUpdated)}` : `Simulated · ${formatRel(lastUpdated)}`);
+    const t = setInterval(() => {
+      const at = lastUpdatedRef.current;
+      if (!at) return;
+      setPricesStatusLabel(isLive ? `Live · ${formatRel(at)}` : `Simulated · ${formatRel(at)}`);
+    }, 10000);
+    return () => clearInterval(t);
+  }, [lastUpdated, isLive]);
   
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
@@ -177,19 +197,20 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   onClick={refreshPrices} 
                   disabled={isRefreshing}
                   className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center space-x-2 ${isRefreshing ? 'animate-pulse' : ''}`}
-                  title="Refresh Market Prices"
+                  title={isLive ? (lastUpdated ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.` : 'Live prices. Click to refresh.') : 'Simulated prices. Click to fetch live prices.'}
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
                   <div className="flex flex-col items-start">
                     <span className="text-[10px] font-bold uppercase tracking-widest hidden xl:block">Refresh Prices</span>
-                    <span className={`text-[8px] font-bold uppercase px-1 rounded ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} hidden xl:block`}>
+                    <span className={`inline-flex items-center gap-1 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded hidden xl:flex ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={isLive ? 'Live market data' : 'Simulated (no API)'}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-green-500' : 'bg-amber-500'}`} />
                       {isLive ? 'Live' : 'Simulated'}
                     </span>
                   </div>
                 </button>
-                {lastUpdated && (
-                  <span className="text-[9px] text-gray-400 font-mono -mt-1 px-2">
-                    Updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                {pricesStatusLabel && (
+                  <span className="text-[9px] text-gray-400 -mt-1 px-2 hidden xl:block" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
+                    {isRefreshing ? 'Updating…' : pricesStatusLabel}
                   </span>
                 )}
               </div>

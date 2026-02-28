@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIRebalancingPlan } from '../services/geminiService';
+import { getAIRebalancingPlan, formatAiError } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
@@ -13,6 +13,7 @@ const AIRebalancerView: React.FC = () => {
     const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data.investments[0]?.id || '');
     const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
     const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
+    const [planError, setPlanError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
     const selectedPortfolio = useMemo(() => {
@@ -23,9 +24,15 @@ const AIRebalancerView: React.FC = () => {
         if (!selectedPortfolio) return;
         setIsLoading(true);
         setRebalancingPlan('');
-        const plan = await getAIRebalancingPlan(selectedPortfolio.holdings, riskProfile);
-        setRebalancingPlan(plan);
-        setIsLoading(false);
+        setPlanError(null);
+        try {
+            const plan = await getAIRebalancingPlan(selectedPortfolio.holdings, riskProfile);
+            setRebalancingPlan(plan);
+        } catch (err) {
+            setPlanError(formatAiError(err));
+        } finally {
+            setIsLoading(false);
+        }
     }, [selectedPortfolio, riskProfile]);
     
     const currentAllocation = useMemo(() => {
@@ -112,6 +119,12 @@ const AIRebalancerView: React.FC = () => {
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
                     </div>
+                    {planError && !isLoading && (
+                        <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                            <SafeMarkdownRenderer content={planError} />
+                            <button type="button" onClick={handleGeneratePlan} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button>
+                        </div>
+                    )}
                     {isLoading && (
                         <div className="flex justify-center items-center h-full min-h-[400px]">
                             <p className="text-gray-500">Analyzing your portfolio and generating suggestions...</p>
@@ -120,7 +133,7 @@ const AIRebalancerView: React.FC = () => {
                     {rebalancingPlan && !isLoading && (
                         <SafeMarkdownRenderer content={rebalancingPlan} />
                     )}
-                    {!rebalancingPlan && !isLoading && (
+                    {!rebalancingPlan && !isLoading && !planError && (
                          <div className="flex justify-center items-center h-full min-h-[400px] text-center text-gray-500">
                             <p>Select a portfolio and risk profile, then click "Generate Plan" to see educational rebalancing ideas.</p>
                         </div>

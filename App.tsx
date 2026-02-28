@@ -10,6 +10,7 @@ import { MarketDataProvider } from './context/MarketDataContext';
 import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
+import LoadingSpinner from './components/LoadingSpinner';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -30,22 +31,21 @@ const Settings = lazy(() => import('./pages/Settings'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
 
-const LoadingSpinner: React.FC = () => (
-    <div className="flex justify-center items-center h-96">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary"></div>
-    </div>
-);
-
-
 const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Investments', 'Assets', 'Liabilities', 'Transactions', 'Budgets', 'Plan', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'System & APIs Health', 'Settings', 'Wealth Ultra'];
-const LAST_PAGE_KEY = 'h.s.last-page';
+
+function getPageFromHash(): Page | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const hash = window.location.hash.slice(1);
+    const decoded = hash ? decodeURIComponent(hash) : '';
+    if (decoded && VALID_PAGES.includes(decoded as Page)) return decoded as Page;
+  } catch (_) {}
+  return null;
+}
 
 function getInitialPage(): Page {
-  if (typeof window === 'undefined') return 'Dashboard';
-  try {
-    const saved = localStorage.getItem(LAST_PAGE_KEY);
-    if (saved && VALID_PAGES.includes(saved as Page)) return saved as Page;
-  } catch (_) {}
+  const fromHash = getPageFromHash();
+  if (fromHash) return fromHash;
   return 'Dashboard';
 }
 
@@ -53,7 +53,21 @@ const App: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
   const setActivePage = useCallback((page: Page) => {
     setActivePageState(page);
-    try { localStorage.setItem(LAST_PAGE_KEY, page); } catch (_) {}
+    try {
+      const hash = '#' + encodeURIComponent(page);
+      if (window.location.hash !== hash) window.location.hash = hash;
+    } catch (_) {}
+  }, []);
+
+  // Sync state from URL when user uses browser back/forward
+  React.useEffect(() => {
+    const onHashChange = () => {
+      const page = getPageFromHash();
+      setActivePageState(page ?? 'Dashboard');
+    };
+    window.addEventListener('hashchange', onHashChange);
+    if (!window.location.hash) window.location.replace('#Dashboard');
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
   const [isLoginView, setIsLoginView] = useState(true);
@@ -79,7 +93,7 @@ const App: React.FC = () => {
       case 'Accounts': return <Accounts setActivePage={setActivePage} />;
       case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Assets': return <Assets {...actionProps} />;
-      case 'Liabilities': return <Liabilities />;
+      case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets />;
       case 'Goals': return <Goals setActivePage={setActivePage} />;
@@ -107,7 +121,7 @@ const App: React.FC = () => {
             <NotificationsProvider>
               <MarketSimulator />
               <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-              <Suspense fallback={<LoadingSpinner />}>
+              <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
                 {renderPage()}
               </Suspense>
               </Layout>
