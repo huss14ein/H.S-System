@@ -218,6 +218,17 @@ function resolveAccountId(candidate: string | undefined, accounts: Account[]): s
     return external?.id;
 }
 
+/** Map portfolio to DB row (snake_case). Supabase schema uses account_id, not accountId. */
+function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { name: string; accountId: string }): Record<string, unknown> {
+    const row: Record<string, unknown> = {
+        name: portfolio.name,
+        account_id: portfolio.accountId,
+    };
+    if (portfolio.goalId != null) row.goal_id = portfolio.goalId;
+    if (portfolio.owner != null) row.owner = portfolio.owner;
+    return row;
+}
+
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
     const row: Record<string, unknown> = {
         user_id: plan.user_id,
@@ -542,7 +553,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await db.from('transactions').insert(mock.transactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
 
             // Portfolios
-            const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, accountId: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
+            const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, account_id: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
             if (portError || !newPortfolios) throw portError || new Error("Failed to create portfolios");
 
             const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
@@ -550,7 +561,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Holdings and Investment Transactions
             const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(({ id, ...h }) => ({...h, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
             await db.from('holdings').insert(holdingsToInsert);
-            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
+            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
 
             alert("Demo data loaded successfully!");
         } catch(error) {
@@ -810,18 +821,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
+        const row = investmentPortfolioToRow(portfolio);
+        const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding portfolio:", error);
             alert(`Failed to add portfolio: ${error.message}`);
             throw error;
         }
-        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
+        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, accountId: (newPortfolio as any).account_id ?? (newPortfolio as any).accountId, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('investment_portfolios').update(portfolio).match({ id: portfolio.id, user_id: auth.user.id });
+        const row = investmentPortfolioToRow(portfolio);
+        const { error } = await db.from('investment_portfolios').update(row).match({ id: portfolio.id, user_id: auth.user.id });
         if(error) console.error("Error updating portfolio:", error);
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
     };
