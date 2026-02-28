@@ -174,8 +174,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
 
 
     const planAlignment = useMemo(() => {
-        const statusBySymbol = new Map((data.portfolioUniverse || []).map((t: any) => [String(t.ticker || '').toUpperCase(), t.status]));
-        const rows = data.plannedTrades.map(plan => {
+        const universe = data.portfolioUniverse ?? [];
+        const plannedTrades = data.plannedTrades ?? [];
+        const statusBySymbol = new Map(universe.map((t: any) => [String(t.ticker || '').toUpperCase(), t.status]));
+        const rows = plannedTrades.map(plan => {
             const universeStatus = statusBySymbol.get(plan.symbol.toUpperCase()) || 'Untracked';
             const isBuy = plan.tradeType === 'buy';
             const recommendation = universeStatus === 'Core' || universeStatus === 'High-Upside'
@@ -184,11 +186,13 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 ? 'Small sizing only'
                 : universeStatus === 'Quarantine'
                 ? 'Reduce / avoid new exposure'
+                : universeStatus === 'Watchlist' || universeStatus === 'Excluded'
+                ? 'Review manually'
                 : 'Review manually';
             const suggestedTradeType: 'buy' | 'sell' = universeStatus === 'Quarantine' ? 'sell' : 'buy';
             const aligned = universeStatus === 'Untracked'
                 ? null
-                : (isBuy && universeStatus !== 'Quarantine') || (!isBuy && universeStatus === 'Quarantine');
+                : (isBuy && !['Quarantine'].includes(universeStatus)) || (!isBuy && universeStatus === 'Quarantine');
             const reason = aligned === false
                 ? (isBuy && universeStatus === 'Quarantine'
                     ? 'Buy conflicts with quarantine status.'
@@ -223,7 +227,8 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
 
 
     const handleAddToUniverse = async (plan: PlannedTrade) => {
-        const exists = (data.portfolioUniverse || []).some(t => t.ticker.toUpperCase() == plan.symbol.toUpperCase());
+        const universe = data.portfolioUniverse ?? [];
+        const exists = universe.some((t: { ticker: string }) => t.ticker.toUpperCase() === plan.symbol.toUpperCase());
         if (exists) {
             setAlignmentFilter('All');
             setSymbolFocus(plan.symbol);
@@ -295,8 +300,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     ] as const;
 
     const aiPlanCandidates = useMemo(() => {
-        const plannedSymbols = new Set(data.plannedTrades.map(p => p.symbol.toUpperCase()));
-        return (data.portfolioUniverse || [])
+        const plannedTrades = data.plannedTrades ?? [];
+        const universe = data.portfolioUniverse ?? [];
+        const plannedSymbols = new Set(plannedTrades.map(p => p.symbol.toUpperCase()));
+        return universe
             .filter((ticker: any) => ['Core', 'High-Upside', 'Quarantine'].includes(ticker.status))
             .filter((ticker: any) => !plannedSymbols.has(String(ticker.ticker || '').toUpperCase()))
             .slice(0, 8)
@@ -304,13 +311,14 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 symbol: String(ticker.ticker || '').toUpperCase(),
                 name: ticker.name || ticker.ticker,
                 status: ticker.status,
-                monthlyWeight: ticker.monthly_weight || 0,
+                monthlyWeight: ticker.monthly_weight ?? 0,
                 suggestion: ticker.status === 'Quarantine' ? 'sell' as const : 'buy' as const,
             }));
     }, [data.portfolioUniverse, data.plannedTrades]);
 
     const handleCreatePlanFromAi = async (candidate: { symbol: string; name: string; status: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
-        const existing = data.plannedTrades.some(plan => plan.symbol.toUpperCase() === candidate.symbol.toUpperCase());
+        const plannedTrades = data.plannedTrades ?? [];
+        const existing = plannedTrades.some(plan => plan.symbol.toUpperCase() === candidate.symbol.toUpperCase());
         if (existing) {
             setSymbolFocus(candidate.symbol);
             return;
@@ -333,8 +341,9 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     };
 
     const visiblePlans = useMemo(() => {
-        if (!symbolFocus) return data.plannedTrades;
-        return data.plannedTrades.filter(plan => plan.symbol.toUpperCase() === symbolFocus.toUpperCase());
+        const plannedTrades = data.plannedTrades ?? [];
+        if (!symbolFocus) return plannedTrades;
+        return plannedTrades.filter(plan => plan.symbol.toUpperCase() === symbolFocus.toUpperCase());
     }, [data.plannedTrades, symbolFocus]);
 
     const isTriggered = (plan: PlannedTrade) => {
@@ -458,15 +467,15 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-white border border-gray-200 rounded-lg p-4">
                     <p className="text-xs uppercase text-gray-500">Planned Trades</p>
-                    <p className="text-2xl font-bold text-dark mt-1">{data.plannedTrades.length}</p>
+                    <p className="text-2xl font-bold text-dark mt-1">{(data.plannedTrades ?? []).length}</p>
                 </div>
                 <div className="bg-white border border-yellow-200 rounded-lg p-4">
                     <p className="text-xs uppercase text-yellow-700">Triggered</p>
-                    <p className="text-2xl font-bold text-yellow-700 mt-1">{data.plannedTrades.filter(isTriggered).length}</p>
+                    <p className="text-2xl font-bold text-yellow-700 mt-1">{(data.plannedTrades ?? []).filter(isTriggered).length}</p>
                 </div>
                 <div className="bg-white border border-green-200 rounded-lg p-4">
                     <p className="text-xs uppercase text-green-700">Executed</p>
-                    <p className="text-2xl font-bold text-green-700 mt-1">{data.plannedTrades.filter(p => p.status === 'Executed').length}</p>
+                    <p className="text-2xl font-bold text-green-700 mt-1">{(data.plannedTrades ?? []).filter(p => p.status === 'Executed').length}</p>
                 </div>
             </div>
 

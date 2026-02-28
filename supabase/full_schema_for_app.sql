@@ -48,9 +48,46 @@ create table if not exists public.investment_plan (
   core_portfolio jsonb default '[]',
   upside_sleeve jsonb default '[]',
   broker_constraints jsonb default '{"allowFractionalShares":true,"minimumOrderSize":100,"roundingRule":"round","leftoverCashRule":"reinvest_core"}',
+  sleeves jsonb default null,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- Ensure sleeves column exists (for DBs where investment_plan was created before this column was added)
+do $$
+begin
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'investment_plan') then
+    alter table public.investment_plan add column if not exists sleeves jsonb default null;
+  end if;
+end $$;
+
+comment on column public.investment_plan.sleeves is 'General sleeve definitions: [{ "id": "core", "label": "Core", "targetPct": 70, "tickers": ["AAPL", ...] }, ...]. If null, derived from core_allocation/upside_allocation and core_portfolio/upside_sleeve.';
+
+-- 3b. Wealth Ultra config (system-wide; general share/sleeve defaults, not code-specific)
+create table if not exists public.wealth_ultra_config (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  fx_rate numeric not null default 0.27,
+  cash_reserve_pct numeric not null default 10,
+  max_per_ticker_pct numeric not null default 20,
+  risk_weight_low numeric not null default 1,
+  risk_weight_med numeric not null default 1.25,
+  risk_weight_high numeric not null default 1.5,
+  risk_weight_spec numeric not null default 2,
+  default_target_1_pct numeric not null default 15,
+  default_target_2_pct numeric not null default 25,
+  default_trailing_pct numeric not null default 10,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+comment on table public.wealth_ultra_config is 'System-wide (user_id null) or per-user Wealth Ultra defaults. General config for shares/sleeves; not hardcoded in app.';
+
+create index if not exists idx_wealth_ultra_config_user on public.wealth_ultra_config(user_id);
+
+insert into public.wealth_ultra_config (id, user_id, fx_rate, cash_reserve_pct, max_per_ticker_pct, risk_weight_low, risk_weight_med, risk_weight_high, risk_weight_spec, default_target_1_pct, default_target_2_pct, default_trailing_pct)
+select gen_random_uuid(), null, 0.27, 10, 20, 1, 1.25, 1.5, 2, 15, 25, 10
+where not exists (select 1 from public.wealth_ultra_config where user_id is null limit 1);
 
 -- 4. Portfolio universe (tickers for investment plan)
 create table if not exists public.portfolio_universe (
@@ -141,8 +178,24 @@ begin
     alter table public.investment_plan add column if not exists core_portfolio jsonb default '[]';
     alter table public.investment_plan add column if not exists upside_sleeve jsonb default '[]';
     alter table public.investment_plan add column if not exists broker_constraints jsonb default '{}';
+    alter table public.investment_plan add column if not exists sleeves jsonb default null;
     alter table public.investment_plan add column if not exists created_at timestamptz default now();
     alter table public.investment_plan add column if not exists updated_at timestamptz default now();
+  end if;
+
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'wealth_ultra_config') then
+    alter table public.wealth_ultra_config add column if not exists fx_rate numeric default 0.27;
+    alter table public.wealth_ultra_config add column if not exists cash_reserve_pct numeric default 10;
+    alter table public.wealth_ultra_config add column if not exists max_per_ticker_pct numeric default 20;
+    alter table public.wealth_ultra_config add column if not exists risk_weight_low numeric default 1;
+    alter table public.wealth_ultra_config add column if not exists risk_weight_med numeric default 1.25;
+    alter table public.wealth_ultra_config add column if not exists risk_weight_high numeric default 1.5;
+    alter table public.wealth_ultra_config add column if not exists risk_weight_spec numeric default 2;
+    alter table public.wealth_ultra_config add column if not exists default_target_1_pct numeric default 15;
+    alter table public.wealth_ultra_config add column if not exists default_target_2_pct numeric default 25;
+    alter table public.wealth_ultra_config add column if not exists default_trailing_pct numeric default 10;
+    alter table public.wealth_ultra_config add column if not exists created_at timestamptz default now();
+    alter table public.wealth_ultra_config add column if not exists updated_at timestamptz default now();
   end if;
 
   -- portfolio_universe

@@ -9,13 +9,13 @@ import type {
 import { getDefaultWealthUltraConfig, validateWealthUltraConfig } from './config';
 import { buildWealthUltraPositions, type PriceMap } from './position';
 import { getTotalPortfolioValue, computeSleeveAllocations } from './allocationEngine';
-import { computePlannedAdjustment, getTotalPlannedBuyCost, validateAdjustment } from './adjustmentEngine';
+import { computePlannedAdjustment } from './adjustmentEngine';
 import { applyExitEngine } from './exitEngine';
-import { runCashPlanner, computeDeployableCash } from './cashPlanner';
-import { generateOrders, exportOrdersJson } from './orderGenerator';
+import { runCashPlanner } from './cashPlanner';
+import { generateOrders } from './orderGenerator';
 import { runMonthlyCoreDeployment } from './monthlyDeployment';
 import { isSpecBreach, shouldDisableNewSpecBuys } from './specRisk';
-import { rankByCapitalEfficiency, capitalEfficiencyScore } from './capitalEfficiency';
+import { rankByCapitalEfficiency } from './capitalEfficiency';
 import { runAlertEngine } from './alertEngine';
 
 export type WealthUltraEngineInput = {
@@ -86,9 +86,6 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
 export {
   getDefaultWealthUltraConfig,
   validateWealthUltraConfig,
-  DEFAULT_CORE_TICKERS,
-  DEFAULT_UPSIDE_TICKERS,
-  DEFAULT_SPEC_TICKERS,
   getRiskWeight,
 } from './config';
 export { buildWealthUltraPositions, tickerToSleeve, tickerToRiskTier } from './position';

@@ -118,6 +118,7 @@ const WatchlistItemRow: React.FC<{
 const WatchlistView: React.FC = () => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, updatePriceAlert, deletePriceAlert } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
+    const { formatCurrencyString } = useFormatCurrency();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);

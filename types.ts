@@ -275,6 +275,8 @@ export interface FinancialData {
   priceAlerts: PriceAlert[];
   plannedTrades: PlannedTrade[];
   investmentPlan: InvestmentPlanSettings;
+  /** System-wide Wealth Ultra defaults (from wealth_ultra_config). General share/sleeve config. */
+  wealthUltraConfig?: WealthUltraSystemConfig | null;
   portfolioUniverse: UniverseTicker[];
   statusChangeLog: StatusChangeLog[];
   executionLogs: InvestmentPlanExecutionLog[];
@@ -335,6 +337,14 @@ export interface BrokerConstraints {
     leftoverCashRule: 'reinvest_core' | 'hold';
 }
 
+/** General sleeve definition from the system (not code-specific). */
+export interface SleeveDefinition {
+  id: string;
+  label: string;
+  targetPct: number;
+  tickers: string[];
+}
+
 export interface InvestmentPlanSettings {
   user_id?: string;
   monthlyBudget: number;
@@ -350,7 +360,23 @@ export interface InvestmentPlanSettings {
   target_provider: string;
   corePortfolio: CorePortfolioDefinition[];
   upsideSleeve: UpsideSleeveDefinition[];
+  /** General sleeve definitions from system. If set, used instead of core/upside/spec split. */
+  sleeves?: SleeveDefinition[] | null;
   brokerConstraints: BrokerConstraints;
+}
+
+/** Wealth Ultra numeric config from system (wealth_ultra_config table). General, not code-specific. */
+export interface WealthUltraSystemConfig {
+  fxRate: number;
+  cashReservePct: number;
+  maxPerTickerPct: number;
+  riskWeightLow: number;
+  riskWeightMed: number;
+  riskWeightHigh: number;
+  riskWeightSpec: number;
+  defaultTarget1Pct: number;
+  defaultTarget2Pct: number;
+  defaultTrailingPct: number;
 }
 
 export interface ProposedTrade {

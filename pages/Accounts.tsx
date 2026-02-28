@@ -201,14 +201,6 @@ const Accounts: React.FC = () => {
         window.localStorage.setItem('accounts-card-density', cardDensity);
     }, [cardDensity]);
 
-    const resetSectionOrder = () => {
-        setSectionOrder({
-            cash: cashAccounts.map(a => a.id),
-            credit: creditAccounts.map(a => a.id),
-            investment: investmentAccounts.map(a => a.id),
-        });
-    };
-
     const reorderIds = (ids: string[], id: string, direction: 'up' | 'down') => {
         const index = ids.indexOf(id);
         if (index < 0) return ids;

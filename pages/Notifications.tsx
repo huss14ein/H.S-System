@@ -84,11 +84,11 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
     }, [notificationsWithRead, filter]);
 
     const handleMarkAsRead = (id: string) => {
-        setReadIds(prev => new Set([...prev, id]));
+        setReadIds(p => new Set([...p, id]));
     };
 
     const handleMarkAllAsRead = () => {
-        setReadIds(prev => new Set(notificationsWithRead.map(n => n.id)));
+        setReadIds(() => new Set(notificationsWithRead.map(n => n.id)));
     };
     
     const handleNotificationClick = (notification: Notification) => {

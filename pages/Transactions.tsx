@@ -210,7 +210,7 @@ interface TransactionsProps {
 }
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, loading, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
+    const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
