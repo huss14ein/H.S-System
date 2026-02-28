@@ -103,9 +103,12 @@ const AIRebalancerView: React.FC = () => {
 
                 {/* Results Panel */}
                 <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow">
-                    <div className="flex items-center space-x-2 mb-4">
-                        <LightBulbIcon className="h-6 w-6 text-yellow-500" />
-                        <h3 className="text-xl font-semibold text-dark">AI Rebalancing Suggestions</h3>
+                    <div className="mb-4">
+                        <div className="flex items-center space-x-2">
+                            <LightBulbIcon className="h-6 w-6 text-yellow-500" />
+                            <h3 className="text-xl font-semibold text-dark">Rebalancing Suggestions</h3>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
                     </div>
                     {isLoading && (
                         <div className="flex justify-center items-center h-full min-h-[400px]">

@@ -1,4 +1,4 @@
-import React, { useState, useContext, useMemo } from 'react';
+import React, { useState, useContext, useMemo, useRef, useEffect } from 'react';
 import { Page } from '../types';
 import { NAVIGATION_ITEMS } from '../constants';
 import { HSLogo } from './icons/HSLogo';
@@ -49,6 +49,35 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     const unreadNotifications = (data.notifications || []).filter(n => !n.read).length;
     return priceAlerts + pendingTransactions + pendingPlannedTrades + unreadNotifications;
   }, [data]);
+
+  const prevNotificationCountRef = useRef(notificationCount);
+  const playNotificationSound = useRef(() => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.15);
+    } catch (_) {}
+  }).current;
+
+  useEffect(() => {
+    if (notificationCount > prevNotificationCountRef.current && prevNotificationCountRef.current >= 0) {
+      playNotificationSound();
+    }
+    prevNotificationCountRef.current = notificationCount;
+  }, [notificationCount, playNotificationSound]);
+
+  const handleBellClick = () => {
+    if (notificationCount > 0) playNotificationSound();
+    setActivePage('Notifications');
+  };
 
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
@@ -186,7 +215,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
               
-              <button onClick={() => setActivePage('Notifications')} className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all">
+              <button onClick={handleBellClick} className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all" aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}>
                   <BellIcon className="h-6 w-6" />
                   {notificationCount > 0 && (
                       <span className="absolute top-2 right-2 flex h-4 w-4">

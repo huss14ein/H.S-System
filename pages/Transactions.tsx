@@ -11,6 +11,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
+import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 
@@ -121,14 +122,26 @@ const TransactionModal: React.FC<{
         <Modal isOpen={isOpen} onClose={onClose} title={transactionToEdit ? 'Edit Transaction' : 'Add Transaction'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div className="grid grid-cols-2 gap-4">
-                    <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                    <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Date <InfoHint text="Transaction date; used for monthly reports and budget tracking." /></label>
+                        <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="Enter a positive number; the system records income as positive and expense as negative." /></label>
+                        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
+                    </div>
                 </div>
-                <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                    <option value="" disabled>Select an Account</option>
-                    {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
-                </select>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Description <InfoHint text="Short description for the transaction; AI can suggest category from this." /></label>
+                    <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
+                    <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                        <option value="" disabled>Select an Account</option>
+                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
+                    </select>
+                </div>
                 <div className="flex space-x-4">
                     <label className="flex items-center"><input type="radio" value="expense" checked={type === 'expense'} onChange={() => setType('expense')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Expense</span></label>
                     <label className="flex items-center"><input type="radio" value="income" checked={type === 'income'} onChange={() => setType('income')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Income</span></label>
@@ -137,7 +150,7 @@ const TransactionModal: React.FC<{
                      <div className="space-y-4 border-t pt-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
+                                <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Spending category; use AI suggest (sparkle) to auto-fill from description." /></label>
                                 <div className="relative">
                                     <input list="categories" id="category-input" value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md pr-10"/>
                                     <datalist id="categories">{allCategories.map(c => <option key={c} value={c} />)}</datalist>
@@ -147,23 +160,32 @@ const TransactionModal: React.FC<{
                                 </div>
                             </div>
                             <div>
-                                <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700">Subcategory (Optional)</label>
+                                <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
                                 <input type="text" id="subcategory" value={subcategory} onChange={e => setSubcategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                             </div>
                         </div>
-                        <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                            <option value="" disabled>Map to Budget</option>
-                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                        <div>
+                            <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
+                            <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                                <option value="" disabled>Map to Budget</option>
+                                {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
                         <div className="grid grid-cols-2 gap-4">
-                            <select value={transactionNature} onChange={e => setTransactionNature(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
-                                <option value="Variable">Variable Nature</option>
-                                <option value="Fixed">Fixed Nature</option>
-                            </select>
-                            <select value={expenseType} onChange={e => setExpenseType(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
-                                <option value="Core">Core Expense</option>
-                                <option value="Discretionary">Discretionary Expense</option>
-                            </select>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Nature <InfoHint text="Fixed: recurring (rent). Variable: changes each month (groceries)." /></label>
+                                <select value={transactionNature} onChange={e => setTransactionNature(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
+                                    <option value="Variable">Variable Nature</option>
+                                    <option value="Fixed">Fixed Nature</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Core: essentials. Discretionary: optional spending for analytics." /></label>
+                                <select value={expenseType} onChange={e => setExpenseType(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
+                                    <option value="Core">Core Expense</option>
+                                    <option value="Discretionary">Discretionary Expense</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                  )}

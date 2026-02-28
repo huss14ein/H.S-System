@@ -16,6 +16,7 @@ import AIAdvisor from '../components/AIAdvisor';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import ProgressBar from '../components/ProgressBar';
+import InfoHint from '../components/InfoHint';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -99,14 +100,26 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={goalToEdit ? 'Edit Goal' : 'Add New Goal'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
-                    <option value="High">High Priority</option>
-                    <option value="Medium">Medium Priority</option>
-                    <option value="Low">Low Priority</option>
-                </select>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Goal Name <InfoHint text="A clear name (e.g. Emergency Fund, World Trip) helps track progress and link assets." /></label>
+                    <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Target Amount <InfoHint text="The total amount you want to reach. Progress is calculated from linked assets and savings." /></label>
+                    <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Deadline <InfoHint text="Target date to reach this goal. Used to compute required monthly savings and status (On Track / At Risk)." /></label>
+                    <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Priority <InfoHint text="High/Medium/Low affects how the system suggests allocating savings across multiple goals." /></label>
+                    <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
+                        <option value="High">High Priority</option>
+                        <option value="Medium">Medium Priority</option>
+                        <option value="Low">Low Priority</option>
+                    </select>
+                </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Goal</button>
             </form>
         </Modal>
@@ -268,7 +281,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             </div>
             
             <div className="bg-indigo-50 p-4 rounded-lg">
-                <div className="flex items-center justify-between"><h4 className="font-semibold text-indigo-800">AI Savings Plan</h4><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
+                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-indigo-800">Savings Plan</h4><p className="text-xs text-indigo-700/80">From your expert advisor</p></div><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
                 {aiPlan && !isLoading && <div className="mt-2"><SafeMarkdownRenderer content={aiPlan} /></div>}
             </div>

@@ -22,6 +22,7 @@ import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import InfoHint from '../components/InfoHint';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
@@ -256,10 +257,22 @@ const RecordTradeModal: React.FC<{
         }
     };
 
+    const hasNoAccounts = !investmentAccounts.length;
+    const hasNoPortfolios = accountId ? portfoliosForAccount.length === 0 : true;
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
+            {hasNoAccounts ? (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+                    <p className="font-medium">No investment account yet</p>
+                    <p className="mt-1">Add an <strong>Investment</strong> account in Accounts, then create a portfolio under Investments. After that you can record trades here.</p>
+                </div>
+            ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
                  {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} SAR</span></div>}
+                 {hasNoPortfolios && accountId && (
+                    <div className="p-2 bg-amber-50 text-amber-800 text-sm rounded-md">No portfolio in this account. Create a portfolio first from the Investments page.</div>
+                 )}
                  <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label htmlFor="account-id" className="block text-sm font-medium text-gray-700">Platform</label>
@@ -314,8 +327,9 @@ const RecordTradeModal: React.FC<{
                     </select>
                 </div>
                 {(submitError || validationError) && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{submitError || validationError}</p>}
-                <button type="submit" disabled={!!validationError || isSubmitting} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : 'Record Trade'}</button>
+                <button type="submit" disabled={!!validationError || isSubmitting || hasNoPortfolios} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : 'Record Trade'}</button>
             </form>
+            )}
         </Modal>
     );
 };
@@ -354,7 +368,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                 </div>
                 <div className="bg-gray-50 p-4 rounded-lg">
                     <div className="flex items-center justify-between">
-                        <h4 className="font-semibold text-gray-800">AI Analyst Report</h4>
+                        <div><h4 className="font-semibold text-gray-800">Analyst Report</h4><p className="text-xs text-slate-500">From your expert investment advisor</p></div>
                         <button onClick={handleGetAIAnalysis} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                             <SparklesIcon className="h-4 w-4 mr-2" />
                             {isLoading ? 'Generating...' : 'Generate Report'}
@@ -803,7 +817,7 @@ const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, 
     return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
 };
 
-const InvestmentPlan: React.FC = () => {
+const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void }> = ({ onNavigateToTab }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
@@ -966,7 +980,11 @@ const InvestmentPlan: React.FC = () => {
                     <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors">Save Plan</button>
                 </div>
             </div>
-            
+            {onNavigateToTab && (
+                <p className="text-sm text-gray-600">
+                    Tied to: <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button> (add tickers) · <button type="button" onClick={() => onNavigateToTab('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button> (run allocation) · <button type="button" onClick={() => onNavigateToTab('Trade Advices')} className="text-primary font-medium hover:underline">Trade Advices</button> (review trades)
+                </p>
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Allocation Settings */}
@@ -974,42 +992,42 @@ const InvestmentPlan: React.FC = () => {
                         <h2 className="text-xl font-semibold text-dark mb-4">Allocation Settings</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Monthly Budget</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below." /></label>
                                 <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Budget Currency</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from settings." /></label>
                                 <input type="text" value={plan.budgetCurrency} disabled className="mt-1 w-full p-2 border rounded-md bg-gray-100" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Core Allocation (%)</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Core Allocation (%) <InfoHint text="Share of monthly budget for stable Core assets (e.g. index funds); the rest goes to High-Upside." /></label>
                                 <input type="number" value={plan.coreAllocation * 100} onChange={e => handlePlanChange('coreAllocation', parseFloat(e.target.value) / 100)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">High-Upside Allocation (%)</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
                                 <input type="number" value={plan.upsideAllocation * 100} onChange={e => handlePlanChange('upsideAllocation', parseFloat(e.target.value) / 100)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div className="md:col-span-2">
-                                <label className="block text-sm font-medium text-gray-700">Minimum Analyst Upside (%)</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Analyst Upside (%) <InfoHint text="Minimum price upside from analyst targets to be eligible for High-Upside sleeve." /></label>
                                 <input type="number" value={plan.minimumUpsidePercentage} onChange={e => handlePlanChange('minimumUpsidePercentage', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Stale Days (Analyst Target)</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Stale Days (Analyst Target) <InfoHint text="Max age of analyst target in days; older targets are treated as stale." /></label>
                                 <input type="number" value={plan.stale_days} onChange={e => handlePlanChange('stale_days', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Min Coverage (Analysts)</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Min Coverage (Analysts) <InfoHint text="Minimum number of analysts covering a stock for it to be eligible for High-Upside." /></label>
                                 <input type="number" value={plan.min_coverage_threshold} onChange={e => handlePlanChange('min_coverage_threshold', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Redirect Policy</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Redirect Policy <InfoHint text="Pro-rata: unallocated High-Upside goes to Core. Priority: fill by priority order." /></label>
                                 <select value={plan.redirect_policy} onChange={e => handlePlanChange('redirect_policy', e.target.value)} className="mt-1 w-full p-2 border rounded-md">
                                     <option value="pro-rata">Pro-rata (Balanced)</option>
                                     <option value="priority">Priority (Sequential)</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Target Provider</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Target Provider <InfoHint text="Source for analyst targets (e.g. TipRanks, Yahoo Finance); used for eligibility." /></label>
                                 <input type="text" value={plan.target_provider} onChange={e => handlePlanChange('target_provider', e.target.value)} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g. TipRanks, Yahoo Finance" />
                             </div>
                         </div>
@@ -1020,15 +1038,15 @@ const InvestmentPlan: React.FC = () => {
                         <h2 className="text-xl font-semibold text-dark mb-4">Broker & Execution Rules</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Minimum Order Size ({plan.budgetCurrency})</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Order Size ({plan.budgetCurrency}) <InfoHint text="Smallest order your broker allows; smaller allocations are skipped or combined." /></label>
                                 <input type="number" value={plan.brokerConstraints.minimumOrderSize} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, minimumOrderSize: parseFloat(e.target.value)})} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div className="flex items-center">
                                 <input type="checkbox" checked={plan.brokerConstraints.allowFractionalShares} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, allowFractionalShares: e.target.checked})} id="fractional-shares" className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                                <label htmlFor="fractional-shares" className="ml-2 block text-sm text-gray-900">Allow Fractional Shares</label>
+                                <label htmlFor="fractional-shares" className="ml-2 block text-sm text-gray-900 flex items-center">Allow Fractional Shares <InfoHint text="If your broker supports fractions, enable this for more accurate allocation." /></label>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Rounding Rule</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Rounding Rule <InfoHint text="How to round share quantities: round, floor, or ceiling to match broker rules." /></label>
                                 <select value={plan.brokerConstraints.roundingRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, roundingRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
                                     <option value="round">Round to nearest</option>
                                     <option value="floor">Floor (round down)</option>
@@ -1036,7 +1054,7 @@ const InvestmentPlan: React.FC = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Leftover Cash Rule</label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Leftover Cash Rule <InfoHint text="What to do with cash that can't form a full order: reinvest in Core or hold." /></label>
                                 <select value={plan.brokerConstraints.leftoverCashRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, leftoverCashRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
                                     <option value="reinvest_core">Re-invest in Core</option>
                                     <option value="hold">Hold in account</option>
@@ -1352,7 +1370,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onHoldingClick={handleHoldingClick}
             onEditHolding={handleOpenHoldingEditModal}
         />;
-      case 'Investment Plan': return <InvestmentPlan />;
+      case 'Investment Plan': return <InvestmentPlan onNavigateToTab={setActiveTab} />;
       case 'Execution History': return <ExecutionHistoryView />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'AI Rebalancer': return <AIRebalancerView />;

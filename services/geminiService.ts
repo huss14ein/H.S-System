@@ -3,11 +3,17 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
-const DEFAULT_SYSTEM_INSTRUCTION = `You are Finova AI, an elite financial assistant. Responses must be accurate, direct, and brief.
-- Lead with a one-sentence answer.
-- Then provide a short bulleted summary (max 3 bullets).
-- Use concrete numbers from provided data when available.
-- Never use HTML.`;
+
+/** Expert advisor persona: used so the AI speaks as a senior financial and investment advisor everywhere. */
+const EXPERT_ADVISOR_PERSONA = `You are Finova AI: a very clever, expert-level financial and investment advisor. You have deep experience in wealth management, portfolio construction, budgeting, and goal-based planning. You speak with authority, clarity, and insight—never generic. You spot what others miss and give direct, actionable guidance. You use precise numbers and concrete next steps. You are encouraging but honest.`;
+
+const DEFAULT_SYSTEM_INSTRUCTION = `${EXPERT_ADVISOR_PERSONA}
+
+Response style:
+- Lead with the main insight in one clear, expert-level sentence.
+- Use Markdown only: ### for section headers, - for bullets, ** for emphasis. Never use HTML.
+- Use section titles that convey meaning: "Key Highlights", "Areas for Attention", "Strategic Recommendation", "Status Assessment", "Next Steps".
+- One sentence per bullet. Use concrete numbers. No filler or hedging. Sound like a senior advisor, not a generic assistant.`;
 
 
 // --- AI Error Formatting ---
@@ -333,17 +339,9 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
     if (cached) return cached;
 
     try {
-        const prompt = `
-            You are a proactive financial analyst for the Finova platform. 
-            Analyze the user's complete financial data and generate a prioritized list of 4-5 insightful, encouraging, and actionable feed items.
-            Financial Data Snapshot:
-            - Net Worth: Calculate from assets, accounts, and liabilities.
-            - Recent Transactions: ${data.transactions.slice(0, 5).map(t => `${t.description}: ${t.amount}`).join(', ')}
-            - Budget Performance: ${data.budgets.map(b => `${b.category} limit ${b.limit}`).join(', ')}
-            - Goal Progress: ${data.goals.map(g => `${g.name} is at ${((g.currentAmount/g.targetAmount)*100).toFixed(0)}%`).join(', ')}
-            - Top Investment Holding: ${getTopHoldingSymbol(data.investments)}
-            Generate a JSON array of feed items based on the provided schema. Each item should have a 'type', 'title', 'description', and a relevant emoji.
-        `;
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this snapshot and return 4-5 feed items as JSON. Be direct: each title is one short punchy line; each description is one sentence with a number or action.
+Data: Recent tx: ${data.transactions.slice(0, 5).map(t => `${t.description} ${t.amount}`).join('; ')}. Budgets: ${data.budgets.map(b => `${b.category} ${b.limit}`).join('; ')}. Goals: ${data.goals.map(g => `${g.name} ${((g.currentAmount/g.targetAmount)*100).toFixed(0)}%`).join('; ')}. Top holding: ${getTopHoldingSymbol(data.investments)}.
+Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, specific), emoji (single). Prioritize what matters most.`;
 
         const response = await invokeAI({
             model: FAST_MODEL,
@@ -381,20 +379,17 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
   if (cached) return cached;
 
   try {
-    const prompt = `
-      You are a helpful personal finance assistant. Based on the following financial summary (all values in SAR), provide a brief, insightful, and encouraging analysis in Markdown format.
-      Your response must be in Markdown format only and contain no HTML tags.
-      Explain trends in net worth, investment returns, and asset allocation.
-      Start with a general overview, then provide two bullet points using ** for the title:
-      - **Positive Trends:** Mention 1-2 positive aspects.
-      - **Areas to Watch:** Gently point out 1-2 areas for improvement.
-      Financial Summary:
-      - Net Worth: ${summary.netWorth.toLocaleString()}
-      - Monthly Income: ${summary.monthlyIncome.toLocaleString()}
-      - Monthly Expenses: ${summary.monthlyExpenses.toLocaleString()}
-      - Total Investment ROI: ${(summary.roi * 100).toFixed(1)}%
-      Provide the Markdown analysis now.
-    `;
+    const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Summary (SAR): Net worth ${summary.netWorth.toLocaleString()}; income ${summary.monthlyIncome.toLocaleString()}; expenses ${summary.monthlyExpenses.toLocaleString()}; investment ROI ${(summary.roi * 100).toFixed(1)}%. Return a short, expert-level analysis in Markdown only (no HTML). Use ### for sections. Be direct with numbers and insight.
+
+### Overall
+One sentence on financial health this month.
+
+### Key Highlights
+- 1-2 positive bullets (trends, returns, allocation).
+
+### Areas to Watch
+- 1-2 bullets for improvement. Direct and brief.
+Markdown only.`;
     
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || "Could not retrieve AI analysis.";
@@ -424,25 +419,19 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
         }).join('\n');
 
-        const prompt = `
-            You are "Finova AI", a sharp and encouraging financial analyst. Analyze the following monthly spending data and provide a concise, actionable analysis in Markdown format.
+        const prompt = `You are Finova AI, a very clever expert financial advisor. Monthly spending:
+${budgetPerformance}
+Return a short, actionable analysis in Markdown only (no HTML). Use ### for each section. One sentence or 2 bullets each; use numbers.
 
-            **Spending Data for the Month:**
-            ${budgetPerformance}
+### Key Spending Insight
+- Main observation (e.g. which category is over/under; quote %).
 
-            **Your Task:**
-            Structure your response with these exact headers. Be direct, use numbers, and keep each point to a single sentence.
-            ### Key Spending Insight
-            - Identify the most significant spending observation. (e.g., "Shopping is your highest expense category at 45% over budget.")
+### Strategic Recommendation
+- One practical tip. One sentence.
 
-            ### Strategic Recommendation
-            - Provide one practical tip to address the key insight. (e.g., "Consider setting a 'no-spend' challenge for 3 days next week in the Shopping category.")
-            
-            ### Positive Note
-            - Highlight one area where spending is well-managed. (e.g., "Well done on keeping your 'Utilities' spending 20% under budget.")
-
-            Provide the Markdown analysis now.
-        `;
+### Positive Note
+- One area well-managed. One sentence.
+Markdown only.`;
 
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve transaction analysis.";
@@ -466,11 +455,11 @@ export const getAIFinancialPersona = async (
 
     try {
         const prompt = `
-            Analyze these financial metrics: Savings Rate: ${(savingsRate * 100).toFixed(1)}%, Debt-to-Asset Ratio: ${(debtToAssetRatio * 100).toFixed(1)}%, Emergency Fund: ${emergencyFundMonths.toFixed(1)} months, Investment Style: ${investmentStyle}.
+            You are Finova AI, a very clever expert financial and investment advisor. Analyze these financial metrics: Savings Rate: ${(savingsRate * 100).toFixed(1)}%, Debt-to-Asset Ratio: ${(debtToAssetRatio * 100).toFixed(1)}%, Emergency Fund: ${emergencyFundMonths.toFixed(1)} months, Investment Style: ${investmentStyle}.
             Generate a financial persona and a detailed report card as a single JSON object.
-            The persona title should be creative (e.g., "The Disciplined Planner").
+            The persona title should be creative and insightful (e.g., "The Disciplined Planner").
             The report card ratings must be one of: "Excellent", "Good", or "Needs Improvement".
-            Analysis and suggestions should be concise and educational.
+            Analysis and suggestions should be concise, educational, and expert-level—like a senior advisor's assessment.
         `;
 
         const response = await invokeAI({
@@ -507,29 +496,17 @@ export const getAIPlanAnalysis = async (totals: any, scenarios: any): Promise<st
     try {
         const { projectedNet } = totals;
         const { incomeShock, expenseStress } = scenarios;
-        const prompt = `
-            You are "Finova AI", a forward-thinking financial strategist. Analyze the user's annual plan and the active 'what-if' scenarios. Provide a concise, insightful, and encouraging analysis in Markdown format.
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Annual plan: projected savings ${projectedNet.toLocaleString()} SAR. Scenarios: income shock ${incomeShock.percent}% for ${incomeShock.duration} mo; expense stress ${expenseStress.percent}% on "${expenseStress.category}". Return a short, expert-level analysis in Markdown only (no HTML). Use ### for sections. Be direct with numbers and strategic insight.
 
-            **Annual Plan Data:**
-            - Baseline Projected Annual Savings: ${projectedNet.toLocaleString()} SAR
+### Scenario Impact
+- One sentence: total impact on projected annual savings (e.g. X SAR less, Y% decrease).
 
-            **Active Scenarios:**
-            - Income Shock: A ${incomeShock.percent}% change for ${incomeShock.duration} months.
-            - Expense Stress: A ${expenseStress.percent}% increase in the "${expenseStress.category}" category.
+### Strategic Recommendation
+- One high-impact tip to build resilience against these shocks. One sentence.
 
-            **Your Task:**
-            Structure your response with these exact headers. Be direct and use numbers.
-            ### Scenario Impact
-            - Quantify the total impact of these combined scenarios on the annual projected savings. (e.g., "These scenarios reduce your projected annual savings by 15,000 SAR, a 25% decrease.")
-
-            ### Resilience Tip
-            - Provide one high-impact recommendation to build resilience against these specific shocks. (e.g., "To counter the expense stress, consider building a 'discretionary buffer' by allocating 5% of your income to a separate savings account for unexpected costs.")
-            
-            ### The Big Picture
-            - Offer a brief, encouraging closing thought about the value of planning. (e.g., "Stress testing your plan like this is a powerful way to prepare for uncertainty and stay on track toward your long-term goals.")
-
-            Provide the Markdown analysis now.
-        `;
+### Summary
+- One short, encouraging line on the value of stress-testing the plan.
+Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve plan analysis.";
         setToCache(cacheKey, result);
@@ -549,26 +526,16 @@ export const getAIAnalysisPageInsights = async (
     if (cached) return cached;
     
     try {
-        const prompt = `
-            You are a senior financial analyst providing a holistic overview based on three key charts. Analyze the following data and provide a concise, insightful summary in Markdown format.
-            Your response must be in Markdown format only and contain no HTML tags.
+        const prompt = `You are Finova AI, a very clever expert financial advisor. Data: (1) Spending YTD: ${spendingData.slice(0, 5).map(d => `${d.name} ${d.value.toLocaleString()} SAR`).join('; ')}. (2) Monthly trend: ${trendData.map(d => `${d.name} Income ${d.income.toLocaleString()} Expenses ${d.expenses.toLocaleString()}`).join('; ')}. (3) Position: ${compositionData.map(d => `${d.name} ${d.value.toLocaleString()}`).join('; ')}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
-            1.  **Spending by Budget Category (YTD):**
-                ${spendingData.slice(0, 5).map(d => `- ${d.name}: ${d.value.toLocaleString()} SAR`).join('\n')}
+### Spending Habits
+- 1-2 bullets: top categories, concentration. Use numbers.
 
-            2.  **Monthly Income vs. Expense Trend (Recent Months):**
-                ${trendData.map(d => `- ${d.name}: Income ${d.income.toLocaleString()} SAR, Expenses ${d.expenses.toLocaleString()} SAR`).join('\n')}
+### Cash Flow Dynamics
+- 1-2 bullets: saving trend? Consistent? One sentence each.
 
-            3.  **Current Financial Position (Assets vs. Liabilities):**
-                ${compositionData.map(d => `- ${d.name}: ${d.value.toLocaleString()} SAR`).join('\n')}
-
-            Your analysis should have three sections using '###' headers:
-            - ### Spending Habits: Comment on the top spending categories. Is spending concentrated?
-            - ### Cash Flow Dynamics: Analyze the income vs. expense trend. Is the user saving money consistently?
-            - ### Balance Sheet Health: Interpret the asset vs. liability composition. Is the user building wealth effectively?
-            
-            Provide the Markdown analysis now.
-        `;
+### Balance Sheet Health
+- One sentence: asset vs liability; building wealth? Markdown only.`;
 
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
@@ -590,27 +557,19 @@ export const getAIInvestmentOverviewAnalysis = async (
     if (cached) return cached;
     
     try {
-        const prompt = `
-            You are a senior investment analyst performing a SWOT analysis (Strengths, Weaknesses, Opportunities, Threats) on a user's investment portfolio. Your response must be in Markdown format only and contain no HTML tags.
-            Analyze the following data:
+        const prompt = `You are Finova AI, a very clever expert investment advisor. Portfolio: ${portfolioAllocation.map(p => `${p.name} ${p.value.toLocaleString()} SAR`).join('; ')}. Asset classes: ${assetClassAllocation.map(a => `${a.name} ${a.value.toLocaleString()}`).join('; ')}. Top holdings performance: ${topHoldings.slice(0, 5).map(h => `${h.name} ${h.gainLossPercent.toFixed(2)}%`).join('; ')}. Return a short SWOT in Markdown only (no HTML). Use ### for each section. Be direct; 1-2 bullets each.
 
-            1.  **Portfolio Allocation (Value by portfolio):**
-                ${portfolioAllocation.map(p => `- ${p.name}: ${p.value.toLocaleString()} SAR`).join('\n')}
+### Strengths
+- Strong points (performers, diversification). Use numbers.
 
-            2.  **Asset Class Allocation (Value by asset type):**
-                ${assetClassAllocation.map(a => `- ${a.name}: ${a.value.toLocaleString()} SAR`).join('\n')}
+### Weaknesses
+- Weak points (concentration, underperformers).
 
-            3.  **Top 5 Holdings by Performance:**
-                ${topHoldings.slice(0, 5).map(h => `- ${h.name}: ${h.gainLossPercent.toFixed(2)}%`).join('\n')}
+### Opportunities
+- 1-2 actions that could improve the portfolio. Educational only.
 
-            Your analysis must have four sections using '###' headers:
-            - ### Strengths: What are the strong points? (e.g., good performers, diversification).
-            - ### Weaknesses: What are the weak points? (e.g., concentration risk, underperformers).
-            - ### Opportunities: What potential actions could improve the portfolio? (e.g., explore new asset classes).
-            - ### Threats: What are the external risks to this portfolio? (e.g., market volatility, sector-specific risks).
-            
-            Keep the analysis concise, strategic, and educational. Do not provide direct financial advice. Provide the Markdown analysis now.
-        `;
+### Threats
+- 1-2 external risks. One sentence each. No financial advice. Markdown only.`;
 
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         const result = response.text || "Could not retrieve analysis.";
@@ -654,29 +613,24 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
     }).join(', ');
 
     const prompt = `
-        You are "Finova AI", a senior personal financial advisor for a sophisticated wealth management platform. Your tone is professional, insightful, and encouraging.
-        Analyze the user's key financial data and provide a concise executive summary in Markdown format.
-        Your response must be in Markdown format only and contain no HTML tags.
-        
-        Financial Snapshot:
-        - This Month's P&L: ${monthlyPnL.toLocaleString()} SAR
-        - Budgets nearing limit (>90%): ${overspentBudgets || 'None'}
-        - Goal Progress: ${goalProgress || 'No goals set'}
+        You are Finova AI, a very clever expert financial and investment advisor. Analyze the user's data and return a short, direct executive summary in Markdown only (no HTML). Speak with authority and insight.
 
-        Structure your response with these exact headers:
+        Data: This month P&L ${monthlyPnL.toLocaleString()} SAR; budgets near limit (>90%): ${overspentBudgets || 'None'}; goal progress: ${goalProgress || 'No goals set'}.
+
+        Use exactly these ### section headers (one sentence or 2-3 bullets each; be specific with numbers):
         ### Overall Financial Health
-        A single, concise sentence summarizing the user's current financial standing for the month.
+        One sentence: current standing for the month.
 
         ### Key Highlights
-        - 2-3 positive bullet points based on the data. Mention specific numbers.
+        - 2-3 positive bullets with numbers.
 
         ### Areas for Attention
-        - 1-2 constructive bullet points about areas that need monitoring. Be gentle but direct.
+        - 1-2 items to watch; direct and constructive.
 
         ### Strategic Recommendation
-        - Provide one actionable, forward-looking recommendation to improve their financial situation.
-        
-        Provide the Markdown summary now.
+        - One actionable next step.
+
+        Output Markdown only.
     `;
 
     try {
@@ -695,7 +649,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
-    const prompt = `You are an expert investment analyst. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Do not give financial advice, and do not include any HTML tags. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+    const prompt = `You are Finova AI, a very clever expert investment advisor. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Be direct and insightful; do not give specific buy/sell advice. No HTML. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || "Could not retrieve analysis.";
     setToCache(cacheKey, result);
@@ -705,7 +659,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
     try {
-        const prompt = `You are a portfolio manager. Based on unrealized gains/losses, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Holdings: ${holdings.length} assets.`;
+        const prompt = `You are Finova AI, a very clever expert investment advisor. Based on unrealized gains/losses for ${holdings.length} assets, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Be direct and insightful.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
@@ -713,7 +667,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
-        const prompt = `You are an investment strategist. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Do not give financial advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+        const prompt = `You are Finova AI, a very clever expert investment advisor. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Speak as a senior advisor; do not give specific buy/sell advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { return formatAiError(error); }
@@ -722,7 +676,7 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<{ content: string, groundingChunks: any[] }> => {
     try {
         const finnhubBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol));
-        const prompt = `You are a financial news analyst. For these stocks (${stocks.map(s => s.symbol).join(', ')}), use Google Search and the provided Finnhub digest to generate a concise summary of the latest market news and analyst sentiment for each. Respond in markdown, using a '###' header for each stock symbol. Add a short section named "### Calendar Watch" for major upcoming macro events. Do not use any HTML tags in your response.\n\n${finnhubBrief ? `Reference data:\n${finnhubBrief}` : ''}`;
+        const prompt = `You are Finova AI, a very clever expert investment analyst. For stocks: ${stocks.map(s => s.symbol).join(', ')}. Use Google Search and the Finnhub digest below. Return a concise Markdown summary (no HTML). Use ### for each symbol and one short section ### Calendar Watch for major macro events. Be direct; one paragraph or 2-3 bullets per symbol.\n\n${finnhubBrief ? `Reference:\n${finnhubBrief}` : ''}`;
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
@@ -747,10 +701,25 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
 };
 
 export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
-    const prompt = `You are an educational trading coach. Analyze these recent transactions and provide educational feedback in markdown. Your response must not contain any HTML. 
-        Focus on identifying patterns (e.g., frequent trading, selling winners, buying losers) and explain the potential portfolio impact. 
-        Conclude with a key concept the user could research (e.g., 'dollar-cost averaging', 'portfolio diversification').
-        Avoid financial advice. Transactions: ${transactions.length} recent trades.`;
+    const txList = transactions.slice(0, 15).map(t => `${t.type} ${t.symbol} ${t.quantity} @ ${t.price} = ${t.total} on ${t.date}`).join('\n');
+    const prompt = `You are Finova AI, a very clever expert investment and trading advisor. Analyze these transactions and return direct, educational feedback in Markdown only (no HTML). Use ### for each section. Give expert-level pattern recognition and guidance.
+
+Transactions:
+${txList || 'None.'}
+
+Respond with exactly these ### sections (one short paragraph or 2-3 bullets each; be specific):
+### Summary
+What the user did in one sentence (buys/sells, main symbols, size).
+
+### Patterns
+- 1-2 bullets on concentration, timing, or lot size. Be direct.
+
+### Portfolio Impact
+- 1-2 bullets on what this implies for the portfolio. Plain language.
+
+### Concept to Research
+- One concept to look up (e.g. dollar-cost averaging, rebalancing). One sentence.
+Do not give buy/sell advice. Markdown only.`;
 
     const execute = async () => {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
@@ -790,7 +759,7 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
         const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
 
         const prompt = `
-            You are "Finova AI", a smart and encouraging financial coach. Analyze this goal and provide a direct, concise plan in Markdown.
+            You are Finova AI, a very clever expert financial and investment advisor. Analyze this goal and provide a direct, concise plan in Markdown. Speak as a senior advisor with clear, actionable guidance.
             
             **Goal Data:**
             - **Name:** ${goal.name}
@@ -843,29 +812,17 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         const totalAllocatedPercent = goals.reduce((sum, g) => sum + (g.savingsAllocationPercent || 0), 0);
         const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);
 
-        const prompt = `
-            You are "Finova AI", a sharp and encouraging strategist. Analyze the user's overall goal portfolio based on the following data. Your response must be direct, concise, and in Markdown format.
+        const unallocated = monthlySavings - allocatedSavings;
+        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: monthly savings ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; allocated ${allocatedSavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR (${totalAllocatedPercent}%); ${goals.length} goals. Progress: ${goalDataWithProgress}. Unallocated: ${unallocated.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
-            **Strategic Overview:**
-            - **Total Monthly Savings Capacity:** ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR
-            - **Currently Allocated Savings:** ${allocatedSavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR (${totalAllocatedPercent}%)
-            - **Number of Goals:** ${goals.length}
-            - **Individual Goal Progress:**
-            ${goalDataWithProgress}
+### Overall Assessment
+One sentence: health of their goal strategy.
 
-            **Your Task:**
-            1.  **Overall Assessment (1 sentence):** Start with a single, powerful sentence summarizing the health of their overall goal strategy.
-            2.  **Key Insight (1 bullet point):** Provide one crucial observation about their strategy (e.g., are they under-utilizing savings? are they spreading too thin?).
-            3.  **Strategic Recommendation (1 bullet point):** Offer one high-impact, actionable recommendation to improve their strategy. Be specific.
+### Key Insight
+- One crucial observation (e.g. under-using savings, spreading thin). Use numbers.
 
-            Example:
-            ### Strategic Analysis
-            Your goal strategy is solid, but you have untapped potential to accelerate your progress.
-            - **Key Insight:** You currently have ${((monthlySavings - allocatedSavings)).toLocaleString(undefined, {maximumFractionDigits: 0})} SAR of unallocated savings each month.
-            - **Strategic Recommendation:** Consider applying the 'Goal Avalanche' method: allocate your unallocated savings to the goal with the highest required monthly contribution to secure it faster.
-
-            Provide the analysis for the user's goals now.
-        `;
+### Strategic Recommendation
+- One high-impact, actionable tip. One sentence. Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not generate analysis.";
     } catch (error) { return formatAiError(error); }
@@ -874,7 +831,17 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
-        const prompt = `You are a portfolio analyst providing educational content. A user with a "${riskProfile}" profile has these holdings: ${holdingsSummary}. Generate a rebalancing plan analysis in markdown. Your response must not contain any HTML. Sections: Current Portfolio Analysis, Target Allocation for a ${riskProfile} Profile, Educational Rebalancing Suggestions. Do not give financial advice.`;
+        const prompt = `You are Finova AI, a very clever expert investment advisor specializing in portfolio construction. User risk profile: ${riskProfile}. Holdings: ${holdingsSummary}. Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each section. Be direct and specific.
+
+### Current Portfolio Analysis
+- One sentence on concentration/diversification; one on risk level.
+
+### Target Allocation (${riskProfile})
+- 2-3 bullets on how a ${riskProfile} investor might allocate. Use numbers if possible.
+
+### Rebalancing Suggestions
+- 2-3 concrete, educational steps (no buy/sell advice). One sentence each.
+Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve plan.";
     } catch (error) { return formatAiError(error); }
@@ -885,12 +852,14 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
-        const prompt = `You are a financial analyst. Using Google Search, provide a concise analyst report summary for the stock ${holding.name} (${holding.symbol}). 
-        Respond in markdown. Your response must not contain any HTML tags.
-        Include these sections using '###' headers:
-        - ### Recent News Summary: A brief of the latest significant news.
-        - ### General Analyst Sentiment: Summarize the current market sentiment (e.g., bullish, bearish, neutral).
-        Do not give direct buy/sell financial advice.`;
+        const prompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
+
+### Recent News Summary
+- 2-3 bullets on the latest significant news. One sentence each.
+
+### Analyst Sentiment
+- One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
+Markdown only.`;
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
@@ -909,7 +878,7 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
 
 export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses: number): Promise<string> => {
     try {
-        const prompt = `You are a holistic financial planner providing educational guidance. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Do not give specific financial advice.`;
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. User overview: Monthly Income: ${income}, Monthly Expenses: ${expenses}, Goals: ${goals.length}. Generate a strategic financial plan in markdown. Your response must not contain any HTML tags. Sections: Financial Health Snapshot, Goal-Oriented Strategy, General Recommendations for Research. Speak as a senior advisor; do not give specific buy/sell advice.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not generate plan.";
     } catch (error) { return formatAiError(error); }
@@ -917,7 +886,7 @@ export const getAIHolisticPlan = async (goals: Goal[], income: number, expenses:
 
 export const getAICategorySuggestion = async (description: string, categories: string[]): Promise<string> => {
     try {
-        const prompt = `You are an automated financial assistant. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name.`;
+        const prompt = `You are Finova AI, an expert financial advisor. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name, nothing else.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text?.trim() || "";
     } catch (error) {
@@ -926,8 +895,38 @@ export const getAICategorySuggestion = async (description: string, categories: s
     }
 };
 
+const SAR_PER_USD = 3.75;
+
+/** Fetch commodity prices from Finnhub (crypto). Returns prices in SAR. */
+export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> {
+    const token = import.meta.env.VITE_FINNHUB_API_KEY;
+    if (!token) return [];
+    const out: { symbol: string; price: number }[] = [];
+    for (const c of commodities) {
+        const sym = c.symbol.toUpperCase();
+        let finnhubSym = '';
+        if (sym === 'BTC_USD' || sym === 'BTC') finnhubSym = 'BINANCE:BTCUSDT';
+        else if (sym === 'ETH_USD' || sym === 'ETH') finnhubSym = 'BINANCE:ETHUSDT';
+        if (!finnhubSym) continue;
+        try {
+            const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
+            if (!res.ok) continue;
+            const row = await res.json();
+            const priceUsd = Number(row?.c);
+            if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+            out.push({ symbol: sym, price: priceUsd * SAR_PER_USD });
+        } catch {
+            // skip
+        }
+    }
+    return out;
+}
+
 export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
+
+    const pricesFromFinnhub = await getFinnhubCommodityPrices(commodities);
+    const finnhubMap = new Map(pricesFromFinnhub.map(p => [p.symbol, p.price]));
 
     try {
         const commodityList = commodities.map(c => `${c.name} (${c.symbol})`).join(', ');
@@ -959,15 +958,25 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
 
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         const prices = robustJsonParse(response.text);
-        const normalizedPrices = Array.isArray(prices)
+        let normalizedPrices = Array.isArray(prices)
             ? prices
                 .filter((p: any) => p && typeof p.symbol === 'string' && Number.isFinite(Number(p.price)))
                 .map((p: any) => ({ symbol: p.symbol.toUpperCase(), price: Number(p.price) }))
             : [];
 
+        for (const [symbol, price] of finnhubMap) {
+            const idx = normalizedPrices.findIndex((p: { symbol: string }) => p.symbol === symbol);
+            if (idx >= 0) normalizedPrices[idx] = { symbol, price };
+            else normalizedPrices.push({ symbol, price });
+        }
+
         return { prices: normalizedPrices, groundingChunks };
 
     } catch (error) {
+        if (finnhubMap.size > 0) {
+            const prices = Array.from(finnhubMap.entries()).map(([symbol, price]) => ({ symbol, price }));
+            return { prices, groundingChunks: [] };
+        }
         console.error("Error fetching AI commodity prices:", error);
         throw error;
     }
@@ -975,16 +984,17 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
 
 export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
     try {
-        const prompt = `You are a financial analyst specializing in dividend income. Analyze the following dividend data and provide a brief, insightful analysis in Markdown. Do not give financial advice, and do not include HTML tags.
-        - Year-to-Date (YTD) Dividend Income: ${ytdIncome.toLocaleString()} SAR
-        - Projected Annual Dividend Income: ${projectedAnnual.toLocaleString()} SAR
-        - Top Dividend Contributors: ${topPayers.map(p => `${p.name} (~${p.projected.toLocaleString()} SAR/yr)`).join(', ')}
+        const prompt = `You are a dividend analyst. Data: YTD ${ytdIncome.toLocaleString()} SAR; projected annual ${projectedAnnual.toLocaleString()} SAR; top payers: ${topPayers.map(p => `${p.name} (~${p.projected.toLocaleString()} SAR/yr)`).join(', ')}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
-        Your analysis should cover:
-        1.  The relationship between YTD and projected income (is it on track?).
-        2.  Concentration risk based on the top contributors.
-        3.  One educational suggestion for improving a dividend strategy.
-        `;
+### On Track?
+- One sentence: is YTD vs projected on track? Use numbers.
+
+### Concentration
+- 1-2 bullets on concentration risk from top contributors.
+
+### Suggestion
+- One educational tip to improve a dividend strategy. One sentence.
+No financial advice. Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
     } catch (error) { return formatAiError(error); }

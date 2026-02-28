@@ -52,15 +52,18 @@ const Zakat: React.FC = () => {
     const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
-    const [localGoldPrice, setLocalGoldPrice] = useState(String(data.settings.goldPrice || 275));
+    const defaultGold = Number((data.settings as any).gold_price ?? data.settings.goldPrice ?? 275);
+    const [localGoldPrice, setLocalGoldPrice] = useState(String(defaultGold));
     const [otherDebts, setOtherDebts] = useState(0);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     
     useEffect(() => {
-        setLocalGoldPrice(String(data.settings.goldPrice || 275));
-    }, [data.settings.goldPrice]);
+        const g = Number((data.settings as any).gold_price ?? data.settings.goldPrice ?? 275);
+        setLocalGoldPrice(String(g));
+    }, [data.settings]);
 
-    const nisab = useMemo(() => (data.settings.goldPrice || 275) * 85, [data.settings.goldPrice]);
+    const goldPrice = Number((data.settings as any).gold_price ?? data.settings.goldPrice ?? 275);
+    const nisab = useMemo(() => goldPrice * 85, [goldPrice]);
 
     const zakatableAssets = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);

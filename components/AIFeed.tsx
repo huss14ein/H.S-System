@@ -51,9 +51,12 @@ const AIFeed: React.FC = () => {
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                <div className="flex items-center space-x-2">
-                    <LightBulbIcon className="h-6 w-6 text-yellow-500" />
-                    <h2 className="text-xl font-semibold text-dark">For You</h2>
+                <div className="flex flex-col">
+                    <div className="flex items-center space-x-2">
+                        <LightBulbIcon className="h-6 w-6 text-yellow-500" />
+                        <h2 className="text-xl font-semibold text-dark">For You</h2>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p>
                 </div>
                 <button
                   type="button"
@@ -90,8 +93,17 @@ const AIFeed: React.FC = () => {
             {feedItems.length > 0 && !isLoading && !error && (
                  <div className="space-y-2">
                     {feedItems.map((item, index) => (
-                        <div key={index} className="flex items-start space-x-4 p-3 hover:bg-gray-50 rounded-lg">
-                            <div className="flex-shrink-0 w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-xl">
+                        <div
+                            key={index}
+                            className={`flex items-start space-x-4 p-3 rounded-lg border-l-4 hover:bg-gray-50/80 ${
+                                item.type === 'BUDGET' ? 'border-amber-500 bg-amber-50/30' :
+                                item.type === 'GOAL' ? 'border-blue-500 bg-blue-50/30' :
+                                item.type === 'INVESTMENT' ? 'border-violet-500 bg-violet-50/30' :
+                                item.type === 'SAVINGS' ? 'border-green-500 bg-green-50/30' :
+                                'border-primary/50 bg-primary/5'
+                            }`}
+                        >
+                            <div className="flex-shrink-0 w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm border border-gray-100">
                                 {item.emoji || <FeedItemIcon type={item.type} />}
                             </div>
                             <div>

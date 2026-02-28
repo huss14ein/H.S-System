@@ -7,6 +7,7 @@ import AIAdvisor from '../components/AIAdvisor';
 import SinkingFunds from './SinkingFunds';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import Modal from '../components/Modal';
+import InfoHint from '../components/InfoHint';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 
 
@@ -47,17 +48,29 @@ const EventModal: React.FC<{
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Add Major Life Event">
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md" />
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Event Name <InfoHint text="One-time life event (e.g. Wedding, Bonus) for scenario planning." /></label>
+                    <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md" />
+                </div>
                 <div className="grid grid-cols-2 gap-4">
-                    <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border rounded-md" />
-                    <select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full p-2 border rounded-md">
-                        {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="One-time amount (income or expense) in your plan currency." /></label>
+                        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border rounded-md" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Month <InfoHint text="Month when this event occurs in the plan year." /></label>
+                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full p-2 border rounded-md">
+                            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="One-time expense (e.g. wedding) or one-time income (e.g. bonus)." /></label>
+                    <select value={type} onChange={e => setType(e.target.value as any)} className="w-full p-2 border rounded-md">
+                        <option value="expense">One-time Expense</option>
+                        <option value="income">One-time Income</option>
                     </select>
                 </div>
-                <select value={type} onChange={e => setType(e.target.value as any)} className="w-full p-2 border rounded-md">
-                    <option value="expense">One-time Expense</option>
-                    <option value="income">One-time Income</option>
-                </select>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg">Save Event</button>
             </form>
         </Modal>
@@ -209,7 +222,7 @@ const AnnualFinancialPlan: React.FC = () => {
                 <p className="text-gray-500 mt-1">A detailed grid for planning and tracking your finances throughout the year.</p>
                 <div className="mt-2 flex items-center justify-center gap-2">
                     <button onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon className="h-5 w-5"/></button>
-                    <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="p-1 border rounded-md w-24 text-center font-semibold" />
+                    <label className="flex items-center gap-1"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="p-1 border rounded-md w-24 text-center font-semibold" /></label>
                     <button onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
                 </div>
             </div>
@@ -230,13 +243,24 @@ const AnnualFinancialPlan: React.FC = () => {
                 </ResponsiveContainer>
             </div>
             
+            {/* Plan vs actual summary */}
+            {totals && (
+                <div className="flex flex-wrap gap-4 p-3 bg-white rounded-lg shadow border border-gray-100">
+                    <span className="font-medium text-dark">Plan vs actual (year):</span>
+                    <span className={totals.actualNet >= totals.projectedNet ? 'text-green-700' : 'text-amber-700'}>
+                        Projected net: {formatCurrencyString(totals.projectedNet, { digits: 0 })} · Actual net: {formatCurrencyString(totals.actualNet, { digits: 0 })}
+                        {totals.projectedNet !== 0 && ` (${((totals.actualNet - totals.projectedNet) / Math.abs(totals.projectedNet) * 100).toFixed(0)}% vs plan)`}
+                    </span>
+                </div>
+            )}
+
             {/* Scenario Controls */}
             <div className="bg-white p-4 rounded-lg shadow">
                  <h3 className="text-lg font-semibold text-dark mb-2">Scenario Planning Tools</h3>
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
                      {/* Income Shock */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">Income Shock</label>
+                        <label className="font-medium text-sm flex items-center">Income Shock <InfoHint text="Simulate a change in income: e.g. +10% for 3 months starting month 5. Planned income in that range is scaled for scenario view." /></label>
                         <div className="flex items-center space-x-2">
                            <input type="number" value={incomeShock.percent} onChange={e => setIncomeShock(s => ({...s, percent: parseInt(e.target.value) || 0}))} className="w-20 p-1 border rounded-md" />
                            <span className="text-sm">% for</span>
@@ -247,7 +271,7 @@ const AnnualFinancialPlan: React.FC = () => {
                      </div>
                       {/* Expense Stress */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">Expense Stress Test</label>
+                        <label className="font-medium text-sm flex items-center">Expense Stress Test <InfoHint text="Stress-test expenses: increase one category or All by a percentage to see impact on the plan grid and net savings." /></label>
                         <div className="flex items-center space-x-2">
                            <span className="text-sm">Increase</span>
                            <select value={expenseStress.category} onChange={e => setExpenseStress(s => ({...s, category: e.target.value}))} className="p-1 border rounded-md text-sm">
@@ -261,7 +285,7 @@ const AnnualFinancialPlan: React.FC = () => {
                      </div>
                       {/* Major Events */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">Major Life Events</label>
+                        <label className="font-medium text-sm flex items-center">Major Life Events <InfoHint text="One-time income or expense events (e.g. bonus, wedding) that affect the plan; add via the button below." /></label>
                         <div className="text-xs space-y-1">
                             {events.map(e => <div key={e.id} className="flex justify-between"><span>{e.name} ({MONTHS[e.month-1]})</span><span>{formatCurrencyString(e.amount)}</span></div>)}
                         </div>

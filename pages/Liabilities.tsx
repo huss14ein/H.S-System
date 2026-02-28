@@ -11,6 +11,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import InfoHint from '../components/InfoHint';
 
 const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null; }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
     const [name, setName] = useState('');
@@ -46,14 +47,23 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={liabilityToEdit ? 'Edit Liability' : 'Add New Liability'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Liability Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select value={type} onChange={e => setType(e.target.value as any)} required className="w-full p-2 border border-gray-300 rounded-md">
-                    <option value="Credit Card">Credit Card</option>
-                    <option value="Loan">Loan (e.g., Car, Institutional)</option>
-                    <option value="Personal Loan">Personal Loan (from individual)</option>
-                    <option value="Mortgage">Mortgage</option>
-                </select>
-                <input type="number" placeholder="Total Amount Owed" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Liability Name <InfoHint text="A clear name (e.g. Car Loan, Mortgage) for tracking and net worth." /></label>
+                    <input type="text" placeholder="Liability Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Category of debt; used for reporting and goal linking." /></label>
+                    <select value={type} onChange={e => setType(e.target.value as any)} required className="w-full p-2 border border-gray-300 rounded-md">
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Loan">Loan (e.g., Car, Institutional)</option>
+                        <option value="Personal Loan">Personal Loan (from individual)</option>
+                        <option value="Mortgage">Mortgage</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Total Amount Owed <InfoHint text="Outstanding balance; affects net worth and Zakat deductible liabilities." /></label>
+                    <input type="number" placeholder="Total Amount Owed" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Liability</button>
             </form>
         </Modal>

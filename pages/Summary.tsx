@@ -173,7 +173,7 @@ const Summary: React.FC = () => {
 
             <div className="bg-white p-6 rounded-lg shadow max-w-full mx-auto">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                    <div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div>
+                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                         <SparklesIcon className="h-5 w-5 mr-2" />
                         {isLoading ? 'Analyzing...' : (analysis ? 'Regenerate Analysis' : 'Generate My Analysis')}
@@ -186,7 +186,7 @@ const Summary: React.FC = () => {
                          <SafeMarkdownRenderer content={error} />
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your AI-powered financial persona and report card.</div>}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your expert financial persona and report card.</div>}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">

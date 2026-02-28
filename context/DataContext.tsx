@@ -90,6 +90,27 @@ interface DataContextType {
 
 export const DataContext = createContext<DataContextType | null>(null);
 
+function normalizeSettings(raw: any): Settings {
+    if (!raw) return initialData.settings;
+    return {
+        riskProfile: (raw.risk_profile ?? raw.riskProfile ?? initialData.settings.riskProfile) as Settings['riskProfile'],
+        budgetThreshold: Number(raw.budget_threshold ?? raw.budgetThreshold ?? initialData.settings.budgetThreshold),
+        driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
+        enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
+        goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
+    };
+}
+
+function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (settings.riskProfile != null) row.risk_profile = settings.riskProfile;
+    if (settings.budgetThreshold != null) row.budget_threshold = settings.budgetThreshold;
+    if (settings.driftThreshold != null) row.drift_threshold = settings.driftThreshold;
+    if (settings.enableEmails != null) row.enable_emails = settings.enableEmails;
+    if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
+    return row;
+}
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
@@ -337,7 +358,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 budgets: budgets.data || [],
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
-                settings: settings.data || initialData.settings,
+                settings: normalizeSettings(settings.data || initialData.settings),
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
@@ -563,9 +584,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
       const db = supabase;
-      const { data: newBudget, error } = await db.from('budgets').insert(withUser(budget)).select().single();
-      if(error) console.error("Error adding budget:", error);
-      if (newBudget) setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
+      const payload = withUser(budget);
+      let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
+      if (error && (payload as any).period) {
+        const fallback: any = { ...payload, limit: (payload as any).period === 'yearly' ? (payload.limit / 12) : payload.limit };
+        delete fallback.period;
+        const retry = await db.from('budgets').insert(fallback).select().single();
+        newBudget = retry.data;
+        error = retry.error;
+      }
+      if (error) {
+        console.error("Error adding budget:", error);
+        throw error;
+      }
+      if (newBudget) {
+        const withPeriod = { ...newBudget, period: (budget as Budget).period };
+        if ((budget as Budget).period === 'yearly') withPeriod.limit = budget.limit;
+        setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
+      }
     };
     const updateBudget = async (budget: Budget) => {
       if(!supabase || !auth?.user) return;
@@ -1003,12 +1039,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
-        const updatedSettings = { ...data.settings, ...settingsUpdate, user_id: auth.user.id };
-        const { error } = await supabase.from('settings').upsert([updatedSettings], { onConflict: 'user_id' });
+        const merged = { ...data.settings, ...settingsUpdate };
+        const row = { ...settingsToRow(merged), user_id: auth.user.id };
+        const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         if (error) {
             console.error("Error updating settings:", error);
         } else {
-            setData(prev => ({ ...prev, settings: updatedSettings }));
+            setData(prev => ({ ...prev, settings: merged }));
         }
     };
 
