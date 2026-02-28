@@ -8,6 +8,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Modal from '../components/Modal';
 import { ZakatPayment } from '../types';
 import ProgressBar from '../components/ProgressBar';
+import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 
 
@@ -149,7 +150,7 @@ const Zakat: React.FC = () => {
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
                     <h3 className="font-semibold text-dark mb-4">Calculation</h3>
                      <div>
-                        <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700">Price of Gold (per gram)</label>
+                        <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: if your net zakatable wealth is below the value of 85 grams of gold, you do not owe Zakat. Update this to your local/current gold price per gram." /></label>
                         <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => updateSettings({ goldPrice: parseFloat(localGoldPrice) || 275 })} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab)}</span></div>

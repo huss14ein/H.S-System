@@ -160,7 +160,13 @@ const Summary: React.FC = () => {
                 </div>
                  <div className="bg-white p-6 rounded-lg shadow h-[450px]">
                     <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>
-                    <PerformanceTreemap data={investmentTreemapData} />
+                    <div className="h-[380px]">
+                        {investmentTreemapData.length > 0 ? (
+                            <PerformanceTreemap data={investmentTreemapData} />
+                        ) : (
+                            <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg text-gray-500">No investment data available.</div>
+                        )}
+                    </div>
                 </div>
             </div>
             

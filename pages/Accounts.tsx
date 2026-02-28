@@ -129,10 +129,7 @@ const Accounts: React.FC = () => {
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
     const [draggingAccount, setDraggingAccount] = useState<{ section: 'cash' | 'credit' | 'investment'; id: string } | null>(null);
-    const [cardDensity, setCardDensity] = useState<'Comfortable' | 'Compact'>(() => {
-        if (typeof window === 'undefined') return 'Comfortable';
-        return window.localStorage.getItem('accounts-card-density') === 'Compact' ? 'Compact' : 'Comfortable';
-    });
+    const cardDensity = 'Compact' as const;
     const [sectionOrder, setSectionOrder] = useState<{ cash: string[]; credit: string[]; investment: string[] }>(() => {
         if (typeof window === 'undefined') return { cash: [], credit: [], investment: [] };
         try {
@@ -261,12 +258,6 @@ const Accounts: React.FC = () => {
                     <p className="text-sm text-gray-500">Drag cards to reorder within each section, or use ↑/↓ controls.</p>
                 </div>
                 <div className="flex w-full sm:w-auto gap-2 flex-wrap sm:flex-nowrap">
-                    <div className="flex border rounded">
-                        {(['Comfortable', 'Compact'] as const).map((density) => (
-                            <button key={density} type="button" onClick={() => setCardDensity(density)} className={`px-2 py-2 text-xs ${cardDensity === density ? 'bg-primary text-white' : 'text-gray-600 bg-white'}`}>{density}</button>
-                        ))}
-                    </div>
-                    <button type="button" onClick={resetSectionOrder} className="w-full sm:w-auto px-3 py-2 text-sm border rounded text-gray-600 hover:text-primary hover:border-primary">Reset card layout</button>
                     <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
                 </div>
             </div>

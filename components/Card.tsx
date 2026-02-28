@@ -15,7 +15,7 @@ interface CardProps {
   density?: 'comfortable' | 'compact';
 }
 
-const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor, icon, density = 'comfortable' }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, valueColor, indicatorColor, icon, density = 'compact' }) => {
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number | undefined>(undefined);
 

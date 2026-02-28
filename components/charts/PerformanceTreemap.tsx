@@ -85,6 +85,14 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
             color: getColor(item.gainLossPercent),
         }));
 
+    if (!processedData.length) {
+        return (
+            <div className="flex items-center justify-center h-full w-full bg-gray-50 rounded-lg text-gray-500 text-sm">
+                No investment data available.
+            </div>
+        );
+    }
+
     return (
         <ResponsiveContainer width="100%" height="100%">
             <Treemap
