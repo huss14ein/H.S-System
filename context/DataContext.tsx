@@ -229,6 +229,33 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
     return row;
 }
 
+/** Map holding to DB row (snake_case). Schema uses avg_cost, current_value, realized_pnl, zakah_class, portfolio_id. */
+function holdingToRow(holding: Partial<Holding> & { symbol: string; quantity: number }): Record<string, unknown> {
+    const row: Record<string, unknown> = {
+        portfolio_id: holding.portfolio_id ?? (holding as any).portfolioId,
+        symbol: holding.symbol,
+        name: holding.name ?? '',
+        quantity: Number(holding.quantity ?? 0),
+        avg_cost: Number(holding.avgCost ?? (holding as any).avg_cost ?? 0),
+        current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
+        realized_pnl: Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0),
+        zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
+    };
+    return row;
+}
+
+/** Normalize DB holding row to app Holding shape (camelCase). */
+function normalizeHoldingFromRow(row: any): Holding {
+    return {
+        ...row,
+        portfolio_id: row.portfolio_id ?? row.portfolioId,
+        avgCost: row.avg_cost ?? row.avgCost ?? 0,
+        currentValue: row.current_value ?? row.currentValue ?? 0,
+        realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
+        zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
+    };
+}
+
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
     const row: Record<string, unknown> = {
         user_id: plan.user_id,
@@ -558,8 +585,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
             
-            // Holdings and Investment Transactions
-            const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(({ id, ...h }) => ({...h, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
+            // Holdings and Investment Transactions (snake_case for DB)
+            const holdingsToInsert = mock.investments.flatMap(p =>
+                p.holdings.map(({ id, ...h }) => ({ ...holdingToRow({ ...h, portfolio_id: portfolioIdMap.get(p.id)! }), user_id: userId }))
+            );
             await db.from('holdings').insert(holdingsToInsert);
             await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
 
@@ -847,14 +876,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const addHolding = async (holding: Omit<Holding, 'id' | 'user_id'>) => {
         if (!supabase) return;
-        const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(holding)).select().single();
+        const row = holdingToRow(holding);
+        const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
         if (error) { console.error("Error adding holding:", error); throw error; }
         if (newHolding) {
+            const normalized = normalizeHoldingFromRow(newHolding);
             setData(prev => ({
                 ...prev,
                 investments: prev.investments.map(p =>
-                    p.id === newHolding.portfolio_id
-                        ? { ...p, holdings: [...p.holdings, newHolding] }
+                    p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
+                        ? { ...p, holdings: [...p.holdings, normalized] }
                         : p
                 )
             }));
@@ -863,7 +894,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
+        const row = holdingToRow(holding);
+        const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if(error) { console.error(error); throw error; }
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
     };
