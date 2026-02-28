@@ -128,20 +128,6 @@ const SystemHealth: React.FC = () => {
             }
         };
 
-        const _checkMarketData = (): Partial<Service> => {
-            if (!marketContext) {
-                return { status: 'Outage', error: 'Market data context is unavailable.' };
-            }
-            const hasPrices = Object.keys(marketContext.simulatedPrices).length > 0;
-            if (!hasPrices) {
-                return { status: 'Degraded Performance', error: 'No market prices loaded yet. Click refresh in the header.' };
-            }
-            return {
-                status: marketContext.isLive ? 'Operational' : 'Degraded Performance',
-                error: marketContext.isLive ? undefined : 'Running with simulated prices. Trigger a refresh to retry live data.'
-            };
-        };
-
         const [auth, db, ai, finnhub, multiUser] = await Promise.all([
             checkSupabaseAuth(),
             checkSupabaseDB(),

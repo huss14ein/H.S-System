@@ -253,8 +253,6 @@ const Budgets: React.FC = () => {
             previousRangeEnd.setHours(23, 59, 59, 999);
         }
 
-        const limitDivisor = budgetView === 'Monthly' ? 1 : budgetView === 'Weekly' ? 4.345 : budgetView === 'Daily' ? 30 : 1;
-
         (data?.transactions ?? [])
             .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t) => {
@@ -325,18 +323,6 @@ const Budgets: React.FC = () => {
         const map = new Map(budgetData.map((b) => [b.id, b]));
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
-
-    const _moveBudgetCard = (id: string, direction: 'up' | 'down') => {
-        setCardOrder((prev) => {
-            const index = prev.indexOf(id);
-            if (index < 0) return prev;
-            const target = direction === 'up' ? index - 1 : index + 1;
-            if (target < 0 || target >= prev.length) return prev;
-            const next = [...prev];
-            [next[index], next[target]] = [next[target], next[index]];
-            return next;
-        });
-    };
 
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
