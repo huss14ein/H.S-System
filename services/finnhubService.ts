@@ -2,9 +2,69 @@
  * Finnhub API – single source for market data (free tier).
  * Endpoints: market status, holidays, company profile, basic financials,
  * quote with 52-week, earnings calendar, insider transactions, news, economic calendar.
+ * Rate limit: 60 calls/min on free tier; requests are throttled and 429 is retried once.
  */
 
 const BASE = 'https://finnhub.io/api/v1';
+
+/** Min gap between requests (ms) to stay under 60/min (~1.1s = ~54/min). */
+const MIN_GAP_MS = 1100;
+/** Default wait (ms) when 429 is returned and Retry-After is missing. */
+const DEFAULT_429_WAIT_MS = 60_000;
+
+let lastRequestTime = 0;
+const pending: Array<{ url: string; options?: RequestInit; resolve: (r: Response) => void; reject: (e: unknown) => void }> = [];
+let processing = false;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function parseRetryAfter(response: Response): number | null {
+  const v = response.headers.get('Retry-After');
+  if (v == null) return null;
+  const n = parseInt(v, 10);
+  if (!Number.isNaN(n)) return n * 1000;
+  const d = new Date(v).getTime();
+  if (!Number.isNaN(d)) return Math.max(0, d - Date.now());
+  return null;
+}
+
+async function processQueue(): Promise<void> {
+  if (processing || pending.length === 0) return;
+  processing = true;
+  while (pending.length > 0) {
+    const task = pending.shift()!;
+    const gap = Math.max(0, MIN_GAP_MS - (Date.now() - lastRequestTime));
+    if (gap > 0) await delay(gap);
+    lastRequestTime = Date.now();
+    try {
+      let res = await fetch(task.url, task.options);
+      if (res.status === 429) {
+        const waitMs = parseRetryAfter(res) ?? DEFAULT_429_WAIT_MS;
+        console.warn(`Finnhub rate limit (429); waiting ${waitMs}ms before retry.`);
+        await delay(waitMs);
+        lastRequestTime = Date.now();
+        res = await fetch(task.url, task.options);
+      }
+      task.resolve(res);
+    } catch (e) {
+      task.reject(e);
+    }
+  }
+  processing = false;
+}
+
+/**
+ * Rate-limited fetch for Finnhub. Use this for all Finnhub API calls so we stay under 60/min
+ * and handle 429 (retry once after Retry-After or 60s).
+ */
+export function finnhubFetch(url: string, options?: RequestInit): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    pending.push({ url, options, resolve, reject });
+    processQueue();
+  });
+}
 
 function getToken(): string {
   const key = import.meta.env.VITE_FINNHUB_API_KEY;
@@ -15,7 +75,8 @@ function getToken(): string {
 function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const token = getToken();
   const q = new URLSearchParams({ ...params, token });
-  return fetch(`${BASE}${path}?${q}`).then((r) => {
+  return finnhubFetch(`${BASE}${path}?${q}`).then((r) => {
+    if (r.status === 429) throw new Error('Finnhub rate limit (60/min). Wait a minute and try again.');
     if (!r.ok) throw new Error(`Finnhub ${path}: ${r.status}`);
     return r.json();
   });

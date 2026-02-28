@@ -210,7 +210,7 @@ interface TransactionsProps {
 }
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
+    const { data, loading, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
@@ -306,14 +306,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         };
 
         loadPendingTransactions();
-    }, [userRole, data.transactions.length]);
+    }, [userRole, (data?.transactions ?? []).length]);
 
     const filteredTransactions = useMemo(() => {
         const [year, month] = filters.month.split('-').map(Number);
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
-        return data.transactions.filter(t => {
+        return (data?.transactions ?? []).filter(t => {
             const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
@@ -322,7 +322,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || permittedBudgetCategories.includes(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
-    }, [data.transactions, filters, userRole, permittedBudgetCategories]);
+    }, [data?.transactions, filters, userRole, permittedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
@@ -343,12 +343,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
     }, [filteredTransactions]);
     
-    const allCategories = useMemo(() => Array.from(new Set(data.transactions.map(t => t.category))), [data.transactions]);
+    const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
     const budgetCategories = useMemo(() => {
-        const categories = data.budgets.map(b => b.category);
+        const categories = (data?.budgets ?? []).map(b => b.category);
         if (userRole === 'Admin') return categories;
         return categories.filter(c => permittedBudgetCategories.includes(c));
-    }, [data.budgets, userRole, permittedBudgetCategories]);
+    }, [data?.budgets, userRole, permittedBudgetCategories]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -471,7 +471,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                 <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data.budgets }} />
+                 <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
                  <div className="bg-white p-6 rounded-lg shadow-md h-[400px]">
                     <h3 className="text-lg font-semibold text-dark mb-4">Expense Breakdown</h3>
                     <ExpenseBreakdownChart data={expenseBreakdown} />
@@ -485,7 +485,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="p-2 border border-gray-300 rounded-md"/>
                         <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="p-2 border border-gray-300 rounded-md">
                             <option value="all">All Accounts</option>
-                            {data.accounts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            {(data?.accounts ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                     </div>
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -544,7 +544,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 transactionToEdit={transactionToEdit} 
                 budgetCategories={budgetCategories}
                 allCategories={allCategories}
-                accounts={data.accounts}
+                accounts={data?.accounts ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
         </div>

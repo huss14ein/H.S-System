@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings' | 'Wealth Ultra';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -401,4 +401,100 @@ export interface StatusChangeLog {
     timestamp: string;
     from_status: TickerStatus;
     to_status: TickerStatus;
+}
+
+// --- Wealth Ultra Portfolio Engine ---
+
+export type WealthUltraSleeve = 'Core' | 'Upside' | 'Spec';
+export type WealthUltraRiskTier = 'Low' | 'Med' | 'High' | 'Spec';
+export type WealthUltraStrategyMode = 'Hold' | 'Adjust' | 'DipBuy' | 'Trim' | 'Exit';
+
+export interface WealthUltraConfig {
+  fxRate: number;
+  targetCorePct: number;
+  targetUpsidePct: number;
+  targetSpecPct: number;
+  defaultTarget1Pct: number;
+  defaultTarget2Pct: number;
+  defaultTrailingPct: number;
+  monthlyDeposit: number;
+  cashAvailable: number;
+  cashReservePct: number;
+  maxPerTickerPct: number;
+  riskWeightLow: number;
+  riskWeightMed: number;
+  riskWeightHigh: number;
+  riskWeightSpec: number;
+  /** Ticker lists from system (e.g. investment_plan); general config, not hardcoded. */
+  coreTickers?: string[];
+  upsideTickers?: string[];
+  specTickers?: string[];
+}
+
+export interface WealthUltraPosition {
+  ticker: string;
+  sleeveType: WealthUltraSleeve;
+  riskTier: WealthUltraRiskTier;
+  strategyMode: WealthUltraStrategyMode;
+  currentShares: number;
+  avgCost: number;
+  currentPrice: number;
+  marketValue: number;
+  plDollar: number;
+  plPct: number;
+  buy1Qty?: number;
+  buy1Price?: number;
+  buy2Qty?: number;
+  buy2Price?: number;
+  buy3Qty?: number;
+  buy3Price?: number;
+  plannedAddedShares?: number;
+  plannedAddedCost?: number;
+  newTotalShares?: number;
+  newAvgCost?: number;
+  target1PctOverride?: number;
+  applyTarget1: boolean;
+  target1Price?: number;
+  target2PctOverride?: number;
+  applyTarget2: boolean;
+  target2Price?: number;
+  trailingPctOverride?: number;
+  applyTrailing: boolean;
+  trailingStopPrice?: number;
+}
+
+export interface WealthUltraSleeveAllocation {
+  sleeve: WealthUltraSleeve;
+  marketValue: number;
+  allocationPct: number;
+  targetPct: number;
+  driftPct: number;
+}
+
+export interface WealthUltraOrder {
+  type: 'BUY' | 'SELL';
+  ticker: string;
+  qty?: number;
+  limitPrice?: number;
+  orderType: 'LIMIT';
+  tif: 'GTC';
+  target1Price?: number;
+  target2Price?: number;
+  trailingStopPrice?: number;
+}
+
+export type WealthUltraAlertType =
+  | 'sleeve_overweight'
+  | 'spec_breach'
+  | 'max_per_ticker_breach'
+  | 'over_budget'
+  | 'position_trim_suggest'   // > +40%
+  | 'position_risk_review';   // < -30%
+
+export interface WealthUltraAlert {
+  type: WealthUltraAlertType;
+  message: string;
+  ticker?: string;
+  sleeve?: WealthUltraSleeve;
+  value?: number;
 }

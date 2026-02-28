@@ -16,9 +16,11 @@ import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
 import { BellIcon } from './components/icons/BellIcon';
 import { GoldBarIcon } from './components/icons/GoldBarIcon';
 import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
+import { PresentationChartLineIcon } from './components/icons/PresentationChartLineIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
+  { name: 'Wealth Ultra', icon: PresentationChartLineIcon },
   { name: 'Transactions', icon: CreditCardIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },

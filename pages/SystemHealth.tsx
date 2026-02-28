@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { invokeAI } from '../services/geminiService';
-import { getMarketStatus, getMarketHolidays, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
+import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -98,7 +98,8 @@ const SystemHealth: React.FC = () => {
             }
             try {
                 const start = performance.now();
-                const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(finnhubApiKey)}`);
+                const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(finnhubApiKey)}`);
+                if (response.status === 429) throw new Error('Rate limit exceeded (60/min). Try again in a minute.');
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const quote = await response.json();
                 const price = Number(quote?.c);
@@ -106,7 +107,8 @@ const SystemHealth: React.FC = () => {
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 2000 ? 'Degraded Performance' : 'Operational', responseTime: duration };
             } catch (e) {
-                return { status: 'Outage', error: 'Could not connect to Finnhub Market Data API.' };
+                const msg = e instanceof Error ? e.message : 'Could not connect to Finnhub Market Data API.';
+                return { status: 'Outage', error: msg };
             }
         };
 

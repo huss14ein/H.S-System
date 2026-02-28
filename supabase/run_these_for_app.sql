@@ -1,6 +1,9 @@
 -- Run this in your Supabase SQL editor so the app works correctly.
 -- 1. Settings: ensure gold_price exists for Zakat (and other preference columns in snake_case).
 -- 2. Budgets: add period column for yearly budgets (e.g. housing).
+--
+-- For a full schema (including investment_plan, portfolio_universe, status_change_log, execution_logs),
+-- run supabase/full_schema_for_app.sql instead.
 
 -- Settings: add gold_price if your table uses snake_case columns
 do $$

@@ -9,14 +9,14 @@ import { FlagIcon } from '../components/icons/FlagIcon';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
         const twelveMonthsAgo = new Date();
         twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-        data.transactions.filter(t => new Date(t.date) > twelveMonthsAgo).forEach(t => {
+        (data?.transactions ?? []).filter(t => new Date(t.date) > twelveMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
             monthlyNet.set(monthKey, currentNet + t.amount);
@@ -26,7 +26,7 @@ const Forecast: React.FC = () => {
         
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     const [horizon, setHorizon] = useState(10);
     const [monthlySavings, setMonthlySavings] = useState(averageMonthlySavings);
@@ -50,10 +50,14 @@ const Forecast: React.FC = () => {
     }, [averageMonthlySavings]);
 
     const initialValues = useMemo(() => {
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0);
+        const assets = data?.assets ?? [];
+        const accounts = data?.accounts ?? [];
+        const liabilities = data?.liabilities ?? [];
+        const investments = data?.investments ?? [];
+        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) + accounts.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalLiabilities = liabilities.reduce((sum, liab) => sum + liab.amount, 0);
         const netWorth = totalAssets + totalLiabilities;
-        const investmentValue = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const investmentValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         return { netWorth, investmentValue };
     }, [data]);
 
@@ -94,7 +98,7 @@ const Forecast: React.FC = () => {
             let currentInvestmentValue = initialValues.investmentValue;
             let currentMonthlySavings = monthlySavings;
             
-            const goalsWithProjections = data.goals.map(g => ({ ...g, metMonth: null as number | null }));
+            const goalsWithProjections = (data?.goals ?? []).map(g => ({ ...g, metMonth: null as number | null }));
 
             const results = [];
             const currentDate = new Date();
@@ -156,17 +160,25 @@ const Forecast: React.FC = () => {
 
             setIsLoading(false);
         }, 500);
-    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data.goals, scenarioPreset]);
+    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data?.goals, scenarioPreset]);
 
     const goalReferenceLines = useMemo(() => {
-        return data.goals.map(goal => {
+        return (data?.goals ?? []).map(goal => {
             const yValue = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
             return {
                 y: yValue,
                 label: goal.name
             };
         });
-    }, [data.goals, initialValues.netWorth]);
+    }, [data?.goals, initialValues.netWorth]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">

@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
+import { finnhubFetch } from './finnhubService';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -128,7 +129,7 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     for (const rawSymbol of symbols) {
         try {
             const finnhubSymbol = toFinnhubSymbol(rawSymbol);
-            const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
+            const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
             if (!response.ok) continue;
             const row = await response.json();
             const price = Number(row?.c);
@@ -157,7 +158,7 @@ const getFinnhubCompanyNews = async (symbols: string[]): Promise<Array<{ symbol:
         const symbol = toFinnhubSymbol(rawSymbol);
         if (symbol.includes(':')) continue;
         try {
-            const response = await fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
+            const response = await finnhubFetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
             if (!response.ok) continue;
             const news = await response.json();
             if (!Array.isArray(news)) continue;
@@ -185,7 +186,7 @@ const getFinnhubEconomicCalendar = async (): Promise<Array<{ date: string; count
     const to = new Date(from.getTime() + 10 * 24 * 60 * 60 * 1000);
     const fromDate = from.toISOString().split('T')[0];
     const toDate = to.toISOString().split('T')[0];
-    const response = await fetch(`https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
+    const response = await finnhubFetch(`https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${encodeURIComponent(token)}`);
     if (!response.ok) return [];
     const json = await response.json();
     const events = Array.isArray(json?.economicCalendar) ? json.economicCalendar : [];
@@ -909,7 +910,7 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
         else if (sym === 'ETH_USD' || sym === 'ETH') finnhubSym = 'BINANCE:ETHUSDT';
         if (!finnhubSym) continue;
         try {
-            const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
+            const res = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
             if (!res.ok) continue;
             const row = await res.json();
             const priceUsd = Number(row?.c);

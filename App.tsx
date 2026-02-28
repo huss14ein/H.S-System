@@ -27,6 +27,7 @@ const Zakat = lazy(() => import('./pages/Zakat'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
 
 const LoadingSpinner: React.FC = () => (
     <div className="flex justify-center items-center h-96">
@@ -72,6 +73,7 @@ const App: React.FC = () => {
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings />;
       case 'System & APIs Health': return <SystemHealth />;
+      case 'Wealth Ultra': return <WealthUltraDashboard />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };
