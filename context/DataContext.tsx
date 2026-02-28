@@ -198,6 +198,7 @@ function normalizeAccount(raw: any): Account {
     const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
     const balance = Number(raw.balance ?? 0);
     return {
+        ...(raw as Record<string, unknown>),
         id,
         user_id: raw.user_id,
         name: name || (id ? `Account ${id.slice(0, 8)}` : 'Account'),
@@ -206,6 +207,15 @@ function normalizeAccount(raw: any): Account {
         owner: raw.owner,
         platformDetails: raw.platformDetails ?? raw.platform_details,
     };
+}
+
+function resolveAccountId(candidate: string | undefined, accounts: Account[]): string | undefined {
+    const c = (candidate ?? '').trim();
+    if (!c) return undefined;
+    const direct = accounts.find(a => a.id === c);
+    if (direct) return direct.id;
+    const external = accounts.find(a => ((a as any).account_id ?? (a as any).accountId) === c);
+    return external?.id;
 }
 
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
@@ -420,18 +430,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
 
+            const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
+
             setData({
-                accounts: ((accounts.data as any[]) || []).map(normalizeAccount),
+                accounts: normalizedAccounts,
                 assets: assets.data || [],
                 liabilities: liabilities.data || [],
                 goals: goals.data || [],
                 transactions: (transactions.data || []).map(normalizeTransaction),
-                investments: ((investments.data as any) || []).map((portfolio: any) => ({
-                    ...portfolio,
-                    accountId: portfolio.accountId || portfolio.account_id,
-                    holdings: (portfolio.holdings || []).map(normalizeHolding)
-                })),
-                investmentTransactions: (investmentTransactions.data || []).map(normalizeInvestmentTransaction),
+                investments: ((investments.data as any) || []).map((portfolio: any) => {
+                    const rawAccountId = portfolio.accountId || portfolio.account_id;
+                    const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
+                    return {
+                        ...portfolio,
+                        accountId: resolved,
+                        holdings: (portfolio.holdings || []).map(normalizeHolding),
+                    };
+                }),
+                investmentTransactions: (investmentTransactions.data || []).map((t: any) => {
+                    const norm = normalizeInvestmentTransaction(t);
+                    const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
+                    return resolved ? { ...norm, accountId: resolved } : norm;
+                }),
                 budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
@@ -879,10 +899,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         // Use the portfolio's account so the FK matches the account that owns the portfolio in the DB
-        const accountIdForInsert = portfolio.accountId || trade.accountId;
+        const portfolioAccountCandidate = portfolio.accountId || (portfolio as any).account_id;
+        const resolvedPortfolioAccountId = resolveAccountId(portfolioAccountCandidate, data.accounts);
+        const resolvedTradeAccountId = resolveAccountId(trade.accountId, data.accounts);
+        const accountIdForInsert = resolvedPortfolioAccountId ?? resolvedTradeAccountId ?? portfolioAccountCandidate ?? trade.accountId;
         if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
-        const accountExists = data.accounts.some((a: { id?: string }) => (a.id ?? (a as any).account_id) === accountIdForInsert);
-        if (!accountExists) throw new Error("Selected account is not in the system. Please refresh the page, ensure you have an Investment account in Accounts, and try again.");
+        const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
+        if (!accountExists) {
+            throw new Error("Selected account is not in the system (or portfolio points to a deleted account). Please go to Accounts, ensure you have an Investment account, then edit the portfolio to select it and try again.");
+        }
 
         // 2. Log the transaction to the database
         const tradeTotal = tradeData.quantity * tradeData.price;
