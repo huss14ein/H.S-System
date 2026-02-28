@@ -189,6 +189,25 @@ function normalizeExecutionLog(raw: any): InvestmentPlanExecutionLog {
     };
 }
 
+function normalizeAccount(raw: any): Account {
+    if (!raw || typeof raw !== 'object') {
+        return { id: '', name: '', type: 'Checking', balance: 0 };
+    }
+    const id = raw.id ?? raw.account_id ?? (raw as any).uuid ?? '';
+    const name = String(raw.name ?? '');
+    const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
+    const balance = Number(raw.balance ?? 0);
+    return {
+        id,
+        user_id: raw.user_id,
+        name: name || (id ? `Account ${id.slice(0, 8)}` : 'Account'),
+        type,
+        balance,
+        owner: raw.owner,
+        platformDetails: raw.platformDetails ?? raw.platform_details,
+    };
+}
+
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
     const row: Record<string, unknown> = {
         user_id: plan.user_id,
@@ -402,10 +421,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
 
             setData({
-                accounts: (accounts.data || []).map((a: { id?: string; account_id?: string; [k: string]: unknown }) => ({
-                    ...a,
-                    id: a.id ?? a.account_id ?? (a as any).uuid,
-                })),
+                accounts: ((accounts.data as any[]) || []).map(normalizeAccount),
                 assets: assets.data || [],
                 liabilities: liabilities.data || [],
                 goals: goals.data || [],

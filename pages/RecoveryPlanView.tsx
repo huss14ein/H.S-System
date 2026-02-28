@@ -4,7 +4,7 @@ import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import type { Holding } from '../types';
-import type { RecoveryPlanResult, RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
+import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
 import {
   buildRecoveryPlan,
   orderDraftGenerator,
