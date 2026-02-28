@@ -12,6 +12,8 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null; }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
     const [name, setName] = useState('');
@@ -49,11 +51,11 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Liability Name <InfoHint text="A clear name (e.g. Car Loan, Mortgage) for tracking and net worth." /></label>
-                    <input type="text" placeholder="Liability Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <input type="text" placeholder="Liability Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Category of debt; used for reporting and goal linking." /></label>
-                    <select value={type} onChange={e => setType(e.target.value as any)} required className="w-full p-2 border border-gray-300 rounded-md">
+                    <select value={type} onChange={e => setType(e.target.value as any)} required className="select-base">
                         <option value="Credit Card">Credit Card</option>
                         <option value="Loan">Loan (e.g., Car, Institutional)</option>
                         <option value="Personal Loan">Personal Loan (from individual)</option>
@@ -62,9 +64,9 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Total Amount Owed <InfoHint text="Outstanding balance; affects net worth and Zakat deductible liabilities." /></label>
-                    <input type="number" placeholder="Total Amount Owed" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <input type="number" placeholder="Total Amount Owed" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base"/>
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Liability</button>
+                <button type="submit" className="w-full btn-primary">Save Liability</button>
             </form>
         </Modal>
     );
@@ -83,7 +85,7 @@ const LiabilityCardComponent: React.FC<{ liability: Liability, onEdit: (l: Liabi
     };
 
     return (
-        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300">
+        <div className="section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300">
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-3">
                     {getIcon(liability.type)}
@@ -151,13 +153,10 @@ const Liabilities: React.FC = () => {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold text-dark">Liabilities</h1>
-                <button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">
-                    Add New Liability
-                </button>
-            </div>
+        <PageLayout
+            title="Liabilities"
+            action={<button type="button" onClick={() => handleOpenModal()} className="btn-primary">Add New Liability</button>}
+        >
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                  <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} />
@@ -177,7 +176,7 @@ const Liabilities: React.FC = () => {
                 onConfirm={handleConfirmDelete}
                 itemName={liabilityToDelete?.name || ''}
             />
-        </div>
+        </PageLayout>
     );
 };
 

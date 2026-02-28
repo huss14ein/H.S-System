@@ -21,6 +21,9 @@ import InfoHint from '../components/InfoHint';
 import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import CardLayoutControls from '../components/CardLayoutControls';
+import SectionCard from '../components/SectionCard';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -65,22 +68,22 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md"/>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="w-full p-2 border rounded-md">
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="select-base">
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
                     <option value="Other">Other</option>
                 </select>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="w-full p-2 border rounded-md"/>
-                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="w-full p-2 border rounded-md"/>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Useful for family-level, multi-user governance and Zakat attribution." /></label><input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="w-full p-2 border rounded-md" />
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
+                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Useful for family-level, multi-user governance and Zakat attribution." /></label><input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
-                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="w-full p-2 border rounded-md"/>}
+                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="input-base"/>}
                     </div>
                 )}
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Asset</button>
+                <button type="submit" className="w-full btn-primary">Save Asset</button>
             </form>
         </Modal>
     );
@@ -423,12 +426,13 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 setGroundingChunks(chunks);
             }
             if (prices.length > 0) {
-                const updates = data.commodityHoldings.map(h => { const p = prices.find(p => p.symbol === h.symbol); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
+                const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
+                const updates = data.commodityHoldings.map(h => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
             console.error("Failed to update prices:", error);
-            alert(`Failed to update commodity prices:\n\n${formatAiError(error)}`);
+            alert(`Failed to update commodity prices. Crypto/metals use Finnhub when AI is unavailable.\n\n${formatAiError(error)}`);
         } 
         finally { setIsUpdatingPrices(false); }
     };
@@ -482,11 +486,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     ];
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Assets</h1>
-                <AddMenu actions={addActions} />
-            </div>
+        <PageLayout title="Assets" action={<AddMenu actions={addActions} />}>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} />
@@ -495,29 +495,32 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} />
             </div>
 
-            <section className="bg-white p-6 rounded-lg shadow">
-                <h2 className="text-xl font-semibold text-dark mb-4">Physical Assets</h2>
+            <SectionCard title="Physical Assets">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {orderedAssets.map((asset, index) => (<AssetCardComponent key={asset.id} asset={asset} compact={!expandedAssetCards.has(asset.id)} controls={<CardLayoutControls index={index} total={orderedAssets.length} isExpanded={expandedAssetCards.has(asset.id)} onMove={(direction) => moveCard('asset', asset.id, direction)} onToggleSize={() => toggleCardSize('asset', asset.id)} />} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />))}
-                    {data.assets.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No physical assets added yet.</p>}
+                    {data.assets.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
                 </div>
-            </section>
-            
-            <section className="bg-white p-6 rounded-lg shadow">
-                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                    <h2 className="text-xl font-semibold text-dark flex items-center">Metals & Crypto <InfoHint text="Use AI or fallback APIs (Finnhub/Stooq) for latest commodity pricing. If one provider fails, retries use alternatives." /></h2>
-                    <button 
-                        onClick={handleUpdatePrices} 
+            </SectionCard>
+
+            <SectionCard
+                title="Metals & Crypto"
+                headerAction={
+                    <button
+                        type="button"
+                        onClick={handleUpdatePrices}
                         disabled={isUpdatingPrices || !isAiAvailable || data.commodityHoldings.length === 0}
                         title={!isAiAvailable ? "AI features are disabled" : (data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices")}
-                        className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed">
-                        <SparklesIcon className="h-4 w-4 mr-2" />
+                        className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <SparklesIcon className="h-4 w-4" />
                         {isUpdatingPrices ? 'Updating...' : 'Update Prices'}
                     </button>
-                </div>
+                }
+            >
+                <p className="text-sm text-slate-600 mb-4 flex items-center gap-2"><InfoHint text="Use AI or fallback APIs (Finnhub/Stooq) for latest commodity pricing. If one provider fails, retries use alternatives." /></p>
                 {!isAiAvailable && data.commodityHoldings.length > 0 && (
-                    <div className="text-center text-sm text-gray-500 bg-gray-50 p-3 rounded-md -mt-2 mb-4">
-                        <p>AI features are disabled. Please configure your API key to enable live price updates.</p>
+                    <div className="alert-warning mb-4">
+                        <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
                     </div>
                 )}
                 {groundingChunks.length > 0 && (
@@ -532,14 +535,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {orderedCommodities.map((h, index) => <CommodityHoldingCard key={h.id} holding={h} compact={!expandedCommodityCards.has(h.id)} controls={<CardLayoutControls index={index} total={orderedCommodities.length} isExpanded={expandedCommodityCards.has(h.id)} onMove={(direction) => moveCard('commodity', h.id, direction)} onToggleSize={() => toggleCardSize('commodity', h.id)} />} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />)}
-                    {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
+                    {data.commodityHoldings.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No commodities added yet.</p>}
                 </div>
-            </section>
+            </SectionCard>
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data.goals} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-        </div>
+        </PageLayout>
     );
 };
 

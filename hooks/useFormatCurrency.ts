@@ -5,24 +5,27 @@ interface FormatCurrencyOptions {
     digits?: number;
     colorize?: boolean;
     showSecondary?: boolean; // New option to show the other currency
+    /** Force display in USD (e.g. for market data / research that is always in USD). */
+    forceUSD?: boolean;
 }
 
 export const useFormatCurrency = () => {
     const { currency, exchangeRate } = useCurrency();
 
     const formatCurrencyString = (value: number, options: Omit<FormatCurrencyOptions, 'colorize'> = {}) => {
-        const { digits = 2, showSecondary = false } = options;
-        const displayValue = currency === 'USD' ? value / exchangeRate : value;
+        const { digits = 2, showSecondary = false, forceUSD = false } = options;
+        const displayCurrency = forceUSD ? 'USD' : currency;
+        const displayValue = forceUSD ? value : (currency === 'USD' ? value / exchangeRate : value);
         const locale = 'en-US';
         
         let formattedString = new Intl.NumberFormat(locale, {
             style: 'currency',
-            currency: currency,
+            currency: displayCurrency,
             minimumFractionDigits: digits,
             maximumFractionDigits: digits,
         }).format(displayValue);
 
-        if (showSecondary) {
+        if (showSecondary && !forceUSD) {
             const secondaryCurrency = currency === 'SAR' ? 'USD' : 'SAR';
             const secondaryValue = currency === 'SAR' ? value / exchangeRate : value * exchangeRate;
             const secondaryFormatted = new Intl.NumberFormat(locale, {

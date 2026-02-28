@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useContext } from 'react';
+import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -8,7 +9,15 @@ import SinkingFunds from './SinkingFunds';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import Modal from '../components/Modal';
 import InfoHint from '../components/InfoHint';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
+import { ScaleIcon } from '../components/icons/ScaleIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -50,23 +59,23 @@ const EventModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Event Name <InfoHint text="One-time life event (e.g. Wedding, Bonus) for scenario planning." /></label>
-                    <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border rounded-md" />
+                    <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="input-base" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="One-time amount (income or expense) in your plan currency." /></label>
-                        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full p-2 border rounded-md" />
+                        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Month <InfoHint text="Month when this event occurs in the plan year." /></label>
-                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full p-2 border rounded-md">
+                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="select-base">
                             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                         </select>
                     </div>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="One-time expense (e.g. wedding) or one-time income (e.g. bonus)." /></label>
-                    <select value={type} onChange={e => setType(e.target.value as any)} className="w-full p-2 border rounded-md">
+                    <select value={type} onChange={e => setType(e.target.value as any)} className="select-base">
                         <option value="expense">One-time Expense</option>
                         <option value="income">One-time Income</option>
                     </select>
@@ -78,7 +87,14 @@ const EventModal: React.FC<{
 };
 
 
-const AnnualFinancialPlan: React.FC = () => {
+const SCENARIO_PRESETS = [
+    { name: 'None', income: 0, expense: 0, duration: 1, startMonth: 1, label: 'None' },
+    { name: 'Recession', income: -10, expense: 5, startMonth: 1, duration: 3, label: 'Recession (income −10%, 3 mo; expenses +5%)' },
+    { name: 'Bonus year', income: 15, expense: 0, startMonth: 4, duration: 1, label: 'Q2 bonus +15%' },
+    { name: 'Expense spike', income: 0, expense: 20, startMonth: 1, duration: 1, label: 'All expenses +20%' },
+];
+
+const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [year, setYear] = useState(new Date().getFullYear());
@@ -92,27 +108,43 @@ const AnnualFinancialPlan: React.FC = () => {
     const [planData, setPlanData] = useState<PlanRow[]>([]);
     const [isEditing, setIsEditing] = useState<{ row: number; col: number } | null>(null);
 
+    const budgets = data?.budgets ?? [];
+    const transactions = data?.transactions ?? [];
+    const goals = data?.goals ?? [];
+    const investmentPlan = data?.investmentPlan;
+    const investmentTransactions = data?.investmentTransactions ?? [];
+
     React.useEffect(() => {
-        // Initialize plan data
         const incomeRow: PlanRow = {
             type: 'income',
             category: 'Salary & Bonuses',
-            monthly_planned: Array(12).fill(30000), // Base salary
+            monthly_planned: Array(12).fill(30000),
             monthly_actual: Array(12).fill(0),
         };
-        // Add known bonuses/allowances to planned
-        incomeRow.monthly_planned[0] += 12000; // Jan tickets
-        incomeRow.monthly_planned[3] += 90000; // Apr bonus
+        incomeRow.monthly_planned[0] += 12000;
+        incomeRow.monthly_planned[3] += 90000;
 
-        const expenseRows: PlanRow[] = data.budgets.map(b => ({
-            type: 'expense',
-            category: b.category,
-            monthly_planned: Array(12).fill(b.limit),
-            monthly_actual: Array(12).fill(0),
-        }));
+        const yearBudgets = budgets.filter((b: { year?: number }) => !b.year || b.year === year);
+        const byCategory = new Map<string, { planned: number[]; actual: number[] }>();
+        yearBudgets.forEach((b: { category: string; limit: number; month?: number; period?: string }) => {
+            const limit = b.limit ?? 0;
+            const monthly = (b as any).period === 'yearly' ? limit / 12 : limit;
+            const monthIndex = (b.month ?? 1) - 1;
+            if (!byCategory.has(b.category)) {
+                byCategory.set(b.category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+            }
+            const row = byCategory.get(b.category)!;
+            row.planned[monthIndex] = monthly;
+        });
+        let expenseRows: PlanRow[] = byCategory.size > 0
+            ? Array.from(byCategory.entries()).map(([category, { planned, actual }]) => {
+                const firstLimit = yearBudgets.find((b: { category: string }) => b.category === category)?.limit ?? 0;
+                const filled = planned.every(x => x === 0) ? Array(12).fill(firstLimit) : planned;
+                return { type: 'expense', category, monthly_planned: filled, monthly_actual: [...actual] };
+            })
+            : [{ type: 'expense', category: 'Expenses', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) }];
 
-        // Populate actuals
-        data.transactions.forEach(t => {
+        transactions.forEach((t: { date: string; type?: string; amount: number; budgetCategory?: string }) => {
             const date = new Date(t.date);
             if (date.getFullYear() === year) {
                 const monthIndex = date.getMonth();
@@ -120,15 +152,28 @@ const AnnualFinancialPlan: React.FC = () => {
                     incomeRow.monthly_actual[monthIndex] += t.amount;
                 } else {
                     const row = expenseRows.find(r => r.category === t.budgetCategory);
-                    if (row) {
-                        row.monthly_actual[monthIndex] += Math.abs(t.amount);
-                    }
+                    if (row) row.monthly_actual[monthIndex] += Math.abs(t.amount);
                 }
             }
         });
 
-        setPlanData([incomeRow, ...expenseRows]);
-    }, [data.budgets, data.transactions, year]);
+        // Add "Monthly investment" row from investment plan + actual from investment transactions
+        const monthlyInvestment = (investmentPlan?.monthlyBudget ?? 0);
+        const investmentActuals = Array(12).fill(0);
+        investmentTransactions.forEach((tx: { date: string; type: string; total: number }) => {
+            const date = new Date(tx.date);
+            if (date.getFullYear() === year && tx.type === 'buy') {
+                investmentActuals[date.getMonth()] += tx.total ?? 0;
+            }
+        });
+        const investmentRow: PlanRow = {
+            type: 'expense',
+            category: 'Monthly investment',
+            monthly_planned: Array(12).fill(monthlyInvestment),
+            monthly_actual: investmentActuals,
+        };
+        setPlanData([incomeRow, ...expenseRows, investmentRow]);
+    }, [budgets, transactions, year, investmentPlan, investmentTransactions]);
     
     const processedPlanData: PlanRow[] = useMemo(() => {
         let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
@@ -178,11 +223,70 @@ const AnnualFinancialPlan: React.FC = () => {
 
         const projectedNet = totalPlannedIncome - totalPlannedExpenses;
         const actualNet = totalActualIncome - totalActualExpenses;
+        const variancePct = projectedNet !== 0 ? ((actualNet - projectedNet) / Math.abs(projectedNet)) * 100 : 0;
 
-        return { totalPlannedIncome, totalPlannedExpenses, projectedNet, actualNet };
+        return { totalPlannedIncome, totalPlannedExpenses, totalActualIncome, totalActualExpenses, projectedNet, actualNet, variancePct };
     }, [processedPlanData]);
-    
-     const planChartData = useMemo(() => {
+
+    const insights = useMemo(() => {
+        const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
+        let monthsOverBudget = 0;
+        let worst: { category: string; month: string; pct: number } | null = null;
+        processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
+            row.monthly_planned.forEach((plan: number, mi: number) => {
+                const actual = row.monthly_actual[mi];
+                if (plan > 0 && actual > plan) monthsOverBudget++;
+                const pct = plan > 0 ? ((actual - plan) / plan) * 100 : 0;
+                if (pct > 0 && (!worst || pct > worst.pct)) worst = { category: row.category, month: MONTHS[mi], pct };
+            });
+        });
+        const currentMonth = new Date().getMonth();
+        const ytdPlannedIncome = income?.monthly_planned.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
+        const ytdActualIncome = income?.monthly_actual.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
+        return { monthsOverBudget, worst, ytdPlannedIncome, ytdActualIncome };
+    }, [processedPlanData]);
+
+    // Goals: when will you reach them? Required per month vs projected surplus (after expenses + investment)
+    const goalsAnalysis = useMemo(() => {
+        const monthlySurplusAfterInvestment = (totals?.projectedNet ?? 0) / 12;
+
+        return (goals as { id: string; name: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number; deadline?: string; targetDate?: string }[]).map(g => {
+            const target = Number(g.targetAmount ?? (g as any).target_amount ?? 0);
+            const current = Number(g.currentAmount ?? (g as any).current_amount ?? 0);
+            const shortfall = Math.max(0, target - current);
+            const deadlineStr = g.deadline ?? (g as any).targetDate ?? '';
+            const deadlineDate = deadlineStr ? new Date(deadlineStr) : null;
+            const now = new Date();
+            const monthsRemaining = deadlineDate && deadlineDate > now
+                ? Math.ceil((deadlineDate.getTime() - now.getTime()) / (30.44 * 24 * 60 * 60 * 1000))
+                : 0;
+            const requiredPerMonth = monthsRemaining > 0 && shortfall > 0 ? shortfall / monthsRemaining : shortfall;
+            let status: 'funded' | 'on_track' | 'need_more' = 'funded';
+            if (shortfall > 0) {
+                status = monthlySurplusAfterInvestment >= requiredPerMonth ? 'on_track' : 'need_more';
+            }
+            // At current surplus, how many months to reach this goal? (undefined if surplus <= 0 or funded)
+            const monthsToReachAtCurrentSurplus = shortfall > 0 && monthlySurplusAfterInvestment > 0
+                ? Math.ceil(shortfall / monthlySurplusAfterInvestment)
+                : undefined;
+            return {
+                id: g.id,
+                name: g.name,
+                targetAmount: target,
+                currentAmount: current,
+                shortfall,
+                deadline: deadlineDate,
+                deadlineStr,
+                monthsRemaining,
+                requiredPerMonth,
+                status,
+                monthlySurplusAfterInvestment,
+                monthsToReachAtCurrentSurplus,
+            };
+        });
+    }, [goals, totals, processedPlanData]);
+
+    const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
             const expenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, r: PlanRow) => sum + r.monthly_planned[index], 0);
@@ -216,15 +320,171 @@ const AnnualFinancialPlan: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="text-center">
-                <h1 className="text-3xl font-bold text-dark">Annual Financial Plan</h1>
-                <p className="text-gray-500 mt-1">A detailed grid for planning and tracking your finances throughout the year.</p>
-                <div className="mt-2 flex items-center justify-center gap-2">
-                    <button onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon className="h-5 w-5"/></button>
-                    <label className="flex items-center gap-1"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="p-1 border rounded-md w-24 text-center font-semibold" /></label>
-                    <button onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
+        <PageLayout
+            title="Annual Financial Plan"
+            description="A detailed grid for planning and tracking your finances throughout the year."
+            action={
+                <div className="flex flex-wrap items-center justify-end gap-4">
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronLeftIcon className="h-5 w-5"/></button>
+                        <label className="flex items-center gap-1"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-base w-24 text-center font-semibold" /></label>
+                        <button type="button" onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronRightIcon className="h-5 w-5"/></button>
+                    </div>
+                    {setActivePage && (
+                        <div className="flex flex-wrap gap-2">
+                            <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-sm"><BanknotesIcon className="h-4 w-4" /> Budgets</button>
+                            <button type="button" onClick={() => setActivePage('Goals')} className="btn-ghost py-1.5 text-sm text-blue-600 hover:bg-blue-50"><ScaleIcon className="h-4 w-4" /> Goals</button>
+                            <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-sm text-violet-600 hover:bg-violet-50"><ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan</button>
+                        </div>
+                    )}
                 </div>
+            }
+        >
+            {/* Executive summary */}
+            {totals && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className={`p-4 rounded-xl border-2 ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Projected surplus</p>
+                        <p className={`text-xl font-bold ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {formatCurrencyString(totals.projectedNet, { digits: 0 })}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-0.5">Income − expenses (plan)</p>
+                    </div>
+                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Actual net (YTD)</p>
+                        <p className={`text-xl font-bold ${totals.actualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {formatCurrencyString(totals.actualNet, { digits: 0 })}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-0.5">From transactions this year</p>
+                    </div>
+                    <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Vs plan</p>
+                        <p className={`text-xl font-bold ${totals.variancePct >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                            {totals.projectedNet !== 0 ? `${totals.variancePct >= 0 ? '+' : ''}${totals.variancePct.toFixed(0)}%` : '—'}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-0.5">Actual vs projected</p>
+                    </div>
+                    <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Months over budget</p>
+                        <p className={`text-xl font-bold ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                            {insights.monthsOverBudget}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-0.5">Category-months above plan</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Smart insights */}
+            {(insights.worst || insights.monthsOverBudget > 0) && (
+                <div className="flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
+                    {insights.monthsOverBudget > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
+                            <ExclamationTriangleIcon className="h-5 w-5 text-amber-500" />
+                            {insights.monthsOverBudget} month{insights.monthsOverBudget !== 1 ? 's' : ''} over budget
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-emerald-700">
+                            <CheckCircleIcon className="h-5 w-5 text-emerald-500" />
+                            No months over budget
+                        </span>
+                    )}
+                    {insights.worst && insights.worst.pct > 0 && (
+                        <span className="text-sm text-gray-700">
+                            Largest variance: <strong>{insights.worst.category}</strong> in {insights.worst.month} (+{insights.worst.pct.toFixed(0)}%)
+                        </span>
+                    )}
+                </div>
+            )}
+
+            {/* Investment in this plan */}
+            {investmentPlan && (investmentPlan.monthlyBudget ?? 0) > 0 && (
+                <div className="p-4 rounded-xl border-2 border-violet-200 bg-violet-50/50">
+                    <h3 className="text-sm font-semibold text-violet-800 mb-2 flex items-center gap-2">
+                        <ArrowTrendingUpIcon className="h-5 w-5" /> Investment in this plan
+                        <InfoHint text="Your monthly investment (from Investment Plan) is included as an outflow in the plan. Surplus below is after expenses and investment." />
+                    </h3>
+                    <p className="text-sm text-gray-700">
+                        You plan to invest <strong>{formatCurrencyString(investmentPlan.monthlyBudget ?? 0, { digits: 0 })}/month</strong>
+                        {' '}({formatCurrencyString((investmentPlan.monthlyBudget ?? 0) * 12, { digits: 0 })} this year).
+                        {totals && (
+                            <span className="block mt-1">
+                                Projected surplus after expenses and investment: <strong className={totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                                    {formatCurrencyString(totals.projectedNet, { digits: 0 })}
+                                </strong>
+                            </span>
+                        )}
+                    </p>
+                </div>
+            )}
+
+            {/* Goals & when you'll reach them */}
+            <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
+                <h3 className="text-lg font-semibold text-dark mb-1 flex items-center gap-2">
+                    <ScaleIcon className="h-5 w-5 text-primary" /> Goals & when you'll reach them
+                    <InfoHint text="Each goal is compared to your projected monthly surplus (after expenses and investment). On track = you can save enough per month by the deadline; Need more = increase savings or extend the deadline." />
+                </h3>
+                <p className="text-sm text-gray-500 mb-4">Based on your plan surplus this year and each goal's deadline.</p>
+                {goalsAnalysis.length === 0 ? (
+                    <div className="py-6 text-center text-gray-500 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                        <p className="font-medium text-slate-600">No goals yet</p>
+                        <p className="text-sm mt-1">Set goals to see when you'll reach them and whether your plan keeps you on track.</p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Goals')} className="mt-3 text-primary font-medium hover:underline">Go to Goals →</button>
+                        )}
+                    </div>
+                ) : (
+                    <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {goalsAnalysis.map(g => (
+                            <div
+                                key={g.id}
+                                className={`p-4 rounded-xl border-2 ${
+                                    g.status === 'funded' ? 'bg-emerald-50/80 border-emerald-200' :
+                                    g.status === 'on_track' ? 'bg-blue-50/80 border-blue-200' :
+                                    'bg-amber-50/80 border-amber-200'
+                                }`}
+                            >
+                                <div className="flex justify-between items-start">
+                                    <span className="font-semibold text-dark">{g.name}</span>
+                                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                        g.status === 'funded' ? 'bg-emerald-200 text-emerald-800' :
+                                        g.status === 'on_track' ? 'bg-blue-200 text-blue-800' :
+                                        'bg-amber-200 text-amber-800'
+                                    }`}>
+                                        {g.status === 'funded' ? 'Funded' : g.status === 'on_track' ? 'On track' : 'Need more'}
+                                    </span>
+                                </div>
+                                <div className="mt-2 text-sm text-gray-600 space-y-0.5">
+                                    <p>Target: {formatCurrencyString(g.targetAmount)} · Current: {formatCurrencyString(g.currentAmount)}</p>
+                                    {g.shortfall > 0 && (
+                                        <>
+                                            <p>Shortfall: {formatCurrencyString(g.shortfall)} by {g.deadline ? g.deadline.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '—'}</p>
+                                            <p>Required: <strong>{formatCurrencyString(g.requiredPerMonth, { digits: 0 })}/month</strong>
+                                                {g.status === 'need_more' && g.monthlySurplusAfterInvestment >= 0 && (
+                                                    <span className="text-amber-700"> (you have ~{formatCurrencyString(g.monthlySurplusAfterInvestment, { digits: 0 })}/month surplus)</span>
+                                                )}
+                                            </p>
+                                            {g.monthsToReachAtCurrentSurplus != null && (
+                                                <p className="text-slate-600">
+                                                    At current surplus: <strong>~{g.monthsToReachAtCurrentSurplus} months</strong> to reach this goal
+                                                    {g.status === 'need_more' && g.monthsRemaining > 0 && (
+                                                        <span className="text-amber-700"> (deadline in {g.monthsRemaining} months)</span>
+                                                    )}
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {setActivePage && (
+                        <button type="button" onClick={() => setActivePage('Goals')} className="mt-4 text-sm font-medium text-primary hover:underline flex items-center gap-1">
+                            View & edit goals →
+                        </button>
+                    )}
+                    </>
+                )}
             </div>
             
              <div className="bg-white p-6 rounded-lg shadow h-[400px]">
@@ -256,7 +516,39 @@ const AnnualFinancialPlan: React.FC = () => {
 
             {/* Scenario Controls */}
             <div className="bg-white p-4 rounded-lg shadow">
-                 <h3 className="text-lg font-semibold text-dark mb-2">Scenario Planning Tools</h3>
+                 <h3 className="text-lg font-semibold text-dark mb-2 flex items-center gap-2">
+                     <ScaleIcon className="h-5 w-5 text-primary" /> Scenario Planning Tools
+                     <InfoHint text="Apply presets or custom shocks to see how your annual plan would change. Use the grid and chart to compare." />
+                 </h3>
+                 <div className="flex flex-wrap gap-2 mb-4">
+                     {SCENARIO_PRESETS.map(preset => (
+                         <button
+                             key={preset.name}
+                             type="button"
+                             onClick={() => {
+                                 if (preset.name === 'None') {
+                                     setIncomeShock({ percent: 0, startMonth: 1, duration: 1 });
+                                     setExpenseStress({ category: 'All', percent: 0 });
+                                 } else {
+                                     setIncomeShock({
+                                         percent: preset.income ?? 0,
+                                         startMonth: preset.startMonth ?? 1,
+                                         duration: preset.duration ?? 3,
+                                     });
+                                     setExpenseStress({ category: 'All', percent: preset.expense ?? 0 });
+                                 }
+                             }}
+                             className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${
+                                 (preset.name === 'None' && incomeShock.percent === 0 && expenseStress.percent === 0) ||
+                                 (preset.name !== 'None' && incomeShock.percent === (preset.income ?? 0) && expenseStress.percent === (preset.expense ?? 0))
+                                     ? 'bg-primary text-white border-primary'
+                                     : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                             }`}
+                         >
+                             {preset.label ?? preset.name}
+                         </button>
+                     ))}
+                 </div>
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
                      {/* Income Shock */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
@@ -276,7 +568,7 @@ const AnnualFinancialPlan: React.FC = () => {
                            <span className="text-sm">Increase</span>
                            <select value={expenseStress.category} onChange={e => setExpenseStress(s => ({...s, category: e.target.value}))} className="p-1 border rounded-md text-sm">
                                <option>All</option>
-                               {data.budgets.map(b => <option key={b.category}>{b.category}</option>)}
+                               {[...new Set(processedPlanData.filter((r: PlanRow) => r.type === 'expense').map((r: PlanRow) => r.category))].map(cat => <option key={cat}>{cat}</option>)}
                            </select>
                            <span className="text-sm">by</span>
                            <input type="number" value={expenseStress.percent} onChange={e => setExpenseStress(s => ({...s, percent: parseInt(e.target.value) || 0}))} className="w-20 p-1 border rounded-md" />
@@ -379,7 +671,7 @@ const AnnualFinancialPlan: React.FC = () => {
                     </div>
                 </div>
             )}
-        </div>
+        </PageLayout>
     );
 };
 

@@ -15,15 +15,17 @@ import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { useAI } from '../context/AiContext';
 import { useMarketData } from '../context/MarketDataContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
 
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
   onOpenLiveAdvisor: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor }) => {
+const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor, onOpenCommandPalette }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
@@ -41,14 +43,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const hasData = data && data.accounts.length > 0;
   
-  const notificationCount = useMemo(() => {
-    if (!data) return 0;
-    const priceAlerts = data.priceAlerts.filter(a => a.status === 'triggered').length;
-    const pendingTransactions = data.transactions.filter(t => (t.status ?? 'Approved') === 'Pending').length;
-    const pendingPlannedTrades = data.plannedTrades.filter(t => t.status === 'Planned').length;
-    const unreadNotifications = (data.notifications || []).filter(n => !n.read).length;
-    return priceAlerts + pendingTransactions + pendingPlannedTrades + unreadNotifications;
-  }, [data]);
+  const notificationsContext = useNotifications();
+  const notificationCount = notificationsContext?.unreadCount ?? 0;
 
   const prevNotificationCountRef = useRef(notificationCount);
   const playNotificationSound = useRef(() => {
@@ -225,6 +221,17 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   )}
               </button>
 
+              {onOpenCommandPalette && (
+                <button
+                  type="button"
+                  onClick={onOpenCommandPalette}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-primary hover:bg-slate-100 border border-slate-200 transition-all"
+                  title="Search pages & quick actions"
+                  aria-label="Open command palette (⌘K)"
+                >
+                  <span className="opacity-80">⌘K</span>
+                </button>
+              )}
               <button
                 onClick={onOpenLiveAdvisor}
                 className="p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 disabled:text-gray-200 transition-all"

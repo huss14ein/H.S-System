@@ -14,7 +14,9 @@ import {
 import { tickerToSleeve, tickerToRiskTier } from '../wealth-ultra/position';
 
 function RecoveryPlanViewContent() {
-  const { data } = useContext(DataContext)!;
+  const ctx = useContext(DataContext)!;
+  const { data } = ctx;
+  const deployableCash = ctx.totalDeployableCash ?? 0;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -31,10 +33,6 @@ function RecoveryPlanViewContent() {
     return map;
   }, [simulatedPrices, allHoldings]);
 
-  const deployableCash = useMemo(() => {
-    const cashAccounts = (data.accounts ?? []).filter((a: { type: string }) => ['Checking', 'Savings'].includes(a.type));
-    return cashAccounts.reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
-  }, [data.accounts]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,

@@ -8,6 +8,8 @@ import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 
 const DividendTrackerView: React.FC = () => {
     const { data } = useContext(DataContext)!;
@@ -64,10 +66,10 @@ const DividendTrackerView: React.FC = () => {
                 <h2 className="text-2xl font-bold text-dark">Dividend Tracker</h2>
                 <p className="text-gray-500 mt-1">Monitor your passive income from dividend-paying investments.</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <Card title="Dividend Income (YTD)" value={formatCurrencyString(dividendIncomeYTD)} />
-                <Card title="Projected Annual Income" value={formatCurrencyString(projectedAnnualIncome)} tooltip="Based on current holdings and their dividend yields." />
-                <Card title="Average Portfolio Yield" value={`${averageYield.toFixed(2)}%`} tooltip="Projected annual dividend income as a percentage of your total investment value."/>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card title="Dividend Income (YTD)" value={formatCurrencyString(dividendIncomeYTD)} indicatorColor="green" valueColor="text-emerald-700" icon={<TrophyIcon className="h-5 w-5 text-emerald-600" />} tooltip="Dividend income received so far this year." />
+                <Card title="Projected Annual Income" value={formatCurrencyString(projectedAnnualIncome)} indicatorColor="green" valueColor="text-indigo-700" icon={<BanknotesIcon className="h-5 w-5 text-indigo-600" />} tooltip="Based on current holdings and their dividend yields." />
+                <Card title="Average Portfolio Yield" value={`${averageYield.toFixed(2)}%`} indicatorColor="yellow" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Projected annual dividend income as a percentage of your total investment value."/>
             </div>
             
             <div className="bg-white p-6 rounded-lg shadow">

@@ -13,34 +13,93 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { useMarketData } from '../context/MarketDataContext';
 
-const AddWatchlistItemModal: React.FC<{ isOpen: boolean, onClose: () => void, onAdd: (item: WatchlistItem) => void }> = ({ isOpen, onClose, onAdd }) => {
+const AddWatchlistItemModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onAdd: (item: WatchlistItem) => void;
+    onAddAlert?: (symbol: string, targetPrice: number) => void;
+}> = ({ isOpen, onClose, onAdd, onAddAlert }) => {
     const [symbol, setSymbol] = useState('');
     const [name, setName] = useState('');
-    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (symbol && name) { onAdd({ symbol: symbol.toUpperCase().trim(), name }); setSymbol(''); setName(''); onClose(); } };
+    const [setAlert, setSetAlert] = useState(false);
+    const [targetPrice, setTargetPrice] = useState('');
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const sym = symbol.toUpperCase().trim();
+        if (!sym || !name) return;
+        onAdd({ symbol: sym, name });
+        if (onAddAlert && setAlert && targetPrice.trim()) {
+            const price = parseFloat(targetPrice.replace(/,/g, ''));
+            if (Number.isFinite(price) && price > 0) onAddAlert(sym, price);
+        }
+        setSymbol('');
+        setName('');
+        setSetAlert(false);
+        setTargetPrice('');
+        onClose();
+    };
+    const handleClose = () => {
+        setSetAlert(false);
+        setTargetPrice('');
+        onClose();
+    };
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add to Watchlist">
+        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist">
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div><label htmlFor="stock-symbol" className="block text-sm font-medium text-gray-700">Stock Symbol</label><input type="text" id="stock-symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
-                <div><label htmlFor="stock-name" className="block text-sm font-medium text-gray-700">Company Name</label><input type="text" id="stock-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Add Item</button>
+                <div>
+                    <label htmlFor="stock-symbol" className="block text-sm font-medium text-gray-700">Stock Symbol</label>
+                    <input type="text" id="stock-symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                </div>
+                <div>
+                    <label htmlFor="stock-name" className="block text-sm font-medium text-gray-700">Company Name</label>
+                    <input type="text" id="stock-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                </div>
+                {onAddAlert && (
+                    <div className="space-y-2 pt-2 border-t border-gray-200">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={setAlert} onChange={e => setSetAlert(e.target.checked)} className="rounded border-gray-300 text-primary" />
+                            <span className="text-sm font-medium text-gray-700">Set a price alert</span>
+                            <BellIcon className="h-4 w-4 text-amber-500" />
+                        </label>
+                        {setAlert && (
+                            <div>
+                                <label htmlFor="add-alert-price" className="block text-xs font-medium text-gray-500 mb-0.5">Notify when price reaches</label>
+                                <input
+                                    type="number"
+                                    id="add-alert-price"
+                                    value={targetPrice}
+                                    onChange={e => setTargetPrice(e.target.value)}
+                                    min="0.01"
+                                    step="0.01"
+                                    placeholder="e.g. 350.50"
+                                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
+                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Add to Watchlist</button>
             </form>
         </Modal>
     );
 };
 
 const WatchlistItemRow: React.FC<{
-    item: WatchlistItem,
-    priceInfo: { price: number; change: number; changePercent: number },
-    activeAlert: PriceAlert | null,
-    onOpenAlertModal: (item: WatchlistItem) => void,
-    onOpenDeleteModal: (item: WatchlistItem) => void,
-    onOpenResearch: (item: WatchlistItem) => void,
-}> = ({ item, priceInfo, activeAlert, onOpenAlertModal, onOpenDeleteModal, onOpenResearch }) => {
+    item: WatchlistItem;
+    priceInfo: { price: number; change: number; changePercent: number };
+    activeAlerts: PriceAlert[];
+    onOpenAlertModal: (item: WatchlistItem) => void;
+    onOpenDeleteModal: (item: WatchlistItem) => void;
+    onOpenResearch: (item: WatchlistItem) => void;
+}> = ({ item, priceInfo, activeAlerts, onOpenAlertModal, onOpenDeleteModal, onOpenResearch }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const formatPrice = (p: number) => formatCurrencyString(p, { forceUSD: true, digits: 2 });
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number | undefined>(undefined);
 
-    const targetPrice = activeAlert?.targetPrice ?? null;
+    const targets = activeAlerts.map(a => a.targetPrice ?? (a as any).target_price).filter((p): p is number => typeof p === 'number' && p > 0);
+    const nearestTarget = targets.length > 0 ? targets.reduce((a, b) => (Math.abs(priceInfo.price - a) < Math.abs(priceInfo.price - b) ? a : b)) : null;
+    const targetPrice = nearestTarget;
     const targetDistancePercent = targetPrice && targetPrice > 0 ? ((priceInfo.price - targetPrice) / targetPrice) * 100 : null;
     const targetStatusClass = !targetPrice
         ? 'bg-gray-100 text-gray-600'
@@ -51,11 +110,13 @@ const WatchlistItemRow: React.FC<{
                 : 'bg-red-100 text-red-700';
     const targetStatusLabel = !targetPrice
         ? 'No alert'
-        : Math.abs(targetDistancePercent || 0) <= 1
-            ? 'Near target'
-            : (targetDistancePercent || 0) >= 0
-                ? 'Above target'
-                : 'Below target';
+        : targets.length > 1
+            ? `${targets.length} alerts`
+            : Math.abs(targetDistancePercent || 0) <= 1
+                ? 'Near target'
+                : (targetDistancePercent || 0) >= 0
+                    ? 'Above target'
+                    : 'Below target';
 
     useEffect(() => {
         if (priceInfo) {
@@ -77,8 +138,8 @@ const WatchlistItemRow: React.FC<{
                 <div className="font-medium text-gray-900">{item.symbol}</div>
                 <div className="text-xs text-gray-500 truncate max-w-[150px]">{item.name}</div>
             </td>
-            <td className="px-4 py-2 w-32">
-                <MiniPriceChart />
+            <td className="px-4 py-2 w-36">
+                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} />
             </td>
             <td className="px-4 py-2 text-right font-semibold text-dark whitespace-nowrap tabular-nums">{formatCurrencyString(priceInfo.price)}</td>
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -86,10 +147,12 @@ const WatchlistItemRow: React.FC<{
             </td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
                 <div className="flex flex-col items-end gap-1">
-                    <span className="text-xs text-gray-500">{targetPrice ? formatCurrencyString(targetPrice) : '--'}</span>
+                    <span className="text-xs text-gray-500">
+                        {targets.length > 0 ? (targets.length === 1 ? formatCurrencyString(targets[0]) : targets.map(t => formatCurrencyString(t)).join(', ')) : '--'}
+                    </span>
                     <span className={`px-2 py-0.5 text-[11px] font-semibold rounded-full ${targetStatusClass}`}>
                         {targetStatusLabel}
-                        {targetDistancePercent !== null && ` (${targetDistancePercent >= 0 ? '+' : ''}${targetDistancePercent.toFixed(1)}%)`}
+                        {targetDistancePercent !== null && targets.length <= 1 && ` (${targetDistancePercent >= 0 ? '+' : ''}${targetDistancePercent.toFixed(1)}%)`}
                     </span>
                 </div>
             </td>
@@ -98,8 +161,8 @@ const WatchlistItemRow: React.FC<{
                     <button onClick={() => onOpenResearch(item)} className="text-gray-400 hover:text-primary p-1" title="Deeper research (profile, 52w, earnings, insider)">
                         <BookOpenIcon className="h-5 w-5" />
                     </button>
-                    <button onClick={() => onOpenAlertModal(item)} className="text-gray-400 hover:text-yellow-500 p-1" title="Set Price Alert">
-                        {activeAlert ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
+                    <button onClick={() => onOpenAlertModal(item)} className="text-gray-400 hover:text-yellow-500 p-1" title={activeAlerts.length > 0 ? 'Manage price alerts' : 'Set price alert'}>
+                        {activeAlerts.length > 0 ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
                     </button>
                     <button onClick={() => onOpenDeleteModal(item)} className="text-gray-400 hover:text-red-500 p-1" title="Delete">
                         <TrashIcon className="h-5 w-5" />
@@ -129,11 +192,11 @@ const WatchlistView: React.FC = () => {
         const rows = data.watchlist.map((item) => ({
             ...item,
             priceInfo: simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 },
-            activeAlert: data.priceAlerts.find(a => a.symbol === item.symbol && a.status === 'active') || null,
+            activeAlerts: data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active'),
         }));
         const positiveMovers = rows.filter(r => r.priceInfo.changePercent > 0).length;
         const negativeMovers = rows.filter(r => r.priceInfo.changePercent < 0).length;
-        const alertCoverage = rows.filter(r => r.activeAlert).length;
+        const alertCoverage = rows.filter(r => r.activeAlerts.length > 0).length;
         return { positiveMovers, negativeMovers, alertCoverage, total: rows.length };
     }, [data.watchlist, data.priceAlerts, simulatedPrices]);
 
@@ -172,13 +235,13 @@ const WatchlistView: React.FC = () => {
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
-                            const activeAlert = data.priceAlerts.find(a => a.symbol === item.symbol && a.status === 'active') || null;
+                            const activeAlerts = data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             return (
                                <WatchlistItemRow
                                   key={item.symbol}
                                   item={item}
                                   priceInfo={priceInfo}
-                                  activeAlert={activeAlert}
+                                  activeAlerts={activeAlerts}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                   onOpenResearch={handleOpenResearch}
@@ -196,9 +259,9 @@ const WatchlistView: React.FC = () => {
                 <p className="text-xs text-slate-500 mt-3">Use Investment Plan to set Core / High-Upside status and weights for allocation.</p>
             </div>
 
-            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} />
+            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} onAddAlert={(sym, targetPrice) => addPriceAlert({ symbol: sym, targetPrice })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-            <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDelete={handleDeleteAlert} stock={stockForAlert} existingAlert={data.priceAlerts.find(a => a.symbol === stockForAlert?.symbol) || null} />
+            <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
 
             {researchSymbol && (
                 <Modal isOpen={!!researchSymbol} onClose={() => { setResearchSymbol(null); setSymbolResearch(null); }} title={`Research: ${researchSymbol.symbol}`}>
@@ -215,9 +278,9 @@ const WatchlistView: React.FC = () => {
                             {symbolResearch.quote && (
                                 <div className="p-4 rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white">
                                     <h4 className="font-semibold text-emerald-800 mb-2">Quote & 52-week</h4>
-                                    <p className="font-semibold text-dark">Current: {formatCurrencyString(symbolResearch.quote.c)} <span className={symbolResearch.quote.d >= 0 ? 'text-green-600' : 'text-red-600'}>· Day: {symbolResearch.quote.d >= 0 ? '+' : ''}{symbolResearch.quote.dp?.toFixed(2)}%</span></p>
+                                    <p className="font-semibold text-dark">Current: {formatCurrencyString(symbolResearch.quote.c, { forceUSD: true })} <span className={symbolResearch.quote.d >= 0 ? 'text-green-600' : 'text-red-600'}>· Day: {symbolResearch.quote.d >= 0 ? '+' : ''}{symbolResearch.quote.dp?.toFixed(2)}%</span></p>
                                     {(symbolResearch.quote.high52 != null || symbolResearch.quote.low52 != null) && (
-                                        <p className="text-gray-600 mt-1">52w high: {symbolResearch.quote.high52 != null ? formatCurrencyString(symbolResearch.quote.high52) : '—'} · 52w low: {symbolResearch.quote.low52 != null ? formatCurrencyString(symbolResearch.quote.low52) : '—'}</p>
+                                        <p className="text-gray-600 mt-1">52w high: {symbolResearch.quote.high52 != null ? formatCurrencyString(symbolResearch.quote.high52, { forceUSD: true }) : '—'} · 52w low: {symbolResearch.quote.low52 != null ? formatCurrencyString(symbolResearch.quote.low52, { forceUSD: true }) : '—'}</p>
                                     )}
                                 </div>
                             )}
@@ -236,7 +299,7 @@ const WatchlistView: React.FC = () => {
                                     <h4 className="font-semibold text-violet-800 mb-2">Recent insider</h4>
                                     <ul className="space-y-1">
                                         {symbolResearch.insider.slice(0, 5).map((t, i) => (
-                                            <li key={i}>{t.name}: {t.transactionCode} · {t.change} @ {formatCurrencyString(t.transactionPrice)} ({t.filingDate})</li>
+                                            <li key={i}>{t.name}: {t.transactionCode} · {t.change} @ {formatCurrencyString(t.transactionPrice, { forceUSD: true })} ({t.filingDate})</li>
                                         ))}
                                     </ul>
                                 </div>

@@ -6,6 +6,8 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -181,14 +183,11 @@ const Forecast: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="text-center">
-                <h1 className="text-3xl font-bold text-dark">Financial Forecast</h1>
-                <p className="text-gray-500 mt-1">Project your financial future based on your current savings habits and market assumptions.</p>
-            </div>
-
-
-            <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+        <PageLayout
+            title="Financial Forecast"
+            description="Project your financial future based on your current savings habits and market assumptions."
+        >
+            <div className="alert-info mb-6">
                 <h2 className="text-base font-semibold text-blue-900 mb-2">How Scenario Planning Works</h2>
                 <ul className="text-sm text-blue-800 space-y-1 list-disc pl-5">
                     <li>The model compounds monthly savings into investment value using your annual growth assumption.</li>
@@ -199,8 +198,7 @@ const Forecast: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow space-y-4 sticky top-24">
-                    <h3 className="text-lg font-semibold text-dark border-b pb-2">Forecast Assumptions</h3>
+                <SectionCard title="Forecast Assumptions" className="lg:col-span-1 sticky top-24 space-y-4">
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
                         {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
@@ -219,22 +217,22 @@ const Forecast: React.FC = () => {
                     </div>
                     <div>
                         <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
-                        <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="input-base mt-1" />
                         <p className="text-xs text-gray-500 mt-1">Calculated average is {formatCurrencyString(averageMonthlySavings)}.</p>
                     </div>
                     <div>
                         <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
-                        <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
                     <div>
                         <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Assume your monthly savings grow by this percent each year (e.g. raises)." /></label>
-                        <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
-                    <button onClick={handleRunForecast} disabled={isLoading} className="w-full flex items-center justify-center px-4 py-3 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors font-semibold">
-                        <SparklesIcon className="h-5 w-5 mr-2" />
+                    <button type="button" onClick={handleRunForecast} disabled={isLoading} className="w-full btn-primary flex items-center justify-center gap-2 font-semibold disabled:opacity-50">
+                        <SparklesIcon className="h-5 w-5" />
                         {isLoading ? 'Calculating...' : 'Run Forecast'}
                     </button>
-                </div>
+                </SectionCard>
 
                 <div className="lg:col-span-3 space-y-6">
                     {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><p className="text-gray-500">Generating your financial forecast...</p></div>}
@@ -251,8 +249,7 @@ const Forecast: React.FC = () => {
 
 
                     {Object.values(comparisonResults).some(Boolean) && !isLoading && (
-                        <div className="bg-white p-6 rounded-lg shadow">
-                            <h3 className="text-lg font-semibold text-dark mb-4">Scenario Comparison ({horizon}-Year Horizon)</h3>
+                        <SectionCard title={`Scenario Comparison (${horizon}-Year Horizon)`}>
                             <div className="overflow-x-auto">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -280,7 +277,7 @@ const Forecast: React.FC = () => {
                                 </table>
                             </div>
                             <p className="text-xs text-gray-500 mt-3">Tip: Run all three presets to compare conservative, base, and aggressive outcomes side-by-side.</p>
-                        </div>
+                        </SectionCard>
                     )}
                     
                     {goalProjections.length > 0 && !isLoading && (
@@ -332,7 +329,7 @@ const Forecast: React.FC = () => {
                     )}
                 </div>
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

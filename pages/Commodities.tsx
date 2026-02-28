@@ -161,20 +161,25 @@ const Commodities: React.FC = () => {
         setIsUpdatingPrices(true);
         try {
             const { prices } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
                 const updates = data.commodityHoldings
                     .map(h => {
-                        const newPriceInfo = prices.find(p => p.symbol === h.symbol);
+                        const newPriceInfo = prices.find(p => match(p, h));
                         return newPriceInfo ? { id: h.id, currentValue: newPriceInfo.price * h.quantity } : null;
                     })
                     .filter((u): u is { id: string; currentValue: number; } => u !== null);
                 
                 if (updates.length > 0) {
                     await batchUpdateCommodityHoldingValues(updates);
+                    if (updates.length < data.commodityHoldings.length) {
+                        console.warn(`Updated ${updates.length} of ${data.commodityHoldings.length} commodity prices.`);
+                    }
                 }
             }
         } catch (error) {
             console.error("Failed to update commodity prices:", error);
+            alert("Failed to update prices. Check console for details. Ensure Finnhub API key is set for crypto/metals fallback.");
         } finally {
             setIsUpdatingPrices(false);
         }

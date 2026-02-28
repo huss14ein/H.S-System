@@ -55,7 +55,7 @@ create table public.investment_transactions (
   user_id uuid not null references auth.users(id) on delete cascade,
   account_id uuid not null references public.accounts(id) on delete restrict,
   date text not null,
-  type text not null check (type in ('buy', 'sell', 'dividend')),
+  type text not null check (type in ('buy', 'sell', 'dividend', 'deposit', 'withdrawal')),
   symbol text not null,
   quantity numeric not null default 0,
   price numeric not null default 0,

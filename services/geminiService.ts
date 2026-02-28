@@ -922,17 +922,28 @@ export const getAICategorySuggestion = async (description: string, categories: s
 };
 
 const SAR_PER_USD = 3.75;
+const GRAMS_PER_TROY_OZ = 31.1035;
 
-/** Fetch commodity prices from Finnhub (crypto). Returns prices in SAR. */
+/** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
 export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
     if (!token) return [];
     const out: { symbol: string; price: number }[] = [];
     for (const c of commodities) {
-        const sym = c.symbol.toUpperCase();
+        const sym = (c.symbol || '').toUpperCase().trim();
         let finnhubSym = '';
-        if (sym === 'BTC_USD' || sym === 'BTC') finnhubSym = 'BINANCE:BTCUSDT';
-        else if (sym === 'ETH_USD' || sym === 'ETH') finnhubSym = 'BINANCE:ETHUSDT';
+        let priceMultiplier = SAR_PER_USD; // USD -> SAR
+        if (sym === 'BTC_USD' || sym === 'BTC') {
+            finnhubSym = 'BINANCE:BTCUSDT';
+        } else if (sym === 'ETH_USD' || sym === 'ETH') {
+            finnhubSym = 'BINANCE:ETHUSDT';
+        } else if (sym === 'XAU_GRAM' || sym === 'XAU') {
+            finnhubSym = 'OANDA:XAU_USD';
+            priceMultiplier = (SAR_PER_USD / GRAMS_PER_TROY_OZ);
+        } else if (sym === 'XAG_GRAM' || sym === 'XAG') {
+            finnhubSym = 'OANDA:XAG_USD';
+            priceMultiplier = (SAR_PER_USD / GRAMS_PER_TROY_OZ);
+        }
         if (!finnhubSym) continue;
         try {
             const res = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
@@ -940,7 +951,7 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
             const row = await res.json();
             const priceUsd = Number(row?.c);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: sym, price: priceUsd * SAR_PER_USD });
+            out.push({ symbol: sym, price: priceUsd * priceMultiplier });
         } catch {
             // skip
         }

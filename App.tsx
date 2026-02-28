@@ -1,4 +1,4 @@
-import React, { useState, useContext, Suspense, lazy } from 'react';
+import React, { useState, useContext, useCallback, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
@@ -7,6 +7,7 @@ import { AuthContext } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { MarketDataProvider } from './context/MarketDataContext';
+import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 
@@ -36,8 +37,24 @@ const LoadingSpinner: React.FC = () => (
 );
 
 
+const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Investments', 'Assets', 'Liabilities', 'Transactions', 'Budgets', 'Plan', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'System & APIs Health', 'Settings', 'Wealth Ultra'];
+const LAST_PAGE_KEY = 'h.s.last-page';
+
+function getInitialPage(): Page {
+  if (typeof window === 'undefined') return 'Dashboard';
+  try {
+    const saved = localStorage.getItem(LAST_PAGE_KEY);
+    if (saved && VALID_PAGES.includes(saved as Page)) return saved as Page;
+  } catch (_) {}
+  return 'Dashboard';
+}
+
 const App: React.FC = () => {
-  const [activePage, setActivePage] = useState<Page>('Dashboard');
+  const [activePage, setActivePageState] = useState<Page>(getInitialPage);
+  const setActivePage = useCallback((page: Page) => {
+    setActivePageState(page);
+    try { localStorage.setItem(LAST_PAGE_KEY, page); } catch (_) {}
+  }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
   const [isLoginView, setIsLoginView] = useState(true);
   const auth = useContext(AuthContext);
@@ -59,19 +76,19 @@ const App: React.FC = () => {
     switch (activePage) {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
       case 'Summary': return <Summary />;
-      case 'Accounts': return <Accounts />;
+      case 'Accounts': return <Accounts setActivePage={setActivePage} />;
       case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets />;
-      case 'Goals': return <Goals />;
-      case 'Plan': return <Plan />;
+      case 'Goals': return <Goals setActivePage={setActivePage} />;
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
       case 'Forecast': return <Forecast />;
       case 'Analysis': return <Analysis />;
       case 'Zakat': return <Zakat />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
-      case 'Settings': return <Settings />;
+      case 'Settings': return <Settings setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       default: return <Dashboard setActivePage={setActivePage} />;
@@ -87,12 +104,14 @@ const App: React.FC = () => {
       <DataProvider>
         <CurrencyProvider>
           <MarketDataProvider>
-            <MarketSimulator />
-            <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+            <NotificationsProvider>
+              <MarketSimulator />
+              <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
               <Suspense fallback={<LoadingSpinner />}>
                 {renderPage()}
               </Suspense>
-            </Layout>
+              </Layout>
+            </NotificationsProvider>
           </MarketDataProvider>
         </CurrencyProvider>
       </DataProvider>

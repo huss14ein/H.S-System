@@ -16,13 +16,13 @@ const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Spec: 'bg-rose-500',
 };
 
-function buildEngineConfigFromSystem(data: { investmentPlan?: any; wealthUltraConfig?: any; accounts?: any[] }) {
+function buildEngineConfigFromSystem(data: { investmentPlan?: any; wealthUltraConfig?: any; accounts?: any[] }, totalDeployableCash?: number) {
   const plan = data.investmentPlan;
   const systemConfig = data.wealthUltraConfig;
   const defaults = getDefaultWealthUltraConfig();
   const base = { ...defaults, ...systemConfig } as typeof defaults;
   if (!plan) return undefined;
-  const cashAvailable = (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
+  const cashAvailable = totalDeployableCash ?? (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
   const sleeves = plan.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
   const core = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
   const upside = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
@@ -46,7 +46,7 @@ interface WealthUltraDashboardProps {
 }
 
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage: _setActivePage, triggerPageAction }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -60,13 +60,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       const sym = (h.symbol || '').toUpperCase();
       if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
     });
-    const config = buildEngineConfigFromSystem(data);
+    const config = buildEngineConfigFromSystem(data, totalDeployableCash);
     return runWealthUltraEngine({
       holdings: allHoldings,
       priceMap,
       config,
     });
-  }, [data.investments, data.investmentPlan, data?.accounts, data.wealthUltraConfig, simulatedPrices]);
+  }, [data.investments, data.investmentPlan, data?.accounts, data.wealthUltraConfig, simulatedPrices, totalDeployableCash]);
 
   const {
     totalPortfolioValue,

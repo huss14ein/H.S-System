@@ -13,6 +13,8 @@ import NetWorthCompositionChart from '../components/charts/NetWorthCompositionCh
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -142,11 +144,9 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <div className="space-y-8">
-            <h1 className="text-3xl font-bold text-dark">Financial Summary</h1>
-
+        <PageLayout title="Financial Summary">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg flex flex-col justify-center items-center text-center border-t-4 border-primary">
+                <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
                     <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
                     <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetrics.netWorth, { digits: 0 })}</p>
                     <p className={`${financialMetrics.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
@@ -169,23 +169,23 @@ const Summary: React.FC = () => {
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="h-[450px] bg-white rounded-lg shadow-lg">
+                <div className="section-card h-[450px]">
                     <NetWorthCompositionChart title="Historical Net Worth" />
                 </div>
-                 <div className="bg-white p-6 rounded-lg shadow h-[450px]">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>
+                <div className="section-card h-[450px]">
+                    <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
                     <div className="h-[380px]">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
-                            <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg text-gray-500">No investment data available.</div>
+                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
                         )}
                     </div>
                 </div>
             </div>
             
 
-            <div className="bg-white p-6 rounded-lg shadow max-w-full mx-auto">
+            <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
@@ -195,7 +195,7 @@ const Summary: React.FC = () => {
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
                 {!isLoading && error && (
-                    <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
+                    <div className="alert-error">
                          <h4 className="font-bold">AI Analysis Error</h4>
                          <SafeMarkdownRenderer content={error} />
                     </div>

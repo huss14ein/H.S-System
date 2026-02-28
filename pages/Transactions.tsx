@@ -1,8 +1,10 @@
 import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Transaction, Account, Page, UserRole } from '../types';
+import { Transaction, Account, Page, UserRole, RecurringTransaction } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -209,8 +211,131 @@ interface TransactionsProps {
   triggerPageAction: (page: Page, action: string) => void;
 }
 
+const RecurringModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (r: Omit<RecurringTransaction, 'id' | 'user_id'>) => void;
+    recurring: RecurringTransaction | null;
+    accounts: Account[];
+    budgetCategories: string[];
+}> = ({ isOpen, onClose, onSave, recurring, accounts, budgetCategories }) => {
+    const { formatCurrencyString } = useFormatCurrency();
+    const [description, setDescription] = useState('');
+    const [amount, setAmount] = useState('');
+    const [type, setType] = useState<'income' | 'expense'>('expense');
+    const [accountId, setAccountId] = useState('');
+    const [budgetCategory, setBudgetCategory] = useState('');
+    const [category, setCategory] = useState('');
+    const [dayOfMonth, setDayOfMonth] = useState('1');
+    const [enabled, setEnabled] = useState(true);
+
+    React.useEffect(() => {
+        if (recurring) {
+            setDescription(recurring.description);
+            setAmount(String(recurring.amount));
+            setType(recurring.type);
+            setAccountId(recurring.accountId);
+            setBudgetCategory(recurring.budgetCategory ?? '');
+            setCategory(recurring.category);
+            setDayOfMonth(String(recurring.dayOfMonth));
+            setEnabled(recurring.enabled);
+        } else {
+            setDescription('');
+            setAmount('');
+            setType('expense');
+            setAccountId(accounts[0]?.id ?? '');
+            setBudgetCategory(budgetCategories[0] ?? '');
+            setCategory('Rent');
+            setDayOfMonth('1');
+            setEnabled(true);
+        }
+    }, [recurring, isOpen, accounts, budgetCategories]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const num = parseFloat(amount);
+        const day = Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1));
+        if (!description.trim() || !Number.isFinite(num) || num <= 0 || !accountId) {
+            alert('Please fill description, positive amount, and account.');
+            return;
+        }
+        if (type === 'expense' && budgetCategories.length && !budgetCategory) {
+            alert('Please select a budget category for expenses.');
+            return;
+        }
+        onSave({
+            description: description.trim(),
+            amount: num,
+            type,
+            accountId,
+            budgetCategory: type === 'expense' ? (budgetCategory || undefined) : undefined,
+            category: category.trim() || description.trim(),
+            dayOfMonth: day,
+            enabled,
+        });
+        onClose();
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={recurring ? 'Edit recurring transaction' : 'Add recurring transaction'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <input type="text" value={description} onChange={e => setDescription(e.target.value)} className="input-base" placeholder="e.g. Salary, Rent" required />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <select value={type} onChange={e => setType(e.target.value as 'income' | 'expense')} className="select-base">
+                            <option value="income">Income</option>
+                            <option value="expense">Expense</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                        <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)} className="input-base" required />
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
+                    <select value={accountId} onChange={e => setAccountId(e.target.value)} className="select-base" required>
+                        <option value="">Select account</option>
+                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                </div>
+                {type === 'expense' && budgetCategories.length > 0 && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget category</label>
+                        <select value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} className="select-base">
+                            <option value="">—</option>
+                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+                )}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Category (e.g. Rent, Salary)</label>
+                    <input type="text" value={category} onChange={e => setCategory(e.target.value)} className="input-base" placeholder="Rent" />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
+                    <input type="number" min={1} max={28} value={dayOfMonth} onChange={e => setDayOfMonth(e.target.value)} className="input-base" />
+                </div>
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" id="recurring-enabled" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+                    <label htmlFor="recurring-enabled" className="text-sm text-gray-700">Enabled (include when applying)</label>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                    <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+                    <button type="submit" className="btn-primary">{recurring ? 'Update' : 'Add'}</button>
+                </div>
+            </form>
+        </Modal>
+    );
+};
+
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, updateTransaction, addTransaction, deleteTransaction } = useContext(DataContext)!;
+    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
@@ -220,6 +345,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Transaction | null>(null);
+    const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
+    const [recurringToEdit, setRecurringToEdit] = useState<RecurringTransaction | null>(null);
+    const [applyingRecurring, setApplyingRecurring] = useState(false);
     
     const [filters, setFilters] = useState({ 
         accountId: 'all', 
@@ -384,6 +512,29 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         deleteTransaction(itemToDelete.id);
         setItemToDelete(null);
     };
+
+    const handleSaveRecurring = (r: Omit<RecurringTransaction, 'id' | 'user_id'>) => {
+        if (recurringToEdit) {
+            updateRecurringTransaction({ ...recurringToEdit, ...r });
+            setRecurringToEdit(null);
+        } else {
+            addRecurringTransaction(r);
+        }
+        setIsRecurringModalOpen(false);
+    };
+
+    const handleApplyRecurringForMonth = async () => {
+        const [year, month] = filters.month.split('-').map(Number);
+        setApplyingRecurring(true);
+        try {
+            const { applied, skipped } = await applyRecurringForMonth(year, month);
+            alert(`Recurring: ${applied} transaction(s) created, ${skipped} already applied for this month.`);
+        } catch (e) {
+            // already alerted in context
+        } finally {
+            setApplyingRecurring(false);
+        }
+    };
     
     const toHijri = (gregorianDateStr: string): string => {
         const date = new Date(gregorianDateStr);
@@ -437,10 +588,54 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     return (
-        <div className="space-y-8">
-            <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Cash Flow</h1>
-                <button onClick={() => handleOpenTransactionModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm">Add Transaction</button>
+        <PageLayout
+            title="Cash Flow"
+            action={<button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>}
+        >
+            <SectionCard
+                title="Recurring (monthly) transactions"
+                headerAction={
+                    <div className="flex items-center gap-2">
+                        <InfoHint text="Define templates (e.g. salary deposit, rent). Use &quot;Apply for this month&quot; to create actual transactions from them. Each rule runs once per month on the chosen day." />
+                        <button
+                            type="button"
+                            onClick={handleApplyRecurringForMonth}
+                            disabled={applyingRecurring || recurringList.length === 0}
+                            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {applyingRecurring ? 'Applying…' : `Apply for ${new Date(filters.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+                        </button>
+                        <button type="button" onClick={() => { setRecurringToEdit(null); setIsRecurringModalOpen(true); }} className="btn-outline">
+                            Add recurring
+                        </button>
+                    </div>
+                }
+            >
+                {recurringList.length === 0 ? (
+                    <p className="empty-state">No recurring rules yet. Add one (e.g. salary to an account, or rent from an account and budget).</p>
+                ) : (
+                    <ul className="space-y-2">
+                        {recurringList.map((r) => (
+                            <li key={r.id} className={`flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg border ${r.enabled ? 'bg-slate-50/50 border-slate-200' : 'bg-gray-100/50 border-gray-200 opacity-75'}`}>
+                                <div className="flex-1 min-w-0">
+                                    <span className="font-medium text-dark">{r.description}</span>
+                                    <span className={`ml-2 text-sm font-medium ${r.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
+                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount)}
+                                    </span>
+                                    <span className="text-xs text-gray-500 ml-2">
+                                        • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
+                                        {r.type === 'expense' && r.budgetCategory && ` • ${r.budgetCategory}`}
+                                    </span>
+                                    {!r.enabled && <span className="ml-2 text-xs text-amber-600">(paused)</span>}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <button type="button" onClick={() => { setRecurringToEdit(r); setIsRecurringModalOpen(true); }} className="p-1.5 text-gray-500 hover:text-primary rounded" title="Edit"><PencilIcon className="h-4 w-4" /></button>
+                                    <button type="button" onClick={() => deleteRecurringTransaction(r.id)} className="p-1.5 text-gray-500 hover:text-red-600 rounded" title="Delete"><TrashIcon className="h-4 w-4" /></button>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </div>
 
             {userRole === 'Admin' && adminPendingTransactions.length > 0 && (
@@ -461,7 +656,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             </div>
                         ))}
                     </div>
-                </div>
+                </SectionCard>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -472,69 +667,54 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                  <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
-                 <div className="bg-white p-6 rounded-lg shadow-md h-[400px]">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Expense Breakdown</h3>
-                    <ExpenseBreakdownChart data={expenseBreakdown} />
-                </div>
+                 <SectionCard title="Expense Breakdown" className="h-[400px] flex flex-col">
+                    <div className="flex-1 min-h-0"><ExpenseBreakdownChart data={expenseBreakdown} /></div>
+                </SectionCard>
             </div>
-            
-            <div>
-                 <h2 className="text-2xl font-semibold text-dark mb-4">Transaction History</h2>
-                 <div className="bg-white p-4 rounded-lg shadow mb-4 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="p-2 border border-gray-300 rounded-md"/>
-                        <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="p-2 border border-gray-300 rounded-md">
-                            <option value="all">All Accounts</option>
-                            {(data?.accounts ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+
+            <SectionCard title="Transaction History">
+                <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
+                    <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
+                    <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
+                        <option value="all">All Accounts</option>
+                        {(data?.accounts ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-slate-500 mr-1">Nature:</span>
+                        <FilterButton label="All" value="all" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                        <FilterButton label="Variable" value="Variable" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
+                        <FilterButton label="Fixed" value="Fixed" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
                     </div>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-2 bg-gray-50 rounded-lg">
-                            <label className="text-xs font-medium text-gray-500">Nature</label>
-                            <div className="flex items-center space-x-2 mt-1">
-                                <FilterButton label="All" value="all" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
-                                <FilterButton label="Variable" value="Variable" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
-                                <FilterButton label="Fixed" value="Fixed" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
-                            </div>
-                        </div>
-                        <div className="p-2 bg-gray-50 rounded-lg">
-                            <label className="text-xs font-medium text-gray-500">Expense Type</label>
-                            <div className="flex items-center space-x-2 mt-1">
-                                <FilterButton label="All" value="all" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
-                                <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
-                                <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
-                            </div>
-                        </div>
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-slate-500 mr-1">Type:</span>
+                        <FilterButton label="All" value="all" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                        <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                        <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                     </div>
-                 </div>
-                <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <ul className="divide-y divide-gray-200">
-                        {filteredTransactions.map(transaction => (
-                            <li key={transaction.id} className="p-4 hover:bg-gray-50">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex-1">
-                                        <p className="font-semibold text-dark">{transaction.description}</p>
-                                        <div className="text-sm text-gray-500 flex items-center space-x-2">
-                                            <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
-                                            <span className="text-gray-300">|</span>
-                                            <span className="px-2 py-0.5 bg-gray-100 rounded-full text-xs">{transaction.category}</span>
-                                            {transaction.status && (
-                                                <span className={`px-2 py-0.5 rounded-full text-xs ${transaction.status === 'Approved' ? 'bg-green-100 text-green-700' : transaction.status === 'Rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{transaction.status}</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center space-x-4">
-                                        <p className="font-bold text-lg">{formatCurrency(transaction.amount, { colorize: true })}</p>
-                                        <button onClick={() => handleOpenTransactionModal(transaction)} className="text-gray-400 hover:text-primary"><PencilIcon className="h-5 w-5"/></button>
-                                        <button onClick={() => setItemToDelete(transaction)} className="text-gray-400 hover:text-danger"><TrashIcon className="h-5 w-5"/></button>
-                                    </div>
+                </div>
+                <ul className="divide-y divide-slate-100">
+                    {filteredTransactions.map(transaction => (
+                        <li key={transaction.id} className="list-row">
+                            <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-dark">{transaction.description}</p>
+                                <div className="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                                    <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
+                                    <span className="badge-neutral">{transaction.category}</span>
+                                    {transaction.status && (
+                                        <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
+                                    )}
                                 </div>
-                            </li>
-                        ))}
-                         {filteredTransactions.length === 0 && <li className="p-8 text-center text-gray-500">No transactions found for the selected period.</li>}
-                    </ul>
-                </div>
-            </div>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction.amount, { colorize: true })}</p>
+                                <button type="button" onClick={() => handleOpenTransactionModal(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50" aria-label="Edit"><PencilIcon className="h-5 w-5"/></button>
+                                <button type="button" onClick={() => setItemToDelete(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-danger/50" aria-label="Delete"><TrashIcon className="h-5 w-5"/></button>
+                            </div>
+                        </li>
+                    ))}
+                    {filteredTransactions.length === 0 && <li className="empty-state">No transactions found for the selected period.</li>}
+                </ul>
+            </SectionCard>
             
             <TransactionModal 
                 isOpen={isTransactionModalOpen} 
@@ -547,7 +727,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 accounts={data?.accounts ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
-        </div>
+            <RecurringModal
+                isOpen={isRecurringModalOpen}
+                onClose={() => { setIsRecurringModalOpen(false); setRecurringToEdit(null); }}
+                onSave={handleSaveRecurring}
+                recurring={recurringToEdit}
+                accounts={data?.accounts ?? []}
+                budgetCategories={budgetCategories}
+            />
+        </PageLayout>
     );
 };
 

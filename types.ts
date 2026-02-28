@@ -88,6 +88,8 @@ export interface Transaction {
   categoryId?: string;
   note?: string;
   rejectionReason?: string;
+  /** Set when transaction was auto-created from a recurring rule. */
+  recurringId?: string;
 }
 
 export type HoldingAssetClass =
@@ -138,7 +140,7 @@ export interface InvestmentTransaction {
   user_id?: string;
   accountId: string;
   date: string;
-  type: 'buy' | 'sell' | 'dividend';
+  type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal';
   symbol: string;
   quantity: number;
   price: number;
@@ -266,12 +268,28 @@ export interface PlannedTrade {
   notes?: string;
 }
 
+/** Template for monthly recurring transactions (e.g. salary deposit, rent). */
+export interface RecurringTransaction {
+  id: string;
+  user_id?: string;
+  description: string;
+  amount: number; // positive; type determines income vs expense
+  type: 'income' | 'expense';
+  accountId: string;
+  budgetCategory?: string;
+  category: string;
+  /** Day of month (1–28) when the transaction should be created. */
+  dayOfMonth: number;
+  enabled: boolean;
+}
+
 export interface FinancialData {
   accounts: Account[];
   assets: Asset[];
   liabilities: Liability[];
   goals: Goal[];
   transactions: Transaction[];
+  recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
   budgets: Budget[];

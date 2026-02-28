@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Cell } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
+import { CHART_COLORS } from './chartTheme';
 
 interface ChartData {
     name: string;
@@ -11,7 +12,7 @@ interface AllocationBarChartProps {
     data: ChartData[];
 }
 
-const COLORS = ['#4f46e5', '#be185d', '#f59e0b', '#10b981', '#6366f1', '#f43f5e', '#fbbf24', '#22c55e'];
+const COLORS = CHART_COLORS.categorical;
 
 const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -19,7 +20,7 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
         const data = payload[0].payload;
         const percentage = totalValue > 0 ? (data.value / totalValue) * 100 : 0;
         return (
-            <div className="bg-white/80 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-lg text-sm">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[120px]">
                 <p className="font-bold text-dark">{data.name}</p>
                 <p className="text-gray-600">{formatCurrencyString(data.value)}</p>
                 <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
