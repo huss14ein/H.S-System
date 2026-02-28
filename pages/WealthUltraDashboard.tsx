@@ -2,10 +2,12 @@ import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { runWealthUltraEngine, exportOrdersJson, capitalEfficiencyScore } from '../wealth-ultra';
+import { runWealthUltraEngine, exportOrdersJson, capitalEfficiencyScore, getDefaultWealthUltraConfig } from '../wealth-ultra';
 import type { WealthUltraSleeve, WealthUltraPosition } from '../types';
+import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
+import { PencilIcon } from '../components/icons/PencilIcon';
 import Card from '../components/Card';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
@@ -14,7 +16,36 @@ const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Spec: 'bg-rose-500',
 };
 
-const WealthUltraDashboard: React.FC = () => {
+function buildEngineConfigFromSystem(data: { investmentPlan?: any; wealthUltraConfig?: any; accounts?: any[] }) {
+  const plan = data.investmentPlan;
+  const systemConfig = data.wealthUltraConfig;
+  const defaults = getDefaultWealthUltraConfig();
+  const base = { ...defaults, ...systemConfig } as typeof defaults;
+  if (!plan) return undefined;
+  const cashAvailable = (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
+  const sleeves = plan.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
+  const core = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
+  const upside = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
+  const spec = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
+  return {
+    ...base,
+    monthlyDeposit: plan.monthlyBudget ?? base.monthlyDeposit,
+    cashAvailable,
+    targetCorePct: sleeves && core ? core.targetPct : (plan.coreAllocation ?? 0.7) * 100,
+    targetUpsidePct: sleeves && upside ? upside.targetPct : (plan.upsideAllocation ?? 0.3) * 100,
+    targetSpecPct: sleeves && spec ? spec.targetPct : Math.max(0, 100 - (plan.coreAllocation ?? 0.7) * 100 - (plan.upsideAllocation ?? 0.3) * 100),
+    coreTickers: sleeves && core ? (core.tickers || []) : (plan.corePortfolio ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
+    upsideTickers: sleeves && upside ? (upside.tickers || []) : (plan.upsideSleeve ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
+    specTickers: sleeves && spec ? (spec.tickers || []) : [],
+  };
+}
+
+interface WealthUltraDashboardProps {
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}
+
+const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
@@ -29,22 +60,13 @@ const WealthUltraDashboard: React.FC = () => {
       const sym = (h.symbol || '').toUpperCase();
       if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
     });
-    const config = data.investmentPlan ? {
-      monthlyDeposit: data.investmentPlan.monthlyBudget,
-      targetCorePct: data.investmentPlan.coreAllocation * 100,
-      targetUpsidePct: data.investmentPlan.upsideAllocation * 100,
-      targetSpecPct: Math.max(0, 100 - data.investmentPlan.coreAllocation * 100 - data.investmentPlan.upsideAllocation * 100),
-      cashAvailable: data.accounts.reduce((s, a) => s + (a.balance || 0), 0),
-      coreTickers: (data.investmentPlan.corePortfolio ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
-      upsideTickers: (data.investmentPlan.upsideSleeve ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean),
-      specTickers: [],
-    } : undefined;
+    const config = buildEngineConfigFromSystem(data);
     return runWealthUltraEngine({
       holdings: allHoldings,
       priceMap,
       config,
     });
-  }, [data.investments, data.investmentPlan, data.accounts, simulatedPrices]);
+  }, [data.investments, data.investmentPlan, data?.accounts, data.wealthUltraConfig, simulatedPrices]);
 
   const {
     totalPortfolioValue,
@@ -95,18 +117,30 @@ const WealthUltraDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-dark flex items-center gap-2">
           <ChartPieIcon className="h-8 w-8 text-primary" />
           Wealth Ultra Portfolio Engine
         </h1>
-        <button
-          type="button"
-          onClick={handleExportOrders}
-          className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm"
-        >
-          Export orders (JSON)
-        </button>
+        <div className="flex items-center gap-2">
+          {triggerPageAction && (
+            <button
+              type="button"
+              onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
+              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm flex items-center gap-2"
+            >
+              <PencilIcon className="h-5 w-5" />
+              Edit plan & budget
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleExportOrders}
+            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm"
+          >
+            Export orders (JSON)
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -2,6 +2,7 @@ import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Sus
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, executeInvestmentPlanStrategy } from '../services/geminiService';
 import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker } from '../types';
+import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -49,12 +50,12 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 
 
 
-const PlanSummary: React.FC = () => {
+const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
     const investmentProgress = useMemo(() => {
-        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, core: 0, upside: 0 };
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0 };
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
         const monthlyInvested = data.investmentTransactions
@@ -64,12 +65,16 @@ const PlanSummary: React.FC = () => {
             })
             .reduce((sum, t) => sum + t.total, 0);
         
+        const corePct = data.investmentPlan.coreAllocation ?? 0.7;
+        const upsidePct = data.investmentPlan.upsideAllocation ?? 0.3;
+        const specPct = Math.max(0, 1 - corePct - upsidePct);
         return {
             percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
             amount: monthlyInvested,
             target: data.investmentPlan.monthlyBudget,
-            core: data.investmentPlan.coreAllocation,
-            upside: data.investmentPlan.upsideAllocation
+            corePct,
+            upsidePct,
+            specPct,
         };
     }, [data]);
 
@@ -79,11 +84,16 @@ const PlanSummary: React.FC = () => {
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div className="flex-1">
-                    <div className="flex items-center space-x-2 mb-2">
-                        <ClipboardDocumentListIcon className="h-5 w-5 text-primary" />
-                        <h3 className="text-lg font-bold text-dark">Active Investment Plan</h3>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center space-x-2">
+                            <ClipboardDocumentListIcon className="h-5 w-5 text-primary" />
+                            <h3 className="text-lg font-bold text-dark">Active Investment Plan</h3>
+                        </div>
+                        {onEditPlan && (
+                            <button type="button" onClick={onEditPlan} className="text-sm font-medium text-primary hover:underline">Edit plan</button>
+                        )}
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target)}</span> with a {investmentProgress.core}% Core and {investmentProgress.upside}% High-Upside split.</p>
+                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target)}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
                     
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -103,15 +113,21 @@ const PlanSummary: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 lg:w-72">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 lg:w-80">
                     <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Core Target</p>
-                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * (investmentProgress.core / 100))}</p>
+                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
                     </div>
                     <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Upside Target</p>
-                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * (investmentProgress.upside / 100))}</p>
+                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
                     </div>
+                    {investmentProgress.specPct > 0 && (
+                        <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Spec Target</p>
+                            <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -132,6 +148,7 @@ const RecordTradeModal: React.FC<{
         amount: number;
         price: number;
         executedPlanId: string;
+        reason?: string;
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const [accountId, setAccountId] = useState('');
@@ -262,6 +279,9 @@ const RecordTradeModal: React.FC<{
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
+            {initialData?.reason && (
+                <div className="mb-4 p-2 rounded-lg bg-violet-50 border border-violet-200 text-violet-800 text-xs font-medium">From plan execution: {initialData.reason}</div>
+            )}
             {hasNoAccounts ? (
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
                     <p className="font-medium">No investment account yet</p>
@@ -524,13 +544,23 @@ export const PortfolioModal: React.FC<{
     );
 };
 
-const ExecutionHistoryView: React.FC = () => {
+const ExecutionHistoryView: React.FC<{ onFocusInvestmentPlan?: () => void }> = ({ onFocusInvestmentPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [selectedLog, setSelectedLog] = useState<InvestmentPlanExecutionLog | null>(null);
+    const logs = data.executionLogs ?? [];
 
     return (
         <div className="space-y-6 mt-4">
+            {logs.length === 0 ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-center">
+                    <p className="text-slate-600 mb-2">No execution logs yet.</p>
+                    <p className="text-sm text-slate-500 mb-4">Run &quot;Execute Monthly Plan&quot; from the Investment Plan tab to generate allocation results and log them here.</p>
+                    {onFocusInvestmentPlan && (
+                        <button type="button" onClick={onFocusInvestmentPlan} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm font-medium">Go to Investment Plan</button>
+                    )}
+                </div>
+            ) : (
             <div className="bg-white rounded-lg shadow overflow-hidden">
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -543,7 +573,7 @@ const ExecutionHistoryView: React.FC = () => {
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {data.executionLogs.map(log => (
+                        {logs.map(log => (
                             <tr key={log.id} className="hover:bg-gray-50">
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(log.created_at).toLocaleString()}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">
@@ -558,14 +588,10 @@ const ExecutionHistoryView: React.FC = () => {
                                 </td>
                             </tr>
                         ))}
-                        {data.executionLogs.length === 0 && (
-                            <tr>
-                                <td colSpan={5} className="px-6 py-10 text-center text-gray-500 italic">No execution logs found.</td>
-                            </tr>
-                        )}
                     </tbody>
                 </table>
             </div>
+            )}
 
             {selectedLog && (
                 <Modal isOpen={!!selectedLog} onClose={() => setSelectedLog(null)} title={`Execution Log: ${new Date(selectedLog.created_at).toLocaleString()}`}>
@@ -817,7 +843,7 @@ const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, 
     return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
 };
 
-const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void }> = ({ onNavigateToTab }) => {
+const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
@@ -825,15 +851,21 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
     const [executionResult, setExecutionResult] = useState<InvestmentPlanExecutionResult | null>(null);
     const [isExecuting, setIsExecuting] = useState(false);
+    const [showFlowNote, setShowFlowNote] = useState(true);
+    const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
-        
+        const portfolioUniverse = data.portfolioUniverse ?? [];
+        const investments = data.investments ?? [];
+        const watchlist = data.watchlist ?? [];
+        const plannedTrades = data.plannedTrades ?? [];
+
         // 1. Start with explicit universe
-        data.portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
-        
+        portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
+
         // 2. Add holdings
-        data.investments.flatMap(p => p.holdings || []).forEach(h => {
+        investments.flatMap(p => p.holdings || []).forEach(h => {
             if (!universeMap.has(h.symbol)) {
                 universeMap.set(h.symbol, {
                     id: `holding-${h.id}`,
@@ -847,9 +879,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
             }
         });
-        
+
         // 3. Add watchlist
-        data.watchlist.forEach(w => {
+        watchlist.forEach(w => {
             if (!universeMap.has(w.symbol)) {
                 universeMap.set(w.symbol, {
                     id: `watchlist-${w.symbol}`,
@@ -865,9 +897,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 }
             }
         });
-        
+
         // 4. Add planned trades
-        data.plannedTrades.forEach(t => {
+        plannedTrades.forEach(t => {
             if (!universeMap.has(t.symbol)) {
                 universeMap.set(t.symbol, {
                     id: `planned-${t.id}`,
@@ -931,9 +963,32 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         }
     };
 
+    const allocationSum = (plan.coreAllocation + plan.upsideAllocation) * 100;
+    const allocationWarning = Math.abs(allocationSum - 100) > 0.5 ? `Core + High-Upside = ${allocationSum.toFixed(1)}%; should equal 100%. Remaining is treated as Spec.` : null;
+
+    const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
+    const budget = plan.monthlyBudget ?? 0;
+    const minOrderWarning = budget > 0 && minOrder > 0 && minOrder > budget * 0.5
+        ? `Minimum order size (${formatCurrencyString(minOrder)}) is more than 50% of monthly budget. You may only place 1–2 orders per month. Consider lowering it or increasing budget.`
+        : budget > 0 && minOrder > budget
+        ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
+        : null;
+
+    const actionableCount = (data.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
+    const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
+
+    const syncPlanFromUniverse = () => {
+        const core = (data.portfolioUniverse || []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const upside = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        setPlan(prev => ({ ...prev, corePortfolio: core, upsideSleeve: upside }));
+    };
+
     const handleSave = () => {
+        if (allocationWarning && !window.confirm(`${allocationWarning}\n\nSave anyway?`)) return;
+        setSaveMessage(null);
         saveInvestmentPlan(plan);
-        alert('Investment plan saved!');
+        setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
+        setTimeout(() => setSaveMessage(null), 6000);
     };
 
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
@@ -980,16 +1035,43 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors">Save Plan</button>
                 </div>
             </div>
-            {onNavigateToTab && (
+            {saveMessage && (
+                <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm flex items-center justify-between">
+                    <span>{saveMessage}</span>
+                    {onOpenWealthUltra && <button type="button" onClick={onOpenWealthUltra} className="text-green-700 font-medium hover:underline whitespace-nowrap ml-2">Open Wealth Ultra</button>}
+                </div>
+            )}
+            {(onNavigateToTab || onOpenWealthUltra) && (
                 <p className="text-sm text-gray-600">
-                    Tied to: <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button> (add tickers) · <button type="button" onClick={() => onNavigateToTab('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button> (run allocation) · <button type="button" onClick={() => onNavigateToTab('Trade Advices')} className="text-primary font-medium hover:underline">Trade Advices</button> (review trades)
+                    Tied to: <button type="button" onClick={() => onNavigateToTab?.('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button> (add tickers) · <button type="button" onClick={() => onNavigateToTab?.('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button> (run allocation) · <button type="button" onClick={() => onNavigateToTab?.('Trade Advices')} className="text-primary font-medium hover:underline">Trade Advices</button> (review trades)
+                    {onOpenWealthUltra && <> · <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> (allocation & orders)</>}
                 </p>
             )}
+
+            {/* How it works — Plan → Universe → Execute / Wealth Ultra */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+                <button type="button" onClick={() => setShowFlowNote(!showFlowNote)} className="w-full px-4 py-3 flex items-center justify-between text-left text-sm font-medium text-slate-800 hover:bg-slate-100">
+                    <span>How this works: Plan → Universe → Execute / Wealth Ultra</span>
+                    <span className="text-slate-500">{showFlowNote ? '▼' : '▶'}</span>
+                </button>
+                {showFlowNote && (
+                    <div className="px-4 pb-4 pt-0 text-sm text-slate-600 space-y-2 border-t border-slate-200">
+                        <p><strong>1. Set budget & allocation</strong> above (monthly amount, Core % vs High-Upside %).</p>
+                        <p><strong>2. Build your universe</strong> — add tickers via Watchlist or the table below. Set status to <em>Core</em> or <em>High-Upside</em> and optional monthly weights (should sum to ~100% for predictable splits).</p>
+                        <p><strong>3. Sync (optional)</strong> — use “Sync Core/Upside from Universe” to copy current Core/High-Upside tickers and weights into the plan so execution and Wealth Ultra use the same list.</p>
+                        <p><strong>4. Execute or use Wealth Ultra</strong> — “Execute Monthly Plan” runs AI-based allocation and logs results; <strong>Wealth Ultra</strong> shows live allocation, orders, and deployable cash. Record trades from either place.</p>
+                    </div>
+                )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Allocation Settings */}
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h2 className="text-xl font-semibold text-dark mb-4">Allocation Settings</h2>
+                        {allocationWarning && (
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{allocationWarning}</div>
+                        )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below." /></label>
@@ -1036,9 +1118,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     {/* Broker & Execution Rules */}
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h2 className="text-xl font-semibold text-dark mb-4">Broker & Execution Rules</h2>
+                        {minOrderWarning && (
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{minOrderWarning}</div>
+                        )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Order Size ({plan.budgetCurrency}) <InfoHint text="Smallest order your broker allows; smaller allocations are skipped or combined." /></label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Order Size ({plan.budgetCurrency}) <InfoHint text="Smallest order your broker allows; smaller allocations are skipped or combined. Should be less than your typical single-ticker allocation." /></label>
                                 <input type="number" value={plan.brokerConstraints.minimumOrderSize} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, minimumOrderSize: parseFloat(e.target.value)})} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div className="flex items-center">
@@ -1077,9 +1162,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                         {Math.abs(universeHealth.monthlyWeightTotal - 1) > 0.01 && (
                             <p className="text-xs mb-4 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Actionable monthly weights should usually sum close to 100% for predictable allocation behavior.</p>
                         )}
-                        <div className="flex gap-2 mb-4">
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
-                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow p-2 border rounded-md" />
+                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
                             <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
                         </div>
                         <div className="max-h-60 overflow-y-auto">
@@ -1111,24 +1197,36 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                 </select>
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                <input 
-                                                    type="number" 
-                                                    value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
-                                                    onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
-                                                    className="w-16 p-1 border rounded text-right text-xs"
-                                                    placeholder="0"
-                                                />
-                                                <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
+                                                    <>
+                                                        <input 
+                                                            type="number" 
+                                                            value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
+                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
+                                                            className="w-16 p-1 border rounded text-right text-xs"
+                                                            placeholder="0"
+                                                        />
+                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
+                                                )}
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                <input 
-                                                    type="number" 
-                                                    value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
-                                                    onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
-                                                    className="w-16 p-1 border rounded text-right text-xs"
-                                                    placeholder="0"
-                                                />
-                                                <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
+                                                    <>
+                                                        <input 
+                                                            type="number" 
+                                                            value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
+                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
+                                                            className="w-16 p-1 border rounded text-right text-xs"
+                                                            placeholder="0"
+                                                        />
+                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
+                                                )}
                                             </td>
                                             <td className="px-4 py-2 text-right">
                                                 {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) && (
@@ -1146,7 +1244,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 {/* Execution & Results */}
                 <div className="bg-white p-6 rounded-lg shadow">
                     <h2 className="text-xl font-semibold text-dark mb-4">Execute & View Results</h2>
-                    <button onClick={handleExecutePlan} disabled={isExecuting} className="w-full flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400">
+                    {noActionableWarning && (
+                        <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{noActionableWarning}</div>
+                    )}
+                    <button onClick={handleExecutePlan} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : ''}>
                         <SparklesIcon className="h-5 w-5 mr-2" />
                         {isExecuting ? 'Executing...' : 'Execute Monthly Plan'}
                     </button>
@@ -1187,15 +1288,23 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <h3 className="font-semibold text-dark mb-2">Proposed Trades</h3>
                                 <div className="space-y-2">
                                     {executionResult.trades.map((trade, index) => (
-                                        <div key={index} className="p-3 border rounded-lg bg-white">
-                                            <div className="flex justify-between items-center">
-                                                <span className="font-bold text-dark">{trade.ticker}</span>
-                                                <span className="font-mono font-semibold text-primary">{formatCurrencyString(trade.amount)}</span>
+                                        <div key={index} className="p-3 border rounded-lg bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                            <div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="font-bold text-dark">{trade.ticker}</span>
+                                                    <span className="font-mono font-semibold text-primary">{formatCurrencyString(trade.amount)}</span>
+                                                </div>
+                                                <p className="text-xs text-gray-500 mt-1">{trade.reason}</p>
                                             </div>
-                                            <p className="text-xs text-gray-500 mt-1">{trade.reason}</p>
+                                            {onOpenRecordTrade && (
+                                                <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-sm px-3 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
+                                {onOpenWealthUltra && (
+                                    <p className="text-xs text-slate-500 mt-3">Tip: Use <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> to see live allocation and export orders.</p>
+                                )}
                             </div>
                         </div>
                     )}
@@ -1209,9 +1318,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 interface InvestmentsProps {
   pageAction?: string | null;
   clearPageAction?: () => void;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }) => {
+const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -1287,6 +1398,10 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             setTradeInitialData(null);
         }
         setIsTradeModalOpen(true);
+        clearPageAction?.();
+    }
+    if (pageAction === 'focus-investment-plan') {
+        setActiveTab('Investment Plan');
         clearPageAction?.();
     }
   }, [pageAction, clearPageAction]);
@@ -1370,8 +1485,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             onHoldingClick={handleHoldingClick}
             onEditHolding={handleOpenHoldingEditModal}
         />;
-      case 'Investment Plan': return <InvestmentPlan onNavigateToTab={setActiveTab} />;
-      case 'Execution History': return <ExecutionHistoryView />;
+      case 'Investment Plan': return (
+                <InvestmentPlan
+                    onNavigateToTab={setActiveTab}
+                    onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+                    onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason }); setIsTradeModalOpen(true); }}
+                />
+            );
+      case 'Execution History': return <ExecutionHistoryView onFocusInvestmentPlan={() => setActiveTab('Investment Plan')} />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
@@ -1403,7 +1524,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction }
             />
         </div>
 
-        <PlanSummary />
+        <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
       
         <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">

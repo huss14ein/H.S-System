@@ -1,6 +1,6 @@
 import type { WealthUltraConfig } from '../types';
 
-/** Default numeric/percentage config only; ticker lists come from the system (e.g. investment_plan). */
+/** Fallback defaults only when system has no wealth_ultra_config row. Primary config is in DB (wealth_ultra_config + investment_plan). */
 const DEFAULT_CONFIG: Omit<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 'specTickers'> = {
   fxRate: 0.27,
   targetCorePct: 70,

@@ -86,9 +86,6 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
 export {
   getDefaultWealthUltraConfig,
   validateWealthUltraConfig,
-  DEFAULT_CORE_TICKERS,
-  DEFAULT_UPSIDE_TICKERS,
-  DEFAULT_SPEC_TICKERS,
   getRiskWeight,
 } from './config';
 export { buildWealthUltraPositions, tickerToSleeve, tickerToRiskTier } from './position';

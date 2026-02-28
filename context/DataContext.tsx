@@ -1,7 +1,7 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, WealthUltraSystemConfig, SleeveDefinition } from '../types';
 import { getMockData } from '../data/mockData';
 
 // Define an empty state for when data is loading or for new users
@@ -33,7 +33,8 @@ const initialData: FinancialData = {
     },
     portfolioUniverse: [],
     statusChangeLog: [],
-    executionLogs: []
+    executionLogs: [],
+    wealthUltraConfig: null
 };
 
 interface DataContextType {
@@ -111,6 +112,33 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     return row;
 }
 
+function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
+    if (!raw || !Array.isArray(raw)) return undefined;
+    const arr = raw.map((s: any) => ({
+        id: String(s?.id ?? ''),
+        label: String(s?.label ?? s?.id ?? ''),
+        targetPct: Number(s?.targetPct ?? s?.target_pct ?? 0),
+        tickers: Array.isArray(s?.tickers) ? s.tickers.map((t: any) => String(t).toUpperCase()) : [],
+    })).filter((s: { id: string }) => s.id);
+    return arr.length ? arr : undefined;
+}
+
+function normalizeWealthUltraConfig(raw: any): WealthUltraSystemConfig | null {
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+        fxRate: Number(raw.fx_rate ?? raw.fxRate ?? 0.27),
+        cashReservePct: Number(raw.cash_reserve_pct ?? raw.cashReservePct ?? 10),
+        maxPerTickerPct: Number(raw.max_per_ticker_pct ?? raw.maxPerTickerPct ?? 20),
+        riskWeightLow: Number(raw.risk_weight_low ?? raw.riskWeightLow ?? 1),
+        riskWeightMed: Number(raw.risk_weight_med ?? raw.riskWeightMed ?? 1.25),
+        riskWeightHigh: Number(raw.risk_weight_high ?? raw.riskWeightHigh ?? 1.5),
+        riskWeightSpec: Number(raw.risk_weight_spec ?? raw.riskWeightSpec ?? 2),
+        defaultTarget1Pct: Number(raw.default_target_1_pct ?? raw.defaultTarget1Pct ?? 15),
+        defaultTarget2Pct: Number(raw.default_target_2_pct ?? raw.defaultTarget2Pct ?? 25),
+        defaultTrailingPct: Number(raw.default_trailing_pct ?? raw.defaultTrailingPct ?? 10),
+    };
+}
+
 function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
     if (!raw) return initialData.investmentPlan;
     const bc = raw.broker_constraints || raw.brokerConstraints || initialData.investmentPlan.brokerConstraints;
@@ -130,6 +158,7 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
         target_provider: String(raw.target_provider ?? raw.targetProvider ?? initialData.investmentPlan.target_provider),
         corePortfolio: Array.isArray(raw.core_portfolio ?? raw.corePortfolio) ? (raw.core_portfolio ?? raw.corePortfolio) : initialData.investmentPlan.corePortfolio,
         upsideSleeve: Array.isArray(raw.upside_sleeve ?? raw.upsideSleeve) ? (raw.upside_sleeve ?? raw.upsideSleeve) : initialData.investmentPlan.upsideSleeve,
+        sleeves: normalizeSleeves(raw.sleeves),
         brokerConstraints: bc && typeof bc === 'object' ? {
             allowFractionalShares: Boolean(bc.allow_fractional_shares ?? bc.allowFractionalShares ?? true),
             minimumOrderSize: Number(bc.minimum_order_size ?? bc.minimumOrderSize ?? 100),
@@ -159,7 +188,7 @@ function normalizeExecutionLog(raw: any): InvestmentPlanExecutionLog {
 }
 
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
-    return {
+    const row: Record<string, unknown> = {
         user_id: plan.user_id,
         monthly_budget: plan.monthlyBudget,
         budget_currency: plan.budgetCurrency,
@@ -176,6 +205,10 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
         upside_sleeve: plan.upsideSleeve,
         broker_constraints: plan.brokerConstraints,
     };
+    if (plan.sleeves != null && Array.isArray(plan.sleeves)) {
+        row.sleeves = plan.sleeves;
+    }
+    return row;
 }
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -338,7 +371,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const [
                 accounts, assets, liabilities, goals, transactions, investments,
                 investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
-                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs
+                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig
             ] = await Promise.all([
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
                 db.from('assets').select('*').eq('user_id', auth.user.id),
@@ -357,10 +390,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('investment_plan').select('*').eq('user_id', auth.user.id).single(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
-                db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false })
+                db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
+                db.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle()
             ]);
 
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs };
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig };
             Object.entries(allFetches).forEach(([key, value]) => {
               if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
             });
@@ -386,6 +420,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 plannedTrades: plannedTrades.data || [],
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
+                wealthUltraConfig: normalizeWealthUltraConfig((wealthUltraConfig as any).data),
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
                 executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog)
