@@ -29,7 +29,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
 
-    const existingCategories = useMemo(() => new Set(data.budgets.filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data.budgets, currentYear, currentMonth]);
+    const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
     const availableCategories = useMemo(() => {
         const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
@@ -78,7 +78,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
+                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
                     {budgetToEdit ? (
                         <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
                     ) : (
@@ -97,7 +97,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
                 </div>
                 <div>
-                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700">Amount Period</label>
+                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is (e.g. 12,000 for housing); monthly view shows limit÷12 for comparison." /></label>
                     <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
                         <option value="Monthly">Monthly</option>
                         <option value="Weekly">Weekly</option>
@@ -112,7 +112,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 }
 
 const Budgets: React.FC = () => {
-    const { data, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, loading, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
@@ -255,7 +255,7 @@ const Budgets: React.FC = () => {
 
         const limitDivisor = budgetView === 'Monthly' ? 1 : budgetView === 'Weekly' ? 4.345 : budgetView === 'Daily' ? 30 : 1;
 
-        data.transactions
+        (data?.transactions ?? [])
             .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t) => {
                 const txDate = new Date(t.date);
@@ -268,7 +268,7 @@ const Budgets: React.FC = () => {
                 }
             });
 
-        const scopedBudgets = data.budgets
+        const scopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth)
             .filter(b => isAdmin || permittedCategories.includes(b.category));
@@ -310,7 +310,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: 'Optional' as const, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -551,6 +551,14 @@ const Budgets: React.FC = () => {
     const respondedRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status !== 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">

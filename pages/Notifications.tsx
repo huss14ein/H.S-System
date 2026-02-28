@@ -49,17 +49,19 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
         
         // Dynamic planned trade alerts
         data.plannedTrades
-            .filter(p => p.status === 'Planned' && p.conditionType === 'price')
+            .filter(p => p.status === 'Planned' && ((p as any).condition_type ?? p.conditionType) === 'price')
             .forEach(plan => {
                 const priceInfo = simulatedPrices[plan.symbol];
                 if (!priceInfo) return;
 
-                const hasTriggered = (plan.tradeType === 'buy' && priceInfo.price <= plan.targetValue) || (plan.tradeType === 'sell' && priceInfo.price >= plan.targetValue);
+                const targetVal = (plan as any).target_value ?? plan.targetValue;
+                const tradeType = (plan as any).trade_type ?? plan.tradeType;
+                const hasTriggered = (tradeType === 'buy' && priceInfo.price <= targetVal) || (tradeType === 'sell' && priceInfo.price >= targetVal);
                 if (hasTriggered) {
                      notifications.push({
                         id: `plan-${plan.id}`,
                         type: 'Investment',
-                        message: `Target Price Met: Your plan to ${plan.tradeType} ${plan.name} is ready to execute.`,
+                        message: `Target Price Met: Your plan to ${tradeType} ${plan.name} is ready to execute.`,
                         date: now.toISOString(),
                         isRead: false,
                         pageLink: 'Investments'
@@ -71,21 +73,22 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
         return notifications.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [data.priceAlerts, data.plannedTrades, simulatedPrices]);
     
-    const [notifications, setNotifications] = useState<Notification[]>(allNotifications);
+    const [readIds, setReadIds] = useState<Set<string>>(new Set());
+    const notificationsWithRead = useMemo(() => allNotifications.map(n => ({ ...n, isRead: readIds.has(n.id) || n.isRead })), [allNotifications, readIds]);
 
     const filteredNotifications = useMemo(() => {
         if (filter === 'Unread') {
-            return notifications.filter(n => !n.isRead);
+            return notificationsWithRead.filter(n => !n.isRead);
         }
-        return notifications;
-    }, [notifications, filter]);
+        return notificationsWithRead;
+    }, [notificationsWithRead, filter]);
 
     const handleMarkAsRead = (id: string) => {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+        setReadIds(prev => new Set([...prev, id]));
     };
 
     const handleMarkAllAsRead = () => {
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+        setReadIds(prev => new Set(notificationsWithRead.map(n => n.id)));
     };
     
     const handleNotificationClick = (notification: Notification) => {

@@ -2,6 +2,7 @@ import React, { useContext, useState, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { RiskProfile } from '../types';
+import InfoHint from '../components/InfoHint';
 
 const Settings: React.FC = () => {
     const { data, updateSettings, loadDemoData, resetData } = useContext(DataContext)!;
@@ -47,7 +48,7 @@ const Settings: React.FC = () => {
                 <h2 className="text-xl font-semibold text-dark border-b pb-3 mb-4">Financial Preferences</h2>
                 <div className="space-y-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Investment Risk Profile</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">Investment Risk Profile <InfoHint text="Guides AI and plan suggestions: Conservative (stability), Moderate (balanced), Aggressive (growth)." /></label>
                         <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-1">
                             {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
                                 <button key={profile} onClick={() => handleSettingChange('riskProfile', profile)}
@@ -59,18 +60,16 @@ const Settings: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                            <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700">Budget Alert Threshold (%)</label>
+                            <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
                             <input id="budget-threshold" type="number" value={localSettings.budgetThreshold}
                                 onChange={(e) => handleSettingChange('budgetThreshold', Number(e.target.value))}
                                 className="mt-1 w-full p-2 border border-gray-300 rounded-md"/>
-                             <p className="text-xs text-gray-500 mt-1">Get notified when you spend this percentage of a budget.</p>
                         </div>
                         <div>
-                            <label htmlFor="drift-threshold" className="block text-sm font-medium text-gray-700">Portfolio Drift Threshold (%)</label>
+                            <label htmlFor="drift-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Portfolio Drift Threshold (%) <InfoHint text="Rebalancing alerts when an asset’s weight drifts from target by more than this percent." /></label>
                             <input id="drift-threshold" type="number" value={localSettings.driftThreshold}
                                 onChange={(e) => handleSettingChange('driftThreshold', Number(e.target.value))}
                                 className="mt-1 w-full p-2 border border-gray-300 rounded-md"/>
-                             <p className="text-xs text-gray-500 mt-1">Get a rebalancing alert if an asset class drifts by this percent.</p>
                         </div>
                     </div>
                 </div>
@@ -81,8 +80,8 @@ const Settings: React.FC = () => {
                 <h2 className="text-xl font-semibold text-dark border-b pb-3 mb-4">Notifications</h2>
                 <label htmlFor="email-toggle" className="flex items-center justify-between cursor-pointer">
                     <span className="text-sm text-gray-700">
-                        <span className="font-medium">Weekly Email Reports</span>
-                        <p className="text-xs text-gray-500">Receive a summary of your financial health every week.</p>
+                        <span className="font-medium flex items-center">Weekly Email Reports <InfoHint text="When enabled, you receive a weekly summary of budgets, net worth, and alerts (if the feature is configured)." /></span>
+                        <p className="text-xs text-gray-500 mt-0.5">Receive a summary of your financial health every week.</p>
                     </span>
                     <div className="relative">
                         <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings.enableEmails}

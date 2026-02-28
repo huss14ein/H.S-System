@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { invokeAI } from '../services/geminiService';
+import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -40,6 +41,8 @@ const getStatusInfo = (status: ServiceStatus) => {
 const SystemHealth: React.FC = () => {
     const [services, setServices] = useState<Service[]>(initialServices);
     const [isLoading, setIsLoading] = useState(false);
+    const [marketStatus, setMarketStatus] = useState<MarketStatusItem | null>(null);
+    const [marketHolidays, setMarketHolidays] = useState<MarketHoliday[]>([]);
     const marketContext = useContext(MarketDataContext);
 
     const runHealthChecks = useCallback(async () => {
@@ -95,7 +98,8 @@ const SystemHealth: React.FC = () => {
             }
             try {
                 const start = performance.now();
-                const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(finnhubApiKey)}`);
+                const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(finnhubApiKey)}`);
+                if (response.status === 429) throw new Error('Rate limit exceeded (60/min). Try again in a minute.');
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const quote = await response.json();
                 const price = Number(quote?.c);
@@ -103,7 +107,8 @@ const SystemHealth: React.FC = () => {
                 const duration = Math.round(performance.now() - start);
                 return { status: duration > 2000 ? 'Degraded Performance' : 'Operational', responseTime: duration };
             } catch (e) {
-                return { status: 'Outage', error: 'Could not connect to Finnhub Market Data API.' };
+                const msg = e instanceof Error ? e.message : 'Could not connect to Finnhub Market Data API.';
+                return { status: 'Outage', error: msg };
             }
         };
 
@@ -152,6 +157,16 @@ const SystemHealth: React.FC = () => {
             if (s.name.includes('Multi-user Access')) return { ...s, ...multiUser };
             return s;
         }));
+
+        if (finnhub.status === 'Operational' && import.meta.env.VITE_FINNHUB_API_KEY) {
+            Promise.all([getMarketStatus('US').catch(() => null), getMarketHolidays('US').catch(() => [])]).then(([status, holidays]) => {
+                setMarketStatus(status || null);
+                setMarketHolidays(Array.isArray(holidays) ? holidays.slice(0, 5) : []);
+            });
+        } else {
+            setMarketStatus(null);
+            setMarketHolidays([]);
+        }
 
         setIsLoading(false);
     }, [marketContext?.isLive, marketContext ? Object.keys(marketContext.simulatedPrices).length : 0]);
@@ -208,6 +223,22 @@ const SystemHealth: React.FC = () => {
             </div>
           
             <OverallStatusCard status={overallStatus} />
+
+            {(marketStatus || marketHolidays.length > 0) && (
+                <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
+                    <h3 className="text-lg font-semibold text-dark mb-2">Finnhub: Market status & holidays</h3>
+                    {marketStatus && (
+                        <p className="text-sm text-gray-700">
+                            US: <span className={marketStatus.isOpen ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'}>{marketStatus.isOpen ? 'Open' : 'Closed'}</span>
+                            {marketStatus.session && ` · ${marketStatus.session}`}
+                            {marketStatus.tztime && ` · ${marketStatus.tztime}`}
+                        </p>
+                    )}
+                    {marketHolidays.length > 0 && (
+                        <p className="text-sm text-gray-600 mt-1">Upcoming holidays: {marketHolidays.map(h => `${h.name} (${h.date})`).join(', ')}</p>
+                    )}
+                </div>
+            )}
 
             <div className="bg-blue-50 border-l-4 border-blue-400 text-blue-800 p-4 rounded-r-lg shadow-sm">
                 <div className="flex">

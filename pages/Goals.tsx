@@ -16,6 +16,7 @@ import AIAdvisor from '../components/AIAdvisor';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import ProgressBar from '../components/ProgressBar';
+import InfoHint from '../components/InfoHint';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -99,14 +100,26 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={goalToEdit ? 'Edit Goal' : 'Add New Goal'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
-                <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
-                    <option value="High">High Priority</option>
-                    <option value="Medium">Medium Priority</option>
-                    <option value="Low">Low Priority</option>
-                </select>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Goal Name <InfoHint text="A clear name (e.g. Emergency Fund, World Trip) helps track progress and link assets." /></label>
+                    <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Target Amount <InfoHint text="The total amount you want to reach. Progress is calculated from linked assets and savings." /></label>
+                    <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Deadline <InfoHint text="Target date to reach this goal. Used to compute required monthly savings and status (On Track / At Risk)." /></label>
+                    <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Priority <InfoHint text="High/Medium/Low affects how the system suggests allocating savings across multiple goals." /></label>
+                    <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
+                        <option value="High">High Priority</option>
+                        <option value="Medium">Medium Priority</option>
+                        <option value="Low">Low Priority</option>
+                    </select>
+                </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Goal</button>
             </form>
         </Modal>
@@ -128,19 +141,20 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
-        
-        data.assets.filter(a => a.goalId === goal.id).forEach(a => {
+        const assets = data?.assets ?? [];
+        const investments = data?.investments ?? [];
+
+        assets.filter(a => a.goalId === goal.id).forEach(a => {
             linkedItems.push({ name: a.name, value: a.value });
         });
 
-        data.investments.forEach(p => {
-            // If the entire portfolio is linked to the goal
+        investments.forEach(p => {
+            const holdings = p.holdings ?? [];
             if (p.goalId === goal.id) {
-                const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0);
                 linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
             } else {
-                // Otherwise check individual holdings
-                p.holdings.filter(h => h.goalId === goal.id).forEach(h => {
+                holdings.filter(h => h.goalId === goal.id).forEach(h => {
                     linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: h.currentValue });
                 });
             }
@@ -149,7 +163,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
-    }, [data.assets, data.investments, goal.id]);
+    }, [data?.assets, data?.investments, goal.id]);
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
@@ -268,7 +282,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             </div>
             
             <div className="bg-indigo-50 p-4 rounded-lg">
-                <div className="flex items-center justify-between"><h4 className="font-semibold text-indigo-800">AI Savings Plan</h4><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
+                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-indigo-800">Savings Plan</h4><p className="text-xs text-indigo-700/80">From your expert advisor</p></div><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
                 {aiPlan && !isLoading && <div className="mt-2"><SafeMarkdownRenderer content={aiPlan} /></div>}
             </div>
@@ -277,7 +291,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 };
 
 const Goals: React.FC = () => {
-    const { data, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
+    const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -287,16 +301,16 @@ const Goals: React.FC = () => {
     
     useEffect(() => {
         const initialAllocations: Record<string, number> = {};
-        data.goals.forEach(g => { initialAllocations[g.id] = g.savingsAllocationPercent || 0; });
+        (data?.goals ?? []).forEach(g => { initialAllocations[g.id] = g.savingsAllocationPercent || 0; });
         setAllocations(initialAllocations);
-    }, [data.goals]);
+    }, [data?.goals]);
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-        data.transactions.filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
+        (data?.transactions ?? []).filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
             monthlyNet.set(monthKey, currentNet + t.amount); // amount is positive for income, negative for expense
@@ -306,26 +320,29 @@ const Goals: React.FC = () => {
         
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     const { totalTargetAmount, totalCurrentAmount } = useMemo(() => {
         let totalTarget = 0;
         let totalCurrent = 0;
-        
+        const assets = data?.assets ?? [];
+        const investments = data?.investments ?? [];
+        const goals = data?.goals ?? [];
         const goalAssetValues = new Map<string, number>();
 
-        data.assets.forEach(a => {
+        assets.forEach(a => {
             if (a.goalId) {
                 goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + a.value);
             }
         });
 
-        data.investments.forEach(p => {
+        investments.forEach(p => {
+            const holdings = p.holdings ?? [];
             if (p.goalId) {
-                const portfolioValue = p.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0);
                 goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
             } else {
-                p.holdings.forEach(h => {
+                holdings.forEach(h => {
                     if (h.goalId) {
                         goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + h.currentValue);
                     }
@@ -333,27 +350,27 @@ const Goals: React.FC = () => {
             }
         });
 
-        data.goals.forEach(goal => {
+        goals.forEach(goal => {
             totalTarget += goal.targetAmount;
             totalCurrent += goalAssetValues.get(goal.id) || 0;
         });
 
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent };
-    }, [data.goals, data.assets, data.investments]);
+    }, [data?.goals, data?.assets, data?.investments]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
-        return [...data.goals].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || a.name.localeCompare(b.name));
-    }, [data.goals]);
+        return [...(data?.goals ?? [])].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || a.name.localeCompare(b.name));
+    }, [data?.goals]);
     
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
     
     const handleSaveGoal = async (goal: Goal) => {
         try {
-            if (data.goals.some(g => g.id === goal.id)) await updateGoal(goal);
+            if ((data?.goals ?? []).some(g => g.id === goal.id)) await updateGoal(goal);
             else await addGoal(goal);
         } catch (error) {
             // Error already alerted in DataContext
@@ -380,6 +397,14 @@ const Goals: React.FC = () => {
         updateGoalAllocations(allocationArray);
         alert("Savings allocation strategy saved!");
     };
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
   return (
     <div className="space-y-6">
@@ -418,7 +443,7 @@ const Goals: React.FC = () => {
         </div>
       </div>
 
-      <AIAdvisor pageContext="goals" contextData={{ goals: data.goals, monthlySavings: averageMonthlySavings }}/>
+      <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
       
        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {goalsByPriority.map(goal => (

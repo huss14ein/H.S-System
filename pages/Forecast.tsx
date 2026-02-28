@@ -4,18 +4,19 @@ import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area
 import Card from '../components/Card';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
         const twelveMonthsAgo = new Date();
         twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-        data.transactions.filter(t => new Date(t.date) > twelveMonthsAgo).forEach(t => {
+        (data?.transactions ?? []).filter(t => new Date(t.date) > twelveMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
             monthlyNet.set(monthKey, currentNet + t.amount);
@@ -25,7 +26,7 @@ const Forecast: React.FC = () => {
         
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     const [horizon, setHorizon] = useState(10);
     const [monthlySavings, setMonthlySavings] = useState(averageMonthlySavings);
@@ -49,10 +50,14 @@ const Forecast: React.FC = () => {
     }, [averageMonthlySavings]);
 
     const initialValues = useMemo(() => {
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0);
+        const assets = data?.assets ?? [];
+        const accounts = data?.accounts ?? [];
+        const liabilities = data?.liabilities ?? [];
+        const investments = data?.investments ?? [];
+        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) + accounts.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalLiabilities = liabilities.reduce((sum, liab) => sum + liab.amount, 0);
         const netWorth = totalAssets + totalLiabilities;
-        const investmentValue = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const investmentValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         return { netWorth, investmentValue };
     }, [data]);
 
@@ -93,7 +98,7 @@ const Forecast: React.FC = () => {
             let currentInvestmentValue = initialValues.investmentValue;
             let currentMonthlySavings = monthlySavings;
             
-            const goalsWithProjections = data.goals.map(g => ({ ...g, metMonth: null as number | null }));
+            const goalsWithProjections = (data?.goals ?? []).map(g => ({ ...g, metMonth: null as number | null }));
 
             const results = [];
             const currentDate = new Date();
@@ -155,17 +160,25 @@ const Forecast: React.FC = () => {
 
             setIsLoading(false);
         }, 500);
-    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data.goals, scenarioPreset]);
+    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data?.goals, scenarioPreset]);
 
     const goalReferenceLines = useMemo(() => {
-        return data.goals.map(goal => {
+        return (data?.goals ?? []).map(goal => {
             const yValue = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
             return {
                 y: yValue,
                 label: goal.name
             };
         });
-    }, [data.goals, initialValues.netWorth]);
+    }, [data?.goals, initialValues.netWorth]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
@@ -188,6 +201,7 @@ const Forecast: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
                 <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow space-y-4 sticky top-24">
                     <h3 className="text-lg font-semibold text-dark border-b pb-2">Forecast Assumptions</h3>
+                    <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
                         {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
                             <button
@@ -200,20 +214,20 @@ const Forecast: React.FC = () => {
                         ))}
                     </div>
                     <div>
-                        <label htmlFor="horizon" className="block text-sm font-medium text-gray-700">Forecast Horizon: {horizon} years</label>
+                        <label htmlFor="horizon" className="block text-sm font-medium text-gray-700 flex items-center">Forecast Horizon: {horizon} years <InfoHint text="Number of years to project net worth and savings growth." /></label>
                         <input type="range" id="horizon" min="1" max="30" value={horizon} onChange={e => setHorizon(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
                     </div>
                     <div>
-                        <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700">Monthly Savings Contribution</label>
+                        <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
                         <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                         <p className="text-xs text-gray-500 mt-1">Calculated average is {formatCurrencyString(averageMonthlySavings)}.</p>
                     </div>
                     <div>
-                        <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700">Annual Investment Growth (%)</label>
+                        <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
                         <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <div>
-                        <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700">Annual Savings Increase (%)</label>
+                        <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Assume your monthly savings grow by this percent each year (e.g. raises)." /></label>
                         <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                     <button onClick={handleRunForecast} disabled={isLoading} className="w-full flex items-center justify-center px-4 py-3 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors font-semibold">

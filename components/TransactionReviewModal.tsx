@@ -15,7 +15,8 @@ interface TransactionReviewModalProps {
 }
 
 const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen, onClose, transactions, budgetCategories }) => {
-    const { updateTransaction } = useContext(DataContext)!;
+    const dataContext = useContext(DataContext);
+    const updateTransaction = dataContext?.updateTransaction;
     const { formatCurrencyString } = useFormatCurrency();
     const [currentIndex, setCurrentIndex] = useState(0);
     const [selectedCategory, setSelectedCategory] = useState('');
@@ -53,7 +54,7 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
     };
 
     const handleSave = async () => {
-        if (!currentTransaction || !selectedCategory) return;
+        if (!currentTransaction || !selectedCategory || !updateTransaction) return;
 
         await updateTransaction({ ...currentTransaction, budgetCategory: selectedCategory });
 
@@ -72,7 +73,7 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
         }
     }
 
-    if (!isOpen || !currentTransaction) return null;
+    if (!isOpen || !currentTransaction || !updateTransaction) return null;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Review Transactions (${currentIndex + 1} of ${transactions.length})`}>

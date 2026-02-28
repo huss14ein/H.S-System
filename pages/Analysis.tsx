@@ -11,14 +11,14 @@ const SpendingByCategoryChart: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
         const spending = new Map<string, number>();
-        data.transactions
+        (data?.transactions ?? [])
             .filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
         return Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     const COLORS = ['#1e40af', '#3b82f6', '#93c5fd', '#60a5fa', '#bfdbfe'];
 
@@ -41,7 +41,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
         const trends = new Map<string, { income: number, expenses: number }>();
-        data.transactions.forEach(t => {
+        (data?.transactions ?? []).forEach(t => {
             const month = new Date(t.date).toLocaleString('default', { month: 'short', year: '2-digit' });
             const current = trends.get(month) || { income: 0, expenses: 0 };
             if (t.type === 'income') {
@@ -54,7 +54,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
         // Convert map to array and sort chronologically
         return Array.from(trends, ([name, value]) => ({ name, date: new Date(name), ...value }))
             .sort((a, b) => a.date.getTime() - b.date.getTime());
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     return (
         <ResponsiveContainer width="100%" height={300}>
@@ -76,10 +76,14 @@ const AssetLiabilityChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
      const chartData = useMemo(() => {
-        const totalInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
-        const totalPhysicalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const inv = data?.investments ?? [];
+        const acc = data?.accounts ?? [];
+        const ast = data?.assets ?? [];
+        const liab = data?.liabilities ?? [];
+        const totalInvestments = inv.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance), 0);
+        const totalPhysicalAssets = ast.reduce((sum, asset) => sum + asset.value, 0);
+        const totalLiabilities = liab.reduce((sum, l) => sum + Math.abs(l.amount), 0) + acc.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, a) => sum + Math.abs(a.balance), 0);
         
         return [
             { name: 'Investments', value: totalInvestments },
@@ -108,12 +112,18 @@ const AssetLiabilityChart: React.FC = () => {
 
 
 const Analysis: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
 
     const contextData = useMemo(() => {
+        const transactions = data?.transactions ?? [];
+        const investments = data?.investments ?? [];
+        const accounts = data?.accounts ?? [];
+        const assets = data?.assets ?? [];
+        const liabilities = data?.liabilities ?? [];
+
         // Spending Data
         const spending = new Map<string, number>();
-        data.transactions.filter(t => t.type === 'expense' && t.budgetCategory)
+        transactions.filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
@@ -122,7 +132,7 @@ const Analysis: React.FC = () => {
 
         // Trend Data
         const trends = new Map<string, { income: number, expenses: number }>();
-        data.transactions.forEach(t => {
+        transactions.forEach(t => {
             const month = new Date(t.date).toLocaleString('default', { month: 'short', year: '2-digit' });
             const current = trends.get(month) || { income: 0, expenses: 0 };
             if (t.type === 'income') current.income += t.amount;
@@ -134,10 +144,10 @@ const Analysis: React.FC = () => {
             .slice(-6); // Last 6 months
 
         // Composition Data
-        const totalInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
-        const totalPhysicalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const totalInvestments = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const totalPhysicalAssets = assets.reduce((sum, asset) => sum + asset.value, 0);
+        const totalLiabilities = liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
         const compositionData = [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
@@ -147,6 +157,14 @@ const Analysis: React.FC = () => {
         
         return { spendingData, trendData, compositionData };
     }, [data]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">

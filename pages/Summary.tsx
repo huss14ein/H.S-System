@@ -47,7 +47,7 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 );
 
 const Summary: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -56,17 +56,23 @@ const Summary: React.FC = () => {
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const recentTransactions = data.transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
+        const transactions = data?.transactions ?? [];
+        const recentTransactions = transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
 
         const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
         const monthlyExpenses = recentTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
         const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
         const monthlyPnL = monthlyIncome - monthlyExpenses;
 
-        const totalDebt = data.liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const totalCommodities = data.commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + 
-                           data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
+        const liabilities = data?.liabilities ?? [];
+        const accounts = data?.accounts ?? [];
+        const assets = data?.assets ?? [];
+        const commodityHoldings = data?.commodityHoldings ?? [];
+        const investments = data?.investments ?? [];
+        const totalDebt = liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
+        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
+                           accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
                            totalCommodities;
         const netWorth = totalAssets - totalDebt;
         const debtToAssetRatio = totalAssets > 0 ? totalDebt / totalAssets : 0;
@@ -74,11 +80,11 @@ const Summary: React.FC = () => {
         const netWorthPrevMonth = netWorth - monthlyPnL;
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
-        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + acc.balance, 0);
-        const coreExpenses = data.transactions.filter(t => t.expenseType === 'Core').reduce((sum, t) => sum + Math.abs(t.amount), 0) / 12; // Average monthly core
+        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + acc.balance, 0);
+        const coreExpenses = transactions.filter(t => t.expenseType === 'Core').reduce((sum, t) => sum + Math.abs(t.amount), 0) / 12; // Average monthly core
         const emergencyFundMonths = coreExpenses > 0 ? cash / coreExpenses : savingsRate >= 0 ? 99 : 0;
 
-        const allHoldings = data.investments.flatMap(p => p.holdings || []);
+        const allHoldings = investments.flatMap(p => p.holdings || []);
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
              const gainLoss = h.currentValue - totalCost;
@@ -107,7 +113,7 @@ const Summary: React.FC = () => {
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle, efStatus, efTrend, netWorthTrend },
             investmentTreemapData
         };
-    }, [data, data.commodityHoldings]);
+    }, [data]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
@@ -126,6 +132,14 @@ const Summary: React.FC = () => {
         }
         setIsLoading(false);
     }, [financialMetrics]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-8">
@@ -173,7 +187,7 @@ const Summary: React.FC = () => {
 
             <div className="bg-white p-6 rounded-lg shadow max-w-full mx-auto">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                    <div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div>
+                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                         <SparklesIcon className="h-5 w-5 mr-2" />
                         {isLoading ? 'Analyzing...' : (analysis ? 'Regenerate Analysis' : 'Generate My Analysis')}
@@ -186,7 +200,7 @@ const Summary: React.FC = () => {
                          <SafeMarkdownRenderer content={error} />
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your AI-powered financial persona and report card.</div>}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your expert financial persona and report card.</div>}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">

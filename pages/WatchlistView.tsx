@@ -4,8 +4,10 @@ import { PriceAlert, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { getAIResearchNews, formatAiError } from '../services/geminiService';
+import { getSymbolResearch, SymbolResearch } from '../services/finnhubService';
 import { MegaphoneIcon } from '../components/icons/MegaphoneIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import Modal from '../components/Modal';
 import PriceAlertModal from '../components/PriceAlertModal';
 import { BellAlertIcon } from '../components/icons/BellAlertIcon';
@@ -35,8 +37,9 @@ const WatchlistItemRow: React.FC<{
     priceInfo: { price: number; change: number; changePercent: number },
     activeAlert: PriceAlert | null,
     onOpenAlertModal: (item: WatchlistItem) => void,
-    onOpenDeleteModal: (item: WatchlistItem) => void
-}> = ({ item, priceInfo, activeAlert, onOpenAlertModal, onOpenDeleteModal }) => {
+    onOpenDeleteModal: (item: WatchlistItem) => void,
+    onOpenResearch: (item: WatchlistItem) => void,
+}> = ({ item, priceInfo, activeAlert, onOpenAlertModal, onOpenDeleteModal, onOpenResearch }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number | undefined>(undefined);
@@ -96,6 +99,9 @@ const WatchlistItemRow: React.FC<{
             </td>
             <td className="px-4 py-2 text-center">
                 <div className="flex justify-center items-center space-x-1">
+                    <button onClick={() => onOpenResearch(item)} className="text-gray-400 hover:text-primary p-1" title="Deeper research (profile, 52w, earnings, insider)">
+                        <BookOpenIcon className="h-5 w-5" />
+                    </button>
                     <button onClick={() => onOpenAlertModal(item)} className="text-gray-400 hover:text-yellow-500 p-1" title="Set Price Alert">
                         {activeAlert ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
                     </button>
@@ -120,6 +126,9 @@ const WatchlistView: React.FC = () => {
     const [aiResearch, setAiResearch] = useState('');
     const [isNewsLoading, setIsNewsLoading] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
+    const [researchSymbol, setResearchSymbol] = useState<WatchlistItem | null>(null);
+    const [symbolResearch, setSymbolResearch] = useState<SymbolResearch | null>(null);
+    const [isResearchLoading, setIsResearchLoading] = useState(false);
 
 
     const watchlistInsights = useMemo(() => {
@@ -159,6 +168,19 @@ const WatchlistView: React.FC = () => {
             setIsNewsLoading(false); 
         }
     }, [data.watchlist]);
+    const handleOpenResearch = useCallback(async (item: WatchlistItem) => {
+        setResearchSymbol(item);
+        setSymbolResearch(null);
+        setIsResearchLoading(true);
+        try {
+            const res = await getSymbolResearch(item.symbol);
+            setSymbolResearch(res);
+        } catch {
+            setSymbolResearch(null);
+        } finally {
+            setIsResearchLoading(false);
+        }
+    }, []);
     const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
     const handleSaveAlert = (symbol: string, targetPrice: number) => { const existing = data.priceAlerts.find(a => a.symbol === symbol); if (existing) { updatePriceAlert({ ...existing, targetPrice, status: 'active' }); } else { addPriceAlert({ symbol, targetPrice }); } };
     const handleDeleteAlert = (symbol: string) => { const existing = data.priceAlerts.find(a => a.symbol === symbol); if (existing) deletePriceAlert(existing.id); };
@@ -188,6 +210,7 @@ const WatchlistView: React.FC = () => {
                                   activeAlert={activeAlert}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
+                                  onOpenResearch={handleOpenResearch}
                                />
                             );
                         })}
@@ -197,10 +220,10 @@ const WatchlistView: React.FC = () => {
             </div>
 
             <div className="lg:col-span-1 bg-green-50 p-4 rounded-lg border border-green-200 h-full">
-                <div className="flex items-center justify-between"><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>Market Research</h4><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
+                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>Market Research</h4><p className="text-xs text-green-700/80">From your expert investment advisor</p></div><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
                 {isNewsLoading && <div className="text-center p-4 text-sm text-gray-500">Fetching latest market info...</div>}
                 {aiResearch && !isNewsLoading && (<div className="mt-2"><SafeMarkdownRenderer content={aiResearch} /></div>)}
-                {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for AI + Finnhub news and calendar insights on your watchlist items.</div>)}
+                {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for expert news and calendar insights on your watchlist items.</div>)}
                  {groundingChunks.length > 0 && (
                     <div className="text-xs text-gray-500 mt-4 pt-2 border-t">
                         <p className="font-semibold text-gray-700">Sources:</p>
@@ -216,6 +239,66 @@ const WatchlistView: React.FC = () => {
             <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDelete={handleDeleteAlert} stock={stockForAlert} existingAlert={data.priceAlerts.find(a => a.symbol === stockForAlert?.symbol) || null} />
+
+            {researchSymbol && (
+                <Modal isOpen={!!researchSymbol} onClose={() => { setResearchSymbol(null); setSymbolResearch(null); }} title={`Research: ${researchSymbol.symbol}`}>
+                    {isResearchLoading && <div className="text-center py-8 text-gray-500">Loading Finnhub data...</div>}
+                    {!isResearchLoading && symbolResearch && (
+                        <div className="space-y-4 text-sm max-h-[70vh] overflow-y-auto">
+                            {symbolResearch.profile && (
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                    <h4 className="font-semibold text-dark mb-2">Company profile</h4>
+                                    <p><span className="text-gray-500">Sector:</span> {symbolResearch.profile.finnhubIndustry} · {symbolResearch.profile.country} · {symbolResearch.profile.currency}</p>
+                                    {symbolResearch.profile.weburl && <a href={symbolResearch.profile.weburl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Website</a>}
+                                </div>
+                            )}
+                            {symbolResearch.quote && (
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                    <h4 className="font-semibold text-dark mb-2">Quote & 52-week</h4>
+                                    <p>Current: {formatCurrencyString(symbolResearch.quote.c)} · Day: {symbolResearch.quote.d >= 0 ? '+' : ''}{symbolResearch.quote.dp?.toFixed(2)}%</p>
+                                    {(symbolResearch.quote.high52 != null || symbolResearch.quote.low52 != null) && (
+                                        <p className="text-gray-600">52w high: {symbolResearch.quote.high52 != null ? formatCurrencyString(symbolResearch.quote.high52) : '—'} · 52w low: {symbolResearch.quote.low52 != null ? formatCurrencyString(symbolResearch.quote.low52) : '—'}</p>
+                                    )}
+                                </div>
+                            )}
+                            {symbolResearch.earnings.length > 0 && (
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                    <h4 className="font-semibold text-dark mb-2">Earnings</h4>
+                                    <ul className="list-disc pl-4 space-y-1">
+                                        {symbolResearch.earnings.slice(0, 5).map((e, i) => (
+                                            <li key={i}>{e.period} {e.year}: Est {e.estimate ?? '—'} · Actual {e.actual ?? '—'}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            {symbolResearch.insider.length > 0 && (
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                    <h4 className="font-semibold text-dark mb-2">Recent insider</h4>
+                                    <ul className="space-y-1">
+                                        {symbolResearch.insider.slice(0, 5).map((t, i) => (
+                                            <li key={i}>{t.name}: {t.transactionCode} · {t.change} @ {formatCurrencyString(t.transactionPrice)} ({t.filingDate})</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            {symbolResearch.news.length > 0 && (
+                                <div className="p-3 bg-gray-50 rounded-lg">
+                                    <h4 className="font-semibold text-dark mb-2">News</h4>
+                                    <ul className="space-y-2">
+                                        {symbolResearch.news.slice(0, 5).map((n, i) => (
+                                            <li key={i}><a href={n.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{n.headline}</a> <span className="text-gray-500 text-xs">({n.source})</span></li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            {!symbolResearch.profile && !symbolResearch.quote && symbolResearch.earnings.length === 0 && symbolResearch.insider.length === 0 && symbolResearch.news.length === 0 && (
+                                <p className="text-gray-500">No Finnhub data returned for this symbol. Check symbol or API key.</p>
+                            )}
+                        </div>
+                    )}
+                    {!isResearchLoading && !symbolResearch && researchSymbol && <p className="text-gray-500">Failed to load research data.</p>}
+                </Modal>
+            )}
         </div>
     );
 };

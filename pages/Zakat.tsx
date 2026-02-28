@@ -49,48 +49,55 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 
 
 const Zakat: React.FC = () => {
-    const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
+    const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
-    const [localGoldPrice, setLocalGoldPrice] = useState(String(data.settings.goldPrice || 275));
+    const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
+    const [localGoldPrice, setLocalGoldPrice] = useState(String(defaultGold));
     const [otherDebts, setOtherDebts] = useState(0);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     
     useEffect(() => {
-        setLocalGoldPrice(String(data.settings.goldPrice || 275));
-    }, [data.settings.goldPrice]);
+        const g = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
+        setLocalGoldPrice(String(g));
+    }, [data?.settings]);
 
-    const nisab = useMemo(() => (data.settings.goldPrice || 275) * 85, [data.settings.goldPrice]);
+    const goldPrice = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
+    const nisab = useMemo(() => goldPrice * 85, [goldPrice]);
 
     const zakatableAssets = useMemo(() => {
-        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
-        
-        const investments = data.investments.flatMap(p => p.holdings || [])
-            .filter(h => h.zakahClass === 'Zakatable')
-            .reduce((sum, h) => sum + h.currentValue, 0);
-            
-        const commodities = data.commodityHoldings
-            .filter(c => c.zakahClass === 'Zakatable')
-            .reduce((sum, c) => sum + c.currentValue, 0);
-
-        const total = cash + investments + commodities;
-        return { cash, investments, commodities, total };
-    }, [data.accounts, data.investments, data.commodityHoldings]);
+        const accounts = data?.accounts ?? [];
+        const investments = data?.investments ?? [];
+        const commodityHoldings = data?.commodityHoldings ?? [];
+        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const invValue = investments.flatMap(p => p.holdings || []).filter(h => h.zakahClass === 'Zakatable').reduce((sum, h) => sum + h.currentValue, 0);
+        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + c.currentValue, 0);
+        const total = cash + invValue + commodities;
+        return { cash, investments: invValue, commodities, total };
+    }, [data?.accounts, data?.investments, data?.commodityHoldings]);
 
     const deductibleLiabilities = useMemo(() => {
-        const shortTermDebts = data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const trackedLiabilities = data.liabilities
-            .filter(l => l.status === 'Active')
-            .reduce((sum, liability) => sum + Math.abs(liability.amount), 0);
+        const accounts = data?.accounts ?? [];
+        const liabilities = data?.liabilities ?? [];
+        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const trackedLiabilities = liabilities.filter(l => l.status === 'Active').reduce((sum, liability) => sum + Math.abs(liability.amount), 0);
         const total = shortTermDebts + trackedLiabilities + otherDebts;
         return { shortTermDebts, trackedLiabilities, otherDebts, total };
-    }, [otherDebts, data.accounts, data.liabilities]);
+    }, [otherDebts, data?.accounts, data?.liabilities]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
-    const totalPaid = useMemo(() => data.zakatPayments.reduce((sum, p) => sum + p.amount, 0), [data.zakatPayments]);
+    const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-96">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
@@ -187,7 +194,7 @@ const Zakat: React.FC = () => {
                     </div>
                     
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {data.zakatPayments.map(p => (
+                        {(data?.zakatPayments ?? []).map(p => (
                              <div key={p.id} className="flex justify-between items-center text-sm p-3 bg-gray-50 rounded-lg border">
                                 <div className="flex items-center gap-3">
                                     <BanknotesIcon className="h-6 w-6 text-green-500 flex-shrink-0" />
@@ -199,7 +206,7 @@ const Zakat: React.FC = () => {
                                 {p.notes && <p className="text-xs text-gray-600 italic text-right truncate" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
-                        {data.zakatPayments.length === 0 && <p className="text-sm text-center text-gray-500 py-4">No payments recorded yet.</p>}
+                        {(data?.zakatPayments ?? []).length === 0 && <p className="text-sm text-center text-gray-500 py-4">No payments recorded yet.</p>}
                     </div>
                 </div>
             </div>

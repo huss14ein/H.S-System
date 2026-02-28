@@ -90,6 +90,94 @@ interface DataContextType {
 
 export const DataContext = createContext<DataContextType | null>(null);
 
+function normalizeSettings(raw: any): Settings {
+    if (!raw) return initialData.settings;
+    return {
+        riskProfile: (raw.risk_profile ?? raw.riskProfile ?? initialData.settings.riskProfile) as Settings['riskProfile'],
+        budgetThreshold: Number(raw.budget_threshold ?? raw.budgetThreshold ?? initialData.settings.budgetThreshold),
+        driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
+        enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
+        goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
+    };
+}
+
+function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (settings.riskProfile != null) row.risk_profile = settings.riskProfile;
+    if (settings.budgetThreshold != null) row.budget_threshold = settings.budgetThreshold;
+    if (settings.driftThreshold != null) row.drift_threshold = settings.driftThreshold;
+    if (settings.enableEmails != null) row.enable_emails = settings.enableEmails;
+    if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
+    return row;
+}
+
+function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
+    if (!raw) return initialData.investmentPlan;
+    const bc = raw.broker_constraints || raw.brokerConstraints || initialData.investmentPlan.brokerConstraints;
+    return {
+        ...initialData.investmentPlan,
+        user_id: raw.user_id,
+        monthlyBudget: Number(raw.monthly_budget ?? raw.monthlyBudget ?? initialData.investmentPlan.monthlyBudget),
+        budgetCurrency: (raw.budget_currency ?? raw.budgetCurrency ?? initialData.investmentPlan.budgetCurrency) as 'SAR',
+        executionCurrency: (raw.execution_currency ?? raw.executionCurrency ?? initialData.investmentPlan.executionCurrency),
+        fxRateSource: String(raw.fx_rate_source ?? raw.fxRateSource ?? initialData.investmentPlan.fxRateSource),
+        coreAllocation: Number(raw.core_allocation ?? raw.coreAllocation ?? initialData.investmentPlan.coreAllocation),
+        upsideAllocation: Number(raw.upside_allocation ?? raw.upsideAllocation ?? initialData.investmentPlan.upsideAllocation),
+        minimumUpsidePercentage: Number(raw.minimum_upside_percentage ?? raw.minimumUpsidePercentage ?? initialData.investmentPlan.minimumUpsidePercentage),
+        stale_days: Number(raw.stale_days ?? initialData.investmentPlan.stale_days),
+        min_coverage_threshold: Number(raw.min_coverage_threshold ?? initialData.investmentPlan.min_coverage_threshold),
+        redirect_policy: (raw.redirect_policy ?? initialData.investmentPlan.redirect_policy) as 'priority' | 'pro-rata',
+        target_provider: String(raw.target_provider ?? raw.targetProvider ?? initialData.investmentPlan.target_provider),
+        corePortfolio: Array.isArray(raw.core_portfolio ?? raw.corePortfolio) ? (raw.core_portfolio ?? raw.corePortfolio) : initialData.investmentPlan.corePortfolio,
+        upsideSleeve: Array.isArray(raw.upside_sleeve ?? raw.upsideSleeve) ? (raw.upside_sleeve ?? raw.upsideSleeve) : initialData.investmentPlan.upsideSleeve,
+        brokerConstraints: bc && typeof bc === 'object' ? {
+            allowFractionalShares: Boolean(bc.allow_fractional_shares ?? bc.allowFractionalShares ?? true),
+            minimumOrderSize: Number(bc.minimum_order_size ?? bc.minimumOrderSize ?? 100),
+            roundingRule: (bc.rounding_rule ?? bc.roundingRule ?? 'round') as 'round' | 'floor' | 'ceil',
+            leftoverCashRule: (bc.leftover_cash_rule ?? bc.leftoverCashRule ?? 'reinvest_core') as 'reinvest_core' | 'hold',
+        } : initialData.investmentPlan.brokerConstraints,
+    };
+}
+
+function normalizeExecutionLog(raw: any): InvestmentPlanExecutionLog {
+    if (!raw) return {} as InvestmentPlanExecutionLog;
+    return {
+        id: raw.id,
+        user_id: raw.user_id,
+        created_at: raw.created_at,
+        date: raw.date ?? '',
+        totalInvestment: Number(raw.total_investment ?? raw.totalInvestment ?? 0),
+        coreInvestment: Number(raw.core_investment ?? raw.coreInvestment ?? 0),
+        upsideInvestment: Number(raw.upside_investment ?? raw.upsideInvestment ?? 0),
+        speculativeInvestment: Number(raw.speculative_investment ?? raw.speculativeInvestment ?? 0),
+        redirectedInvestment: Number(raw.redirected_investment ?? raw.redirectedInvestment ?? 0),
+        unusedUpsideFunds: Number(raw.unused_upside_funds ?? raw.unusedUpsideFunds ?? 0),
+        trades: Array.isArray(raw.trades) ? raw.trades : [],
+        status: (raw.status ?? 'success') as 'success' | 'failure',
+        log_details: String(raw.log_details ?? ''),
+    };
+}
+
+function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
+    return {
+        user_id: plan.user_id,
+        monthly_budget: plan.monthlyBudget,
+        budget_currency: plan.budgetCurrency,
+        execution_currency: plan.executionCurrency,
+        fx_rate_source: plan.fxRateSource,
+        core_allocation: plan.coreAllocation,
+        upside_allocation: plan.upsideAllocation,
+        minimum_upside_percentage: plan.minimumUpsidePercentage,
+        stale_days: plan.stale_days,
+        min_coverage_threshold: plan.min_coverage_threshold,
+        redirect_policy: plan.redirect_policy,
+        target_provider: plan.target_provider,
+        core_portfolio: plan.corePortfolio,
+        upside_sleeve: plan.upsideSleeve,
+        broker_constraints: plan.brokerConstraints,
+    };
+}
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
@@ -182,18 +270,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         const payloadBase = {
-    const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => ([
-        {
-            name: holding.name,
-            quantity: holding.quantity,
-            unit: holding.unit,
-            symbol: holding.symbol,
-            owner: holding.owner,
-            purchase_value: holding.purchaseValue,
-            current_value: holding.currentValue,
-            zakah_class: holding.zakahClass,
-        },
-        {
             name: holding.name,
             quantity: holding.quantity,
             unit: holding.unit,
@@ -246,39 +322,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (seen.has(signature)) continue;
             seen.add(signature);
             dedupedVariants.push(payload as Record<string, unknown>);
-            purchaseValue: holding.purchaseValue,
-            currentValue: holding.currentValue,
-            zakahClass: holding.zakahClass,
-        },
-        {
-            name: holding.name,
-            quantity: holding.quantity,
-            unit: holding.unit,
-            symbol: holding.symbol,
-            owner: holding.owner,
-            purchasevalue: holding.purchaseValue,
-            currentvalue: holding.currentValue,
-            zakahclass: holding.zakahClass,
-        },
-        {
-            name: holding.name,
-            quantity: holding.quantity,
-            unit: holding.unit,
-            symbol: holding.symbol,
-            owner: holding.owner,
-            purchase_value: holding.purchaseValue,
-            currentValue: holding.currentValue,
-            zakahClass: holding.zakahClass,
-        },
-        {
-            name: holding.name,
-            quantity: holding.quantity,
-            unit: holding.unit,
-            symbol: holding.symbol,
-            owner: holding.owner,
-            purchaseValue: holding.purchaseValue,
-            current_value: holding.currentValue,
-            zakah_class: holding.zakahClass,
         }
 
         return dedupedVariants;
@@ -337,21 +380,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 budgets: budgets.data || [],
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
-                settings: settings.data || initialData.settings,
+                settings: normalizeSettings(settings.data || initialData.settings),
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: priceAlerts.data || [],
                 plannedTrades: plannedTrades.data || [],
                 notifications: [],
-                investmentPlan: (investmentPlan as any).data 
-                    ? { 
-                        ...initialData.investmentPlan, 
-                        ...(investmentPlan as any).data,
-                        brokerConstraints: (investmentPlan as any).data.brokerConstraints || initialData.investmentPlan.brokerConstraints 
-                      }
-                    : initialData.investmentPlan,
+                investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
-                executionLogs: (executionLogs as any).data || []
+                executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog)
             });
         } catch (error) {
             console.error("Error fetching financial data:", error);
@@ -379,7 +416,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
-        const tables = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings', 'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist', 'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades'];
+        const tables = [
+            'accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings',
+            'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist',
+            'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades',
+            'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
+        ];
         await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);
@@ -563,9 +605,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
       const db = supabase;
-      const { data: newBudget, error } = await db.from('budgets').insert(withUser(budget)).select().single();
-      if(error) console.error("Error adding budget:", error);
-      if (newBudget) setData(prev => ({ ...prev, budgets: [...prev.budgets, newBudget] }));
+      const payload = withUser(budget);
+      let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
+      if (error && (payload as any).period) {
+        const fallback: any = { ...payload, limit: (payload as any).period === 'yearly' ? (payload.limit / 12) : payload.limit };
+        delete fallback.period;
+        const retry = await db.from('budgets').insert(fallback).select().single();
+        newBudget = retry.data;
+        error = retry.error;
+      }
+      if (error) {
+        console.error("Error adding budget:", error);
+        throw error;
+      }
+      if (newBudget) {
+        const withPeriod = { ...newBudget, period: (budget as Budget).period };
+        if ((budget as Budget).period === 'yearly') withPeriod.limit = budget.limit;
+        setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
+      }
     };
     const updateBudget = async (budget: Budget) => {
       if(!supabase || !auth?.user) return;
@@ -594,8 +651,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const existingTargetCategories = new Set(data.budgets.filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
         
         const budgetsToInsert = sourceBudgets
-            .filter(b => !existingTargetCategories.has(b.category))
-            .map(({ id, user_id, ...rest }) => ({ ...rest, month: targetMonth, year: targetYear }));
+            .filter((b: any) => !existingTargetCategories.has(b.category))
+            .map((b: any) => {
+                const { id, user_id, ...rest } = b;
+                return { ...rest, month: targetMonth, year: targetYear, period: b.period ?? 'monthly' };
+            });
 
         if (budgetsToInsert.length === 0) { alert("All budgets from last month already exist for the selected month."); return; }
 
@@ -1003,18 +1063,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
-        const updatedSettings = { ...data.settings, ...settingsUpdate, user_id: auth.user.id };
-        const { error } = await supabase.from('settings').upsert([updatedSettings], { onConflict: 'user_id' });
+        const merged = { ...data.settings, ...settingsUpdate };
+        const row = { ...settingsToRow(merged), user_id: auth.user.id };
+        const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         if (error) {
             console.error("Error updating settings:", error);
         } else {
-            setData(prev => ({ ...prev, settings: updatedSettings }));
+            setData(prev => ({ ...prev, settings: merged }));
         }
     };
 
     const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
         if (!supabase || !auth?.user) return;
-        const planWithUser = { ...plan, user_id: auth.user.id };
+        const planWithUser = { ...investmentPlanToRow(plan), user_id: auth.user.id };
         const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
         if (error) {
             console.error("Error saving investment plan:", error);
@@ -1077,12 +1138,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveExecutionLog = async (log: InvestmentPlanExecutionLog) => {
         if (!supabase || !auth?.user) return;
-        const logWithUser = { ...log, user_id: auth.user.id };
-        const { error } = await supabase.from('execution_logs').insert(logWithUser);
+        const row: Record<string, unknown> = {
+            user_id: auth.user.id,
+            date: log.date,
+            total_investment: log.totalInvestment,
+            core_investment: log.coreInvestment,
+            upside_investment: log.upsideInvestment,
+            speculative_investment: log.speculativeInvestment,
+            redirected_investment: log.redirectedInvestment,
+            unused_upside_funds: log.unusedUpsideFunds,
+            trades: log.trades,
+            status: log.status,
+            log_details: log.log_details,
+        };
+        const { data: inserted, error } = await supabase.from('execution_logs').insert(row).select().single();
         if (error) {
             console.error("Error saving execution log:", error);
         } else {
-            setData(prev => ({ ...prev, executionLogs: [log, ...prev.executionLogs] }));
+            const normalized = inserted ? normalizeExecutionLog(inserted) : log;
+            setData(prev => ({ ...prev, executionLogs: [normalized, ...prev.executionLogs] }));
         }
     };
 

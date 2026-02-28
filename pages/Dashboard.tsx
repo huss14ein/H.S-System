@@ -50,9 +50,12 @@ const AIExecutiveSummary: React.FC = () => {
     return (
         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-secondary">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                <div className="flex items-center space-x-3">
-                    <SparklesIcon className="h-7 w-7 text-secondary" />
-                    <h2 className="text-xl font-semibold text-dark">AI Executive Summary</h2>
+                <div className="flex flex-col">
+                    <div className="flex items-center space-x-3">
+                        <SparklesIcon className="h-7 w-7 text-secondary" />
+                        <h2 className="text-xl font-semibold text-dark">Executive Summary</h2>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5 ml-10">From your expert financial & investment advisor</p>
                 </div>
                 <button
                     type="button"
@@ -83,7 +86,7 @@ const AIExecutiveSummary: React.FC = () => {
             ) : (
                 !summary && !isLoading && !error && (
                     <div className="text-center p-8 text-gray-500">
-                        Click "Generate Summary" for a high-level overview and strategic advice from your AI advisor.
+                        Click "Generate Summary" for a high-level overview and strategic advice from your expert advisor.
                     </div>
                 )
             )}
@@ -249,6 +252,29 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 };
 
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+
+const KpiCardMenu: React.FC<{ cardKey: KpiCardKey; index: number; total: number; isWide: boolean; onResize: () => void; onMoveUp: () => void; onMoveDown: () => void }> = ({ index, total, isWide, onResize, onMoveUp, onMoveDown }) => {
+    const [open, setOpen] = useState(false);
+    const ref = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+        if (!open) return;
+        const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', fn); return () => document.removeEventListener('mousedown', fn);
+    }, [open]);
+    return (
+        <div className="absolute top-2 right-2 z-10" ref={ref}>
+            <button type="button" onClick={() => setOpen((o) => !o)} className="p-1.5 rounded bg-white/90 border text-gray-500 hover:text-primary" title="Layout options" aria-label="Card options">⋮</button>
+            {open && (
+                <div className="absolute right-0 top-full mt-1 py-1 w-36 bg-white border rounded-lg shadow-lg z-20 text-left">
+                    <button type="button" onClick={() => { onMoveUp(); setOpen(false); }} disabled={index === 0} className="w-full px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40">↑ Move up</button>
+                    <button type="button" onClick={() => { onMoveDown(); setOpen(false); }} disabled={index === total - 1} className="w-full px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40">↓ Move down</button>
+                    <hr className="my-1" />
+                    <button type="button" onClick={() => { onResize(); setOpen(false); }} className="w-full px-3 py-2 text-sm hover:bg-gray-50">{isWide ? 'Small' : 'Wide'}</button>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
@@ -506,17 +532,26 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
             
-            <p className="text-xs text-gray-500">Tip: drag KPI cards to reorder, use ↑/↓ to move, and L/S to resize each card.</p>
+            <p className="text-xs text-gray-500">Drag the ⋮⋮ handle to reorder; use the ⋮ menu for move or resize.</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
                 {kpiCardOrder.map((cardKey, index) => (
-                    <div key={cardKey} className={`relative ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`} draggable onDragStart={() => handleKpiDragStart(cardKey)} onDragOver={(e) => e.preventDefault()} onDrop={() => handleKpiDrop(cardKey)} onDragEnd={() => setDraggingKpiCard(null)}>
-                        <div className="flex justify-end gap-1 mb-2 sm:absolute sm:top-2 sm:right-2 sm:mb-0 sm:z-10">
-                            <button type="button" onClick={() => setKpiCardSize(prev => ({ ...prev, [cardKey]: prev[cardKey] === 'wide' ? 'normal' : 'wide' }))} title="Resize card" aria-label="Resize KPI card" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary">{kpiCardSize[cardKey] === 'wide' ? 'S' : 'L'}</button>
-                            <button disabled={index === 0} onClick={() => moveKpiCard(cardKey, 'up')} title="Move card left/up" aria-label="Move KPI card up" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary disabled:opacity-30">↑</button>
-                            <button disabled={index === kpiCardOrder.length - 1} onClick={() => moveKpiCard(cardKey, 'down')} title="Move card right/down" aria-label="Move KPI card down" className="px-2 py-1 text-xs rounded bg-white/90 border text-gray-500 hover:text-primary disabled:opacity-30">↓</button>
+                    <div
+                        key={cardKey}
+                        className={`relative flex gap-1 ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`}
+                        draggable
+                        onDragStart={() => handleKpiDragStart(cardKey)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => handleKpiDrop(cardKey)}
+                        onDragEnd={() => setDraggingKpiCard(null)}
+                    >
+                        <div className="flex-shrink-0 cursor-grab active:cursor-grabbing pt-2 text-gray-400 hover:text-gray-600 touch-none" title="Drag to reorder" aria-hidden>
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0V9a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm6-12a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1z" /></svg>
                         </div>
-                        {kpiCards[cardKey]}
+                        <div className="flex-1 min-w-0 relative">
+                            <KpiCardMenu cardKey={cardKey} index={index} total={kpiCardOrder.length} isWide={kpiCardSize[cardKey] === 'wide'} onResize={() => setKpiCardSize(prev => ({ ...prev, [cardKey]: prev[cardKey] === 'wide' ? 'normal' : 'wide' }))} onMoveUp={() => moveKpiCard(cardKey, 'up')} onMoveDown={() => moveKpiCard(cardKey, 'down')} />
+                            {kpiCards[cardKey]}
+                        </div>
                     </div>
                 ))}
             </div>

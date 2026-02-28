@@ -72,7 +72,7 @@ const DividendTrackerView: React.FC = () => {
             
             <div className="bg-white p-6 rounded-lg shadow">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-dark flex items-center"><LightBulbIcon className="h-5 w-5 mr-2 text-yellow-500"/>AI Dividend Advisor</h3>
+                    <div><h3 className="text-lg font-semibold text-dark flex items-center"><LightBulbIcon className="h-5 w-5 mr-2 text-yellow-500"/>Dividend Advisor</h3><p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p></div>
                     <button onClick={handleGetAnalysis} disabled={isLoading} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">
                         <SparklesIcon className="h-4 w-4 mr-2"/>
                         {isLoading ? 'Analyzing...' : 'Generate Analysis'}
@@ -80,7 +80,7 @@ const DividendTrackerView: React.FC = () => {
                 </div>
                  {isLoading && <p className="text-sm text-center text-gray-500 py-4">Analyzing your dividend strategy...</p>}
                  {!isLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                 {!isLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an AI-powered summary of your dividend income.</p>}
+                 {!isLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an expert summary of your dividend income.</p>}
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow h-[400px]">

@@ -37,8 +37,8 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
       <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} />
       
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto animate-fadeIn">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full">
+        <div className="max-w-7xl mx-auto w-full animate-fadeIn">
             {children}
         </div>
       </main>

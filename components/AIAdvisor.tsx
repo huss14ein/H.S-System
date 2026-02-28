@@ -80,9 +80,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                <div className="flex items-center space-x-2">
-                    <LightBulbIcon className="h-6 w-6 text-yellow-500" />
-                    <h2 className="text-xl font-semibold text-dark">AI Financial Advisor</h2>
+                <div className="flex flex-col">
+                    <div className="flex items-center space-x-2">
+                        <LightBulbIcon className="h-6 w-6 text-yellow-500" />
+                        <h2 className="text-xl font-semibold text-dark">Financial Advisor</h2>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">Expert financial & investment insights</p>
                 </div>
                 <button
                     type="button"
