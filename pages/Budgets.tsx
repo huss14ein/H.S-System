@@ -42,7 +42,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         if (budgetToEdit) {
             setCategory(budgetToEdit.category);
             setLimit(String(budgetToEdit.limit));
-            setLimitPeriod('Monthly');
+            setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : 'Monthly');
         } else {
             setCategory('');
             setLimit('');
@@ -53,19 +53,21 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
-        const monthlyLimit = limitPeriod === 'Monthly'
+        const isYearly = limitPeriod === 'Yearly';
+        const storedLimit = isYearly
             ? rawLimit
-            : limitPeriod === 'Weekly'
-                ? rawLimit * 4.345
-                : limitPeriod === 'Daily'
-                    ? rawLimit * 30
-                    : rawLimit / 12;
+            : limitPeriod === 'Monthly'
+                ? rawLimit
+                : limitPeriod === 'Weekly'
+                    ? rawLimit * 4.345
+                    : rawLimit * 30;
 
         onSave({
             category,
-            limit: monthlyLimit,
+            limit: storedLimit,
             month: budgetToEdit ? budgetToEdit.month : currentMonth,
             year: budgetToEdit ? budgetToEdit.year : currentYear,
+            period: isYearly ? 'yearly' : 'monthly',
         }, !!budgetToEdit);
         onClose();
     };
@@ -91,7 +93,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     )}
                 </div>
                  <div>
-                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose a period; we normalize and store it as a monthly limit to keep reports consistent." /></label>
+                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
                 </div>
                 <div>
@@ -143,19 +145,11 @@ const Budgets: React.FC = () => {
         colorClass: string;
         displayLimit: number;
         monthlyLimit: number;
-        previousPeriodSpent: number;
-        trendDelta: number;
-        trendDirection: 'up' | 'down' | 'flat';
-        budgetTier: BudgetTier;
-        utilizationLabel: 'Healthy' | 'Watch' | 'Critical';
-    };
-
-    type BudgetRow = Budget & {
-        spent: number;
-        percentage: number;
-        colorClass: string;
-        displayLimit: number;
-        monthlyLimit: number;
+        previousPeriodSpent?: number;
+        trendDelta?: number;
+        trendDirection?: 'up' | 'down' | 'flat';
+        budgetTier?: BudgetTier;
+        utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
     };
 
     const currentYear = currentDate.getFullYear();
@@ -306,11 +300,15 @@ const Budgets: React.FC = () => {
                 .sort((a, b) => b.spent - a.spent);
         }
 
+        return scopedBudgets.map((budget) => {
+                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
+                const spent = spending.get(budget.category) || 0;
+                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
-
-                return { ...budget, spent, displayLimit: adjustedLimit, monthlyLimit: budget.limit, percentage, colorClass };
+                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: 'Optional' as const, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
     }, [data.transactions, data.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
@@ -343,7 +341,7 @@ const Budgets: React.FC = () => {
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
-        const totalLimit = budgetData.reduce((sum, b) => sum + b.displayLimit, 0);
+        const totalLimit = budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0);
         const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
         const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
         const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
@@ -739,24 +737,40 @@ const Budgets: React.FC = () => {
             {allRespondedRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
                     <div className="flex items-center justify-between gap-3 mb-3">
-                        <h2 className="text-lg font-semibold">Request History Timeline</h2>
-                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded">{allRespondedRequests.length} total decisions</span>
+                        <div>
+                            <h2 className="text-lg font-semibold">Request History</h2>
+                            <p className="text-xs text-gray-600 mt-0.5">Single timeline of all past decisions — not tied to any month.</p>
+                        </div>
+                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded">{allRespondedRequests.length} total</span>
                     </div>
-                    <div className="space-y-2">
-                        {visibleHistoryRequests.map((r) => (
-                            <div key={`history-${r.id}`} className="p-3 border rounded-lg bg-white/80">
-                                <div className="flex items-center justify-between gap-2">
-                                    <p className="font-medium text-sm">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
-                            </div>
-                        ))}
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                            <thead>
+                                <tr className="border-b border-violet-200">
+                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
+                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
+                                    <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
+                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
+                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visibleHistoryRequests.map((r) => (
+                                    <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
+                                        <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                        <td className="py-2 px-2">{r.request_type}</td>
+                                        <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
+                                        <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
+                                        <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
+                                        <td className="py-2 px-2 text-gray-600 max-w-[180px] truncate" title={r.note || r.request_note || ''}>{r.note || r.request_note || '—'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                     {historyItemsToShow < allRespondedRequests.length && (
-                        <button onClick={() => setHistoryItemsToShow((prev) => prev + 6)} className="mt-3 px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load more history</button>
+                        <button onClick={() => setHistoryItemsToShow((prev) => prev + 6)} className="mt-3 px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load more</button>
                     )}
                 </div>
             )}
@@ -778,13 +792,13 @@ const Budgets: React.FC = () => {
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.displayLimit, { digits: 0 })}</span>
+                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : ''}</span>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budget.displayLimit} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${budget.displayLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                    {budget.displayLimit - budget.spent >= 0 
-                                        ? `${formatCurrencyString(budget.displayLimit - budget.spent, { digits: 0 })} remaining`
-                                        : `${formatCurrencyString(Math.abs(budget.displayLimit - budget.spent), { digits: 0 })} over`
+                                <ProgressBar value={budget.spent} max={budget.monthlyLimit} color={budget.colorClass} />
+                                <p className={`text-right text-sm mt-1 ${budget.monthlyLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                    {budget.monthlyLimit - budget.spent >= 0 
+                                        ? `${formatCurrencyString(budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
+                                        : `${formatCurrencyString(Math.abs(budget.monthlyLimit - budget.spent), { digits: 0 })} over`
                                     }
                                 </p>
                                 <div className="mt-2 flex items-center justify-between text-xs">
@@ -796,7 +810,7 @@ const Budgets: React.FC = () => {
                             </div>
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
-                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.monthlyLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
+                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
                             <button disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>

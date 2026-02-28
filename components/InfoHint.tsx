@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface InfoHintProps {
   text: string;
@@ -6,9 +6,21 @@ interface InfoHintProps {
 
 const InfoHint: React.FC<InfoHintProps> = ({ text }) => {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
 
   return (
-    <span className="relative inline-flex items-center">
+    <span ref={containerRef} className="relative inline-flex items-center">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

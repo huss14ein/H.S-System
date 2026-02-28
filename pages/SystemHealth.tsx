@@ -24,10 +24,7 @@ const initialServices: Service[] = [
   { name: 'Database Service (Supabase)', status: 'Operational' },
   { name: 'AI Services API (Gemini)', status: 'Operational' },
   { name: 'Market Data API (Finnhub)', status: 'Operational' },
-  { name: 'Market Data Simulator', status: 'Operational' },
   { name: 'Multi-user Access', status: 'Operational' },
-  { name: 'Bank Connection APIs', status: 'Simulated' },
-  { name: 'Notification Service', status: 'Simulated' },
 ];
 
 const getStatusInfo = (status: ServiceStatus) => {
@@ -147,14 +144,11 @@ const SystemHealth: React.FC = () => {
             checkFinnhubService(),
             checkMultiUserAccess(),
         ]);
-        const market = checkMarketData();
-
         setServices(currentServices => currentServices.map(s => {
             if (s.name.includes('Authentication')) return { ...s, ...auth };
             if (s.name.includes('Database')) return { ...s, ...db };
             if (s.name.includes('AI Services')) return { ...s, ...ai };
             if (s.name.includes('Market Data API (Finnhub)')) return { ...s, ...finnhub };
-            if (s.name.includes('Market Data Simulator')) return { ...s, ...market };
             if (s.name.includes('Multi-user Access')) return { ...s, ...multiUser };
             return s;
         }));

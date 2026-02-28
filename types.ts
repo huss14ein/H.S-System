@@ -152,6 +152,8 @@ export interface Budget {
   limit: number;
   month: number; // 1-12
   year: number;
+  /** When 'yearly', limit is the total per year (e.g. housing). When missing or 'monthly', limit is per month. */
+  period?: 'monthly' | 'yearly';
 }
 
 

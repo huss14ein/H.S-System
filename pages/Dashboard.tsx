@@ -255,11 +255,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [draggingKpiCard, setDraggingKpiCard] = useState<KpiCardKey | null>(null);
-    const [kpiDensity, setKpiDensity] = useState<'comfortable' | 'compact'>(() => {
-        if (typeof window === 'undefined') return 'comfortable';
-        const saved = window.localStorage.getItem('dashboard-kpi-density');
-        return saved === 'compact' ? 'compact' : 'comfortable';
-    });
+    const kpiDensity = 'compact' as const;
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
@@ -344,25 +340,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        window.localStorage.setItem('dashboard-kpi-density', kpiDensity);
-    }, [kpiDensity]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
         window.localStorage.setItem('dashboard-kpi-card-size', JSON.stringify(kpiCardSize));
     }, [kpiCardSize]);
-
-    const resetKpiCardOrder = () => {
-        const defaults: Array<KpiCardKey> = ['netWorth', 'monthlyPnL', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
-        setKpiCardOrder(defaults);
-        setKpiCardSize({
-            netWorth: 'normal',
-            monthlyPnL: 'normal',
-            budgetVariance: 'normal',
-            investmentRoi: 'normal',
-            investmentPlan: 'normal',
-        });
-    };
 
     const moveKpiCard = (id: KpiCardKey, direction: 'up' | 'down') => {
         setKpiCardOrder(prev => {
@@ -407,7 +386,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
             const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
             const monthlyPnL = monthlyIncome - monthlyExpenses;
-            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + b.limit, 0);
+            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + (b.period === 'yearly' ? b.limit / 12 : b.limit), 0);
             const budgetVariance = totalBudget - monthlyExpenses;
             
             // Previous Month P&L for trend
@@ -527,22 +506,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
             
-            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
-                <div className="flex border rounded bg-white self-stretch sm:self-auto">
-                    {(['comfortable', 'compact'] as const).map((density) => (
-                        <button
-                            key={density}
-                            type="button"
-                            onClick={() => setKpiDensity(density)}
-                            className={`px-3 py-2 text-xs capitalize ${kpiDensity === density ? 'bg-primary text-white' : 'text-gray-600 bg-white'}`}
-                        >
-                            {density}
-                        </button>
-                    ))}
-                </div>
-                <button type="button" onClick={resetKpiCardOrder} className="w-full sm:w-auto px-3 py-2 text-sm border rounded text-gray-600 hover:text-primary hover:border-primary">Reset KPI card layout</button>
-            </div>
-            <p className="text-xs text-gray-500 -mt-1">Tip: drag KPI cards to reorder, use ↑/↓ to move, and L/S to resize each card.</p>
+            <p className="text-xs text-gray-500">Tip: drag KPI cards to reorder, use ↑/↓ to move, and L/S to resize each card.</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
                 {kpiCardOrder.map((cardKey, index) => (
