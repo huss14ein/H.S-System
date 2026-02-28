@@ -36,8 +36,8 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
         if (error.message.includes('API key not valid')) {
             return "The AI service API key is not valid. Please check the backend configuration.";
         }
-        if (error.message.includes('quota')) {
-            return "The AI service has exceeded its usage quota. Please try again later.";
+        if (error.message.includes('quota') || error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('429')) {
+            return "The AI service has exceeded its usage quota. Please try again later (e.g. in an hour or tomorrow). You can also use **Wealth Ultra** for rule-based allocation and orders without using the AI.";
         }
         if (error.message.includes('model')) {
              return `There was an issue with the specified AI model. ${error.message}`;
@@ -701,25 +701,50 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
     }
 };
 
-export const getAITradeAnalysis = async (transactions: InvestmentTransaction[]): Promise<string> => {
+export interface TradeAnalysisContext {
+    holdingsSummary?: string;
+    watchlistSymbols?: string[];
+    planBudget?: number;
+    corePct?: number;
+    upsidePct?: number;
+}
+
+export const getAITradeAnalysis = async (
+    transactions: InvestmentTransaction[],
+    context?: TradeAnalysisContext
+): Promise<string> => {
     const txList = transactions.slice(0, 15).map(t => `${t.type} ${t.symbol} ${t.quantity} @ ${t.price} = ${t.total} on ${t.date}`).join('\n');
-    const prompt = `You are Finova AI, a very clever expert investment and trading advisor. Analyze these transactions and return direct, educational feedback in Markdown only (no HTML). Use ### for each section. Give expert-level pattern recognition and guidance.
+    const contextBlock = context
+        ? `
+Current context (use to tailor feedback):
+${context.holdingsSummary ? `Holdings: ${context.holdingsSummary}` : ''}
+${context.watchlistSymbols?.length ? `Watchlist: ${context.watchlistSymbols.join(', ')}` : ''}
+${context.planBudget != null ? `Monthly plan budget: ${context.planBudget}` : ''}
+${context.corePct != null ? `Core/Upside split: ${(context.corePct * 100).toFixed(0)}% / ${(context.upsidePct ?? 0) * 100}%` : ''}
+`.trim()
+        : '';
+
+    const prompt = `You are Finova AI, an expert investment and trading advisor. Analyze these transactions and return direct, educational feedback in Markdown only (no HTML). Use ### for each section. Be specific and actionable; reference symbols and amounts where relevant.
+${contextBlock ? '\n' + contextBlock + '\n' : ''}
 
 Transactions:
 ${txList || 'None.'}
 
 Respond with exactly these ### sections (one short paragraph or 2-3 bullets each; be specific):
 ### Summary
-What the user did in one sentence (buys/sells, main symbols, size).
+What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 
 ### Patterns
-- 1-2 bullets on concentration, timing, or lot size. Be direct.
+- 1-2 bullets on concentration, timing, lot size, or alignment with a plan. Be direct.
 
 ### Portfolio Impact
-- 1-2 bullets on what this implies for the portfolio. Plain language.
+- 1-2 bullets on what this implies for the portfolio (diversification, cost basis, risk). Plain language.
+
+### Suggestions
+- One or two concrete, educational suggestions (e.g. "Consider tracking X", "Look up Y"). No buy/sell recommendations.
 
 ### Concept to Research
-- One concept to look up (e.g. dollar-cost averaging, rebalancing). One sentence.
+- One concept to look up (e.g. dollar-cost averaging, tax-loss harvesting, rebalancing). One sentence.
 Do not give buy/sell advice. Markdown only.`;
 
     const execute = async () => {

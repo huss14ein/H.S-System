@@ -3,10 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
-import { getAIResearchNews, formatAiError } from '../services/geminiService';
 import { getSymbolResearch, SymbolResearch } from '../services/finnhubService';
-import { MegaphoneIcon } from '../components/icons/MegaphoneIcon';
-import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import Modal from '../components/Modal';
 import PriceAlertModal from '../components/PriceAlertModal';
@@ -15,7 +12,6 @@ import { BellIcon } from '../components/icons/BellIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { useMarketData } from '../context/MarketDataContext';
-import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const AddWatchlistItemModal: React.FC<{ isOpen: boolean, onClose: () => void, onAdd: (item: WatchlistItem) => void }> = ({ isOpen, onClose, onAdd }) => {
     const [symbol, setSymbol] = useState('');
@@ -124,9 +120,6 @@ const WatchlistView: React.FC = () => {
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
     const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
     const [stockForAlert, setStockForAlert] = useState<{ symbol: string, name: string, price: number } | null>(null);
-    const [aiResearch, setAiResearch] = useState('');
-    const [isNewsLoading, setIsNewsLoading] = useState(false);
-    const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
     const [researchSymbol, setResearchSymbol] = useState<WatchlistItem | null>(null);
     const [symbolResearch, setSymbolResearch] = useState<SymbolResearch | null>(null);
     const [isResearchLoading, setIsResearchLoading] = useState(false);
@@ -146,29 +139,6 @@ const WatchlistView: React.FC = () => {
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => { if (itemToDelete) { deleteWatchlistItem(itemToDelete.symbol); setIsDeleteModalOpen(false); setItemToDelete(null); } };
-    const handleGetNews = useCallback(async () => { 
-        if (data.watchlist.length === 0) { 
-            setAiResearch("Your watchlist is empty. Add a stock to get news."); 
-            return; 
-        } 
-        setIsNewsLoading(true);
-        setGroundingChunks([]);
-        try {
-            const { content, groundingChunks } = await getAIResearchNews(data.watchlist); 
-            setAiResearch(content); 
-            setGroundingChunks(groundingChunks);
-        } catch (error) {
-            const message = formatAiError(error);
-            if (message.toLowerCase().includes('quota') || message.includes('503') || message.toLowerCase().includes('unavailable')) {
-                setAiResearch('AI research is temporarily unavailable due to provider limits. Please retry shortly.');
-            } else {
-                setAiResearch(`Unable to fetch AI watchlist research right now. ${message}`);
-            }
-            setGroundingChunks([]);
-        } finally {
-            setIsNewsLoading(false); 
-        }
-    }, [data.watchlist]);
     const handleOpenResearch = useCallback(async (item: WatchlistItem) => {
         setResearchSymbol(item);
         setSymbolResearch(null);
@@ -220,21 +190,10 @@ const WatchlistView: React.FC = () => {
                 {data.watchlist.length === 0 && (<div className="text-center py-10 text-gray-500">Your watchlist is empty.</div>)}</div>
             </div>
 
-            <div className="lg:col-span-1 bg-green-50 p-4 rounded-lg border border-green-200 h-full">
-                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-green-800 flex items-center"><MegaphoneIcon className="h-5 w-5 mr-2"/>Market Research</h4><p className="text-xs text-green-700/80">From your expert investment advisor</p></div><button onClick={handleGetNews} disabled={isNewsLoading} className="flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400"><SparklesIcon className="h-4 w-4 mr-1"/>{isNewsLoading ? 'Fetching...' : 'Get News'}</button></div>
-                {isNewsLoading && <div className="text-center p-4 text-sm text-gray-500">Fetching latest market info...</div>}
-                {aiResearch && !isNewsLoading && (<div className="mt-2"><SafeMarkdownRenderer content={aiResearch} /></div>)}
-                {!aiResearch && !isNewsLoading && (<div className="mt-4 text-center text-sm text-green-700">Click "Get News" for expert news and calendar insights on your watchlist items.</div>)}
-                 {groundingChunks.length > 0 && (
-                    <div className="text-xs text-gray-500 mt-4 pt-2 border-t">
-                        <p className="font-semibold text-gray-700">Sources:</p>
-                        <ul className="list-disc pl-5 mt-1 space-y-1">
-                            {groundingChunks.map((chunk, index) => (
-                                chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
+            <div className="lg:col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-200 h-full">
+                <h4 className="font-semibold text-slate-800 flex items-center gap-2"><BookOpenIcon className="h-5 w-5 text-primary"/>Research</h4>
+                <p className="text-xs text-slate-600 mt-1">Click <strong>Research</strong> on any row for company profile, quote, earnings, and news from Finnhub.</p>
+                <p className="text-xs text-slate-500 mt-3">Use Investment Plan to set Core / High-Upside status and weights for allocation.</p>
             </div>
 
             <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} />
@@ -245,26 +204,26 @@ const WatchlistView: React.FC = () => {
                 <Modal isOpen={!!researchSymbol} onClose={() => { setResearchSymbol(null); setSymbolResearch(null); }} title={`Research: ${researchSymbol.symbol}`}>
                     {isResearchLoading && <div className="text-center py-8 text-gray-500">Loading Finnhub data...</div>}
                     {!isResearchLoading && symbolResearch && (
-                        <div className="space-y-4 text-sm max-h-[70vh] overflow-y-auto">
+                        <div className="space-y-4 text-sm max-h-[70vh] overflow-y-auto pr-2">
                             {symbolResearch.profile && (
-                                <div className="p-3 bg-gray-50 rounded-lg">
-                                    <h4 className="font-semibold text-dark mb-2">Company profile</h4>
-                                    <p><span className="text-gray-500">Sector:</span> {symbolResearch.profile.finnhubIndustry} · {symbolResearch.profile.country} · {symbolResearch.profile.currency}</p>
-                                    {symbolResearch.profile.weburl && <a href={symbolResearch.profile.weburl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Website</a>}
+                                <div className="p-4 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white">
+                                    <h4 className="font-semibold text-indigo-800 mb-2">Company profile</h4>
+                                    <p><span className="text-gray-500">Sector:</span> <span className="font-medium text-dark">{symbolResearch.profile.finnhubIndustry}</span> · {symbolResearch.profile.country} · {symbolResearch.profile.currency}</p>
+                                    {symbolResearch.profile.weburl && <a href={symbolResearch.profile.weburl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">Website →</a>}
                                 </div>
                             )}
                             {symbolResearch.quote && (
-                                <div className="p-3 bg-gray-50 rounded-lg">
-                                    <h4 className="font-semibold text-dark mb-2">Quote & 52-week</h4>
-                                    <p>Current: {formatCurrencyString(symbolResearch.quote.c)} · Day: {symbolResearch.quote.d >= 0 ? '+' : ''}{symbolResearch.quote.dp?.toFixed(2)}%</p>
+                                <div className="p-4 rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white">
+                                    <h4 className="font-semibold text-emerald-800 mb-2">Quote & 52-week</h4>
+                                    <p className="font-semibold text-dark">Current: {formatCurrencyString(symbolResearch.quote.c)} <span className={symbolResearch.quote.d >= 0 ? 'text-green-600' : 'text-red-600'}>· Day: {symbolResearch.quote.d >= 0 ? '+' : ''}{symbolResearch.quote.dp?.toFixed(2)}%</span></p>
                                     {(symbolResearch.quote.high52 != null || symbolResearch.quote.low52 != null) && (
-                                        <p className="text-gray-600">52w high: {symbolResearch.quote.high52 != null ? formatCurrencyString(symbolResearch.quote.high52) : '—'} · 52w low: {symbolResearch.quote.low52 != null ? formatCurrencyString(symbolResearch.quote.low52) : '—'}</p>
+                                        <p className="text-gray-600 mt-1">52w high: {symbolResearch.quote.high52 != null ? formatCurrencyString(symbolResearch.quote.high52) : '—'} · 52w low: {symbolResearch.quote.low52 != null ? formatCurrencyString(symbolResearch.quote.low52) : '—'}</p>
                                     )}
                                 </div>
                             )}
                             {symbolResearch.earnings.length > 0 && (
-                                <div className="p-3 bg-gray-50 rounded-lg">
-                                    <h4 className="font-semibold text-dark mb-2">Earnings</h4>
+                                <div className="p-4 rounded-xl border border-amber-100 bg-gradient-to-br from-amber-50/80 to-white">
+                                    <h4 className="font-semibold text-amber-800 mb-2">Earnings</h4>
                                     <ul className="list-disc pl-4 space-y-1">
                                         {symbolResearch.earnings.slice(0, 5).map((e, i) => (
                                             <li key={i}>{e.period} {e.year}: Est {e.estimate ?? '—'} · Actual {e.actual ?? '—'}</li>
@@ -273,8 +232,8 @@ const WatchlistView: React.FC = () => {
                                 </div>
                             )}
                             {symbolResearch.insider.length > 0 && (
-                                <div className="p-3 bg-gray-50 rounded-lg">
-                                    <h4 className="font-semibold text-dark mb-2">Recent insider</h4>
+                                <div className="p-4 rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/80 to-white">
+                                    <h4 className="font-semibold text-violet-800 mb-2">Recent insider</h4>
                                     <ul className="space-y-1">
                                         {symbolResearch.insider.slice(0, 5).map((t, i) => (
                                             <li key={i}>{t.name}: {t.transactionCode} · {t.change} @ {formatCurrencyString(t.transactionPrice)} ({t.filingDate})</li>
@@ -283,17 +242,17 @@ const WatchlistView: React.FC = () => {
                                 </div>
                             )}
                             {symbolResearch.news.length > 0 && (
-                                <div className="p-3 bg-gray-50 rounded-lg">
-                                    <h4 className="font-semibold text-dark mb-2">News</h4>
+                                <div className="p-4 rounded-xl border border-sky-100 bg-gradient-to-br from-sky-50/80 to-white">
+                                    <h4 className="font-semibold text-sky-800 mb-2">News</h4>
                                     <ul className="space-y-2">
                                         {symbolResearch.news.slice(0, 5).map((n, i) => (
-                                            <li key={i}><a href={n.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{n.headline}</a> <span className="text-gray-500 text-xs">({n.source})</span></li>
+                                            <li key={i}><a href={n.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">{n.headline}</a> <span className="text-gray-500 text-xs">({n.source})</span></li>
                                         ))}
                                     </ul>
                                 </div>
                             )}
                             {!symbolResearch.profile && !symbolResearch.quote && symbolResearch.earnings.length === 0 && symbolResearch.insider.length === 0 && symbolResearch.news.length === 0 && (
-                                <p className="text-gray-500">No Finnhub data returned for this symbol. Check symbol or API key.</p>
+                                <p className="text-gray-500 p-4 rounded-lg bg-gray-50">No Finnhub data returned for this symbol. Check symbol or API key.</p>
                             )}
                         </div>
                     )}

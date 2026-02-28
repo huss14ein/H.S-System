@@ -24,11 +24,16 @@ begin
   if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'settings' and column_name = 'enable_emails') then
     alter table public.settings add column enable_emails boolean default true;
   end if;
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'settings' and column_name = 'nisab_amount') then
+    alter table public.settings add column nisab_amount numeric default null;
+  end if;
 end $$;
 
--- 2. Budgets: period column for yearly budgets
+-- 2. Budgets: period and tier columns
 alter table if exists public.budgets
   add column if not exists period text default 'monthly' check (period in ('monthly', 'yearly'));
+alter table if exists public.budgets
+  add column if not exists tier text default 'Optional' check (tier in ('Core', 'Supporting', 'Optional'));
 
 -- 3. Investment plan (one row per user; upsert on user_id)
 -- Note: If you use Supabase Auth, auth.users exists. If not, remove "references auth.users(id) on delete cascade".

@@ -12,6 +12,7 @@ import AIRebalancerView from './AIRebalancerView';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import WatchlistView from './WatchlistView';
 import TradeAdvicesView from './TradeAdvicesView';
+import RecoveryPlanView from './RecoveryPlanView';
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
@@ -35,13 +36,14 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Trade Advices' | 'Dividend Tracker';
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
     { name: 'Execution History', icon: BookOpenIcon },
+    { name: 'Recovery Plan', icon: ArrowsRightLeftIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
@@ -113,19 +115,22 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 lg:w-80">
-                    <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Core Target</p>
+                <div className={`grid gap-3 min-w-[240px] ${investmentProgress.specPct > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                    <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center">
+                        <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">Core Target</p>
                         <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
+                        <p className="text-[10px] text-gray-500">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
                     </div>
-                    <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Upside Target</p>
+                    <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center">
+                        <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1">Upside Target</p>
                         <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
+                        <p className="text-[10px] text-gray-500">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
                     </div>
                     {investmentProgress.specPct > 0 && (
-                        <div className="p-4 bg-slate-50 rounded-xl border border-gray-100">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Spec Target</p>
+                        <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center">
+                            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1">Spec Target</p>
                             <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
+                            <p className="text-[10px] text-gray-500">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
                         </div>
                     )}
                 </div>
@@ -850,9 +855,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const [plan, setPlan] = useState<InvestmentPlanSettings>(data.investmentPlan);
     const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
     const [executionResult, setExecutionResult] = useState<InvestmentPlanExecutionResult | null>(null);
+    const [executionError, setExecutionError] = useState<string | null>(null);
     const [isExecuting, setIsExecuting] = useState(false);
     const [showFlowNote, setShowFlowNote] = useState(true);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [planAdvancedOpen, setPlanAdvancedOpen] = useState(false);
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
@@ -1007,9 +1014,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const handleExecutePlan = async () => {
         setIsExecuting(true);
         setExecutionResult(null);
+        setExecutionError(null);
         try {
             const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse);
             setExecutionResult(result);
+            setExecutionError(null);
             
             // Save to audit log
             const logEntry: InvestmentPlanExecutionLog = {
@@ -1022,7 +1031,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             
         } catch (error) {
             console.error("Error executing plan:", error);
-            alert(`Error executing plan: ${error instanceof Error ? error.message : String(error)}`);
+            const message = error instanceof Error ? error.message : String(error);
+            const isQuota = /quota|RESOURCE_EXHAUSTED|429/i.test(message);
+            if (isQuota) {
+                setExecutionError(
+                    "AI quota exceeded. Please try again later, or use Wealth Ultra for rule-based allocation without AI."
+                );
+            } else {
+                setExecutionError(message);
+            }
         }
         setIsExecuting(false);
     };
@@ -1066,9 +1083,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
-                    {/* Allocation Settings */}
+                    {/* Allocation Settings — essential fields first */}
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Allocation Settings</h2>
+                        <h2 className="text-xl font-semibold text-dark mb-4">Monthly Plan</h2>
+                        <p className="text-sm text-gray-500 mb-4">Set how much to invest each month and how to split it between Core (stable) and High-Upside (growth) tickers.</p>
                         {allocationWarning && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{allocationWarning}</div>
                         )}
@@ -1089,68 +1107,82 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
                                 <input type="number" value={plan.upsideAllocation * 100} onChange={e => handlePlanChange('upsideAllocation', parseFloat(e.target.value) / 100)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Analyst Upside (%) <InfoHint text="Minimum price upside from analyst targets to be eligible for High-Upside sleeve." /></label>
-                                <input type="number" value={plan.minimumUpsidePercentage} onChange={e => handlePlanChange('minimumUpsidePercentage', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Stale Days (Analyst Target) <InfoHint text="Max age of analyst target in days; older targets are treated as stale." /></label>
-                                <input type="number" value={plan.stale_days} onChange={e => handlePlanChange('stale_days', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Min Coverage (Analysts) <InfoHint text="Minimum number of analysts covering a stock for it to be eligible for High-Upside." /></label>
-                                <input type="number" value={plan.min_coverage_threshold} onChange={e => handlePlanChange('min_coverage_threshold', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Redirect Policy <InfoHint text="Pro-rata: unallocated High-Upside goes to Core. Priority: fill by priority order." /></label>
-                                <select value={plan.redirect_policy} onChange={e => handlePlanChange('redirect_policy', e.target.value)} className="mt-1 w-full p-2 border rounded-md">
-                                    <option value="pro-rata">Pro-rata (Balanced)</option>
-                                    <option value="priority">Priority (Sequential)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Target Provider <InfoHint text="Source for analyst targets (e.g. TipRanks, Yahoo Finance); used for eligibility." /></label>
-                                <input type="text" value={plan.target_provider} onChange={e => handlePlanChange('target_provider', e.target.value)} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g. TipRanks, Yahoo Finance" />
-                            </div>
                         </div>
-                    </div>
 
-                    {/* Broker & Execution Rules */}
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Broker & Execution Rules</h2>
-                        {minOrderWarning && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{minOrderWarning}</div>
+                        {planAdvancedOpen && (
+                            <>
+                                <div className="mt-6 pt-4 border-t border-gray-100">
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Analyst & eligibility</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="md:col-span-2">
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Analyst Upside (%) <InfoHint text="Minimum price upside from analyst targets to be eligible for High-Upside sleeve." /></label>
+                                            <input type="number" value={plan.minimumUpsidePercentage} onChange={e => handlePlanChange('minimumUpsidePercentage', parseFloat(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Stale Days (Analyst Target)</label>
+                                            <input type="number" value={plan.stale_days} onChange={e => handlePlanChange('stale_days', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Min Coverage (Analysts)</label>
+                                            <input type="number" value={plan.min_coverage_threshold} onChange={e => handlePlanChange('min_coverage_threshold', parseInt(e.target.value))} className="mt-1 w-full p-2 border rounded-md" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Redirect Policy</label>
+                                            <select value={plan.redirect_policy} onChange={e => handlePlanChange('redirect_policy', e.target.value)} className="mt-1 w-full p-2 border rounded-md">
+                                                <option value="pro-rata">Pro-rata (Balanced)</option>
+                                                <option value="priority">Priority (Sequential)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Target Provider</label>
+                                            <input type="text" value={plan.target_provider} onChange={e => handlePlanChange('target_provider', e.target.value)} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g. TipRanks" />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="mt-6 pt-4 border-t border-gray-100">
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Broker & execution</h3>
+                                    {minOrderWarning && (
+                                        <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{minOrderWarning}</div>
+                                    )}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Order Size ({plan.budgetCurrency})</label>
+                                            <input type="number" value={plan.brokerConstraints.minimumOrderSize} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, minimumOrderSize: parseFloat(e.target.value)})} className="mt-1 w-full p-2 border rounded-md" />
+                                        </div>
+                                        <div className="flex items-center">
+                                            <input type="checkbox" checked={plan.brokerConstraints.allowFractionalShares} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, allowFractionalShares: e.target.checked})} id="fractional-shares" className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                            <label htmlFor="fractional-shares" className="ml-2 block text-sm text-gray-900">Allow Fractional Shares</label>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Rounding Rule</label>
+                                            <select value={plan.brokerConstraints.roundingRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, roundingRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
+                                                <option value="round">Round to nearest</option>
+                                                <option value="floor">Floor (round down)</option>
+                                                <option value="ceil">Ceiling (round up)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Leftover Cash Rule</label>
+                                            <select value={plan.brokerConstraints.leftoverCashRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, leftoverCashRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
+                                                <option value="reinvest_core">Re-invest in Core</option>
+                                                <option value="hold">Hold in account</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
                         )}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Order Size ({plan.budgetCurrency}) <InfoHint text="Smallest order your broker allows; smaller allocations are skipped or combined. Should be less than your typical single-ticker allocation." /></label>
-                                <input type="number" value={plan.brokerConstraints.minimumOrderSize} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, minimumOrderSize: parseFloat(e.target.value)})} className="mt-1 w-full p-2 border rounded-md" />
-                            </div>
-                            <div className="flex items-center">
-                                <input type="checkbox" checked={plan.brokerConstraints.allowFractionalShares} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, allowFractionalShares: e.target.checked})} id="fractional-shares" className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                                <label htmlFor="fractional-shares" className="ml-2 block text-sm text-gray-900 flex items-center">Allow Fractional Shares <InfoHint text="If your broker supports fractions, enable this for more accurate allocation." /></label>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Rounding Rule <InfoHint text="How to round share quantities: round, floor, or ceiling to match broker rules." /></label>
-                                <select value={plan.brokerConstraints.roundingRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, roundingRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
-                                    <option value="round">Round to nearest</option>
-                                    <option value="floor">Floor (round down)</option>
-                                    <option value="ceil">Ceiling (round up)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Leftover Cash Rule <InfoHint text="What to do with cash that can't form a full order: reinvest in Core or hold." /></label>
-                                <select value={plan.brokerConstraints.leftoverCashRule} onChange={e => handlePlanChange('brokerConstraints', {...plan.brokerConstraints, leftoverCashRule: e.target.value as any})} className="mt-1 w-full p-2 border rounded-md">
-                                    <option value="reinvest_core">Re-invest in Core</option>
-                                    <option value="hold">Hold in account</option>
-                                </select>
-                            </div>
-                        </div>
+                        <button type="button" onClick={() => setPlanAdvancedOpen(!planAdvancedOpen)} className="mt-4 text-sm font-medium text-primary hover:underline">
+                            {planAdvancedOpen ? '▲ Hide advanced options' : '▼ Show advanced options (analyst rules, broker)'}
+                        </button>
                     </div>
 
                     {/* Portfolio Universe */}
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Portfolio Universe & Weights</h2>
+                        <h2 className="text-xl font-semibold text-dark mb-4 flex items-center gap-2">
+                            Portfolio Universe & Weights
+                            <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." />
+                        </h2>
                         <p className="text-sm text-gray-500 mb-4">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-xs">
                             <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Tickers</p><p className="font-semibold text-dark">{universeHealth.totalCount}</p></div>
@@ -1173,9 +1205,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <thead className="bg-gray-50 sticky top-0"><tr>
                                     <th className="px-4 py-2 text-left font-medium text-gray-500">Ticker</th>
                                     <th className="px-4 py-2 text-left font-medium text-gray-500">Name</th>
-                                    <th className="px-4 py-2 text-left font-medium text-gray-500">Status</th>
-                                    <th className="px-4 py-2 text-center font-medium text-gray-500">Monthly Wt</th>
-                                    <th className="px-4 py-2 text-center font-medium text-gray-500">Max Pos Wt</th>
+                                    <th className="px-4 py-2 text-left font-medium text-gray-500 flex items-center gap-1"><span>Status</span><InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." /></th>
+                                    <th className="px-4 py-2 text-center font-medium text-gray-500 flex items-center justify-center gap-1"><span>Monthly Wt</span><InfoHint text="Share of this sleeve&#39;s budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." /></th>
+                                    <th className="px-4 py-2 text-center font-medium text-gray-500 flex items-center justify-center gap-1"><span>Max Pos Wt</span><InfoHint text="Cap on a single ticker&#39;s share of the sleeve (e.g. 0.25 = max 25%)." /></th>
                                     <th className="px-4 py-2 text-right font-medium text-gray-500">Actions</th>
                                 </tr></thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -1246,6 +1278,16 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     <h2 className="text-xl font-semibold text-dark mb-4">Execute & View Results</h2>
                     {noActionableWarning && (
                         <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{noActionableWarning}</div>
+                    )}
+                    {executionError && (
+                        <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex flex-col gap-2">
+                            <span>{executionError}</span>
+                            {onOpenWealthUltra && /quota|Wealth Ultra/i.test(executionError) && (
+                                <button type="button" onClick={onOpenWealthUltra} className="self-start px-3 py-1.5 rounded-md bg-primary text-white text-sm font-medium hover:bg-secondary">
+                                    Open Wealth Ultra (rule-based, no AI)
+                                </button>
+                            )}
+                        </div>
                     )}
                     <button onClick={handleExecutePlan} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : ''}>
                         <SparklesIcon className="h-5 w-5 mr-2" />
@@ -1494,6 +1536,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             );
       case 'Execution History': return <ExecutionHistoryView onFocusInvestmentPlan={() => setActiveTab('Investment Plan')} />;
       case 'Dividend Tracker': return <DividendTrackerView />;
+      case 'Recovery Plan': return <RecoveryPlanView />;
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Watchlist': return <WatchlistView />;
       case 'Trade Advices': return <TradeAdvicesView />;

@@ -28,6 +28,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
+    const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
@@ -43,10 +44,12 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setCategory(budgetToEdit.category);
             setLimit(String(budgetToEdit.limit));
             setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : 'Monthly');
+            setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
         } else {
             setCategory('');
             setLimit('');
             setLimitPeriod('Monthly');
+            setTier('Optional');
         }
     }, [budgetToEdit, isOpen]);
 
@@ -61,13 +64,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                 : limitPeriod === 'Weekly'
                     ? rawLimit * 4.345
                     : rawLimit * 30;
+        const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
+        const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
         onSave({
             category,
             limit: storedLimit,
-            month: budgetToEdit ? budgetToEdit.month : currentMonth,
-            year: budgetToEdit ? budgetToEdit.year : currentYear,
+            month,
+            year,
             period: isYearly ? 'yearly' : 'monthly',
+            tier,
         }, !!budgetToEdit);
         onClose();
     };
@@ -92,17 +98,25 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                         </div>
                     )}
                 </div>
+                <div>
+                    <label htmlFor="budget-tier" className="block text-sm font-medium text-gray-700 flex items-center">Budget Type <InfoHint text="Core: essential spending (e.g. rent, food). Supporting: important but flexible. Optional: discretionary." /></label>
+                    <select id="budget-tier" value={tier} onChange={(e) => setTier(e.target.value as 'Core' | 'Supporting' | 'Optional')} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                        <option value="Core">Core (essential)</option>
+                        <option value="Supporting">Supporting</option>
+                        <option value="Optional">Optional</option>
+                    </select>
+                </div>
                  <div>
                     <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
                 </div>
                 <div>
-                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is (e.g. 12,000 for housing); monthly view shows limit÷12 for comparison." /></label>
+                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is and applies to all months of the year." /></label>
                     <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
                         <option value="Monthly">Monthly</option>
                         <option value="Weekly">Weekly</option>
                         <option value="Daily">Daily</option>
-                        <option value="Yearly">Yearly</option>
+                        <option value="Yearly">Yearly (all months)</option>
                     </select>
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Budget</button>
@@ -128,8 +142,10 @@ const Budgets: React.FC = () => {
     const [requestSearch, setRequestSearch] = useState('');
     const [requestSort, setRequestSort] = useState<'Newest' | 'Oldest' | 'AmountHigh' | 'AmountLow'>('Newest');
     const [requestStatusFilter, setRequestStatusFilter] = useState<'All' | 'Pending' | 'Finalized' | 'Rejected'>('All');
-    const [historyItemsToShow, setHistoryItemsToShow] = useState(6);
-    
+    const [historyItemsToShow, setHistoryItemsToShow] = useState(10);
+    const [historyCollapsed, setHistoryCollapsed] = useState(true);
+    const HISTORY_PAGE_SIZE = 15;
+
     const [currentDate, setCurrentDate] = useState(new Date());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
@@ -268,7 +284,7 @@ const Budgets: React.FC = () => {
 
         const scopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
-            .filter(b => budgetView === 'Yearly' || b.month === currentMonth)
+            .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
 
         if (budgetView === 'Yearly') {
@@ -306,7 +322,7 @@ const Budgets: React.FC = () => {
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
-                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: 'Optional' as const, utilizationLabel };
+                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
     }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
 
@@ -537,6 +553,7 @@ const Budgets: React.FC = () => {
     const respondedRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status !== 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
+    const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
 
     if (loading) {
         return (
@@ -730,41 +747,51 @@ const Budgets: React.FC = () => {
 
             {allRespondedRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
-                    <div className="flex items-center justify-between gap-3 mb-3">
+                    <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
                         <div>
                             <h2 className="text-lg font-semibold">Request History</h2>
-                            <p className="text-xs text-gray-600 mt-0.5">Single timeline of all past decisions — not tied to any month.</p>
+                            <p className="text-xs text-gray-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
                         </div>
-                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded">{allRespondedRequests.length} total</span>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm border-collapse">
-                            <thead>
-                                <tr className="border-b border-violet-200">
-                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
-                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
-                                    <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
-                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
-                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {visibleHistoryRequests.map((r) => (
-                                    <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
-                                        <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
-                                        <td className="py-2 px-2">{r.request_type}</td>
-                                        <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
-                                        <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
-                                        <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                        <td className="py-2 px-2 text-gray-600 max-w-[180px] truncate" title={r.note || r.request_note || ''}>{r.note || r.request_note || '—'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                    {historyItemsToShow < allRespondedRequests.length && (
-                        <button onClick={() => setHistoryItemsToShow((prev) => prev + 6)} className="mt-3 px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load more</button>
+                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded shrink-0">{allRespondedRequests.length} total</span>
+                        <span className="text-violet-600 shrink-0">{historyCollapsed ? '▼ Expand' : '▲ Collapse'}</span>
+                    </button>
+                    {!historyCollapsed && (
+                        <>
+                            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                                <table className="w-full text-sm border-collapse">
+                                    <thead className="sticky top-0 bg-violet-50/95 z-10">
+                                        <tr className="border-b border-violet-200">
+                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
+                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
+                                            <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
+                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
+                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {visibleHistoryRequests.map((r) => (
+                                            <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
+                                                <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                                <td className="py-2 px-2">{r.request_type}</td>
+                                                <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
+                                                <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
+                                                <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
+                                                <td className="py-2 px-2 text-gray-600 max-w-[180px] truncate" title={r.note || r.request_note || ''}>{r.note || r.request_note || '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                {hasMoreHistory && (
+                                    <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
+                                )}
+                                {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
+                                    <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
+                                )}
+                            </div>
+                        </>
                     )}
                 </div>
             )}

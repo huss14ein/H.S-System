@@ -99,6 +99,7 @@ function normalizeSettings(raw: any): Settings {
         driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
         enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
         goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
+        nisabAmount: raw.nisab_amount != null || raw.nisabAmount != null ? Number(raw.nisab_amount ?? raw.nisabAmount) : undefined,
     };
 }
 
@@ -109,6 +110,7 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     if (settings.driftThreshold != null) row.drift_threshold = settings.driftThreshold;
     if (settings.enableEmails != null) row.enable_emails = settings.enableEmails;
     if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
+    if (settings.nisabAmount != null) row.nisab_amount = settings.nisabAmount;
     return row;
 }
 
@@ -184,6 +186,25 @@ function normalizeExecutionLog(raw: any): InvestmentPlanExecutionLog {
         trades: Array.isArray(raw.trades) ? raw.trades : [],
         status: (raw.status ?? 'success') as 'success' | 'failure',
         log_details: String(raw.log_details ?? ''),
+    };
+}
+
+function normalizeAccount(raw: any): Account {
+    if (!raw || typeof raw !== 'object') {
+        return { id: '', name: '', type: 'Checking', balance: 0 };
+    }
+    const id = raw.id ?? raw.account_id ?? (raw as any).uuid ?? '';
+    const name = String(raw.name ?? '');
+    const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
+    const balance = Number(raw.balance ?? 0);
+    return {
+        id,
+        user_id: raw.user_id,
+        name: name || (id ? `Account ${id.slice(0, 8)}` : 'Account'),
+        type,
+        balance,
+        owner: raw.owner,
+        platformDetails: raw.platformDetails ?? raw.platform_details,
     };
 }
 
@@ -387,7 +408,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
                 db.from('planned_trades').select('*').eq('user_id', auth.user.id),
-                db.from('investment_plan').select('*').eq('user_id', auth.user.id).single(),
+                db.from('investment_plan').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
@@ -400,7 +421,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
 
             setData({
-                accounts: accounts.data || [],
+                accounts: ((accounts.data as any[]) || []).map(normalizeAccount),
                 assets: assets.data || [],
                 liabilities: liabilities.data || [],
                 goals: goals.data || [],
@@ -411,7 +432,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     holdings: (portfolio.holdings || []).map(normalizeHolding)
                 })),
                 investmentTransactions: (investmentTransactions.data || []).map(normalizeInvestmentTransaction),
-                budgets: budgets.data || [],
+                budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
                 settings: normalizeSettings(settings.data || initialData.settings),
@@ -654,7 +675,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error;
       }
       if (newBudget) {
-        const withPeriod = { ...newBudget, period: (budget as Budget).period };
+        const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier };
         if ((budget as Budget).period === 'yearly') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
       }
@@ -857,11 +878,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
         }
 
+        // Use the portfolio's account so the FK matches the account that owns the portfolio in the DB
+        const accountIdForInsert = portfolio.accountId || trade.accountId;
+        if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
+        const accountExists = data.accounts.some((a: { id?: string }) => (a.id ?? (a as any).account_id) === accountIdForInsert);
+        if (!accountExists) throw new Error("Selected account is not in the system. Please refresh the page, ensure you have an Investment account in Accounts, and try again.");
+
         // 2. Log the transaction to the database
         const tradeTotal = tradeData.quantity * tradeData.price;
         let newTransaction: any = null;
         let txError: any = null;
-        const tradePayload = { ...tradeData, symbol: normalizedSymbol, total: tradeTotal };
+        const tradePayload = { ...tradeData, accountId: accountIdForInsert, symbol: normalizedSymbol, total: tradeTotal };
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;

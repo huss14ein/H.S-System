@@ -14,6 +14,7 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import InfoHint from '../components/InfoHint';
@@ -487,11 +488,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <AddMenu actions={addActions} />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} />
-                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} />
-                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} />
             </div>
 
             <section className="bg-white p-6 rounded-lg shadow">

@@ -145,6 +145,9 @@ export interface InvestmentTransaction {
   total: number;
 }
 
+/** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */
+export type BudgetTier = 'Core' | 'Supporting' | 'Optional';
+
 export interface Budget {
   id: string;
   user_id?: string;
@@ -154,6 +157,8 @@ export interface Budget {
   year: number;
   /** When 'yearly', limit is the total per year (e.g. housing). When missing or 'monthly', limit is per month. */
   period?: 'monthly' | 'yearly';
+  /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
+  tier?: BudgetTier;
 }
 
 
@@ -215,6 +220,8 @@ export interface Settings {
     driftThreshold: number; // e.g., 5%
     enableEmails: boolean;
     goldPrice: number;
+    /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */
+    nisabAmount?: number;
 }
 
 export interface ZakatPayment {
@@ -523,4 +530,100 @@ export interface WealthUltraAlert {
   ticker?: string;
   sleeve?: WealthUltraSleeve;
   value?: number;
+}
+
+// --- Recovery Plan (Averaging / Correction Engine) ---
+
+export type RecoveryPlanState =
+  | 'NORMAL'      // no action
+  | 'WATCH'       // down but not triggered
+  | 'QUALIFIED'   // loss crossed trigger; recovery allowed
+  | 'PLANNED'     // ladder created + exits generated
+  | 'PARTIAL_FILL'// some ladder filled → recompute avg + exits
+  | 'READY_TO_EXIT'// price reached target → suggest sell
+  | 'CLOSED'      // position reduced/closed
+  | 'FROZEN';     // blocked (spec breach / cash shortage / rule breach)
+
+/** Per-position recovery config (stored or derived). */
+export interface RecoveryPositionConfig {
+  symbol: string;
+  recoveryEnabled: boolean;
+  lossTriggerPct: number;       // e.g. 20 → qualifies when loss >= 20%
+  cashCap: number;              // max money allowed for correction on this ticker
+  maxAddShares?: number;
+  maxAddCost?: number;
+  sleeveType: WealthUltraSleeve;
+  riskTier: WealthUltraRiskTier;
+}
+
+/** One level in the buy ladder. */
+export interface RecoveryLadderLevel {
+  level: 1 | 2 | 3;
+  qty: number;
+  price: number;
+  cost: number;
+  weightPct?: number;
+}
+
+/** Exit targets (optional toggles). */
+export interface RecoveryExitPlan {
+  applyTarget1: boolean;
+  target1Pct: number;
+  target1Price?: number;
+  applyTarget2: boolean;
+  target2Pct: number;
+  target2Price?: number;
+  applyTrailing: boolean;
+  trailPct: number;
+  trailStopPrice?: number;
+}
+
+/** Global config for recovery plan. */
+export interface RecoveryGlobalConfig {
+  deployableCash: number;
+  reservePct: number;
+  maxPerTickerPct: number;
+  maxPerTickerCost?: number;
+  recoveryBudgetPct: number;    // e.g. 0.2 = 20% of deployable for recovery
+  specFreezeRules: boolean;    // when true, SPEC recovery blocked unless override
+  minDeployableThreshold: number;
+  /** Ladder step multipliers below current price (e.g. [0.07, 0.12, 0.18] = 7%, 12%, 18%). */
+  ladderStepsByRisk: Record<WealthUltraRiskTier, [number, number, number]>;
+  /** Level weights for allocating budget (e.g. [0.4, 0.35, 0.25]). */
+  ladderWeights: [number, number, number];
+}
+
+/** Full recovery plan for one position. */
+export interface RecoveryPlanResult {
+  symbol: string;
+  state: RecoveryPlanState;
+  qualified: boolean;
+  reason?: string;
+  costBasis: number;
+  marketValue: number;
+  plUsd: number;
+  plPct: number;
+  currentPrice: number;
+  shares: number;
+  avgCost: number;
+  ladder: RecoveryLadderLevel[];
+  totalPlannedCost: number;
+  newShares: number;
+  newAvgCost: number;
+  exitPlan: RecoveryExitPlan;
+  budgetImpact: number;
+  capCheckOk: boolean;
+}
+
+/** Draft order for broker/execution. */
+export interface RecoveryOrderDraft {
+  type: 'BUY' | 'SELL';
+  symbol: string;
+  qty: number;
+  limitPrice: number;
+  orderType: 'LIMIT';
+  target1Price?: number;
+  target2Price?: number;
+  trailingStopPrice?: number;
+  label?: string;
 }
