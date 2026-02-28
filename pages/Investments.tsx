@@ -1322,7 +1322,7 @@ interface InvestmentsProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
+const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction: _triggerPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();

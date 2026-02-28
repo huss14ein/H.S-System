@@ -128,7 +128,7 @@ const SystemHealth: React.FC = () => {
             }
         };
 
-        const checkMarketData = (): Partial<Service> => {
+        const _checkMarketData = (): Partial<Service> => {
             if (!marketContext) {
                 return { status: 'Outage', error: 'Market data context is unavailable.' };
             }

@@ -45,7 +45,7 @@ interface WealthUltraDashboardProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
+const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage: _setActivePage, triggerPageAction }) => {
   const { data, loading } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();

@@ -326,7 +326,7 @@ const Budgets: React.FC = () => {
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
 
-    const moveBudgetCard = (id: string, direction: 'up' | 'down') => {
+    const _moveBudgetCard = (id: string, direction: 'up' | 'down') => {
         setCardOrder((prev) => {
             const index = prev.indexOf(id);
             if (index < 0) return prev;
@@ -346,7 +346,7 @@ const Budgets: React.FC = () => {
         const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
         const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
         const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
-        const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta) - Math.abs(a.trendDelta))[0];
+        const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
         return { totalLimit, totalSpent, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
 
@@ -634,7 +634,7 @@ const Budgets: React.FC = () => {
                 </div>
                 {budgetInsights.topChange && (
                     <p className="mt-3 text-xs text-gray-600">
-                        Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta, { digits: 0 })} vs previous period).
+                        Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta ?? 0, { digits: 0 })} vs previous period).
                     </p>
                 )}
             </div>
@@ -790,8 +790,8 @@ const Budgets: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {orderedBudgetData.map((budget, index) => (
-                    <div key={budget.id} className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}">
+                {orderedBudgetData.map((budget) => (
+                    <div key={budget.id} className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}>
                         <div className="flex-grow">
                             <div className="flex items-center justify-between gap-2">
                                 <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
@@ -802,7 +802,7 @@ const Budgets: React.FC = () => {
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
                                     <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : ''}</span>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budget.monthlyLimit} color={budget.colorClass} />
+                                <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? 1} color={budget.colorClass} />
                                 <p className={`text-right text-sm mt-1 ${budget.monthlyLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
                                     {budget.monthlyLimit - budget.spent >= 0 
                                         ? `${formatCurrencyString(budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
@@ -812,14 +812,17 @@ const Budgets: React.FC = () => {
                                 <div className="mt-2 flex items-center justify-between text-xs">
                                     <span className={`px-2 py-1 rounded ${budget.utilizationLabel === 'Critical' ? 'bg-rose-100 text-rose-800' : budget.utilizationLabel === 'Watch' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{budget.utilizationLabel}</span>
                                     <span className={budget.trendDirection === 'up' ? 'text-rose-600' : budget.trendDirection === 'down' ? 'text-emerald-600' : 'text-gray-500'}>
-                                        {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'} {formatCurrencyString(Math.abs(budget.trendDelta), { digits: 0 })} vs previous
+                                        {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'} {formatCurrencyString(Math.abs(budget.trendDelta ?? 0), { digits: 0 })} vs previous
                                     </span>
                                 </div>
                             </div>
                         </div>
-                         <div className="border-t mt-4 pt-2 flex justify-end space-x-2">
-                            <button disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
-                            <button disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
+                         <div className="border-t mt-4 pt-2 flex justify-end items-center space-x-2">
+                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-gray-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
+                                <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
+                            </button>
+                            <button type="button" disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
+                            <button type="button" disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
                 ))}

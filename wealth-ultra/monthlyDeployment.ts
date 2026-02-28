@@ -1,5 +1,5 @@
 import type { WealthUltraConfig, WealthUltraPosition, WealthUltraSleeveAllocation } from '../types';
-import { getTotalPortfolioValue, computeSleeveAllocations, isDriftAlert } from './allocationEngine';
+import { getTotalPortfolioValue, isDriftAlert } from './allocationEngine';
 import { computeDeployableCash } from './cashPlanner';
 
 export interface MonthlyDeploymentResult {
