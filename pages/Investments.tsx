@@ -23,6 +23,7 @@ import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
+import { useCurrency } from '../context/CurrencyContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import InfoHint from '../components/InfoHint';
 import { LinkIcon } from '../components/icons/LinkIcon';
@@ -140,6 +141,8 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     );
 };
 
+type TradeCurrency = 'USD' | 'SAR';
+
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
@@ -158,9 +161,11 @@ const RecordTradeModal: React.FC<{
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const { currency: appCurrency } = useCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
     const [type, setType] = useState<'buy' | 'sell' | 'deposit' | 'withdrawal'>('buy');
+    const [tradeCurrency, setTradeCurrency] = useState<TradeCurrency>(appCurrency);
     const [cashAmount, setCashAmount] = useState('');
     const [symbol, setSymbol] = useState('');
     const [quantity, setQuantity] = useState('');
@@ -191,6 +196,7 @@ const RecordTradeModal: React.FC<{
         setType('buy'); setSymbol(''); setQuantity(''); setPrice(''); setCashAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setHoldingName('');
+        setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
         setSubmitError(null);
@@ -203,6 +209,7 @@ const RecordTradeModal: React.FC<{
         if (isOpen) {
             setSubmitError(null);
             setIsSubmitting(false);
+            setTradeCurrency(appCurrency);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
                 setSymbol(initialData.symbol || '');
@@ -218,7 +225,7 @@ const RecordTradeModal: React.FC<{
                 resetForm();
             }
         }
-    }, [isOpen, initialData, investmentAccounts]);
+    }, [isOpen, initialData, investmentAccounts, appCurrency]);
 
     useEffect(() => {
         if (portfoliosForAccount.length > 0) {
@@ -295,6 +302,7 @@ const RecordTradeModal: React.FC<{
                     quantity: 0,
                     price: 0,
                     total: parseFloat(cashAmount) || 0,
+                    currency: tradeCurrency,
                 }, undefined);
             } else {
                 await onSave({
@@ -304,6 +312,7 @@ const RecordTradeModal: React.FC<{
                     quantity: parseFloat(quantity) || 0,
                     price: parseFloat(price) || 0,
                     date,
+                    currency: tradeCurrency,
                     ...(goalId && { goalId }),
                 }, executedPlanId);
             }
@@ -359,11 +368,20 @@ const RecordTradeModal: React.FC<{
                     </div>
                     )}
                 </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
-                    <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => setType('sell')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
-                    <label className="flex items-center"><input type="radio" value="deposit" checked={type === 'deposit'} onChange={() => setType('deposit')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Deposit</span></label>
-                    <label className="flex items-center"><input type="radio" value="withdrawal" checked={type === 'withdrawal'} onChange={() => setType('withdrawal')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Withdrawal</span></label>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
+                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => setType('sell')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
+                        <label className="flex items-center"><input type="radio" value="deposit" checked={type === 'deposit'} onChange={() => setType('deposit')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Deposit</span></label>
+                        <label className="flex items-center"><input type="radio" value="withdrawal" checked={type === 'withdrawal'} onChange={() => setType('withdrawal')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Withdrawal</span></label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Record in</span>
+                        <select value={tradeCurrency} onChange={e => setTradeCurrency(e.target.value as TradeCurrency)} className="text-sm font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-800 focus:ring-2 focus:ring-primary focus:border-primary">
+                            <option value="USD">USD</option>
+                            <option value="SAR">SAR</option>
+                        </select>
+                    </div>
                 </div>
                 {isCashFlow ? (
                     <>
@@ -442,36 +460,121 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
 
     if (!holding) return null;
 
+    const displayName = holding.name || (holding as any).name || holding.symbol;
+    const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
+    const totalCost = (holding.avgCost ?? 0) * holding.quantity;
+    // useFormatCurrency treats values as SAR (when USD it divides by exchangeRate). So raw values are SAR — show them in the SAR block.
+    const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Details for ${holding.name || holding.symbol} (${holding.symbol})`}>
-            <div className="space-y-4">
-                <MiniPriceChart />
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-center">
-                    <div><dt className="text-gray-500">Market Value</dt><dd className="font-semibold text-dark text-base">{formatCurrencyString(holding.currentValue)}</dd></div>
-                    <div><dt className="text-gray-500">Quantity</dt><dd className="font-semibold text-dark text-base">{holding.quantity}</dd></div>
-                    <div><dt className="text-gray-500">Avg. Cost</dt><dd className="font-semibold text-dark text-base">{formatCurrencyString(holding.avgCost)}</dd></div>
-                    <div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold text-base">{formatCurrency(holding.gainLoss, { colorize: true })}</dd></div>
+        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+            <div className="space-y-6">
+                {/* Hero: symbol, name, price, change */}
+                <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <span className="text-2xl font-bold text-slate-900">{holding.symbol}</span>
+                        <span className="text-slate-500">·</span>
+                        <span className="text-base text-slate-600 font-medium truncate max-w-[200px]" title={displayName}>{displayName}</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-baseline gap-4">
+                        <span className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums">{formatCurrencyString(currentPrice)}</span>
+                        <span className={`text-lg font-semibold tabular-nums ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
+                        </span>
+                        <span className="text-sm text-slate-500">per share</span>
+                    </div>
                 </div>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex items-center justify-between">
-                        <div><h4 className="font-semibold text-gray-800">Analyst Report</h4><p className="text-xs text-slate-500">From your expert investment advisor</p></div>
-                        <button onClick={handleGetAIAnalysis} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
-                            <SparklesIcon className="h-4 w-4 mr-2" />
+
+                {/* Key metrics grid — aligned and organized */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{formatCurrencyString(holding.currentValue)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{holding.quantity}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{formatCurrencyString(holding.avgCost ?? 0)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
+                        <p className={`mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {formatCurrency(holding.gainLoss, { colorize: false })}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">on cost {formatCurrencyString(totalCost)}</p>
+                    </div>
+                </div>
+
+                {/* Value in Saudi Riyal — shown when user clicks for more details */}
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+                    <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">
+                        In Saudi Riyal (SAR)
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                        <div>
+                            <p className="text-slate-600">Market value</p>
+                            <p className="font-bold text-slate-900 tabular-nums">{formatSAR(holding.currentValue)}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-600">Cost basis</p>
+                            <p className="font-bold text-slate-900 tabular-nums">{formatSAR(totalCost)}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-600">Unrealized G/L</p>
+                            <p className={`font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatSAR(holding.gainLoss)}</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Price trend chart */}
+                <div className="rounded-xl border border-slate-100 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-700 mb-3">Price trend</p>
+                    <MiniPriceChart
+                        symbol={holding.symbol}
+                        currentPrice={currentPrice}
+                        changePercent={holding.gainLossPercent}
+                        formatPrice={(p) => formatCurrencyString(p)}
+                    />
+                </div>
+
+                {/* AI Analyst */}
+                <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-amber-50/50 to-white p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                        <div>
+                            <h4 className="font-semibold text-slate-800">Analyst Report</h4>
+                            <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleGetAIAnalysis}
+                            disabled={isLoading}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
+                        >
+                            <SparklesIcon className="h-4 w-4" />
                             {isLoading ? 'Generating...' : 'Generate Report'}
                         </button>
                     </div>
-                    {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating analysis...</div>}
+                    {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysis && !isLoading && (
-                        <div className="mt-2">
-                           <SafeMarkdownRenderer content={aiAnalysis} />
+                        <div className="prose prose-sm max-w-none mt-3 text-slate-700">
+                            <SafeMarkdownRenderer content={aiAnalysis} />
                         </div>
                     )}
                     {groundingChunks.length > 0 && (
-                        <div className="text-xs text-gray-500 mt-4 pt-2 border-t">
-                            <p className="font-semibold text-gray-700">Sources:</p>
-                            <ul className="list-disc pl-5 mt-1 space-y-1">
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                            <p className="text-xs font-semibold text-slate-600 mb-2">Sources</p>
+                            <ul className="text-xs text-slate-500 space-y-1">
                                 {groundingChunks.map((chunk, index) => (
-                                    chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
+                                    chunk.web && (
+                                        <li key={index}>
+                                            <a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                                {chunk.web.title || chunk.web.uri}
+                                            </a>
+                                        </li>
+                                    )
                                 ))}
                             </ul>
                         </div>
@@ -479,8 +582,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                 </div>
             </div>
         </Modal>
-    )
-}
+    );
+};
 
 const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
     const { data } = useContext(DataContext)!;
@@ -702,7 +805,15 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
             <div className="max-h-[60vh] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0"><tr><th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th><th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th><th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th></tr></thead>
+                    <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
+                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
+                        </tr>
+                    </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {transactions.map(t => (
                             <tr key={t.id} className="hover:bg-gray-50">
@@ -710,6 +821,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                                 <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
                                 <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrency(t.total, { colorize: false })}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-center text-xs text-slate-500">{t.currency ?? '—'}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -801,117 +913,172 @@ const PlatformCard: React.FC<{
     };
 
     return (
-        <div className="bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-100 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
+        <article className="bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
             {/* Platform Header */}
-            <div className="bg-gradient-to-r from-slate-50 to-white px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200 min-w-0">
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start gap-3">
-                    <div className="flex items-start gap-2 min-w-0 flex-1">
-                        <div className="w-1 h-10 rounded-full bg-primary shrink-0" />
+            <header className="bg-gradient-to-br from-slate-50 via-white to-slate-50/50 px-5 sm:px-6 py-5 sm:py-6 border-b border-slate-200 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start gap-4">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div className="w-1 h-12 rounded-full bg-primary shrink-0" aria-hidden />
                         <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="text-lg sm:text-xl font-bold text-slate-800 truncate" title={platform.name}>{platform.name}</h3>
+                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 truncate" title={platform.name}>{platform.name}</h3>
                                 <span className="flex items-center gap-0.5 shrink-0">
-                                    <button onClick={() => onEditPlatform(platform)} className="p-1 rounded text-slate-400 hover:text-primary hover:bg-primary/5" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
-                                    <button onClick={() => onDeletePlatform(platform)} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
+                                    <button type="button" onClick={() => onEditPlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
+                                    <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p className="text-xl sm:text-2xl font-bold text-primary mt-0.5 truncate" title={formatCurrencyString(totalValue)}>{formatCurrencyString(totalValue)}</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 truncate tabular-nums" title={formatCurrencyString(totalValue)}>{formatCurrencyString(totalValue)}</p>
                         </div>
                     </div>
-                    <button onClick={() => setIsTxnModalOpen(true)} className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary rounded-lg border border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto"><ArrowsRightLeftIcon className="h-4 w-4"/>Transaction Log</button>
+                    <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto transition-colors">
+                        <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
+                    </button>
                 </div>
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Available Cash">Available Cash</dt>
-                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(availableCash, { digits: 0 })}>{formatCurrencyString(availableCash, { digits: 0 })}</dd>
+                <dl className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" aria-label="Platform metrics">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Available Cash</dt>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(availableCash, { digits: 0 })}>{formatCurrencyString(availableCash, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Unrealized P/L">Unrealized P/L</dt>
-                        <dd className="font-semibold text-xs sm:text-sm mt-0.5 truncate">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Unrealized P/L</dt>
+                        <dd className="font-bold text-sm mt-0.5 truncate">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Daily P/L">Daily P/L</dt>
-                        <dd className="font-semibold text-xs sm:text-sm mt-0.5 truncate">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Daily P/L</dt>
+                        <dd className="font-bold text-sm mt-0.5 truncate">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Total ROI">Total ROI</dt>
-                        <dd className={`font-semibold text-xs sm:text-sm mt-0.5 truncate ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">ROI</dt>
+                        <dd className={`font-bold text-sm mt-0.5 tabular-nums truncate ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Total Invested">Total Invested</dt>
-                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(totalInvested, { digits: 0 })}>{formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Invested</dt>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(totalInvested, { digits: 0 })}>{formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-lg bg-white/80 border border-slate-100 px-2 sm:px-3 py-2 text-center min-w-0 overflow-hidden">
-                        <dt className="text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide truncate" title="Withdrawn">Withdrawn</dt>
-                        <dd className="font-semibold text-slate-800 text-xs sm:text-sm mt-0.5 truncate" title={formatCurrencyString(totalWithdrawn, { digits: 0 })}>{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
+                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Withdrawn</dt>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(totalWithdrawn, { digits: 0 })}>{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
-                </div>
-            </div>
-            
-            {/* Portfolios Section */}
-            <div className="p-4 space-y-4">
+                </dl>
+            </header>
+
+            {/* Portfolios & Holdings */}
+            <div className="p-5 sm:p-6 space-y-6">
                 <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-semibold text-slate-600 uppercase tracking-wide">Portfolios ({portfolios.length})</h4>
+                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Portfolios · {portfolios.length}</h4>
                 </div>
                 {portfolios.length === 0 ? (
-                    <p className="text-sm text-slate-500 py-4 text-center rounded-lg bg-slate-50 border border-dashed border-slate-200">No portfolios yet. Use <strong>Add Portfolio</strong> above to create one and choose this platform.</p>
+                    <div className="rounded-xl bg-slate-50/80 border-2 border-dashed border-slate-200 py-8 px-4 text-center">
+                        <p className="text-sm text-slate-600">No portfolios in this platform yet.</p>
+                        <p className="text-xs text-slate-500 mt-1">Use <strong>Add Portfolio</strong> above and select this platform.</p>
+                    </div>
                 ) : null}
-                {portfolios.map(portfolio => (
-                    <div key={portfolio.id} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50/80 to-white p-4 shadow-sm">
-                        <div className="flex justify-between items-center mb-3">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="font-bold text-slate-800">{portfolio.name}</h4>
-                                {portfolio.goalId && (
-                                    <span className="flex items-center text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100" title={`Linked to: ${getGoalName(portfolio.goalId)}`}>
-                                        <LinkIcon className="h-3 w-3 mr-1" />
-                                        {getGoalName(portfolio.goalId)}
-                                    </span>
+                {portfolios.map(portfolio => {
+                    const portfolioHoldings = holdingsWithGains(portfolio.holdings || []);
+                    const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+                    return (
+                        <section key={portfolio.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                            {/* Portfolio header: name, value, goal, actions */}
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-base">{portfolio.name}</h4>
+                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5">{formatCurrencyString(portfolioValue)}</p>
+                                    </div>
+                                    {portfolio.goalId && (
+                                        <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 shrink-0" title={`Linked to: ${getGoalName(portfolio.goalId)}`}>
+                                            <LinkIcon className="h-3.5 w-3.5" />
+                                            {getGoalName(portfolio.goalId)}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <button type="button" onClick={() => onEditPortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit portfolio" aria-label="Edit portfolio"><PencilIcon className="h-4 w-4"/></button>
+                                    <button type="button" onClick={() => onDeletePortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove portfolio" aria-label="Remove portfolio"><TrashIcon className="h-4 w-4"/></button>
+                                </div>
+                            </div>
+                            {/* Holdings */}
+                            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                                {portfolioHoldings.length === 0 ? (
+                                    <div className="px-5 py-8 text-center text-sm text-slate-500 rounded-b-2xl bg-slate-50/30">No holdings yet. Record a buy from <strong>Record Trade</strong> or the Transaction Log.</div>
+                                ) : (
+                                    <>
+                                        <table className="w-full min-w-[640px] border-collapse" aria-label={`Holdings for ${portfolio.name}`}>
+                                            <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                                                <tr className="text-left">
+                                                    <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Share</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right w-20">Alloc.</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Qty</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Avg cost</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Value</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">P/L</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Today</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center w-20">Zakat</th>
+                                                    <th className="w-9" aria-label="Actions" />
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {portfolioHoldings.map(h => {
+                                                    const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
+                                                    const dailyPnL = simulatedPrices[h.symbol]?.change * h.quantity || 0;
+                                                    const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
+                                                    return (
+                                                        <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
+                                                            <td className="px-4 py-3">
+                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct })}
+                                                                        className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0"
+                                                                    >
+                                                                        <span className="font-bold text-slate-900 block truncate">{h.symbol}</span>
+                                                                        {displayName(h) && displayName(h) !== h.symbol && (
+                                                                            <span className="text-xs text-slate-500 block truncate max-w-[160px]" title={displayName(h)!}>{displayName(h)}</span>
+                                                                        )}
+                                                                    </button>
+                                                                    {h.goalId && <LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" title={getGoalName(h.goalId)} />}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-3 text-right">
+                                                                {portfolioValue > 0 && (
+                                                                    <div className="flex items-center justify-end gap-1.5">
+                                                                        <div className="w-10 h-1.5 bg-slate-200 rounded-full overflow-hidden" title={`${allocationPct.toFixed(1)}%`}>
+                                                                            <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(100, allocationPct)}%` }} />
+                                                                        </div>
+                                                                        <span className="text-sm font-medium text-slate-700 tabular-nums w-10">{allocationPct.toFixed(1)}%</span>
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
+                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{formatCurrencyString(h.avgCost ?? 0, { digits: 2 })}</td>
+                                                            <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</td>
+                                                            <td className="px-3 py-3 text-right">
+                                                                <span className={`text-sm font-semibold tabular-nums ${h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(h.gainLoss, { colorize: false, digits: 0 })}</span>
+                                                                <span className={`text-xs tabular-nums block ${gainLossPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>({gainLossPct >= 0 ? '+' : ''}{gainLossPct.toFixed(1)}%)</span>
+                                                            </td>
+                                                            <td className="px-3 py-3 text-right">
+                                                                <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(dailyPnL, { colorize: false, digits: 0 })}</span>
+                                                            </td>
+                                                            <td className="px-3 py-3 text-center">
+                                                                <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>{h.zakahClass === 'Zakatable' ? 'Zak.' : 'Non'}</span>
+                                                            </td>
+                                                            <td className="px-1 py-3">
+                                                                <button type="button" onClick={() => onEditHolding(h)} className="p-1.5 rounded-md text-slate-300 group-hover:text-primary hover:bg-primary/5 transition-all" title="Edit holding" aria-label="Edit holding"><PencilIcon className="h-4 w-4" /></button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </>
                                 )}
                             </div>
-                            <div className="flex items-center gap-0.5"><button onClick={() => onEditPortfolio(portfolio)} className="p-1.5 rounded text-slate-400 hover:text-primary hover:bg-primary/5" title="Edit portfolio"><PencilIcon className="h-4 w-4"/></button><button onClick={() => onDeletePortfolio(portfolio)} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50" title="Remove portfolio"><TrashIcon className="h-4 w-4"/></button></div>
-                        </div>
-                         <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                            <div className="flex items-center text-xs text-slate-500 font-semibold px-3 py-2 bg-slate-100/80 rounded-lg sticky top-0 z-10">
-                                <div className="flex-grow">Symbol / Name</div>
-                                <div className="w-32 text-left text-gray-500">Qty · Avg cost</div>
-                                <div className="w-24 text-left">Zakat Class</div>
-                                <div className="w-24 text-right">Mkt Value</div>
-                                <div className="w-24 text-right">Unrealized P/L</div>
-                                <div className="w-24 text-right">Daily P/L</div>
-                            </div>
-                            {holdingsWithGains(portfolio.holdings || []).map(h => (
-                                 <div key={h.id} className="group rounded-md hover:bg-gray-50 border bg-white p-3">
-                                    <div className="flex items-center text-sm flex-wrap gap-x-4 gap-y-1">
-                                        <div className="flex-grow min-w-0 flex items-center gap-2">
-                                            <button onClick={() => onHoldingClick({ ...h, gainLossPercent: (h.gainLoss / (h.totalCost || 1)) * 100 })} className="text-left bg-transparent border-none p-0 hover:underline truncate">
-                                                <span className="font-semibold text-gray-900">{h.symbol}</span>
-                                                {(() => { const dn = displayName(h); return dn ? <span className="block text-xs text-gray-500 truncate max-w-[200px]" title={dn}>{dn}</span> : null; })()}
-                                            </button>
-                                            <button onClick={() => onEditHolding(h)} className="text-gray-300 group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" title="Edit holding"><PencilIcon className="h-3.5 w-3.5" /></button>
-                                            {h.goalId && <span title={`Linked to: ${getGoalName(h.goalId)}`}><LinkIcon className="h-3.5 w-3.5 text-green-500 flex-shrink-0" /></span>}
-                                        </div>
-                                        <div className="flex items-center gap-4 text-xs text-gray-600">
-                                            <span title="Quantity">Qty: <span className="font-medium tabular-nums">{h.quantity}</span></span>
-                                            <span title="Average cost">Avg: <span className="font-medium tabular-nums">{formatCurrencyString(h.avgCost ?? (h as any).avg_cost ?? 0, { digits: 2 })}</span></span>
-                                        </div>
-                                        <div className="w-24 text-left">
-                                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>
-                                                {h.zakahClass}
-                                            </span>
-                                        </div>
-                                        <div className="w-24 text-right font-semibold text-dark tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</div>
-                                        <div className="w-24 text-right font-medium text-xs tabular-nums">{formatCurrency(h.gainLoss, { colorize: true, digits: 0 })}</div>
-                                        <div className="w-24 text-right font-medium text-xs tabular-nums">
-                                            {formatCurrency(simulatedPrices[h.symbol]?.change * h.quantity || 0, { colorize: true, digits: 0 })}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                         </div>
-                    </div>
-                ))}
+                        </section>
+                    );
+                })}
             </div>
-            
+
             <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
         </div>
     );
@@ -931,6 +1098,7 @@ const PlatformView: React.FC<{
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
     const { setActivePage, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
@@ -943,17 +1111,91 @@ const PlatformView: React.FC<{
         }));
     }, [data, getAvailableCashForAccount]);
 
+    const { currency: displayCurrency } = useCurrency();
+    const totalPlatforms = platformsData.length;
+    const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
+    const aggregateValue = platformsData.reduce((sum, p) => {
+        const holdings = p.portfolios.flatMap(port => port.holdings || []);
+        return sum + holdings.reduce((s, h) => s + (props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+    }, 0);
+    const hasAnyPlatforms = totalPlatforms > 0;
+    const hasAnyPortfolios = totalPortfolios > 0;
+
     return (
-        <div className="space-y-6 mt-4">
-            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
-                <p className="text-sm text-gray-600">Platforms (Investment accounts) and their portfolios. Add a platform from <strong>Accounts</strong>, then add portfolios below.</p>
-                <div className="flex flex-wrap gap-2">
-                    {setActivePage && <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm text-primary hover:underline py-1">Go to Accounts</button>
-                    }
-                    <button type="button" onClick={onOpenAddPortfolio} className="btn-primary text-sm inline-flex items-center gap-1.5"><PlusIcon className="h-4 w-4"/> Add Portfolio</button>
-                    <button type="button" onClick={props.onAddPlatform} className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-700">Add platform</button>
+        <div className="space-y-6 mt-2">
+            <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div>
+                        <h2 className="text-lg font-bold text-slate-800">Portfolios</h2>
+                        <p className="text-sm text-slate-600 mt-0.5 max-w-2xl">
+                            Manage platforms and portfolios. Each platform holds one or more portfolios; click a share for full details including value in SAR. Amounts in <span className="font-medium text-slate-700">{displayCurrency === 'SAR' ? 'SAR' : 'USD'}</span>.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm font-medium text-primary hover:underline py-2 px-1">
+                                Go to Accounts
+                            </button>
+                        )}
+                        <button type="button" onClick={onOpenAddPortfolio} className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium shadow-sm">
+                            <PlusIcon className="h-4 w-4" /> Add Portfolio
+                        </button>
+                        <button type="button" onClick={props.onAddPlatform} className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-700 text-sm font-medium transition-colors">
+                            Add platform
+                        </button>
+                    </div>
                 </div>
-            </div>
+                {hasAnyPlatforms && (
+                    <div className="mt-5 pt-5 border-t border-slate-200">
+                        <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                            <div className="flex items-baseline gap-2">
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value</span>
+                                <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
+                            </div>
+                            <div className="flex items-center gap-2 sm:gap-4">
+                                <div className="flex items-center gap-1.5 rounded-lg bg-slate-100/80 px-3 py-1.5">
+                                    <Squares2X2Icon className="h-4 w-4 text-slate-500 shrink-0" aria-hidden />
+                                    <span className="text-sm font-semibold text-slate-700 tabular-nums">{totalPlatforms}</span>
+                                    <span className="text-xs text-slate-500 hidden sm:inline">accounts</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5">
+                                    <ChartPieIcon className="h-4 w-4 text-primary shrink-0" aria-hidden />
+                                    <span className="text-sm font-semibold text-primary tabular-nums">{totalPortfolios}</span>
+                                    <span className="text-xs text-primary/80 hidden sm:inline">portfolios</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </section>
+
+            {!hasAnyPlatforms ? (
+                <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-8 sm:p-12 text-center">
+                    <Squares2X2Icon className="mx-auto h-12 w-12 text-slate-400" aria-hidden />
+                    <h3 className="mt-4 text-lg font-semibold text-slate-800">No investment platforms yet</h3>
+                    <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">Add an <strong>Investment</strong> account from Accounts, then create portfolios here and record trades.</p>
+                    <div className="mt-6 flex flex-wrap justify-center gap-3">
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
+                                Go to Accounts
+                            </button>
+                        )}
+                        <button type="button" onClick={props.onAddPlatform} className="px-4 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-100 text-slate-700 text-sm font-medium">
+                            Add platform
+                        </button>
+                    </div>
+                </div>
+            ) : !hasAnyPortfolios ? (
+                <div className="rounded-2xl border-2 border-dashed border-amber-200 bg-amber-50/50 p-8 sm:p-12 text-center">
+                    <ClipboardDocumentListIcon className="mx-auto h-12 w-12 text-amber-500" aria-hidden />
+                    <h3 className="mt-4 text-lg font-semibold text-slate-800">No portfolios yet</h3>
+                    <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">Create a portfolio under one of your platforms below, then record buys and sells.</p>
+                    <button type="button" onClick={onOpenAddPortfolio} className="mt-6 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
+                        <PlusIcon className="h-4 w-4" /> Add Portfolio
+                    </button>
+                </div>
+            ) : null}
+
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
                 {platformsData.map(p => (
                     <PlatformCard
@@ -1644,7 +1886,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   }, [pageAction, clearPageAction]);
 
   const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
-  
+
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; })) => { setSelectedHolding(holding); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
     const handleSaveHolding = async (holding: Holding) => { 
@@ -1741,37 +1983,54 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   return (
     <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center flex-wrap gap-3">
-             <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-3xl font-bold text-dark">Investments</h1>
-                <LivePricesStatus variant="inline" className="flex-shrink-0" />
+        <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start flex-wrap gap-4">
+             <div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Investments</h1>
+                  <LivePricesStatus variant="inline" className="flex-shrink-0" />
+                </div>
+                <p className="text-sm text-slate-500 mt-1">Track platforms, portfolios, and holdings in one place. Record trades and monitor performance.</p>
              </div>
-             <div className="flex items-center space-x-2">
-                <button onClick={() => setIsTradeModalOpen(true)} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 transition-colors text-sm flex items-center"><ArrowsRightLeftIcon className="h-4 w-4 mr-2" />Record Trade</button>
+             <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium shadow-sm">
+                  <ArrowsRightLeftIcon className="h-4 w-4" /> Record Trade
+                </button>
              </div>
-        </div>
+        </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card title="Total Investment Value" value={formatCurrencyString(totalValue)} />
-            <Card title="Total Unrealized P/L" value={formatCurrency(totalGainLoss, { colorize: true })} />
-            <Card title="Overall Portfolio ROI" value={`${roi.toFixed(2)}%`} valueColor={roi >= 0 ? 'text-success' : 'text-danger'} />
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" aria-label="Investment summary">
+            <Card title="Total Value" value={formatCurrencyString(totalValue)} density="compact" />
+            <Card title="Unrealized P/L" value={formatCurrency(totalGainLoss, { colorize: true })} density="compact" />
+            <Card title="Portfolio ROI" value={`${roi.toFixed(2)}%`} valueColor={roi >= 0 ? 'text-success' : 'text-danger'} density="compact" />
             <Card 
-                title="Total Daily P/L" 
+                title="Daily P/L" 
                 value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2 })}
                 trend={getTrendString(trendPercentage)}
                 tooltip="Total profit or loss for all investments based on today's simulated market changes."
+                density="compact"
             />
-        </div>
+        </section>
 
         <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
       
-        <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
-            {INVESTMENT_SUB_PAGES.map(tab => (
-                <button key={tab.name} onClick={() => setActiveTab(tab.name)} className={`${ activeTab === tab.name ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' } group inline-flex items-center whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm transition-colors`}><tab.icon className="-ml-0.5 mr-2 h-5 w-5" />{tab.name}</button>
-            ))}
-            </nav>
-        </div>
+        <nav className="border-b border-slate-200" aria-label="Investment sections">
+            <div className="flex gap-1 overflow-x-auto pb-px scrollbar-thin">
+              {INVESTMENT_SUB_PAGES.map(tab => (
+                <button
+                  key={tab.name}
+                  onClick={() => setActiveTab(tab.name)}
+                  className={`inline-flex items-center gap-2 whitespace-nowrap py-3 px-4 rounded-t-lg font-medium text-sm transition-colors ${
+                    activeTab === tab.name
+                      ? 'bg-white text-primary border border-b-0 border-slate-200 -mb-px shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50 border border-transparent'
+                  }`}
+                >
+                  <tab.icon className="h-4 w-4 shrink-0" aria-hidden />
+                  {tab.name}
+                </button>
+              ))}
+            </div>
+        </nav>
       
       <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem]" />}>
         {renderContent()}

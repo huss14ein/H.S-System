@@ -5,7 +5,8 @@ import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTrans
 import { getMockData } from '../data/mockData';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 
-// Define an empty state for when data is loading or for new users
+// Default parameters live in app settings/config (here and wealth-ultra/config), not in the DB.
+// DB only stores user overrides; we merge with these defaults when reading.
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
@@ -35,7 +36,7 @@ const initialData: FinancialData = {
     portfolioUniverse: [],
     statusChangeLog: [],
     executionLogs: [],
-    wealthUltraConfig: null
+    wealthUltraConfig: getDefaultWealthUltraSystemConfig()
 };
 
 interface DataContextType {
@@ -120,6 +121,18 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     if (settings.enableEmails != null) row.enable_emails = settings.enableEmails;
     if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
     if (settings.nisabAmount != null) row.nisab_amount = settings.nisabAmount;
+    return row;
+}
+
+/** Build DB row with only overrides (values that differ from app defaults). Defaults live in initialData.settings, not in DB. */
+function settingsOverridesToRow(merged: Settings, explicitClears?: Partial<Settings>): Record<string, unknown> {
+    const defaultRow = settingsToRow(initialData.settings);
+    const mergedRow = settingsToRow(merged);
+    const row: Record<string, unknown> = {};
+    for (const k of Object.keys(mergedRow) as (keyof typeof mergedRow)[]) {
+        if (mergedRow[k] !== defaultRow[k]) row[k] = mergedRow[k];
+    }
+    if (explicitClears && 'nisabAmount' in explicitClears && explicitClears.nisabAmount === undefined) row.nisab_amount = null;
     return row;
 }
 
@@ -305,6 +318,21 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
     return row;
 }
 
+/** Build DB row with only overrides (values that differ from app defaults). Defaults live in initialData.investmentPlan, not in DB. */
+function investmentPlanOverridesToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
+    const defaultRow = investmentPlanToRow(initialData.investmentPlan);
+    const planRow = investmentPlanToRow(plan);
+    const row: Record<string, unknown> = {};
+    for (const k of Object.keys(planRow) as (keyof typeof planRow)[]) {
+        if (k === 'user_id') continue;
+        const a = planRow[k];
+        const b = defaultRow[k];
+        const same = a === b || (JSON.stringify(a) === JSON.stringify(b));
+        if (!same) row[k] = a;
+    }
+    return row;
+}
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
@@ -327,6 +355,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => ({
         ...transaction,
         accountId: transaction.accountId || transaction.account_id,
+        currency: transaction.currency ?? undefined,
     });
 
     const normalizeCommodityHolding = (holding: any): CommodityHolding => {
@@ -402,26 +431,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ];
     };
 
-    const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => ([
-        {
-            account_id: trade.accountId,
-            date: trade.date,
-            type: trade.type,
-            symbol: trade.symbol,
-            quantity: trade.quantity,
-            price: trade.price,
-            total: trade.total,
-        },
-        {
-            accountId: trade.accountId,
-            date: trade.date,
-            type: trade.type,
-            symbol: trade.symbol,
-            quantity: trade.quantity,
-            price: trade.price,
-            total: trade.total,
-        }
-    ]);
+    const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => {
+        const baseRow = { account_id: trade.accountId, date: trade.date, type: trade.type, symbol: trade.symbol, quantity: trade.quantity, price: trade.price, total: trade.total };
+        const withCurrency = trade.currency ? { ...baseRow, currency: trade.currency } : baseRow;
+        return [withCurrency, baseRow];
+    };
 
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
@@ -431,12 +445,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         setLoading(true);
         try {
-            const [
-                accounts, assets, liabilities, goals, transactions, investments,
-                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
-                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs,
-                recurringTransactions
-            ] = await Promise.all([
+            // recurring_transactions may not exist if migration not run; fetch so it never rejects
+            const recurringPromise = db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
+                .then((r: any) => r, () => ({ data: [] as any[], error: { code: 'PGRST205', message: 'Table not found' } }));
+
+            const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
                 db.from('assets').select('*').eq('user_id', auth.user.id),
                 db.from('liabilities').select('*').eq('user_id', auth.user.id),
@@ -446,7 +459,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('investment_transactions').select('*').eq('user_id', auth.user.id),
                 db.from('budgets').select('*').eq('user_id', auth.user.id),
                 db.from('watchlist').select('*').eq('user_id', auth.user.id),
-                db.from('settings').select('*').eq('user_id', auth.user.id).single(),
+                db.from('settings').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('zakat_payments').select('*').eq('user_id', auth.user.id),
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
@@ -455,12 +468,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
-                db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
-            ]);
-
+                recurringPromise
+            ];
+            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions'] as const;
+            const settled = await Promise.allSettled(fetchPromises);
+            const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
+            const results = settled.map((s, i) => {
+                if (s.status === 'fulfilled') return s.value as any;
+                console.error(`Error fetching ${keys[i]}:`, s.reason);
+                return emptyResult(s.reason);
+            });
+            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions] = results;
             const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions };
             Object.entries(allFetches).forEach(([key, value]) => {
-              if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
+              if (value?.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error);
             });
 
             const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
@@ -488,12 +509,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
-                settings: normalizeSettings(settings.data || initialData.settings),
+                settings: normalizeSettings((settings as any).data ?? initialData.settings),
                 zakatPayments: zakatPayments.data || [],
                 priceAlerts: (priceAlerts.data || []).map(normalizePriceAlert),
                 plannedTrades: plannedTrades.data || [],
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
+                // Default parameters from app settings/config only; we do not read wealth_ultra_config from DB
                 wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
@@ -535,7 +557,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
             'recurring_transactions',
         ];
-        await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
+        // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
+        await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setLoading(false);
     };
@@ -1295,7 +1318,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
         const merged = { ...data.settings, ...settingsUpdate };
-        const row = { ...settingsToRow(merged), user_id: auth.user.id };
+        const overrides = settingsOverridesToRow(merged, settingsUpdate);
+        const row = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         if (error) {
             console.error("Error updating settings:", error);
@@ -1306,7 +1330,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
         if (!supabase || !auth?.user) return;
-        const planWithUser = { ...investmentPlanToRow(plan), user_id: auth.user.id };
+        const overrides = investmentPlanOverridesToRow(plan);
+        const planWithUser = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
         if (error) {
             console.error("Error saving investment plan:", error);

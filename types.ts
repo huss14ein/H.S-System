@@ -135,6 +135,8 @@ export interface InvestmentPortfolio {
   owner?: string;
 }
 
+export type TradeCurrency = 'USD' | 'SAR';
+
 export interface InvestmentTransaction {
   id: string;
   user_id?: string;
@@ -145,6 +147,8 @@ export interface InvestmentTransaction {
   quantity: number;
   price: number;
   total: number;
+  /** Currency the trade was recorded in (display & reporting). */
+  currency?: TradeCurrency;
 }
 
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */
@@ -304,7 +308,7 @@ export interface FinancialData {
   priceAlerts: PriceAlert[];
   plannedTrades: PlannedTrade[];
   investmentPlan: InvestmentPlanSettings;
-  /** System-wide Wealth Ultra defaults (from wealth_ultra_config). General share/sleeve config. */
+  /** Wealth Ultra default parameters from app settings/config only (not from DB). */
   wealthUltraConfig?: WealthUltraSystemConfig | null;
   portfolioUniverse: UniverseTicker[];
   statusChangeLog: StatusChangeLog[];
@@ -394,7 +398,7 @@ export interface InvestmentPlanSettings {
   brokerConstraints: BrokerConstraints;
 }
 
-/** Wealth Ultra numeric config from system (wealth_ultra_config table). General, not code-specific. */
+/** Wealth Ultra default parameters (from app settings/config, not DB). General share/sleeve config. */
 export interface WealthUltraSystemConfig {
   fxRate: number;
   cashReservePct: number;

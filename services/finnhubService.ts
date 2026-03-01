@@ -90,6 +90,38 @@ export function getExchangeAndCurrencyForSymbol(symbol: string): { exchange: str
   return null;
 }
 
+/** Normalize symbol for Finnhub (US upper, crypto mapped). */
+function toFinnhubSymbol(symbol: string): string {
+  const upper = (symbol || '').toUpperCase().trim();
+  if (!upper) return upper;
+  if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
+  if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+  return upper;
+}
+
+/** 1-month daily candle data for charting. Points are day index (0 = oldest) and close price. */
+export interface CandlePoint {
+  day: number;
+  price: number;
+}
+
+/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. */
+export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
+  const finnhubSymbol = toFinnhubSymbol(symbol);
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 31 * 24 * 60 * 60;
+  const token = getToken();
+  const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
+  const res = await finnhubFetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const t = data?.t as number[] | undefined;
+  const c = data?.c as number[] | undefined;
+  if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) return [];
+  const points: CandlePoint[] = t.map((_, i) => ({ day: i, price: Number(c[i]) }));
+  return points.filter((p) => Number.isFinite(p.price) && p.price > 0);
+}
+
 // --- Market status (exchange open/closed) ---
 export interface MarketStatusItem {
   exchange: string;

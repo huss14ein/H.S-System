@@ -3,7 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert, PriceAlertCurrency, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
-import { getExchangeAndCurrencyForSymbol } from '../services/finnhubService';
+import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint } from '../services/finnhubService';
 import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError } from '../services/geminiService';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
 import Modal from '../components/Modal';
@@ -15,6 +15,7 @@ import { BellIcon } from '../components/icons/BellIcon';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { useMarketData } from '../context/MarketDataContext';
 import LivePricesStatus from '../components/LivePricesStatus';
+import InfoHint from '../components/InfoHint';
 
 const ALERT_CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'USD', label: 'USD' },
@@ -201,7 +202,7 @@ const WatchlistItemRow: React.FC<{
                 <div className="text-xs text-gray-500 truncate max-w-[150px]">{item.name}{market ? ` · ${market.exchange}` : ''}</div>
             </td>
             <td className="px-4 py-2 w-36">
-                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} />
+                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} />
             </td>
             <td className="px-4 py-2 text-right font-semibold text-dark whitespace-nowrap tabular-nums">
                 {formatInCurrency(priceInfo.price, priceCurrency)}
@@ -250,6 +251,34 @@ const WatchlistView: React.FC = () => {
     const [aiWatchlistTips, setAiWatchlistTips] = useState('');
     const [aiWatchlistLoading, setAiWatchlistLoading] = useState(false);
     const [aiWatchlistError, setAiWatchlistError] = useState<string | null>(null);
+    const [historicalBySymbol, setHistoricalBySymbol] = useState<Record<string, CandlePoint[] | null>>({});
+
+    const watchlistSymbolKey = useMemo(() => data.watchlist.map((w) => w.symbol.trim().toUpperCase()).filter(Boolean).join(','), [data.watchlist]);
+    useEffect(() => {
+        if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
+        const symbols = watchlistSymbolKey ? watchlistSymbolKey.split(',') : [];
+        if (symbols.length === 0) {
+            setHistoricalBySymbol({});
+            return;
+        }
+        let cancelled = false;
+        const delayMs = 1200;
+        (async () => {
+            const next: Record<string, CandlePoint[] | null> = {};
+            for (const symbol of symbols) {
+                if (cancelled) break;
+                try {
+                    const points = await getStockCandles1M(symbol);
+                    if (!cancelled) next[symbol] = points.length > 0 ? points : null;
+                } catch {
+                    if (!cancelled) next[symbol] = null;
+                }
+                if (!cancelled && symbols.indexOf(symbol) < symbols.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+            }
+            if (!cancelled) setHistoricalBySymbol((prev) => ({ ...prev, ...next }));
+        })();
+        return () => { cancelled = true; };
+    }, [watchlistSymbolKey]);
 
     const watchlistInsights = useMemo(() => {
         const rows = data.watchlist.map((item) => ({
@@ -336,17 +365,19 @@ const WatchlistView: React.FC = () => {
                     <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
                 </div>
                 <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">30-Day Trend</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1M trend <InfoHint text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
                             const activeAlerts = data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
+                            const symKey = item.symbol.trim().toUpperCase();
                             return (
                                <WatchlistItemRow
                                   key={item.symbol}
                                   item={item}
                                   priceInfo={priceInfo}
                                   activeAlerts={activeAlerts}
+                                  historical1M={historicalBySymbol[symKey] ?? undefined}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                />
