@@ -109,60 +109,101 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
     const budgets = data?.budgets ?? [];
     const transactions = data?.transactions ?? [];
+    const accounts = data?.accounts ?? [];
     const goals = data?.goals ?? [];
     const investmentPlan = data?.investmentPlan;
     const investmentTransactions = data?.investmentTransactions ?? [];
+    const recurringTransactions = data?.recurringTransactions ?? [];
 
+    // Build plan from transactions, budgets, recurring, and investment data — fully integrated
     React.useEffect(() => {
+        const yearTx = transactions.filter((t: { date: string }) => new Date(t.date).getFullYear() === year);
+
+        // Income: planned and actual from Transactions (income type only); add expected recurring income to planned
+        const incomeActuals = Array(12).fill(0);
+        yearTx.forEach((t: { type?: string; amount: number; date: string }) => {
+            if (t.type === 'income') {
+                const monthIndex = new Date(t.date).getMonth();
+                incomeActuals[monthIndex] += Number(t.amount) || 0;
+            }
+        });
+        const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
+        const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
+        const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
+        const incomePlanned = incomeActuals.map((actual) => actual > 0 ? actual : incomeAvg);
+        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string; addManually?: boolean }) => r.enabled && r.type === 'income' && !r.addManually).reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
+        for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
         const incomeRow: PlanRow = {
             type: 'income',
-            category: 'Salary & Bonuses',
-            monthly_planned: Array(12).fill(30000),
-            monthly_actual: Array(12).fill(0),
+            category: 'Income',
+            monthly_planned: incomePlanned,
+            monthly_actual: incomeActuals,
         };
-        incomeRow.monthly_planned[0] += 12000;
-        incomeRow.monthly_planned[3] += 90000;
 
-        const yearBudgets = budgets.filter((b: { year?: number }) => !b.year || b.year === year);
+        // Expense categories: from Budgets (planned) + Transactions (actual); include every category that appears in either
+        // Include budgets with no year (falsy: null, undefined, 0, '') or matching plan year to avoid excluding year 0
+        const yearBudgets = budgets.filter((b: { year?: number }) => !(b as any).year || (b as any).year === year);
         const byCategory = new Map<string, { planned: number[]; actual: number[] }>();
+
+        const budgetToMonthly = (limit: number, period?: string) =>
+            period === 'yearly' ? limit / 12 : period === 'weekly' ? limit * (52 / 12) : period === 'daily' ? limit * (365 / 12) : limit;
         yearBudgets.forEach((b: { category: string; limit: number; month?: number; period?: string }) => {
-            const limit = b.limit ?? 0;
-            const monthly = (b as any).period === 'yearly' ? limit / 12 : limit;
-            const monthIndex = (b.month ?? 1) - 1;
+            const limit = Number(b.limit) || 0;
+            const period = (b as any).period;
+            const monthly = budgetToMonthly(limit, period);
+            const monthIndex = ((b as any).month ?? 1) - 1;
             if (!byCategory.has(b.category)) {
                 byCategory.set(b.category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
             }
-            const row = byCategory.get(b.category)!;
-            row.planned[monthIndex] = monthly;
-        });
-        let expenseRows: PlanRow[] = byCategory.size > 0
-            ? Array.from(byCategory.entries()).map(([category, { planned, actual }]) => {
-                const firstLimit = yearBudgets.find((b: { category: string }) => b.category === category)?.limit ?? 0;
-                const filled = planned.every(x => x === 0) ? Array(12).fill(firstLimit) : planned;
-                return { type: 'expense', category, monthly_planned: filled, monthly_actual: [...actual] };
-            })
-            : [{ type: 'expense', category: 'Expenses', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) }];
-
-        transactions.forEach((t: { date: string; type?: string; amount: number; budgetCategory?: string }) => {
-            const date = new Date(t.date);
-            if (date.getFullYear() === year) {
-                const monthIndex = date.getMonth();
-                if (t.type === 'income') {
-                    incomeRow.monthly_actual[monthIndex] += t.amount;
-                } else {
-                    const row = expenseRows.find(r => r.category === t.budgetCategory);
-                    if (row) row.monthly_actual[monthIndex] += Math.abs(t.amount);
-                }
+            const planned = byCategory.get(b.category)!.planned;
+            // Yearly, weekly, and daily apply to the whole year; monthly applies only to its calendar month
+            const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
+            if (appliesAllYear) {
+                for (let m = 0; m < 12; m++) planned[m] += monthly;
+            } else {
+                planned[monthIndex] += monthly;
             }
         });
 
-        // Add "Monthly investment" row from investment plan + actual from investment transactions
-        const monthlyInvestment = (investmentPlan?.monthlyBudget ?? 0);
+        yearTx.forEach((t: { type?: string; amount: number; date: string; category?: string; budgetCategory?: string }) => {
+            if (t.type !== 'expense') return;
+            const monthIndex = new Date(t.date).getMonth();
+            const category = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
+            if (!byCategory.has(category)) {
+                byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+            }
+            byCategory.get(category)!.actual[monthIndex] += Math.abs(Number(t.amount)) || 0;
+        });
+
+        // Recurring expenses: add expected amount to planned for each category (every month); exclude addManually (not auto-recorded)
+        recurringTransactions.filter((r: { enabled: boolean; type: string; addManually?: boolean }) => r.enabled && r.type === 'expense' && !r.addManually).forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
+            const cat = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
+            if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+            const row = byCategory.get(cat)!;
+            const amt = Number(r.amount) || 0;
+            for (let m = 0; m < 12; m++) row.planned[m] += amt;
+        });
+
+        let expenseRows: PlanRow[] = Array.from(byCategory.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([category, { planned, actual }]) => ({
+                type: 'expense' as const,
+                category,
+                monthly_planned: planned.some(x => x > 0) ? planned : Array(12).fill(0),
+                monthly_actual: actual,
+            }));
+
+        if (expenseRows.length === 0) {
+            expenseRows = [{ type: 'expense', category: 'Expenses', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) }];
+        }
+
+        // Monthly investment: from Investment Plan (planned) + Investment Transactions (actual buys)
+        const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;
         const investmentActuals = Array(12).fill(0);
-        investmentTransactions.forEach((tx: { date: string; type: string; total: number }) => {
+        investmentTransactions.forEach((tx: { date: string; type: string; total?: number }) => {
             const date = new Date(tx.date);
             if (date.getFullYear() === year && tx.type === 'buy') {
-                investmentActuals[date.getMonth()] += tx.total ?? 0;
+                investmentActuals[date.getMonth()] += Number(tx.total) || 0;
             }
         });
         const investmentRow: PlanRow = {
@@ -172,7 +213,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             monthly_actual: investmentActuals,
         };
         setPlanData([incomeRow, ...expenseRows, investmentRow]);
-    }, [budgets, transactions, year, investmentPlan, investmentTransactions]);
+    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions]);
     
     const processedPlanData: PlanRow[] = useMemo(() => {
         let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
@@ -321,7 +362,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     return (
         <PageLayout
             title="Annual Financial Plan"
-            description="A detailed grid for planning and tracking your finances throughout the year."
+            description="Income and expenses are captured from Transactions; limits from Budgets; investment from Investment Plan. Liquid cash from Accounts. Plan is fully integrated with your data."
             action={
                 <div className="flex flex-wrap items-center justify-end gap-4">
                     <div className="flex items-center gap-2">
@@ -339,6 +380,45 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             }
         >
+            {/* Data sources: plan is built from Transactions, Budgets, Investment Plan */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+                <span className="font-semibold text-slate-800">Plan data from:</span>
+                {setActivePage && (
+                    <>
+                        <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                            <BanknotesIcon className="h-4 w-4" /> Transactions
+                        </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Budgets')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                            Budgets
+                        </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                            <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan & trades
+                        </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Accounts')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                            Accounts (cash)
+                        </button>
+                    </>
+                )}
+                <span className="text-xs text-slate-500 ml-auto">Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan.</span>
+            </div>
+
+            {/* Liquid cash from Accounts (cash flow context) */}
+            {accounts.length > 0 && (() => {
+                const liquidCash = accounts
+                    .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
+                    .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
+                return liquidCash !== 0 ? (
+                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50">
+                        <p className="text-xs font-medium text-emerald-800 uppercase tracking-wide">Liquid cash (Checking + Savings)</p>
+                        <p className="text-xl font-bold text-emerald-800 tabular-nums mt-0.5">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
+                    </div>
+                ) : null;
+            })()}
+
             {/* Executive summary */}
             {totals && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

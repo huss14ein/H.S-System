@@ -22,6 +22,7 @@ import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
+import DraggableResizableGrid from '../components/DraggableResizableGrid';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
@@ -96,6 +97,9 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
         }
     };
     const unrealizedGain = asset.purchasePrice != null ? asset.value - asset.purchasePrice : null;
+    const unrealizedGainPct = asset.purchasePrice != null && asset.purchasePrice > 0 && unrealizedGain !== null
+        ? (unrealizedGain / asset.purchasePrice) * 100
+        : null;
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
@@ -118,7 +122,7 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                 <div><dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                     <div><dt className="text-slate-500">Purchase Price</dt><dd className="font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
-                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? formatCurrency(unrealizedGain, { colorize: true }) : '—'}</dd></div>
+                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{unrealizedGain >= 0 ? ' ' : ' '}({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
                 </div>
                 {asset.isRental && asset.monthlyRent != null && <div><dt className="text-slate-500">Monthly Rent</dt><dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
             </div>
@@ -325,24 +329,24 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void }> = ({ holding, onEdit, onDelete, goals, onLinkGoal }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
-    const linkedGoal = holding.goalId ? goals.find(g => g.id === holding.goalId) : null;
+    const unrealizedGainPct = holding.purchaseValue > 0 ? (unrealizedGain / holding.purchaseValue) * 100 : null;
     const borderTone = unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const getIcon = (type: CommodityHolding['name']) => {
         switch (type) {
-            case 'Gold': return <GoldBarIcon className="h-8 w-8 text-amber-500" />;
-            case 'Silver': return <GoldBarIcon className="h-8 w-8 text-slate-400" />;
-            case 'Bitcoin': return <BitcoinIcon className="h-8 w-8 text-orange-500" />;
-            default: return <CubeIcon className="h-8 w-8 text-slate-500" />;
+            case 'Gold': return <GoldBarIcon className="h-8 w-8 text-amber-500 flex-shrink-0" />;
+            case 'Silver': return <GoldBarIcon className="h-8 w-8 text-slate-400 flex-shrink-0" />;
+            case 'Bitcoin': return <BitcoinIcon className="h-8 w-8 text-orange-500 flex-shrink-0" />;
+            default: return <CubeIcon className="h-8 w-8 text-slate-500 flex-shrink-0" />;
         }
     };
     return (
-        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow`}>
-            <div className="flex items-start justify-between gap-2 min-h-[32px]">
-                <div className="flex items-center gap-3 min-w-0">
+        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl overflow-visible`}>
+            <div className="flex items-start justify-between gap-2 min-h-[40px]">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                     {getIcon(holding.name)}
-                    <div className="min-w-0">
-                        <h3 className="font-semibold text-dark truncate">{holding.name}</h3>
-                        <p className="text-xs text-slate-500">{holding.quantity} {holding.unit}</p>
+                    <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-dark break-words">{holding.name}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">{holding.quantity} {holding.unit}</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -350,22 +354,35 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     <button type="button" onClick={() => onDelete(holding)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-            {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
-            <div className="mt-2">
-                {linkedGoal ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">Linked: {linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
-                <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="mt-2 w-full text-xs border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-1.5" aria-label={`Link ${holding.name} to goal`}>
-                    <option value="none">Link to goal...</option>
-                    {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select>
-            </div>
-            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-                <div><dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(holding.currentValue)}</dd></div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div><dt className="text-slate-500">Purchase Value</dt><dd className="font-medium text-slate-700">{formatCurrencyString(holding.purchaseValue)}</dd></div>
-                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div>
+            {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full w-fit">{holding.owner}</span>}
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                <div>
+                    <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt>
+                    <dd className="font-bold text-dark text-xl tabular-nums mt-0.5 break-all">{formatCurrencyString(holding.currentValue)}</dd>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <div className="min-w-0">
+                        <dt className="text-slate-500 text-xs">Purchase Value</dt>
+                        <dd className="font-medium text-slate-700 break-all">{formatCurrencyString(holding.purchaseValue)}</dd>
+                    </div>
+                    <div className="min-w-0">
+                        <dt className="text-slate-500 text-xs">Unrealized G/L</dt>
+                        <dd className="font-semibold break-all"><span>{formatCurrency(unrealizedGain, { colorize: true })}</span>{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGain >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</dd>
+                    </div>
                 </div>
             </div>
-            <div className="border-t mt-4 pt-4"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{holding.zakahClass}</span></div>
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                <dt className="text-slate-500 text-xs">Link to goal</dt>
+                <dd>
+                    <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="w-full text-sm border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-2 pl-2 pr-8 min-w-0" aria-label={`Link ${holding.name} to goal`}>
+                        <option value="none">Not linked</option>
+                        {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                </dd>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100">
+                <span className={`inline-block px-2.5 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{holding.zakahClass}</span>
+            </div>
         </div>
     );
 };
@@ -454,12 +471,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     return (
         <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
-                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
-                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
-            </div>
+            <DraggableResizableGrid
+                layoutKey="assets-summary"
+                items={[
+                    { id: 'total', content: <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'physical', content: <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'metals-crypto', content: <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'rental', content: <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                ]}
+                cols={12}
+                rowHeight={100}
+            />
 
             <SectionCard title="Physical Assets">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -472,6 +494,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
 
             <SectionCard
                 title="Metals & Crypto"
+                className="overflow-visible"
                 headerAction={
                     <button
                         type="button"
@@ -485,27 +508,32 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     </button>
                 }
             >
-                <p className="text-sm text-slate-600 mb-4 flex items-center gap-2"><InfoHint text="Use AI or fallback APIs (Finnhub/Stooq) for latest commodity pricing. If one provider fails, retries use alternatives." /></p>
+                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4">
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                        Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI or fallback APIs (Finnhub/Stooq).
+                        <InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." />
+                    </p>
+                </div>
                 {!isAiAvailable && data.commodityHoldings.length > 0 && (
-                    <div className="alert-warning mb-4">
+                    <div className="alert-warning mb-4 rounded-lg">
                         <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
                     </div>
                 )}
                 {groundingChunks.length > 0 && (
-                    <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-md border">
-                        <p className="font-semibold text-gray-700">Sources:</p>
-                        <ul className="list-disc pl-5 mt-1 space-y-1">
+                    <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-lg border border-slate-200">
+                        <p className="font-semibold text-gray-700 mb-1">Sources</p>
+                        <ul className="list-disc pl-5 space-y-0.5">
                             {groundingChunks.map((chunk, index) => (
                                 chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
                             ))}
                         </ul>
                     </div>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedCommodities.map((h) => (
                         <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
                     ))}
-                    {data.commodityHoldings.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No commodities added yet.</p>}
+                    {data.commodityHoldings.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
                 </div>
             </SectionCard>
             

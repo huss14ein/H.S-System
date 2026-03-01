@@ -163,8 +163,8 @@ export interface Budget {
   limit: number;
   month: number; // 1-12
   year: number;
-  /** When 'yearly', limit is the total per year (e.g. housing). When missing or 'monthly', limit is per month. */
-  period?: 'monthly' | 'yearly';
+  /** When 'yearly', limit is total per year. When 'weekly'/'daily', limit is per week/day. When missing or 'monthly', limit is per month. */
+  period?: 'monthly' | 'yearly' | 'weekly' | 'daily';
   /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
   tier?: BudgetTier;
 }
@@ -291,6 +291,8 @@ export interface RecurringTransaction {
   /** Day of month (1–28) when the transaction should be created. */
   dayOfMonth: number;
   enabled: boolean;
+  /** When true, do not auto-record on the day; user must apply manually from Transactions. When false (default), system records on dayOfMonth automatically. */
+  addManually?: boolean;
 }
 
 export interface FinancialData {
@@ -545,17 +547,38 @@ export interface WealthUltraOrder {
 }
 
 export type WealthUltraAlertType =
+  | 'sleeve_drift'            // over or under target
   | 'sleeve_overweight'
   | 'spec_breach'
   | 'max_per_ticker_breach'
   | 'over_budget'
   | 'position_trim_suggest'   // > +40%
-  | 'position_risk_review';   // < -30%
+  | 'position_risk_review'    // < -30%
+  | 'dip_buy_opportunity'     // Core/Upside down 15%+ (DipBuy mode)
+  | 'deployment_opportunity'  // monthly Core deploy has suggested ticker
+  | 'cash_reserve_low'        // deployable below reserve
+  | 'concentration_risk'      // top tickers too high % of portfolio
+  | 'spec_loss_review'        // Spec position large loss
+  | 'trailing_stop_near'      // price near trailing stop
+  | 'underperformer_review'   // worst capital efficiency — review holdings
+  | 'cash_deploy_prompt'      // deployable cash + Core under target
+  | 'portfolio_stress'        // many positions in meaningful loss
+  | 'portfolio_on_track';     // positive: allocation on target, no critical issues
+
+export type WealthUltraAlertSeverity = 'critical' | 'warning' | 'info';
 
 export interface WealthUltraAlert {
   type: WealthUltraAlertType;
   message: string;
+  /** Short actionable suggestion for the user. */
+  actionHint?: string;
+  /** Optional short title for UI (e.g. "Rebalance", "Opportunity"). */
+  title?: string;
+  /** critical = act soon; warning = review; info = opportunity or FYI. */
+  severity?: WealthUltraAlertSeverity;
   ticker?: string;
+  /** For grouped alerts (e.g. multiple trim candidates). */
+  tickers?: string[];
   sleeve?: WealthUltraSleeve;
   value?: number;
 }

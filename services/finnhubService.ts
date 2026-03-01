@@ -105,21 +105,72 @@ export interface CandlePoint {
   price: number;
 }
 
-/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. */
+/** Stooq symbol for historical CSV: Saudi 2222.SR -> 2222.sr, US AAPL -> aapl.us, BRK.A -> brk-a */
+function toStooqSymbol(symbol: string): string {
+  const s = (symbol || '').trim();
+  if (/\.(SR|SA)$/i.test(s)) return s.toLowerCase();
+  const hadDot = s.includes('.');
+  const lower = s.toLowerCase().replace(/\./g, '-');
+  return hadDot ? lower : lower + '.us';
+}
+
+/** Fetch ~1 month of daily close prices from Stooq (no API key). Used when Finnhub has no data (e.g. Tadawul). */
+async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
+  const stooqSym = toStooqSymbol(symbol);
+  try {
+    const res = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+    if (!res.ok) return [];
+    const csv = await res.text();
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return [];
+    const rows = lines.slice(1).map((line) => line.split(','));
+    const withDate: { date: number; close: number }[] = [];
+    for (const row of rows) {
+      const dateStr = row[0];
+      const close = Number(row[4]);
+      if (!Number.isFinite(close) || close <= 0) continue;
+      const date = dateStr ? new Date(dateStr).getTime() : NaN;
+      if (!Number.isFinite(date)) continue;
+      withDate.push({ date, close });
+    }
+    if (withDate.length === 0) return [];
+    withDate.sort((a, b) => a.date - b.date);
+    const last31 = withDate.slice(-31);
+    return last31.map((p, i) => ({ day: i, price: p.close }));
+  } catch {
+    return [];
+  }
+}
+
+/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. Uses Finnhub; for Saudi (.SR/.SA) falls back to Stooq when Finnhub returns no data. */
 export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
-  const finnhubSymbol = toFinnhubSymbol(symbol);
-  const to = Math.floor(Date.now() / 1000);
-  const from = to - 31 * 24 * 60 * 60;
-  const token = getToken();
-  const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
-  const res = await finnhubFetch(url);
-  if (!res.ok) return [];
-  const data = await res.json();
-  const t = data?.t as number[] | undefined;
-  const c = data?.c as number[] | undefined;
-  if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) return [];
-  const points: CandlePoint[] = t.map((_, i) => ({ day: i, price: Number(c[i]) }));
-  return points.filter((p) => Number.isFinite(p.price) && p.price > 0);
+  try {
+    const finnhubSymbol = toFinnhubSymbol(symbol);
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - 31 * 24 * 60 * 60;
+    const token = getToken();
+    const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
+    const res = await finnhubFetch(url);
+    if (!res.ok) {
+      if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
+      return [];
+    }
+    const data = await res.json();
+    const t = data?.t as number[] | undefined;
+    const c = data?.c as number[] | undefined;
+    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) {
+      if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
+      return [];
+    }
+    const pairs = t.map((ts, i) => ({ ts, price: Number(c[i]) })).filter((p) => Number.isFinite(p.price) && p.price > 0);
+    pairs.sort((a, b) => a.ts - b.ts);
+    const points = pairs.map((p, i) => ({ day: i, price: p.price }));
+    if (points.length === 0 && /\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
+    return points;
+  } catch {
+    if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
+    return [];
+  }
 }
 
 // --- Market status (exchange open/closed) ---

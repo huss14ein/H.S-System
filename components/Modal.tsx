@@ -67,18 +67,18 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
     >
       <div
         ref={panelRef}
-        className="bg-white rounded-xl shadow-xl max-w-lg w-full mb-8 border border-slate-200"
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full mb-8 border border-slate-200 min-w-0 overflow-hidden"
         role="document"
         onClick={e => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
-        <div className="flex justify-between items-center px-5 py-4 border-b border-slate-200 flex-shrink-0">
-          <h3 id={titleId} className="text-lg font-semibold text-dark">{title}</h3>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" aria-label="Close">
+        <div className="flex justify-between items-center px-5 py-4 border-b border-slate-200 flex-shrink-0 min-w-0">
+          <h3 id={titleId} className="text-lg font-semibold text-dark truncate min-w-0 mr-2">{title}</h3>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 shrink-0" aria-label="Close">
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
-        <div className="p-5 sm:p-6">
+        <div className="p-5 sm:p-6 min-w-0 overflow-auto">
           {children}
         </div>
       </div>

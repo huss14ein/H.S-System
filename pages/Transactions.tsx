@@ -227,6 +227,7 @@ const RecurringModal: React.FC<{
     const [category, setCategory] = useState('');
     const [dayOfMonth, setDayOfMonth] = useState('1');
     const [enabled, setEnabled] = useState(true);
+    const [addManually, setAddManually] = useState(false);
 
     React.useEffect(() => {
         if (recurring) {
@@ -238,6 +239,7 @@ const RecurringModal: React.FC<{
             setCategory(recurring.category);
             setDayOfMonth(String(recurring.dayOfMonth));
             setEnabled(recurring.enabled);
+            setAddManually(recurring.addManually === true);
         } else {
             setDescription('');
             setAmount('');
@@ -247,6 +249,7 @@ const RecurringModal: React.FC<{
             setCategory('Rent');
             setDayOfMonth('1');
             setEnabled(true);
+            setAddManually(false);
         }
     }, [recurring, isOpen, accounts, budgetCategories]);
 
@@ -271,6 +274,7 @@ const RecurringModal: React.FC<{
             category: category.trim() || description.trim(),
             dayOfMonth: day,
             enabled,
+            addManually,
         });
         onClose();
     };
@@ -323,6 +327,11 @@ const RecurringModal: React.FC<{
                     <input type="checkbox" id="recurring-enabled" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
                     <label htmlFor="recurring-enabled" className="text-sm text-gray-700">Enabled (include when applying)</label>
                 </div>
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" id="recurring-add-manually" checked={addManually} onChange={e => setAddManually(e.target.checked)} />
+                    <label htmlFor="recurring-add-manually" className="text-sm text-gray-700">Add manually only (do not auto-record on the day)</label>
+                </div>
+                <p className="text-xs text-slate-500">When unchecked, the transaction is recorded automatically on the specified day of each month.</p>
                 <div className="flex justify-end gap-2 pt-2">
                     <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
                     <button type="submit" className="btn-primary">{recurring ? 'Update' : 'Add'}</button>
@@ -624,6 +633,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     <span className="text-xs text-gray-500 ml-2">
                                         • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
                                         {r.type === 'expense' && r.budgetCategory && ` • ${r.budgetCategory}`}
+                                        {r.addManually ? <span className="ml-1 text-slate-500">(manual)</span> : <span className="ml-1 text-emerald-600">(auto)</span>}
                                     </span>
                                     {!r.enabled && <span className="ml-2 text-xs text-amber-600">(paused)</span>}
                                 </div>

@@ -7,6 +7,13 @@ Use these patterns so all pages look and behave consistently.
 - **PageLayout** (`components/PageLayout.tsx`): Wraps the page with a title, optional description, and optional action (e.g. "Add" button). Use for every main app page.
 - **Page container**: The root of page content uses the `page-container` class (or PageLayout, which applies it). Spacing between sections: `space-y-8`.
 
+## Drag-and-drop and resizable grids
+
+- **DraggableResizableGrid** (`components/DraggableResizableGrid.tsx`): Use for any page that wants components (cards, sections) to be **draggable** and **resizable** with no extra buttons. Users drag items to reorder and resize by the corner handle.
+- **Centralized and standard**: One component, one persistence key per grid. Layout is stored in `localStorage` under `rgl-{layoutKey}` so it is remembered across sessions.
+- **Usage**: Import `DraggableResizableGrid`, pass a unique `layoutKey` (e.g. `"dashboard-kpi"`, `"assets-summary"`) and an `items` array of `{ id, content, defaultW?, defaultH?, minW?, minH? }`. Grid is 12 columns; `defaultW`/`defaultH` are in grid units. Drag anywhere on the item to move; use the resize handle on the bottom-right to resize.
+- **Where used**: Dashboard (KPI cards), Assets (summary cards). Use the same pattern on Budgets, Summary, or any page with a set of cards/sections you want reorderable and resizable.
+
 ## Content blocks
 
 - **SectionCard** (`components/SectionCard.tsx`): Main content blocks. Use for:
@@ -55,6 +62,10 @@ Use these patterns so all pages look and behave consistently.
 ## Charts & graphs
 
 - Use the **chart theme** and **ChartContainer** from `components/charts/` so all graphs look consistent. See **docs/CHARTS.md** for colors, tooltips, empty states, and currency formatting in charts.
+
+## Investment plan execution
+
+- **Execute & View Results** (Investments → Plan): Uses AI when available; if the AI service is unavailable (e.g. quota), results are **automatically computed with rule-based logic** so execution always returns a plan. Users can also click **Run rule-based only** to skip AI. Rule-based allocation uses plan weights (Core / High-Upside / Speculative) and broker constraints; audit log is marked "Rule-based execution (no AI)".
 
 ## Performance & security
 

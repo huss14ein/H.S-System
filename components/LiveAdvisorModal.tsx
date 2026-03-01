@@ -41,14 +41,13 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
         const budget = data.budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
         if (!budget) return { error: `Budget category "${category}" not found.` };
-        
+        const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const spent = data.transactions
             .filter(t => t.type === 'expense' && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
             .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-        
-        return { limit: budget.limit, spent, remaining: budget.limit - spent };
+        return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
     }, [data]);
     
      const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {

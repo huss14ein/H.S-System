@@ -54,11 +54,13 @@ export function validateWealthUltraConfig(c: WealthUltraConfig): { valid: boolea
 }
 
 export function getRiskWeight(config: WealthUltraConfig, tier: string): number {
-  switch (tier) {
-    case 'Low': return config.riskWeightLow;
-    case 'Med': return config.riskWeightMed;
-    case 'High': return config.riskWeightHigh;
-    case 'Spec': return config.riskWeightSpec;
-    default: return config.riskWeightMed;
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+  const fallback = (v: number, def: number): number => (Number.isFinite(v) ? v : def);
+  switch (String(tier)) {
+    case 'Low': return fallback(num(config.riskWeightLow), DEFAULT_CONFIG.riskWeightLow);
+    case 'Med': return fallback(num(config.riskWeightMed), DEFAULT_CONFIG.riskWeightMed);
+    case 'High': return fallback(num(config.riskWeightHigh), DEFAULT_CONFIG.riskWeightHigh);
+    case 'Spec': return fallback(num(config.riskWeightSpec), DEFAULT_CONFIG.riskWeightSpec);
+    default: return fallback(num(config.riskWeightMed), DEFAULT_CONFIG.riskWeightMed);
   }
 }

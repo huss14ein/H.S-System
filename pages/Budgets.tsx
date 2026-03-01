@@ -45,7 +45,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         if (budgetToEdit) {
             setCategory(budgetToEdit.category);
             setLimit(String(budgetToEdit.limit));
-            setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : 'Monthly');
+            setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
         } else {
             setCategory('');
@@ -59,22 +59,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
         const isYearly = limitPeriod === 'Yearly';
-        const storedLimit = isYearly
-            ? rawLimit
-            : limitPeriod === 'Monthly'
-                ? rawLimit
-                : limitPeriod === 'Weekly'
-                    ? rawLimit * 4.345
-                    : rawLimit * 30;
+        const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
         onSave({
             category,
-            limit: storedLimit,
+            limit: rawLimit,
             month,
             year,
-            period: isYearly ? 'yearly' : 'monthly',
+            period,
             tier,
         }, !!budgetToEdit);
         onClose();
@@ -291,7 +285,8 @@ const Budgets: React.FC = () => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + b.limit));
+            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
 
             return Array.from(yearlyLimitByCategory.entries())
                 .map(([category, yearlyLimit]) => {
@@ -308,7 +303,7 @@ const Budgets: React.FC = () => {
                         spent,
                         limit: yearlyLimit,
                         displayLimit: yearlyLimit,
-                        monthlyLimit: yearlyLimit,
+                        monthlyLimit: yearlyLimit / 12,
                         percentage,
                         colorClass,
                     };
@@ -317,7 +312,7 @@ const Budgets: React.FC = () => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
+                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
                 const spent = spending.get(budget.category) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -380,8 +375,8 @@ const Budgets: React.FC = () => {
 
 
     const normalizeToMonthly = (amount: number, period: 'Monthly' | 'Weekly' | 'Daily' | 'Yearly') => {
-        if (period === 'Weekly') return amount * 4.345;
-        if (period === 'Daily') return amount * 30;
+        if (period === 'Weekly') return amount * (52 / 12);
+        if (period === 'Daily') return amount * (365 / 12);
         if (period === 'Yearly') return amount / 12;
         return amount;
     };
@@ -862,13 +857,13 @@ const Budgets: React.FC = () => {
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : ''}</span>
+                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? 1} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${budget.monthlyLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                    {budget.monthlyLimit - budget.spent >= 0 
-                                        ? `${formatCurrencyString(budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
-                                        : `${formatCurrencyString(Math.abs(budget.monthlyLimit - budget.spent), { digits: 0 })} over`
+                                <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
+                                <p className={`text-right text-sm mt-1 ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                    {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 
+                                        ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
+                                        : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`
                                     }
                                 </p>
                                 <div className="mt-2 flex items-center justify-between text-xs">

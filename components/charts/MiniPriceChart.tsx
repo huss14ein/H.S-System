@@ -42,15 +42,15 @@ interface MiniPriceChartProps {
 
 const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, changePercent, formatPrice = (p: number) => p.toFixed(2), showIllustrativeLabel = false, historicalData }) => {
     const data = useMemo(() => {
-        if (historicalData && historicalData.length > 0) return historicalData;
+        if (historicalData && historicalData.length > 0) return [...historicalData].sort((a, b) => a.day - b.day);
         return generateIllustrativeTrendData(currentPrice, changePercent);
     }, [historicalData, currentPrice, changePercent]);
     const isUp = data.length > 0 && data[data.length - 1].price >= data[0].price;
     const color = isUp ? '#22c55e' : '#ef4444';
     const startPrice = data.length > 0 ? data[0].price : 0;
     const endPrice = data.length > 0 ? data[data.length - 1].price : 0;
-    const trendPct = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : (changePercent ?? 0);
     const isRealData = Boolean(historicalData && historicalData.length > 0);
+    const trendPct = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : null;
 
     return (
         <div className="w-full min-w-[120px]">
@@ -60,15 +60,19 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                         <span className="font-semibold text-gray-800 tabular-nums">{formatPrice(currentPrice)}</span>
                     )}
                     {showIllustrativeLabel && !isRealData && (
-                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide" title="Not real historical data">Illustrative</span>
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide" title="Chart shape is illustrative; no real 1-month history available for this symbol">Illustrative</span>
                     )}
                     {showIllustrativeLabel && isRealData && (
-                        <span className="text-[10px] font-medium text-emerald-600 uppercase tracking-wide" title="Real 1-month history">1M</span>
+                        <span className="text-[10px] font-medium text-emerald-600 uppercase tracking-wide" title="Real 1-month daily close history">1M</span>
                     )}
                 </div>
-                <span className={`font-medium tabular-nums ${trendPct >= 0 ? 'text-green-600' : 'text-red-600'}`} title={isRealData ? '1-month change' : undefined}>
-                    {trendPct >= 0 ? '+' : ''}{trendPct.toFixed(2)}%
-                </span>
+                {trendPct !== null ? (
+                    <span className={`font-medium tabular-nums ${trendPct >= 0 ? 'text-green-600' : 'text-red-600'}`} title="1-month change">
+                        {trendPct >= 0 ? '+' : ''}{trendPct.toFixed(2)}%
+                    </span>
+                ) : (
+                    <span className="text-[10px] text-slate-400 font-medium" title="1-month trend not available">—</span>
+                )}
             </div>
             <div style={{ width: '100%', height: 56 }}>
                 <ResponsiveContainer>

@@ -1,5 +1,6 @@
 import React, { useMemo, useContext, useState, useCallback } from 'react';
 import Card from '../components/Card';
+import DraggableResizableGrid from '../components/DraggableResizableGrid';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
@@ -27,6 +28,7 @@ import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 interface ExtendedBudget extends Budget {
     spent: number;
     percentage: number;
+    monthlyLimit?: number;
 }
 
 const AIExecutiveSummary: React.FC = () => {
@@ -236,10 +238,10 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
                                     {status.text}
                                 </span>
                             </div>
-                            <ProgressBar value={budget.spent} max={budget.limit} color={status.colorClass} />
+                            <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? budget.limit} color={status.colorClass} />
                             <div className="flex justify-between items-baseline text-xs text-gray-500 mt-1">
                                 <span>
-                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.limit, { digits: 0 })}
+                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.monthlyLimit ?? budget.limit, { digits: 0 })}
                                     <span className="font-medium text-gray-600"> ({budget.percentage.toFixed(0)}%)</span>
                                 </span>
                                 <span>
@@ -297,7 +299,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
             const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
             const monthlyPnL = monthlyIncome - monthlyExpenses;
-            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + (b.period === 'yearly' ? b.limit / 12 : b.limit), 0);
+            const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
             const budgetVariance = totalBudget - monthlyExpenses;
             
             // Previous Month P&L for trend
@@ -317,8 +320,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                                cashAndSavingsPositive +
                                totalCommodities +
                                totalInvestmentsValue;
-            const totalDebt = (data.liabilities || []).filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, liab: { amount: number }) => sum + Math.abs(liab.amount), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
-            const totalReceivable = (data.liabilities || []).filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, liab: { amount: number }) => sum + liab.amount, 0);
+            const totalDebt = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+            const totalReceivable = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
             const netWorth = totalAssets - totalDebt + totalReceivable;
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
@@ -346,8 +349,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlyBudgets = (data.budgets || [])
                 .map(budget => {
                     const spent = monthlySpending.get(budget.category) || 0;
-                    const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
-                    return { ...budget, spent, percentage };
+                    const monthlyLimit = budgetToMonthly(budget);
+                    const percentage = monthlyLimit > 0 ? (spent / monthlyLimit) * 100 : 0;
+                    return { ...budget, spent, percentage, monthlyLimit };
                 })
                 .sort((a, b) => b.percentage - a.percentage);
             
@@ -447,14 +451,38 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                     </div>
                 </div>
             )}
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
-                {KPI_CARD_ORDER.map((cardKey) => (
-                    <div key={cardKey} className="min-h-[132px] flex flex-col">
-                        {kpiCards[cardKey]}
+
+            {(() => {
+                const today = new Date().getDate();
+                const isDueToday = (r: { dayOfMonth: number }) =>
+                    r.dayOfMonth === today || (today >= 28 && r.dayOfMonth === 28);
+                const dueToday = (data?.recurringTransactions ?? []).filter((r: { enabled: boolean; dayOfMonth: number; addManually?: boolean }) => r.enabled && isDueToday(r) && !r.addManually);
+                return dueToday.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                        <CalendarDaysIcon className="h-5 w-5 text-slate-500" />
+                        <span className="text-slate-700"><strong>{dueToday.length}</strong> recurring {dueToday.length === 1 ? 'item' : 'items'} due today</span>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline ml-1">
+                                View in Transactions →
+                            </button>
+                        )}
                     </div>
-                ))}
-            </div>
+                );
+            })()}
+            
+            <DraggableResizableGrid
+                layoutKey="dashboard-kpi"
+                items={KPI_CARD_ORDER.map((cardKey) => ({
+                    id: cardKey,
+                    content: <div className="min-h-[132px] flex flex-col h-full">{kpiCards[cardKey]}</div>,
+                    defaultW: 2,
+                    defaultH: 2,
+                    minW: 1,
+                    minH: 1,
+                }))}
+                cols={12}
+                rowHeight={72}
+            />
 
             {data?.accounts?.length > 0 && (
                 <div className="section-card border-l-4 border-primary/40">

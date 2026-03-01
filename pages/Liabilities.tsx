@@ -212,8 +212,8 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         return [...data.liabilities, ...creditCardDebts];
     }, [data.liabilities, data.accounts]);
 
-    const allDebts = useMemo(() => allLiabilities.filter(l => l.amount < 0), [allLiabilities]);
-    const allReceivables = useMemo(() => allLiabilities.filter(l => l.amount > 0), [allLiabilities]);
+    const allDebts = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) < 0), [allLiabilities]);
+    const allReceivables = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) > 0), [allLiabilities]);
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
     const liabilityIds = useMemo(() => new Set(data.liabilities.map(l => l.id)), [data.liabilities]);
@@ -221,9 +221,9 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
         const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
-        const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount), 0);
-        const totalReceivable = activeReceivables.reduce((sum, liab) => sum + liab.amount, 0);
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
+        const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
+        const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
+        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };

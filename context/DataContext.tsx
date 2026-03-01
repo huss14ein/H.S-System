@@ -63,6 +63,7 @@ interface DataContextType {
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
   applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
+  applyRecurringDueToday: () => Promise<number>;
   addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => Promise<void>;
   updatePlatform: (platform: Account) => Promise<void>;
   deletePlatform: (platformId: string) => Promise<void>;
@@ -339,6 +340,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
+    const transactionsRef = useRef<FinancialData['transactions']>(data.transactions);
+    transactionsRef.current = data.transactions;
 
     const normalizeHolding = (holding: any): Holding => ({
         ...holding,
@@ -411,6 +414,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         category: raw.category ?? '',
         dayOfMonth: Math.min(28, Math.max(1, Number(raw.dayOfMonth ?? raw.day_of_month ?? 1))),
         enabled: raw.enabled !== false,
+        addManually: raw.addManually === true || raw.add_manually === true,
     });
 
     const isMissingColumnError = (error: any) => {
@@ -544,7 +548,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         return () => clearTimeout(timeoutId);
     }, [auth?.user]);
-    
+
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
 
@@ -766,10 +770,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const db = supabase;
       const payload = withUser(budget);
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
+      // Retry once with same payload. Do not convert yearly limit to monthly or reload will show wrong value (DB would store monthly amount with period=yearly).
       if (error && (payload as any).period) {
-        const fallback: any = { ...payload, limit: (payload as any).period === 'yearly' ? (payload.limit / 12) : payload.limit };
-        delete fallback.period;
-        const retry = await db.from('budgets').insert(fallback).select().single();
+        const retry = await db.from('budgets').insert(payload).select().single();
         newBudget = retry.data;
         error = retry.error;
       }
@@ -779,7 +782,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       if (newBudget) {
         const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier };
-        if ((budget as Budget).period === 'yearly') withPeriod.limit = budget.limit;
+        if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
       }
     };
@@ -839,6 +842,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             row.recurring_id = recId;
             delete row.recurringId;
         }
+        const budgetCat = (transaction as { budgetCategory?: string }).budgetCategory;
+        if (budgetCat !== undefined) {
+            row.budget_category = budgetCat;
+            delete row.budgetCategory;
+        }
+        const accId = transaction.accountId;
+        if (accId !== undefined) {
+            row.account_id = accId;
+            delete row.accountId;
+        }
         const { data: newTx, error } = await db.from('transactions').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding transaction:", error);
@@ -850,7 +863,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('transactions').update(transaction).match({ id: transaction.id, user_id: auth.user.id });
+        const updateRow: Record<string, unknown> = { ...transaction };
+        const recId = (transaction as { recurringId?: string }).recurringId;
+        if (recId !== undefined) {
+            updateRow.recurring_id = recId;
+            delete updateRow.recurringId;
+        }
+        if (transaction.budgetCategory !== undefined) {
+            updateRow.budget_category = transaction.budgetCategory;
+            delete updateRow.budgetCategory;
+        }
+        if (transaction.accountId !== undefined) {
+            updateRow.account_id = transaction.accountId;
+            delete updateRow.accountId;
+        }
+        const { error } = await db.from('transactions').update(updateRow).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalizeTransaction({ ...t, ...transaction }) : t) }));
     };
@@ -875,6 +902,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: recurring.category,
             day_of_month: recurring.dayOfMonth,
             enabled: recurring.enabled,
+            add_manually: recurring.addManually === true,
         };
         const { data: inserted, error } = await db.from('recurring_transactions').insert(withUser(row)).select().single();
         if (error) {
@@ -900,6 +928,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: recurring.category,
             day_of_month: recurring.dayOfMonth,
             enabled: recurring.enabled,
+            add_manually: recurring.addManually === true,
         };
         const { error } = await db.from('recurring_transactions').update(row).match({ id: recurring.id, user_id: auth.user.id });
         if (error) console.error("Error updating recurring:", error);
@@ -921,17 +950,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const applyRecurringForMonth = async (year: number, month: number): Promise<{ applied: number; skipped: number }> => {
         if (!supabase || !auth?.user) return { applied: 0, skipped: 0 };
-        const enabled = data.recurringTransactions.filter(r => r.enabled);
+        const enabled = data.recurringTransactions.filter(r => r.enabled && !(r.addManually === true));
         const monthStr = String(month).padStart(2, '0');
         const dayStr = (d: number) => String(d).padStart(2, '0');
         let applied = 0;
         let skipped = 0;
         for (const rule of enabled) {
             const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
-            const already = data.transactions.some(
-                t => (t.recurringId ?? (t as any).recurring_id) === rule.id &&
-                    t.date.startsWith(`${year}-${monthStr}`)
-            );
+            const monthPrefix = `${year}-${monthStr}-`;
+            // For EOM rules (dayOfMonth 28), treat any transaction on 28–31 in this month as already applied (matches applyRecurringDueToday which uses effectiveDateStr 28th on days 29–31)
+            const already = data.transactions.some(t => {
+                const rid = t.recurringId ?? (t as any).recurring_id;
+                if (rid !== rule.id) return false;
+                if (!t.date.startsWith(monthPrefix)) return false;
+                if (rule.dayOfMonth === 28) {
+                    const day = parseInt(t.date.slice(8, 10), 10);
+                    if (day >= 28) return true;
+                }
+                return t.date.startsWith(date);
+            });
             if (already) {
                 skipped++;
                 continue;
@@ -955,6 +992,72 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         return { applied, skipped };
     };
+
+    /** Apply recurring rules that are due today (dayOfMonth === today) and not addManually. Called after data load, once per day.
+     * dayOfMonth is stored clamped to 1–28, so on the 29th/30th/31st we treat dayOfMonth 28 as due (end-of-month); we use effectiveDateStr 28th so duplicates are detected by applyRecurringForMonth. */
+    const applyRecurringDueToday = useCallback(async (): Promise<number> => {
+        if (!supabase || !auth?.user) return 0;
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = today.getMonth() + 1;
+        const day = today.getDate();
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = (d: number) => String(d).padStart(2, '0');
+        // dayOfMonth is clamped to 1–28, so (dayOfMonth > lastDayOfMonth) is never true; only exact match and EOM-28 apply
+        const isDueToday = (r: { dayOfMonth: number }) =>
+            r.dayOfMonth === day || (day >= 28 && r.dayOfMonth === 28);
+        const toApply = data.recurringTransactions.filter(
+            r => r.enabled && !(r.addManually === true) && isDueToday(r)
+        );
+        let applied = 0;
+        const todayStr = `${year}-${monthStr}-${dayStr(day)}`;
+        const appliedThisRun = new Set<string>();
+        for (const rule of toApply) {
+            // Use effective due date so we match applyRecurringForMonth: dayOfMonth 28 on 29th–31st → 28th
+            const effectiveDateStr = (day >= 28 && rule.dayOfMonth === 28)
+                ? `${year}-${monthStr}-28`
+                : todayStr;
+            const key = `${rule.id}:${effectiveDateStr}`;
+            if (appliedThisRun.has(key)) continue;
+            const already = (transactionsRef.current ?? []).some(
+                t => (t.recurringId ?? (t as any).recurring_id) === rule.id &&
+                    t.date.startsWith(effectiveDateStr)
+            );
+            if (already) continue;
+            const amount = rule.type === 'income' ? rule.amount : -rule.amount;
+            try {
+                await addTransaction({
+                    date: effectiveDateStr,
+                    description: rule.description,
+                    amount,
+                    category: rule.category,
+                    accountId: rule.accountId,
+                    budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
+                    type: rule.type,
+                    recurringId: rule.id,
+                });
+                appliedThisRun.add(key);
+                applied++;
+            } catch (err) {
+                // Re-throw so the effect's .catch() runs and clears the sessionStorage lock, allowing retry later
+                throw err;
+            }
+        }
+        return applied;
+    }, [data.recurringTransactions, addTransaction, supabase, auth?.user]);
+
+    // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
+    // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
+    useEffect(() => {
+        if (loading || !auth?.user || !data.recurringTransactions?.length) return;
+        const todayStr = new Date().toDateString();
+        const storageKey = `recurring_auto_apply_${auth.user.id}`;
+        if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(storageKey) === todayStr) return;
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey, todayStr);
+        applyRecurringDueToday().catch(() => {
+            if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
+        });
+    }, [loading, auth?.user, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => {
@@ -1439,7 +1542,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return bank + platformCash;
     }, [data.accounts, getAvailableCashForAccount]);
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

@@ -31,7 +31,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text }) => {
         !
       </button>
       {open && (
-        <div className="absolute z-20 top-7 right-0 w-56 rounded-md border border-gray-200 bg-white p-2 text-xs text-gray-700 shadow-lg">
+        <div className="absolute z-20 top-7 right-0 w-72 max-w-[min(20rem,90vw)] rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg leading-relaxed">
           {text}
         </div>
       )}

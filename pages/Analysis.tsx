@@ -90,10 +90,10 @@ const AssetLiabilityChart: React.FC = () => {
         const ast = data?.assets ?? [];
         const liab = data?.liabilities ?? [];
         const totalInvestments = inv.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance), 0);
+        const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
         const totalPhysicalAssets = ast.reduce((sum, asset) => sum + asset.value, 0);
-        const totalDebt = liab.filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, l: { amount: number }) => sum + Math.abs(l.amount), 0) + acc.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, a) => sum + Math.abs(a.balance), 0);
-        const totalReceivable = liab.filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, l: { amount: number }) => sum + l.amount, 0);
+        const totalDebt = liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0) + acc.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, a) => sum + Math.abs(a.balance ?? 0), 0);
+        const totalReceivable = liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
         return [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
@@ -159,10 +159,10 @@ const Analysis: React.FC = () => {
 
         // Composition Data
         const totalInvestments = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
         const totalPhysicalAssets = assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalDebt = liabilities.filter((l: { amount: number }) => l.amount < 0).reduce((sum: number, liab: { amount: number }) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum: number, acc: { balance: number }) => sum + Math.abs(acc.balance), 0);
-        const totalReceivable = liabilities.filter((l: { amount: number }) => l.amount > 0).reduce((sum: number, liab: { amount: number }) => sum + liab.amount, 0);
+        const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivable = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
         const compositionData = [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },

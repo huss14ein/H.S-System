@@ -126,6 +126,24 @@
     .section-card {
         @apply bg-white rounded-xl shadow-md border border-slate-200/80 p-4 sm:p-5 md:p-6 min-w-0 max-w-full overflow-hidden;
     }
+    /* DraggableResizableGrid: item wrapper so content fills cell and resize handle is usable */
+    .rgl-item-wrapper {
+        @apply w-full h-full min-h-[80px] flex flex-col;
+    }
+    .rgl-container .react-grid-item > .react-resizable-handle {
+        @apply opacity-60 hover:opacity-100;
+    }
+    /* Resize handle hidden until hover (no visible buttons); drag is on the whole item */
+    .rgl-handles-on-hover .react-grid-item > .react-resizable-handle {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+    .rgl-handles-on-hover .react-grid-item:hover > .react-resizable-handle {
+        opacity: 0.7;
+    }
+    .rgl-handles-on-hover .react-grid-item > .react-resizable-handle:hover {
+        opacity: 1;
+    }
     .section-card-hover {
         @apply section-card transition-all duration-200 hover:shadow-lg hover:border-slate-300 cursor-pointer;
     }

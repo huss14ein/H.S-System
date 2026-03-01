@@ -99,8 +99,9 @@ const Zakat: React.FC = () => {
     const deductibleLiabilities = useMemo(() => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
-        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const trackedLiabilities = liabilities.filter(l => l.status === 'Active').reduce((sum, liability) => sum + Math.abs(liability.amount), 0);
+        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
+        const trackedLiabilities = liabilities.filter(l => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum, liability) => sum + Math.abs(liability.amount ?? 0), 0);
         const total = shortTermDebts + trackedLiabilities + otherDebts;
         return { shortTermDebts, trackedLiabilities, otherDebts, total };
     }, [otherDebts, data?.accounts, data?.liabilities]);

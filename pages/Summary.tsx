@@ -74,8 +74,8 @@ const Summary: React.FC = () => {
         const cashSavingsAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
         const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalDebt = liabilities.filter(l => l.amount < 0).reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
-        const totalReceivable = liabilities.filter(l => l.amount > 0).reduce((sum, liab) => sum + liab.amount, 0);
+        const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+        const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
         const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
         const totalInvestmentsValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +

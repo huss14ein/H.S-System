@@ -33,11 +33,16 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       ? 'text-red-700'
       : (valueColor || 'text-dark');
 
-  const cardToneClass = isPositive
-    ? 'from-green-50 via-white to-green-100 border-green-200'
-    : isNegative
-      ? 'from-red-50 via-white to-red-100 border-red-200'
-      : 'from-sky-50 via-white to-indigo-50 border-slate-200';
+  const cardToneClass = indicatorColor
+    ? (indicatorColor === 'green' ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200' :
+       indicatorColor === 'yellow' ? 'from-amber-50/80 via-white to-yellow-50/80 border-amber-200' :
+       indicatorColor === 'red' ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200' :
+       'from-sky-50 via-white to-indigo-50 border-slate-200')
+    : isPositive
+      ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200'
+      : isNegative
+        ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200'
+        : 'from-sky-50 via-white to-indigo-50 border-slate-200';
 
   useEffect(() => {
     const isNumeric = typeof value === 'number' || (typeof value === 'string' && !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, ""))));
@@ -54,10 +59,10 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
     prevValueRef.current = numericValue;
   }, [value]);
   
-  const indicatorClass = 
-      indicatorColor === 'green' ? 'border-t-green-500' :
-      indicatorColor === 'yellow' ? 'border-t-yellow-500' :
-      indicatorColor === 'red' ? 'border-t-red-500' :
+  const indicatorClass =
+      indicatorColor === 'green' ? 'border-l-4 border-l-emerald-500 border-t-emerald-500/30' :
+      indicatorColor === 'yellow' ? 'border-l-4 border-l-amber-500 border-t-amber-500/30' :
+      indicatorColor === 'red' ? 'border-l-4 border-l-rose-500 border-t-rose-500/30' :
       'border-t-transparent';
 
   const flashClass = flash === 'up' ? 'flash-green' : flash === 'down' ? 'flash-red' : '';

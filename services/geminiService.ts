@@ -639,12 +639,14 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
     const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
     const monthlyPnL = monthlyIncome - monthlyExpenses;
 
+    const budgetMonthlyLimit = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
     const overspentBudgets = data.budgets
         .map(budget => {
             const spent = monthlyTransactions
                 .filter(t => t.type === 'expense' && t.budgetCategory === budget.category)
                 .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-            const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
+            const limit = budgetMonthlyLimit(budget);
+            const percentage = limit > 0 ? (spent / limit) * 100 : 0;
             return { ...budget, spent, percentage };
         })
         .filter(b => b.percentage > 90)
@@ -816,7 +818,24 @@ Details: ${retryDetails}`;
     }
 };
 
-/** AI suggestions for watchlist symbols: diversification, themes, concepts to research. Educational only. */
+/** Fallback when AI is unavailable for watchlist tips. */
+function buildFallbackWatchlistTips(symbols: string[]): string {
+    const list = symbols.slice(0, 20).join(', ');
+    return `## Watchlist summary (no AI)
+
+Your watchlist: **${list}**
+
+### When AI is available
+- Use **Generate Watchlist Tips** for diversification, themes, and concepts to research.
+- AI suggestions are educational only (no buy/sell advice).
+
+### General tips
+- Review sector and region concentration; consider diversifying if heavily concentrated.
+- Revisit themes (e.g. dividend vs growth) and position sizing.
+- Try again later for AI-generated tips when the service is available.`;
+}
+
+/** AI suggestions for watchlist symbols: diversification, themes, concepts to research. Educational only. Returns fallback text when AI is unavailable. */
 export const getAIWatchlistAdvice = async (symbols: string[]): Promise<string> => {
     if (!symbols?.length) return 'Add symbols to your watchlist to get AI tips.';
     const list = symbols.slice(0, 25).join(', ');
@@ -839,8 +858,8 @@ Keep each section to 2–4 short bullets. Markdown only.`;
     try {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || 'No suggestions generated.';
-    } catch (error) {
-        throw error;
+    } catch {
+        return buildFallbackWatchlistTips(symbols);
     }
 };
 
@@ -969,7 +988,7 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        return { content: formatAiError(error), groundingChunks: [] };
+        throw new Error(formatAiError(error));
     }
 };
 
@@ -1186,7 +1205,189 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
 };
 
 
-export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings, universe: UniverseTicker[]): Promise<InvestmentPlanExecutionResult> {
+/** Default analyst/eligibility values when AI is not used (app-level defaults, not manual entry). */
+const DEFAULT_ANALYST_ELIGIBILITY = {
+    minimumUpsidePercentage: 25,
+    stale_days: 30,
+    min_coverage_threshold: 3,
+    redirect_policy: 'pro-rata' as const,
+    target_provider: 'TipRanks',
+};
+
+export type SuggestedAnalystEligibility = {
+    minimumUpsidePercentage: number;
+    stale_days: number;
+    min_coverage_threshold: number;
+    redirect_policy: 'pro-rata' | 'priority';
+    target_provider: string;
+};
+
+/** Suggest analyst & eligibility parameters from AI based on universe and context. Use to auto-fill the plan; no manual entry required. */
+export async function getSuggestedAnalystEligibility(
+    universe: UniverseTicker[],
+    currentPlan?: Partial<InvestmentPlanSettings>
+): Promise<SuggestedAnalystEligibility> {
+    try {
+        const tickers = universe.slice(0, 30).map(t => t.ticker).join(', ') || 'none';
+        const prompt = `You are Finova AI, an expert investment analyst. Suggest sensible default parameters for an investment plan's "Analyst & eligibility" rules.
+
+Universe tickers (sample): ${tickers}.
+Current plan (if any): min upside ${currentPlan?.minimumUpsidePercentage ?? 'not set'}%, stale days ${currentPlan?.stale_days ?? 'not set'}, min coverage ${currentPlan?.min_coverage_threshold ?? 'not set'}, provider ${currentPlan?.target_provider ?? 'not set'}.
+
+Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical 20-25), stale_days (number 14-90, typical 30), min_coverage_threshold (number 2-5, typical 3), redirect_policy ("pro-rata" or "priority"), target_provider (string, e.g. "TipRanks", "Reuters", "Bloomberg"). Be conservative and standard.`;
+
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        minimumUpsidePercentage: { type: Type.NUMBER },
+                        stale_days: { type: Type.NUMBER },
+                        min_coverage_threshold: { type: Type.NUMBER },
+                        redirect_policy: { type: Type.STRING },
+                        target_provider: { type: Type.STRING },
+                    },
+                    required: ['minimumUpsidePercentage', 'stale_days', 'min_coverage_threshold', 'redirect_policy', 'target_provider'],
+                },
+            },
+        });
+        const raw = robustJsonParse(response.text);
+        if (!raw || typeof raw !== 'object') return DEFAULT_ANALYST_ELIGIBILITY;
+        const minUpside = Math.min(50, Math.max(10, Number(raw.minimumUpsidePercentage) || DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage));
+        const staleDays = Math.min(365, Math.max(7, Math.round(Number(raw.stale_days) || DEFAULT_ANALYST_ELIGIBILITY.stale_days)));
+        const minCov = Math.min(10, Math.max(1, Math.round(Number(raw.min_coverage_threshold) || DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold)));
+        const redirect = (raw.redirect_policy === 'priority' ? 'priority' : 'pro-rata') as 'pro-rata' | 'priority';
+        const provider = String(raw.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider;
+        return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider };
+    } catch (_) {
+        return DEFAULT_ANALYST_ELIGIBILITY;
+    }
+}
+
+/** Rule-based execution (no AI): allocates budget by plan weights. Use when AI is unavailable or as fallback. */
+export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, universe: UniverseTicker[]): InvestmentPlanExecutionResult {
+    const date = new Date().toISOString();
+    const coreTickers = universe.filter(t => t.status === 'Core');
+    const upsideTickers = universe.filter(t => t.status === 'High-Upside');
+    const speculativeTickers = universe.filter(t => t.status === 'Speculative');
+    const budget = plan.monthlyBudget ?? 0;
+    const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
+    const corePct = plan.coreAllocation ?? 0.7;
+    const upsidePct = plan.upsideAllocation ?? 0.3;
+
+    const trades: InvestmentPlanExecutionResult['trades'] = [];
+    let coreInvestment = 0;
+    let upsideInvestment = 0;
+    let speculativeInvestment = 0;
+    const redirectPool: { ticker: string; amount: number }[] = [];
+
+    const totalWeight = (arr: UniverseTicker[]) => arr.reduce((s, t) => s + (t.monthly_weight ?? 1), 0);
+    const coreW = totalWeight(coreTickers);
+    const upsideW = totalWeight(upsideTickers);
+    const specW = totalWeight(speculativeTickers);
+
+    const roundAmount = (amt: number): number => {
+        if (plan.brokerConstraints?.roundingRule === 'floor') return Math.floor(amt);
+        if (plan.brokerConstraints?.roundingRule === 'ceil') return Math.ceil(amt);
+        return Math.round(amt);
+    };
+
+    coreTickers.forEach(t => {
+        const w = (t.monthly_weight ?? 1) / (coreW || 1);
+        let amt = roundAmount(budget * corePct * w);
+        if (minOrder > 0 && amt > 0 && amt < minOrder) {
+            redirectPool.push({ ticker: t.ticker, amount: amt });
+            return;
+        }
+        if (amt > 0) {
+            trades.push({ ticker: t.ticker, amount: amt, reason: 'Core' });
+            coreInvestment += amt;
+        }
+    });
+
+    upsideTickers.forEach(t => {
+        const w = (t.monthly_weight ?? 1) / (upsideW || 1);
+        let amt = roundAmount(budget * upsidePct * w);
+        if (minOrder > 0 && amt > 0 && amt < minOrder) {
+            redirectPool.push({ ticker: t.ticker, amount: amt });
+            return;
+        }
+        if (amt > 0) {
+            trades.push({ ticker: t.ticker, amount: amt, reason: 'Upside' });
+            upsideInvestment += amt;
+        }
+    });
+
+    speculativeTickers.forEach(t => {
+        const w = (t.monthly_weight ?? 1) / (specW || 1);
+        const cap = budget * 0.05;
+        let amt = roundAmount(Math.min(cap * w, budget * 0.02));
+        if (minOrder > 0 && amt > 0 && amt < minOrder) amt = 0;
+        if (amt > 0) {
+            trades.push({ ticker: t.ticker, amount: amt, reason: 'Speculative' });
+            speculativeInvestment += amt;
+        }
+    });
+
+    let redirectedInvestment = 0;
+    const redirectSum = redirectPool.reduce((s, x) => s + x.amount, 0);
+    if (redirectSum > 0 && coreTickers.length > 0 && plan.redirect_policy) {
+        const proRata = plan.redirect_policy === 'pro-rata';
+        if (proRata) {
+            coreTickers.forEach(t => {
+                const w = (t.monthly_weight ?? 1) / (coreW || 1);
+                let amt = roundAmount(redirectSum * w);
+                if (minOrder > 0 && amt > 0 && amt < minOrder) amt = 0;
+                if (amt > 0) {
+                    trades.push({ ticker: t.ticker, amount: amt, reason: 'Redirected' });
+                    redirectedInvestment += amt;
+                }
+            });
+        } else {
+            if (redirectSum >= minOrder) {
+                const amt = roundAmount(redirectSum);
+                trades.push({ ticker: coreTickers[0].ticker, amount: amt, reason: 'Redirected' });
+                redirectedInvestment = amt;
+            }
+        }
+    }
+
+    const totalInvestment = coreInvestment + upsideInvestment + speculativeInvestment + redirectedInvestment;
+    const unusedUpsideFunds = Math.max(0, budget - totalInvestment);
+
+    const log_details = `## Rule-based execution (no AI)
+- **Date:** ${date}
+- **Budget:** ${budget} ${plan.budgetCurrency}
+- **Core:** ${coreInvestment} | **Upside:** ${upsideInvestment} | **Spec:** ${speculativeInvestment} | **Redirected:** ${redirectedInvestment}
+- **Unused:** ${unusedUpsideFunds}
+- Tickers: Core ${coreTickers.length}, High-Upside ${upsideTickers.length}, Speculative ${speculativeTickers.length}.
+- No analyst targets or eligibility checks; allocation by weights only. Use AI execution for full logic.`;
+
+    return {
+        date,
+        totalInvestment,
+        coreInvestment,
+        upsideInvestment,
+        speculativeInvestment,
+        redirectedInvestment,
+        unusedUpsideFunds,
+        trades,
+        status: totalInvestment > 0 ? 'success' : 'failure',
+        log_details,
+    };
+}
+
+export async function executeInvestmentPlanStrategy(
+    plan: InvestmentPlanSettings,
+    universe: UniverseTicker[],
+    options?: { forceRuleBased?: boolean }
+): Promise<InvestmentPlanExecutionResult> {
+    if (options?.forceRuleBased) {
+        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe));
+    }
     console.log('Executing investment plan with:', { plan, universe });
 
     const coreTickers = universe.filter(t => t.status === 'Core');
@@ -1319,17 +1520,17 @@ export async function executeInvestmentPlanStrategy(plan: InvestmentPlanSettings
         return await executeWithModel(FAST_MODEL);
     } catch (error) {
         const details = formatAiError(error);
-        const shouldRetry = details.includes('503') || details.toLowerCase().includes('unavailable') || details.toLowerCase().includes('high demand');
+        const shouldRetry = !details.includes('quota') && !details.includes('usage limit') && (details.includes('503') || details.toLowerCase().includes('unavailable') || details.toLowerCase().includes('high demand'));
         if (shouldRetry) {
             try {
                 await new Promise(resolve => setTimeout(resolve, 800));
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
-                console.error('Error executing investment plan strategy with AI (retry failed):', retryError);
-                throw new Error(`Failed to get investment plan execution from AI after retry: ${formatAiError(retryError)}`);
+                console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
+                return executeInvestmentPlanRuleBased(plan, universe);
             }
         }
-        console.error('Error executing investment plan strategy with AI:', error);
-        throw new Error(`Failed to get investment plan execution from AI: ${details}`);
+        console.warn('AI execution failed, falling back to rule-based (no AI):', error);
+        return executeInvestmentPlanRuleBased(plan, universe);
     }
 }
