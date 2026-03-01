@@ -1037,7 +1037,7 @@ const PlatformCard: React.FC<{
                                                                             <span className="text-xs text-slate-500 block truncate max-w-[160px]" title={displayName(h)!}>{displayName(h)}</span>
                                                                         )}
                                                                     </button>
-                                                                    {h.goalId && <LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" title={getGoalName(h.goalId)} />}
+                                                                    {h.goalId && <span title={getGoalName(h.goalId)}><LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" aria-hidden /></span>}
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-right">
@@ -1080,7 +1080,7 @@ const PlatformCard: React.FC<{
             </div>
 
             <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
-        </div>
+        </article>
     );
 };
 

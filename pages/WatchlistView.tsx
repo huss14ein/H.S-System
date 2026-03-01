@@ -143,9 +143,10 @@ const WatchlistItemRow: React.FC<{
     item: WatchlistItem;
     priceInfo: { price: number; change: number; changePercent: number };
     activeAlerts: PriceAlert[];
+    historical1M?: CandlePoint[] | null;
     onOpenAlertModal: (item: WatchlistItem) => void;
     onOpenDeleteModal: (item: WatchlistItem) => void;
-}> = ({ item, priceInfo, activeAlerts, onOpenAlertModal, onOpenDeleteModal }) => {
+}> = ({ item, priceInfo, activeAlerts, historical1M, onOpenAlertModal, onOpenDeleteModal }) => {
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
     const formatInCurrency = (value: number, currency: 'USD' | 'SAR', digits = 2) =>
