@@ -248,6 +248,7 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
     };
     if (portfolio.goalId != null) row.goal_id = portfolio.goalId;
     if (portfolio.owner != null) row.owner = portfolio.owner;
+    if (portfolio.currency != null) row.currency = portfolio.currency;
     return row;
 }
 
@@ -498,6 +499,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     return {
                         ...portfolio,
                         accountId: resolved,
+                        currency: portfolio.currency ?? 'USD',
                         holdings: (portfolio.holdings || []).map(normalizeHolding),
                     };
                 }),

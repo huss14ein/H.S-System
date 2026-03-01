@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, executeInvestmentPlanStrategy, formatAiError } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker } from '../types';
+import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
@@ -141,7 +141,6 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     );
 };
 
-type TradeCurrency = 'USD' | 'SAR';
 
 const RecordTradeModal: React.FC<{
     isOpen: boolean;
@@ -234,6 +233,13 @@ const RecordTradeModal: React.FC<{
             setPortfolioId('');
         }
     }, [portfoliosForAccount]);
+
+    useEffect(() => {
+        if (portfolioId && portfolios.length > 0) {
+            const portfolio = portfolios.find(p => p.id === portfolioId);
+            setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
+        }
+    }, [portfolioId, portfolios]);
     
     useEffect(() => {
         if (amountToInvest && price && type === 'buy') {
@@ -441,8 +447,9 @@ const RecordTradeModal: React.FC<{
 // ... other modals ...
 
 // #region Portfolio View Components
-const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holding: (Holding & { gainLoss: number, gainLossPercent: number }) | null }> = ({ isOpen, onClose, holding }) => {
+const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
@@ -460,16 +467,22 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
 
     if (!holding) return null;
 
+    const portfolioCurrency: TradeCurrency = (portfolio?.currency as TradeCurrency) || 'USD';
+    const fmt = (val: number, opts?: { digits?: number }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
+    const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
+
     const displayName = holding.name || (holding as any).name || holding.symbol;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
-    // useFormatCurrency treats values as SAR (when USD it divides by exchangeRate). So raw values are SAR — show them in the SAR block.
+    const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
+    const toUSD = (valueSar: number) => valueSar / exchangeRate;
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+    const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
             <div className="space-y-6">
-                {/* Hero: symbol, name, price, change */}
+                {/* Hero: symbol, name, price, change — in portfolio currency */}
                 <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className="text-2xl font-bold text-slate-900">{holding.symbol}</span>
@@ -477,19 +490,19 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                         <span className="text-base text-slate-600 font-medium truncate max-w-[200px]" title={displayName}>{displayName}</span>
                     </div>
                     <div className="mt-3 flex flex-wrap items-baseline gap-4">
-                        <span className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums">{formatCurrencyString(currentPrice)}</span>
+                        <span className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums">{fmt(currentPrice)}</span>
                         <span className={`text-lg font-semibold tabular-nums ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
                         </span>
-                        <span className="text-sm text-slate-500">per share</span>
+                        <span className="text-sm text-slate-500">per share · {portfolioCurrency}</span>
                     </div>
                 </div>
 
-                {/* Key metrics grid — aligned and organized */}
+                {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{formatCurrencyString(holding.currentValue)}</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{fmt(holding.currentValue)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
@@ -497,37 +510,55 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{formatCurrencyString(holding.avgCost ?? 0)}</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">{fmt(holding.avgCost ?? 0)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
                         <p className={`mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {formatCurrency(holding.gainLoss, { colorize: false })}
+                            {fmtColor(holding.gainLoss)}
                         </p>
-                        <p className="text-xs text-slate-500 mt-0.5">on cost {formatCurrencyString(totalCost)}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
-                {/* Value in Saudi Riyal — shown when user clicks for more details */}
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
-                    <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">
-                        In Saudi Riyal (SAR)
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                        <div>
-                            <p className="text-slate-600">Market value</p>
-                            <p className="font-bold text-slate-900 tabular-nums">{formatSAR(holding.currentValue)}</p>
-                        </div>
-                        <div>
-                            <p className="text-slate-600">Cost basis</p>
-                            <p className="font-bold text-slate-900 tabular-nums">{formatSAR(totalCost)}</p>
-                        </div>
-                        <div>
-                            <p className="text-slate-600">Unrealized G/L</p>
-                            <p className={`font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatSAR(holding.gainLoss)}</p>
+                {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
+                {portfolioCurrency === 'USD' ? (
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+                        <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                            <div>
+                                <p className="text-slate-600">Market value</p>
+                                <p className="font-bold text-slate-900 tabular-nums">{formatSAR(toSAR(holding.currentValue))}</p>
+                            </div>
+                            <div>
+                                <p className="text-slate-600">Cost basis</p>
+                                <p className="font-bold text-slate-900 tabular-nums">{formatSAR(toSAR(totalCost))}</p>
+                            </div>
+                            <div>
+                                <p className="text-slate-600">Unrealized G/L</p>
+                                <p className={`font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatSAR(toSAR(holding.gainLoss))}</p>
+                            </div>
                         </div>
                     </div>
-                </div>
+                ) : (
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                            <div>
+                                <p className="text-slate-600">Market value</p>
+                                <p className="font-bold text-slate-900 tabular-nums">{formatUSD(toUSD(holding.currentValue))}</p>
+                            </div>
+                            <div>
+                                <p className="text-slate-600">Cost basis</p>
+                                <p className="font-bold text-slate-900 tabular-nums">{formatUSD(toUSD(totalCost))}</p>
+                            </div>
+                            <div>
+                                <p className="text-slate-600">Unrealized G/L</p>
+                                <p className={`font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatUSD(toUSD(holding.gainLoss))}</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Price trend chart */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4">
@@ -536,7 +567,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean, onClose: () => void, holdi
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
                         changePercent={holding.gainLossPercent}
-                        formatPrice={(p) => formatCurrencyString(p)}
+                        formatPrice={(p) => fmt(p)}
                     />
                 </div>
 
@@ -649,12 +680,14 @@ export const PortfolioModal: React.FC<{
     const [name, setName] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>();
+    const [currency, setCurrency] = useState<TradeCurrency>('USD');
 
     useEffect(() => {
         if (isOpen) {
             setName(portfolioToEdit?.name || '');
             setSelectedAccountId(accountId || investmentAccounts[0]?.id || '');
             setGoalId(portfolioToEdit?.goalId);
+            setCurrency((portfolioToEdit?.currency as TradeCurrency) || 'USD');
         }
     }, [portfolioToEdit, isOpen, accountId, investmentAccounts]);
 
@@ -662,13 +695,13 @@ export const PortfolioModal: React.FC<{
         e.preventDefault();
         try {
             if (portfolioToEdit) {
-                await onSave({ ...portfolioToEdit, name, goalId });
+                await onSave({ ...portfolioToEdit, name, goalId, currency });
             } else {
                 if (!selectedAccountId) {
                     alert("Please select an account for the new portfolio.");
                     return;
                 }
-                await onSave({ name, accountId: selectedAccountId, goalId });
+                await onSave({ name, accountId: selectedAccountId, goalId, currency });
             }
             onClose();
         } catch (error) {
@@ -699,6 +732,14 @@ export const PortfolioModal: React.FC<{
                 <div>
                     <label htmlFor="portfolio-name" className="block text-sm font-medium text-gray-700">Portfolio Name</label>
                     <input type="text" id="portfolio-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/>
+                </div>
+                <div>
+                    <label htmlFor="portfolio-currency" className="block text-sm font-medium text-gray-700">Base currency</label>
+                    <select id="portfolio-currency" value={currency} onChange={e => setCurrency(e.target.value as TradeCurrency)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                        <option value="USD">USD (US market)</option>
+                        <option value="SAR">SAR (Tadawul / Saudi)</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">All holdings in this portfolio are shown in this currency. Record trades in the same currency.</p>
                 </div>
                 <div>
                     <label htmlFor="portfolio-goal-link" className="block text-sm font-medium text-gray-700">Link to Goal</label>
@@ -841,13 +882,18 @@ const PlatformCard: React.FC<{
     onDeletePlatform: (platform: Account) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
-    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
+    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { platform, portfolios, transactions, goals, availableCash = 0, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
+
+    const platformCurrency = useMemo(() => {
+        const currencies = [...new Set(portfolios.map(p => p.currency || 'USD'))];
+        return currencies.length === 1 ? (currencies[0] as TradeCurrency) : undefined;
+    }, [portfolios]);
 
     const { totalValue, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
@@ -927,7 +973,7 @@ const PlatformCard: React.FC<{
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 truncate tabular-nums" title={formatCurrencyString(totalValue)}>{formatCurrencyString(totalValue)}</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 truncate tabular-nums" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValue)}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValue)}</p>
                         </div>
                     </div>
                     <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto transition-colors">
@@ -937,15 +983,15 @@ const PlatformCard: React.FC<{
                 <dl className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" aria-label="Platform metrics">
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Available Cash</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(availableCash, { digits: 0 })}>{formatCurrencyString(availableCash, { digits: 0 })}</dd>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(availableCash, { digits: 0 })}>{platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(availableCash, { digits: 0 })}</dd>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Unrealized P/L</dt>
-                        <dd className="font-bold text-sm mt-0.5 truncate">{formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                        <dd className="font-bold text-sm mt-0.5 truncate">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Daily P/L</dt>
-                        <dd className="font-bold text-sm mt-0.5 truncate">{formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                        <dd className="font-bold text-sm mt-0.5 truncate">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">ROI</dt>
@@ -953,11 +999,11 @@ const PlatformCard: React.FC<{
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Invested</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(totalInvested, { digits: 0 })}>{formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
                         <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Withdrawn</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={formatCurrencyString(totalWithdrawn, { digits: 0 })}>{formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </dl>
             </header>
@@ -974,8 +1020,11 @@ const PlatformCard: React.FC<{
                     </div>
                 ) : null}
                 {portfolios.map(portfolio => {
+                    const portfolioCurrency = (portfolio.currency as TradeCurrency) || 'USD';
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || []);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+                    const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
+                    const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
                     return (
                         <section key={portfolio.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                             {/* Portfolio header: name, value, goal, actions */}
@@ -984,7 +1033,7 @@ const PlatformCard: React.FC<{
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
                                     <div>
                                         <h4 className="font-bold text-slate-800 text-base">{portfolio.name}</h4>
-                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5">{formatCurrencyString(portfolioValue)}</p>
+                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5">{fmt(portfolioValue)}</p>
                                     </div>
                                     {portfolio.goalId && (
                                         <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 shrink-0" title={`Linked to: ${getGoalName(portfolio.goalId)}`}>
@@ -1029,7 +1078,7 @@ const PlatformCard: React.FC<{
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct })}
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct }, portfolio)}
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0"
                                                                     >
                                                                         <span className="font-bold text-slate-900 block truncate">{h.symbol}</span>
@@ -1051,14 +1100,14 @@ const PlatformCard: React.FC<{
                                                                 )}
                                                             </td>
                                                             <td className="px-3 py-3 text-right text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{formatCurrencyString(h.avgCost ?? 0, { digits: 2 })}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(h.currentValue, { digits: 0 })}</td>
+                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
+                                                            <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
                                                             <td className="px-3 py-3 text-right">
-                                                                <span className={`text-sm font-semibold tabular-nums ${h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(h.gainLoss, { colorize: false, digits: 0 })}</span>
+                                                                <span className={`text-sm font-semibold tabular-nums ${h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(h.gainLoss, { digits: 0 })}</span>
                                                                 <span className={`text-xs tabular-nums block ${gainLossPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>({gainLossPct >= 0 ? '+' : ''}{gainLossPct.toFixed(1)}%)</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-right">
-                                                                <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(dailyPnL, { colorize: false, digits: 0 })}</span>
+                                                                <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
                                                                 <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>{h.zakahClass === 'Zakatable' ? 'Zak.' : 'Non'}</span>
@@ -1093,7 +1142,7 @@ const PlatformView: React.FC<{
     onDeletePlatform: (platform: Account) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
-    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }) => void;
+    onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
@@ -1809,6 +1858,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; }) | null>(null);
+  const [selectedPortfolio, setSelectedPortfolio] = useState<InvestmentPortfolio | null>(null);
   
   const [isHoldingEditModalOpen, setIsHoldingEditModalOpen] = useState(false);
   const [holdingToEdit, setHoldingToEdit] = useState<Holding | null>(null);
@@ -1887,7 +1937,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
 
-  const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; })) => { setSelectedHolding(holding); setIsHoldingModalOpen(true); };
+  const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; }), portfolio: InvestmentPortfolio) => { setSelectedHolding(holding); setSelectedPortfolio(portfolio); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
     const handleSaveHolding = async (holding: Holding) => { 
         try {
@@ -2036,7 +2086,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         {renderContent()}
       </Suspense>
 
-      <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => setIsHoldingModalOpen(false)} holding={selectedHolding} />
+      <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 

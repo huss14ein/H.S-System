@@ -130,6 +130,8 @@ export interface InvestmentPortfolio {
   user_id?: string;
   name: string;
   accountId: string;
+  /** Base currency for this portfolio (all holding values are in this currency). Default USD for US markets. */
+  currency?: TradeCurrency;
   holdings: Holding[];
   goalId?: string;
   owner?: string;
