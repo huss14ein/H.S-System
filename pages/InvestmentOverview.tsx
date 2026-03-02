@@ -7,9 +7,13 @@ import AllocationBarChart from '../components/charts/AllocationBarChart';
 import { getAIInvestmentOverviewAnalysis, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import { useAI } from '../context/AiContext';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 
 const InvestmentOverview: React.FC = () => {
     const { data } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
         const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings || []);
@@ -61,14 +65,32 @@ const InvestmentOverview: React.FC = () => {
 
     return (
         <div className="space-y-6 mt-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolios</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900">{portfolioAllocation.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tracked Shares</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900">{allHoldingsWithGains.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Engine Status</p>
+                    <p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} {isAiAvailable ? 'Operational' : 'Offline'}
+                    </p>
+                </div>
+            </div>
+
             <div className="section-card">
                 <div className="flex justify-between items-center mb-4">
                     <div><h3 className="section-title !mb-1">SWOT Analysis</h3><p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p></div>
-                    <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="btn-primary">
+                    <button onClick={handleGenerateAnalysis} disabled={isAiLoading || !isAiAvailable} className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed" title={!isAiAvailable ? 'AI features are disabled' : 'Generate SWOT Analysis'}>
                         <SparklesIcon className="h-4 w-4 mr-2" />
                         {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
                     </button>
                 </div>
+                {!isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI features are disabled. Re-enable your AI provider/API key to generate live SWOT recommendations.</div>}
                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                 {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {!isAiLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}

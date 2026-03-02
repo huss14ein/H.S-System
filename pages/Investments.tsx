@@ -35,6 +35,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
 
@@ -45,6 +47,45 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Execution History' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
+
+class InvestmentTabErrorBoundary extends React.Component<
+    { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
+    { hasError: boolean; errorMessage: string | null }
+> {
+    state = { hasError: false, errorMessage: null as string | null };
+
+    static getDerivedStateFromError(error: unknown) {
+        return {
+            hasError: true,
+            errorMessage: error instanceof Error ? error.message : 'Unexpected rendering error.',
+        };
+    }
+
+    componentDidUpdate(prevProps: { activeTab: InvestmentSubPage }) {
+        if (prevProps.activeTab !== this.props.activeTab && this.state.hasError) {
+            this.setState({ hasError: false, errorMessage: null });
+        }
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <SectionCard title="Section temporarily unavailable" className="border-amber-200 bg-amber-50/50">
+                    <p className="text-sm text-amber-900">This section failed to render after inactivity. We prevented a full-page crash.</p>
+                    {this.state.errorMessage && <p className="text-xs text-amber-700 mt-2">{this.state.errorMessage}</p>}
+                    <button
+                        type="button"
+                        onClick={this.props.onReset}
+                        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:bg-secondary text-sm font-medium"
+                    >
+                        Return to Overview
+                    </button>
+                </SectionCard>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
@@ -909,6 +950,21 @@ const ExecutionHistoryView: React.FC<{ onFocusInvestmentPlan?: () => void; onNav
                 )}
             </section>
 
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <SectionCard className="min-w-0">
+                    <p className="text-xs uppercase tracking-wide font-semibold text-slate-500">Total runs</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">{logs.length}</p>
+                </SectionCard>
+                <SectionCard className="min-w-0">
+                    <p className="text-xs uppercase tracking-wide font-semibold text-slate-500">Last execution</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{logs[0] ? new Date(logs[0].created_at).toLocaleString() : '—'}</p>
+                </SectionCard>
+                <SectionCard className="min-w-0">
+                    <p className="text-xs uppercase tracking-wide font-semibold text-slate-500">Linked workflow</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">Plan → Execute → Wealth Ultra</p>
+                </SectionCard>
+            </div>
+
             {logs.length === 0 ? (
                 <SectionCard className="text-center py-10">
                     <p className="text-slate-600 font-medium mb-2">No execution logs yet.</p>
@@ -1407,7 +1463,7 @@ const PlatformView: React.FC<{
             <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
-                        <h2 className="text-lg font-bold text-slate-800">Portfolios</h2>
+                        <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-bold text-slate-800">Portfolios</h2><span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">Integrated with plan + execution</span></div>
                         <p className="text-sm text-slate-600 mt-0.5 max-w-2xl">
                             Manage platforms and portfolios. Each portfolio has a base currency (SAR or USD). Record trades in that currency. Click a share for full details. Integrated with Investment Plan, Execution History, and Wealth Ultra.
                         </p>
@@ -1909,12 +1965,18 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold text-dark">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
-                <div className="flex items-center space-x-2">
-                    <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors">Save Plan</button>
+            <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 sm:p-6">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h1 className="text-2xl sm:text-3xl font-bold text-white">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
+                        <p className="mt-1 text-sm text-slate-200 max-w-2xl">Design, validate, and execute your monthly allocation in one professional workflow connected to universe signals and Wealth Ultra.</p>
+                        <span className={`mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <button onClick={handleSave} className="px-6 py-2.5 bg-white text-slate-900 rounded-xl hover:bg-slate-100 transition-colors font-semibold">Save Plan</button>
+                    </div>
                 </div>
-            </div>
+            </section>
             {saveMessage && (
                 <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm flex items-center justify-between">
                     <span>{saveMessage}</span>
@@ -2373,6 +2435,7 @@ interface InvestmentsProps {
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction: _triggerPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { isAiAvailable } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
@@ -2559,19 +2622,30 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   return (
     <div className="space-y-6">
-        <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start flex-wrap gap-4">
-             <div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Investments</h1>
-                  <LivePricesStatus variant="inline" className="flex-shrink-0" />
+        <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-5 py-6 sm:px-6 shadow-sm">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <h1 className="text-3xl font-bold tracking-tight text-white">Investments</h1>
+                        <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100 backdrop-blur">Unified portfolio workspace</span>
+                    </div>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-200/90">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-100" />
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>
+                            {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+                        </span>
+                    </div>
                 </div>
-                <p className="text-sm text-slate-500 mt-1">Track platforms, portfolios, and holdings in one place. Record trades and monitor performance.</p>
-             </div>
-             <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors text-sm font-medium shadow-sm">
-                  <ArrowsRightLeftIcon className="h-4 w-4" /> Record Trade
-                </button>
-             </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
+                        <SparklesIcon className="h-4 w-4" /> Smart Plan
+                    </button>
+                    <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100">
+                        <ArrowsRightLeftIcon className="h-4 w-4" /> Record Trade
+                    </button>
+                </div>
+            </div>
         </header>
 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
@@ -2614,18 +2688,39 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             />
         </section>
 
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Smart navigation</p>
+                    <h2 className="text-base font-semibold text-slate-900">Move quickly across investment workflows</h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {['Overview', 'Portfolios', 'Investment Plan', 'Execution History', 'Watchlist'].map((item) => (
+                        <button
+                            key={item}
+                            type="button"
+                            onClick={() => setActiveTab(item as InvestmentSubPage)}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${activeTab === item ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                        >
+                            {item}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </section>
+
         <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
       
-        <nav className="border-b border-slate-200" aria-label="Investment sections">
-            <div className="flex gap-1 overflow-x-auto pb-px scrollbar-thin">
+        <nav className="rounded-2xl border border-slate-200 bg-white p-2" aria-label="Investment sections">
+            <div className="flex gap-1 overflow-x-auto scrollbar-thin">
               {INVESTMENT_SUB_PAGES.map(tab => (
                 <button
                   key={tab.name}
                   onClick={() => setActiveTab(tab.name)}
-                  className={`inline-flex items-center gap-2 whitespace-nowrap py-3 px-4 rounded-t-lg font-medium text-sm transition-colors ${
+                  className={`inline-flex items-center gap-2 whitespace-nowrap py-2.5 px-4 rounded-xl font-medium text-sm transition-colors ${
                     activeTab === tab.name
-                      ? 'bg-white text-primary border border-b-0 border-slate-200 -mb-px shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50 border border-transparent'
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100 border border-transparent'
                   }`}
                 >
                   <tab.icon className="h-4 w-4 shrink-0" aria-hidden />
@@ -2635,9 +2730,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             </div>
         </nav>
       
-      <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem]" />}>
-        {renderContent()}
-      </Suspense>
+      <InvestmentTabErrorBoundary activeTab={activeTab} onReset={() => setActiveTab('Overview')}>
+        <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem]" />}>
+          {renderContent()}
+        </Suspense>
+      </InvestmentTabErrorBoundary>
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />

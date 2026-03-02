@@ -14,6 +14,9 @@ import {
 } from '../services/recoveryPlan';
 import { tickerToSleeve, tickerToRiskTier } from '../wealth-ultra/position';
 import { getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
+import { useAI } from '../context/AiContext';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -26,6 +29,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const deployableCash = ctx.totalDeployableCash ?? 0;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
+  const { isAiAvailable } = useAI();
 
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; currency: TradeCurrency }[] = [];
@@ -162,10 +166,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
       {/* Hero */}
       <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
         <div className="flex flex-col gap-3">
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 flex-wrap">
-            Recovery Plan (Averaging / Correction Engine)
-            <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 flex-wrap">
+              Recovery Plan (Averaging / Correction Engine)
+              <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
+            </h2>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+            </span>
+          </div>
           <p className="text-sm text-slate-600 max-w-2xl">
             Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
           </p>
