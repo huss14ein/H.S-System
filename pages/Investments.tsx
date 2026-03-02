@@ -1043,7 +1043,7 @@ const PlatformCard: React.FC<{
     }, [portfolios]);
     const hasMixedCurrencies = platformCurrency === undefined && portfolios.length > 1;
 
-    const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi } = useMemo(() => {
+    const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
         const rate = exchangeRate;
         let valueSAR = 0, valueUSD = 0;
@@ -1053,20 +1053,65 @@ const PlatformCard: React.FC<{
             if (cur === 'SAR') valueSAR += v; else valueUSD += v;
         });
         const totalValueInSAR = valueSAR + valueUSD * rate;
-        const totalValue = platformCurrency === 'SAR' ? valueSAR + valueUSD / rate : (platformCurrency === 'USD' ? valueUSD + valueSAR * rate : totalValueInSAR);
+        const totalValue =
+            platformCurrency === 'SAR'
+                ? valueSAR + valueUSD * rate
+                : platformCurrency === 'USD'
+                ? valueUSD + valueSAR / rate
+                : totalValueInSAR;
 
         let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-        transactions.filter(t => t.type === 'buy').forEach(t => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-        transactions.filter(t => t.type === 'sell').forEach(t => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
-        const totalInvested = platformCurrency === 'SAR' ? invSAR + invUSD / rate : (platformCurrency === 'USD' ? invUSD + invSAR * rate : invSAR + invUSD * rate);
-        const totalWithdrawn = platformCurrency === 'SAR' ? wdrSAR + wdrUSD / rate : (platformCurrency === 'USD' ? wdrUSD + wdrSAR * rate : wdrSAR + wdrUSD * rate);
+        transactions.filter(t => t.type === 'buy').forEach(t => {
+            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            if (c === 'SAR') invSAR += t.total ?? 0;
+            else invUSD += t.total ?? 0;
+        });
+        transactions.filter(t => t.type === 'sell').forEach(t => {
+            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            if (c === 'SAR') wdrSAR += t.total ?? 0;
+            else wdrUSD += t.total ?? 0;
+        });
+        const totalInvested =
+            platformCurrency === 'SAR'
+                ? invSAR + invUSD * rate
+                : platformCurrency === 'USD'
+                ? invUSD + invSAR / rate
+                : invSAR + invUSD * rate;
+        const totalWithdrawn =
+            platformCurrency === 'SAR'
+                ? wdrSAR + wdrUSD * rate
+                : platformCurrency === 'USD'
+                ? wdrUSD + wdrSAR / rate
+                : wdrSAR + wdrUSD * rate;
 
         const netCapital = totalInvested - totalWithdrawn;
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-        const dailyPnL = allHoldings.reduce((s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].change * h.quantity : 0), 0);
-        return { totalValue, totalValueInSAR: valueSAR + valueUSD * rate, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi };
-    }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate]);
+        const dailyPnL = allHoldings.reduce(
+            (s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].change * h.quantity : 0),
+            0
+        );
+
+        const cashSAR = availableCashByCurrency.SAR ?? 0;
+        const cashUSD = availableCashByCurrency.USD ?? 0;
+        const totalAvailable =
+            platformCurrency === 'SAR'
+                ? cashSAR + cashUSD * rate
+                : platformCurrency === 'USD'
+                ? cashUSD + cashSAR / rate
+                : cashSAR + cashUSD * rate;
+
+        return {
+            totalValue,
+            totalValueInSAR,
+            totalGainLoss,
+            dailyPnL,
+            totalInvested,
+            totalWithdrawn,
+            roi,
+            totalAvailable,
+        };
+    }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate, availableCashByCurrency]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
         const priceInfo = simulatedPrices[h.symbol];
@@ -1121,12 +1166,41 @@ const PlatformCard: React.FC<{
                     </button>
                 </div>
                 <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center lg:col-span-2">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
                         <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Available Cash</dt>
-                        <dd className="metric-value w-full text-sm mt-0.5 tabular-nums flex flex-col gap-0.5">
-                            {availableCashByCurrency.SAR > 0 && <span className="font-bold text-slate-800">{formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span>}
-                            {availableCashByCurrency.USD > 0 && <span className="font-bold text-slate-800">{formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span>}
-                            {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 && <span className="font-bold text-slate-500">—</span>}
+                        <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
+                            {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
+                                <span className="font-bold text-slate-500">—</span>
+                            ) : (
+                                <>
+                                    <span className="font-bold text-slate-800 block">
+                                        {platformCurrency
+                                            ? formatCurrencyString(totalAvailable, {
+                                                  inCurrency: platformCurrency,
+                                                  digits: 0,
+                                                  showSecondary:
+                                                      availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
+                                              })
+                                            : formatCurrencyString(totalAvailable, {
+                                                  inCurrency: 'SAR',
+                                                  digits: 0,
+                                                  showSecondary:
+                                                      availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
+                                              })}
+                                    </span>
+                                    <span className="block text-[11px] text-slate-500">
+                                        {formatCurrencyString(availableCashByCurrency.SAR, {
+                                            inCurrency: 'SAR',
+                                            digits: 0,
+                                        })}{' '}
+                                        ·{' '}
+                                        {formatCurrencyString(availableCashByCurrency.USD, {
+                                            inCurrency: 'USD',
+                                            digits: 0,
+                                        })}
+                                    </span>
+                                </>
+                            )}
                         </dd>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
@@ -1250,8 +1324,19 @@ const PlatformCard: React.FC<{
                                                             <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
                                                             <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
                                                             <td className="px-3 py-3 text-right whitespace-nowrap">
-                                                                <span className={`text-sm font-semibold tabular-nums ${h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(h.gainLoss, { digits: 0 })}</span>
-                                                                <span className={`text-xs tabular-nums ${gainLossPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}> ({gainLossPct >= 0 ? '+' : ''}{gainLossPct.toFixed(1)}%)</span>
+                                                                <span
+                                                                    className={`inline-flex items-baseline gap-1 tabular-nums ${
+                                                                        h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-sm font-semibold">
+                                                                        {fmtColor(h.gainLoss, { digits: 0 })}
+                                                                    </span>
+                                                                    <span className="text-xs">
+                                                                        ({gainLossPct >= 0 ? '+' : ''}
+                                                                        {gainLossPct.toFixed(1)}%)
+                                                                    </span>
+                                                                </span>
                                                             </td>
                                                             <td className="px-3 py-3 text-right">
                                                                 <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>

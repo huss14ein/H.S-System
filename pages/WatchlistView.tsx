@@ -3,7 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert, PriceAlertCurrency, WatchlistItem } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
-import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint } from '../services/finnhubService';
+import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint, getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
 import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError } from '../services/geminiService';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
 import Modal from '../components/Modal';
@@ -144,14 +144,20 @@ const WatchlistItemRow: React.FC<{
     priceInfo: { price: number; change: number; changePercent: number };
     activeAlerts: PriceAlert[];
     historical1M?: CandlePoint[] | null;
+    fundamentals?: HoldingFundamentals | null;
+    fundamentalsLoading?: boolean;
     onOpenAlertModal: (item: WatchlistItem) => void;
     onOpenDeleteModal: (item: WatchlistItem) => void;
-}> = ({ item, priceInfo, activeAlerts, historical1M, onOpenAlertModal, onOpenDeleteModal }) => {
+}> = ({ item, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, onOpenAlertModal, onOpenDeleteModal }) => {
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
     const formatInCurrency = (value: number, currency: 'USD' | 'SAR', digits = 2) =>
         new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
     const formatPrice = (p: number) => formatInCurrency(p, priceCurrency);
+    const fundamentalsCurrencyRaw = (fundamentals?.currency || '').toUpperCase();
+    const fundamentalsCurrency: 'USD' | 'SAR' = fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
+    const formatFundamentalValue = (value: number, digits = 0) =>
+        formatInCurrency(value, fundamentalsCurrency, digits);
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number | undefined>(undefined);
 
@@ -212,6 +218,57 @@ const WatchlistItemRow: React.FC<{
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(priceInfo.change, priceCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
             </td>
+            <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[220px]">
+                {fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">Loading events…</span>}
+                {!fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">No event data</span>}
+                {fundamentals && (
+                    <div className="space-y-0.5">
+                        <div className="text-[11px] text-slate-700">
+                            {fundamentals.nextEarnings?.date ? (
+                                <>
+                                    {new Date(fundamentals.nextEarnings.date).toLocaleDateString(undefined, {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                    })}
+                                    {fundamentals.nextEarnings.quarter != null && fundamentals.nextEarnings.year != null && (
+                                        <span className="text-[10px] text-slate-500 ml-1">
+                                            · Q{fundamentals.nextEarnings.quarter} {fundamentals.nextEarnings.year}
+                                        </span>
+                                    )}
+                                </>
+                            ) : (
+                                <span className="text-[11px] text-slate-400">No upcoming earnings</span>
+                            )}
+                        </div>
+                        {typeof fundamentals.nextEarnings?.revenueEstimate === 'number' &&
+                            fundamentals.nextEarnings.revenueEstimate > 0 && (
+                                <div className="text-[11px] text-slate-500">
+                                    Rev est ({fundamentalsCurrency}):{' '}
+                                    {formatFundamentalValue(fundamentals.nextEarnings.revenueEstimate, 0)}
+                                </div>
+                            )}
+                        {fundamentals.dividend &&
+                            (typeof fundamentals.dividend.dividendYieldPct === 'number' ||
+                                typeof fundamentals.dividend.dividendPerShareAnnual === 'number') && (
+                                <div className="text-[11px] text-slate-500">
+                                    Div
+                                    {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
+                                        fundamentals.dividend.dividendYieldPct > 0 &&
+                                        ` ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
+                                    {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
+                                        fundamentals.dividend.dividendPerShareAnnual > 0 && (
+                                            <>
+                                                {' '}
+                                                · {formatFundamentalValue(fundamentals.dividend.dividendPerShareAnnual, 2)}
+                                                /sh
+                                            </>
+                                        )}
+                                </div>
+                            )}
+                    </div>
+                )}
+            </td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
                 <div className="flex flex-col items-end gap-1">
                     <span className="text-xs text-gray-500">
@@ -257,6 +314,8 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const [aiWatchlistLoading, setAiWatchlistLoading] = useState(false);
     const [aiWatchlistError, setAiWatchlistError] = useState<string | null>(null);
     const [historicalBySymbol, setHistoricalBySymbol] = useState<Record<string, CandlePoint[] | null>>({});
+    const [fundamentalsBySymbol, setFundamentalsBySymbol] = useState<Record<string, HoldingFundamentals | null>>({});
+    const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
 
     const watchlistSymbolKey = useMemo(() => data.watchlist.map((w) => w.symbol.trim().toUpperCase()).filter(Boolean).join(','), [data.watchlist]);
     useEffect(() => {
@@ -283,6 +342,44 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             if (!cancelled) setHistoricalBySymbol((prev) => ({ ...prev, ...next }));
         })();
         return () => { cancelled = true; };
+    }, [watchlistSymbolKey]);
+
+    useEffect(() => {
+        if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
+        const symbols = watchlistSymbolKey ? watchlistSymbolKey.split(',') : [];
+        if (symbols.length === 0) {
+            setFundamentalsBySymbol({});
+            return;
+        }
+        let cancelled = false;
+        setFundamentalsLoading(true);
+        (async () => {
+            try {
+                const entries = await Promise.all(
+                    symbols.map(async (raw) => {
+                        const sym = raw.trim().toUpperCase();
+                        if (!sym) return [sym, null] as const;
+                        try {
+                            const data = await getHoldingFundamentals(sym);
+                            return [sym, data] as const;
+                        } catch {
+                            return [sym, null] as const;
+                        }
+                    }),
+                );
+                if (cancelled) return;
+                const next: Record<string, HoldingFundamentals | null> = {};
+                for (const [sym, info] of entries) {
+                    if (sym) next[sym] = info;
+                }
+                setFundamentalsBySymbol(next);
+            } finally {
+                if (!cancelled) setFundamentalsLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
     }, [watchlistSymbolKey]);
 
     const watchlistInsights = useMemo(() => {
@@ -388,7 +485,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
                 </div>
                 <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
@@ -401,6 +498,8 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                                   priceInfo={priceInfo}
                                   activeAlerts={activeAlerts}
                                   historical1M={historicalBySymbol[symKey] ?? undefined}
+                                  fundamentals={fundamentalsBySymbol[symKey] ?? undefined}
+                                  fundamentalsLoading={fundamentalsLoading && !fundamentalsBySymbol[symKey]}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                />

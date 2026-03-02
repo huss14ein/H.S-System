@@ -473,6 +473,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
 
             <DraggableResizableGrid
                 layoutKey="assets-summary"
+                itemOverflowY="visible"
                 items={[
                     { id: 'total', content: <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
                     { id: 'physical', content: <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },

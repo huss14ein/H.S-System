@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext } from 'react';
+import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -13,6 +13,7 @@ import {
   DEFAULT_RECOVERY_GLOBAL_CONFIG,
 } from '../services/recoveryPlan';
 import { tickerToSleeve, tickerToRiskTier } from '../wealth-ultra/position';
+import { getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -114,10 +115,41 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
+  const [selectedFundamentals, setSelectedFundamentals] = useState<HoldingFundamentals | null>(null);
+  const [isSelectedFundamentalsLoading, setIsSelectedFundamentalsLoading] = useState(false);
+  const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
 
   const selected = selectedHoldingId ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId) : null;
   const selectedPlan = selected?.plan;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
+
+  useEffect(() => {
+    const symbol = selected?.holding?.symbol;
+    if (!symbol) {
+      setSelectedFundamentals(null);
+      setSelectedFundamentalsError(null);
+      setIsSelectedFundamentalsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsSelectedFundamentalsLoading(true);
+    setSelectedFundamentalsError(null);
+    getHoldingFundamentals(symbol)
+      .then((data) => {
+        if (!cancelled) setSelectedFundamentals(data);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSelectedFundamentalsError(e instanceof Error ? e.message : 'Unable to load upcoming events.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsSelectedFundamentalsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.holding?.symbol]);
 
   const handleGenerateDraft = () => {
     if (!selectedPlan) return;
@@ -295,6 +327,96 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                   inCurrency: selected.currency ?? 'USD',
                 })}
               </p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-white border border-slate-100">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Next financial statement & dividends
+              </p>
+              {isSelectedFundamentalsLoading && (
+                <p className="text-[11px] text-slate-400">Updating…</p>
+              )}
+            </div>
+            {selectedFundamentalsError && (
+              <p className="text-[11px] text-rose-600 mb-1">
+                Could not load event details right now.
+              </p>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2 text-xs text-slate-600">
+              <div className="space-y-1">
+                <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
+                  Next financial statement
+                </p>
+                {selectedFundamentals?.nextEarnings?.date ? (
+                  <>
+                    <p className="text-slate-800">
+                      {new Date(selectedFundamentals.nextEarnings.date).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                      {selectedFundamentals.nextEarnings.quarter != null &&
+                        selectedFundamentals.nextEarnings.year != null && (
+                          <span className="text-[11px] text-slate-500 ml-1">
+                            · Q{selectedFundamentals.nextEarnings.quarter}{' '}
+                            {selectedFundamentals.nextEarnings.year}
+                          </span>
+                        )}
+                    </p>
+                    {typeof selectedFundamentals.nextEarnings.revenueEstimate === 'number' &&
+                      selectedFundamentals.nextEarnings.revenueEstimate > 0 && (
+                        <p className="text-[11px] text-slate-600">
+                          Expected revenue:{' '}
+                          {formatCurrencyString(selectedFundamentals.nextEarnings.revenueEstimate, {
+                            inCurrency:
+                              (selectedFundamentals.currency === 'SAR' ? 'SAR' : 'USD') as TradeCurrency,
+                            digits: 0,
+                          })}
+                        </p>
+                      )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-slate-500">No upcoming earnings date available.</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
+                  Dividends
+                </p>
+                {selectedFundamentals?.dividend ? (
+                  <>
+                    {typeof selectedFundamentals.dividend.dividendYieldPct === 'number' &&
+                      selectedFundamentals.dividend.dividendYieldPct > 0 && (
+                        <p className="text-slate-800">
+                          Dividend yield:{' '}
+                          {selectedFundamentals.dividend.dividendYieldPct.toFixed(2)}%
+                        </p>
+                      )}
+                    {typeof selectedFundamentals.dividend.dividendPerShareAnnual === 'number' &&
+                      selectedFundamentals.dividend.dividendPerShareAnnual > 0 && (
+                        <p className="text-[11px] text-slate-600">
+                          Annual dividend per share:{' '}
+                          {formatCurrencyString(
+                            selectedFundamentals.dividend.dividendPerShareAnnual,
+                            {
+                              inCurrency:
+                                (selectedFundamentals.currency === 'SAR' ? 'SAR' : 'USD') as TradeCurrency,
+                              digits: 2,
+                            },
+                          )}
+                        </p>
+                      )}
+                    {!selectedFundamentals.dividend.dividendYieldPct &&
+                      !selectedFundamentals.dividend.dividendPerShareAnnual && (
+                        <p className="text-[11px] text-slate-500">No dividend data available.</p>
+                      )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-slate-500">No dividend data available.</p>
+                )}
+              </div>
             </div>
           </div>
 

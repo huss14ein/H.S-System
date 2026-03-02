@@ -45,6 +45,8 @@ export interface DraggableResizableGridProps {
   handlesOnHoverOnly?: boolean;
   /** CSS selector for the drag handle element. If set, only that element starts a drag; clicking the rest of the item won't trigger drag (e.g. so card clicks can navigate). */
   draggableHandle?: string;
+  /** Vertical overflow behavior for each grid item wrapper. Defaults to 'auto' (scrolls when content exceeds tile). */
+  itemOverflowY?: 'auto' | 'visible' | 'hidden';
 }
 
 function buildDefaultLayout(items: GridItemConfig[], cols: number): Layout {
@@ -104,6 +106,7 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
   isResizable = true,
   handlesOnHoverOnly = false,
   draggableHandle,
+  itemOverflowY = 'auto',
 }) => {
   const { width, containerRef, mounted } = useContainerWidth({
     measureBeforeMount: false,
@@ -145,6 +148,12 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
   if (items.length === 0) return null;
 
   const containerClass = `rgl-container min-w-0 ${handlesOnHoverOnly ? 'rgl-handles-on-hover' : ''} ${className}`.trim();
+  const itemOverflowClass =
+    itemOverflowY === 'visible'
+      ? 'overflow-y-visible'
+      : itemOverflowY === 'hidden'
+      ? 'overflow-y-hidden'
+      : 'overflow-y-auto';
   return (
     <div ref={containerRef as React.RefObject<HTMLDivElement>} className={containerClass}>
       {mounted && width > 0 && (
@@ -165,7 +174,10 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
           className="rgl-grid"
         >
           {orderedLayout.map((item) => (
-            <div key={item.i} className="rgl-item-wrapper min-h-0 overflow-y-auto overflow-x-hidden">
+            <div
+              key={item.i}
+              className={`rgl-item-wrapper min-h-0 ${itemOverflowClass} overflow-x-hidden`}
+            >
               {contentById.get(item.i) ?? null}
             </div>
           ))}

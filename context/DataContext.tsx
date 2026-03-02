@@ -792,11 +792,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     };
     const updateBudget = async (budget: Budget) => {
-      if(!supabase || !auth?.user) return;
+      if (!supabase || !auth?.user) return;
       const db = supabase;
-      const { error } = await db.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category, month: budget.month, year: budget.year });
-      if(error) console.error("Error updating budget:", error);
-      else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => (b.category === budget.category && b.month === budget.month && b.year === budget.year) ? budget : b) }));
+      const { category, month, year, limit, period, tier } = budget;
+      const payload: Record<string, unknown> = {
+        limit,
+        period,
+        tier,
+      };
+      const { error } = await db
+        .from('budgets')
+        .update(payload)
+        .match({ user_id: auth.user.id, category, month, year });
+      if (error) {
+        console.error('Error updating budget:', error);
+        return;
+      }
+      setData((prev) => ({
+        ...prev,
+        budgets: prev.budgets.map((b) =>
+          b.category === category && b.month === month && b.year === year
+            ? { ...b, limit, period, tier }
+            : b
+        ),
+      }));
     };
     const deleteBudget = async (category: string, month: number, year: number) => {
       if(!supabase || !auth?.user) return;
