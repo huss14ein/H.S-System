@@ -121,9 +121,9 @@ const AccountCardComponent: React.FC<{
                     <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-            <div className="mt-4 pt-4 border-t border-slate-100">
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
-                <p className={`text-xl font-bold tabular-nums whitespace-nowrap overflow-hidden text-ellipsis mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+            <div className="mt-4 pt-4 border-t border-slate-100 min-w-0 overflow-hidden">
+                <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
+                <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
             </div>
         </div>
     );
@@ -190,7 +190,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
         >
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                  <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
                  <Card title="Total Credit Balance" value={formatCurrencyString(totalCredit)} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
                  <Card title="Total Investment Value" value={formatCurrencyString(totalInvestments)} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of linked investment portfolios." />
@@ -215,7 +215,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <section>
                 <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCashAccounts.map((acc) => (
                         <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
                     ))}
@@ -224,7 +224,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <section>
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCreditAccounts.map((acc) => (
                         <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
                     ))}
@@ -233,7 +233,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <section>
                 <h2 className="section-title text-xl mb-4">Investment Platforms</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = data.investments.filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (

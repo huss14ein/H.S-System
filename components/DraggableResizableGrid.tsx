@@ -161,7 +161,7 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
           className="rgl-grid"
         >
           {orderedLayout.map((item) => (
-            <div key={item.i} className="rgl-item-wrapper min-h-0 overflow-auto">
+            <div key={item.i} className="rgl-item-wrapper min-h-0 overflow-y-auto overflow-x-hidden">
               {contentById.get(item.i) ?? null}
             </div>
           ))}

@@ -122,9 +122,9 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     <div className="flex space-x-1"><button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button></div>
                 </div>
                 {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
-                <div className="mt-4 space-y-3">
-                    <div><dt className="text-sm text-gray-500">Current Value</dt><dd className="font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
-                    <div className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">Purchase Value</dt><dd className="font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div><dt className="text-gray-500">Unrealized G/L</dt><dd className="font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
+                <div className="mt-4 space-y-3 min-w-0 overflow-hidden">
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-sm text-gray-500">Current Value</dt><dd className="metric-value font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
+                    <div className="grid grid-cols-2 gap-4 text-sm min-w-0"><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Purchase Value</dt><dd className="metric-value font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Unrealized G/L</dt><dd className="metric-value font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
                 </div>
             </div>
             <div className="border-t mt-4 pt-4"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>{holding.zakahClass}</span></div>
@@ -199,7 +199,7 @@ const Commodities: React.FC = () => {
                         {isUpdatingPrices ? 'Updating Prices...' : 'Update Prices via AI'}
                     </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {data.commodityHoldings.map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
                     {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>

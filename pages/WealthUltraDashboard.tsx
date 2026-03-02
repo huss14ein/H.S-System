@@ -261,7 +261,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'summary-cards',
         content: (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 h-full">
+          <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 h-full">
             <Card title="Total Portfolio Value" value={formatCurrencyString(totalPortfolioValue)} trend={totalSAR.toLocaleString('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 0 }) + ' (SAR)'} density="comfortable" tooltip="Total value of all portfolio positions in your base currency." />
             <Card title="Cash Planner" value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'WITHIN LIMIT' : 'OVER BUDGET'} trend={`Deployable: ${formatCurrencyString(deployableCash)} · Planned: ${formatCurrencyString(totalPlannedBuyCost)}`} density="comfortable" indicatorColor={cashPlannerStatus === 'OVER_BUDGET' ? 'red' : 'green'} tooltip="Compares deployable cash to planned buy cost." />
           </div>
@@ -488,7 +488,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                       <div className="flex items-center gap-2 flex-wrap">
                         <ExclamationTriangleIcon className={`h-4 w-4 flex-shrink-0 ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-slate-500'}`} />
                         {a.title && <span className={`font-semibold ${titleColor}`}>{a.title}</span>}
-                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
+                        <span className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
                       </div>
                       <p className="text-slate-700">{a.message}</p>
                       {a.actionHint && (

@@ -668,13 +668,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                 <Card title="Income" value={formatCurrencyString(monthlyIncome)} />
                 <Card title="Expenses" value={formatCurrencyString(monthlyExpenses)} />
                 <Card title="Net Flow" value={formatCurrency(netCashflow, { colorize: true })} trend={netCashflow >= 0 ? 'SURPLUS' : 'DEFICIT'} />
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                  <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
                  <SectionCard title="Expense Breakdown" className="h-[400px] flex flex-col">
                     <div className="flex-1 min-h-0"><ExpenseBreakdownChart data={expenseBreakdown} /></div>

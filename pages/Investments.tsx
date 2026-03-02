@@ -120,21 +120,21 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 </div>
 
                 <div className={`grid gap-3 min-w-[240px] ${investmentProgress.specPct > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                    <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center">
-                        <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">Core Target</p>
-                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
-                        <p className="text-[10px] text-gray-500">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
+                    <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1 w-full">Core Target</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
+                        <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
                     </div>
-                    <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center">
-                        <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1">Upside Target</p>
-                        <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
-                        <p className="text-[10px] text-gray-500">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
+                    <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1 w-full">Upside Target</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
+                        <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
                     </div>
                     {investmentProgress.specPct > 0 && (
-                        <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center">
-                            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1">Spec Target</p>
-                            <p className="text-sm font-bold text-dark">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
-                            <p className="text-[10px] text-gray-500">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
+                        <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                            <p className="metric-label text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1 w-full">Spec Target</p>
+                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
+                            <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
                         </div>
                     )}
                 </div>
@@ -493,16 +493,16 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
             <div className="space-y-6 min-w-0 overflow-hidden">
-                {/* Hero: symbol, name, price, change — in portfolio currency */}
-                <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6 min-w-0">
+                {/* Hero: symbol, name, price, change — in portfolio currency; content contained */}
+                <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6 min-w-0 overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-x-3 min-w-0">
-                        <span className="text-2xl font-bold text-slate-900 shrink-0">{holding.symbol}</span>
+                        <span className="metric-label text-2xl font-bold text-slate-900 shrink-0 max-w-full" title={holding.symbol}>{holding.symbol}</span>
                         <span className="hidden sm:inline text-slate-500 shrink-0">·</span>
-                        <span className="text-base text-slate-600 font-medium break-words min-w-0" title={displayName}>{displayName}</span>
+                        <span className="metric-label text-base text-slate-600 font-medium min-w-0 max-w-full" title={displayName}>{displayName}</span>
                     </div>
                     <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 min-w-0">
-                        <span className="text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums break-all">{fmt(currentPrice)}</span>
-                        <span className={`text-lg font-semibold tabular-nums shrink-0 ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
+                        <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
                         </span>
                         <span className="text-sm text-slate-500 shrink-0">per share · {portfolioCurrency}</span>
@@ -511,59 +511,59 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 min-w-0">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Market Value</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
+                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Quantity</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums break-all">{holding.quantity.toLocaleString()}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
+                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Avg. Cost</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
+                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">Unrealized G/L</p>
-                        <p className={`mt-1 text-lg font-bold tabular-nums break-all overflow-hidden ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="text-xs text-slate-500 mt-0.5 break-all truncate" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 overflow-hidden flex flex-col items-center">
+                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
+                        <p className={`metric-value w-full mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="metric-value w-full text-xs text-slate-500 mt-0.5" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
                 {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
                 {portfolioCurrency === 'USD' ? (
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
+                        <p className="metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Market value</p>
-                                <p className="font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Market value</p>
+                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Cost basis</p>
-                                <p className="font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Cost basis</p>
+                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Unrealized G/L</p>
-                                <p className={`font-bold tabular-nums break-all overflow-hidden ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
+                                <p className={`metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
                             </div>
                         </div>
                     </div>
                 ) : (
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 overflow-hidden">
-                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
+                        <p className="metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Market value</p>
-                                <p className="font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Market value</p>
+                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Cost basis</p>
-                                <p className="font-bold text-slate-900 tabular-nums break-all overflow-hidden" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Cost basis</p>
+                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden">
-                                <p className="text-slate-600 truncate">Unrealized G/L</p>
-                                <p className={`font-bold tabular-nums break-all overflow-hidden ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
+                                <p className="metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
+                                <p className={`metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
                             </div>
                         </div>
                     </div>
@@ -973,21 +973,21 @@ const PlatformCard: React.FC<{
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
 
     return (
-        <article className="bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
-            {/* Platform Header — names and values wrap; boxes fit content */}
-            <header className="bg-gradient-to-br from-slate-50 via-white to-slate-50/50 px-5 sm:px-6 py-5 sm:py-6 border-b border-slate-200 min-w-0">
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start gap-4">
-                    <div className="flex items-start gap-3 min-w-0 flex-1">
+        <article className="platform-card bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
+            {/* Platform Header — compact, professional */}
+            <header className="platform-card-header bg-gradient-to-br from-slate-50 via-white to-slate-50/50 border-b border-slate-200 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start">
+                    <div className="flex items-start gap-3 min-w-0 flex-1 overflow-hidden">
                         <div className="w-1 h-12 rounded-full bg-primary shrink-0" aria-hidden />
-                        <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 break-words" title={platform.name}>{platform.name}</h3>
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 truncate min-w-0" title={platform.name}>{platform.name}</h3>
                                 <span className="flex items-center gap-0.5 shrink-0">
                                     <button type="button" onClick={() => onEditPlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 break-all tabular-nums" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValue)}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValue)}</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums truncate overflow-hidden" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValue)}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValue)}</p>
                             <p className="text-xs text-slate-500 mt-1 font-medium">Contains {portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} · {totalHoldings} holding{totalHoldings !== 1 ? 's' : ''}</p>
                         </div>
                     </div>
@@ -995,36 +995,36 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
-                <dl className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Available Cash</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums break-all" title={platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(availableCash, { digits: 0 })}>{platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(availableCash, { digits: 0 })}</dd>
+                <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6" aria-label="Platform metrics">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">Available Cash</dt>
+                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(availableCash, { digits: 0 })}>{platformCurrency ? formatCurrencyString(availableCash, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(availableCash, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Unrealized P/L</dt>
-                        <dd className="font-bold text-sm break-all">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized P/L</dt>
+                        <dd className="metric-value w-full font-bold text-sm">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Daily P/L</dt>
-                        <dd className="font-bold text-sm break-all">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">Daily P/L</dt>
+                        <dd className="metric-value w-full font-bold text-sm">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">ROI</dt>
-                        <dd className={`font-bold text-sm tabular-nums break-all ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">ROI</dt>
+                        <dd className={`metric-value w-full font-bold text-sm tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Invested</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums break-all" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">Invested</dt>
+                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm">
-                        <dt className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Withdrawn</dt>
-                        <dd className="font-bold text-slate-800 text-sm mt-0.5 tabular-nums break-all" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-[4.5rem] overflow-hidden shadow-sm flex flex-col items-center">
+                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide">Withdrawn</dt>
+                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </dl>
             </header>
 
-            {/* Portfolios & Holdings — organized hierarchy */}
-            <div className="p-5 sm:p-6 space-y-6">
+            {/* Portfolios & Holdings — compact hierarchy; spacing from design system */}
+            <div className="platform-card-body">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                     <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Portfolios · {portfolios.length}</h4>
                 </div>
@@ -1041,14 +1041,14 @@ const PlatformCard: React.FC<{
                     const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
                     const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
                     return (
-                        <section key={portfolio.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                            {/* Portfolio header: name, value, goal, actions — names fully visible */}
-                            <div className="flex flex-wrap items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100">
-                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                            {/* Portfolio header: name, value, goal, actions — contained in box */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 min-w-0">
+                                <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
-                                    <div className="min-w-0 flex-1">
-                                        <h4 className="font-bold text-slate-800 text-base break-words">{portfolio.name}</h4>
-                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 break-all">{fmt(portfolioValue)}</p>
+                                    <div className="min-w-0 flex-1 overflow-hidden">
+                                        <h4 className="font-bold text-slate-800 text-base truncate" title={portfolio.name}>{portfolio.name}</h4>
+                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 truncate overflow-hidden" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>
                                         )}
@@ -1092,16 +1092,16 @@ const PlatformCard: React.FC<{
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
-                                                            <td className="px-4 py-3">
+                                                            <td className="px-4 py-3 min-w-0 max-w-[200px]">
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct }, portfolio)}
-                                                                        className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0"
+                                                                        className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
-                                                                        <span className="font-bold text-slate-900 block truncate">{h.symbol}</span>
+                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={h.symbol}>{h.symbol}</span>
                                                                         {displayName(h) && displayName(h) !== h.symbol && (
-                                                                            <span className="text-xs text-slate-500 block truncate max-w-[160px]" title={displayName(h)!}>{displayName(h)}</span>
+                                                                            <span className="metric-value text-xs text-slate-500 block w-full" title={displayName(h)!}>{displayName(h)}</span>
                                                                         )}
                                                                     </button>
                                                                     {h.goalId && <span title={getGoalName(h.goalId)}><LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" aria-hidden /></span>}
@@ -1120,9 +1120,9 @@ const PlatformCard: React.FC<{
                                                             <td className="px-3 py-3 text-right text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
                                                             <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
                                                             <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
-                                                            <td className="px-3 py-3 text-right">
+                                                            <td className="px-3 py-3 text-right whitespace-nowrap">
                                                                 <span className={`text-sm font-semibold tabular-nums ${h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(h.gainLoss, { digits: 0 })}</span>
-                                                                <span className={`text-xs tabular-nums block ${gainLossPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>({gainLossPct >= 0 ? '+' : ''}{gainLossPct.toFixed(1)}%)</span>
+                                                                <span className={`text-xs tabular-nums ${gainLossPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}> ({gainLossPct >= 0 ? '+' : ''}{gainLossPct.toFixed(1)}%)</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-right">
                                                                 <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>
@@ -1263,7 +1263,7 @@ const PlatformView: React.FC<{
                 </div>
             ) : null}
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <div className="platform-cards-grid grid grid-cols-1 xl:grid-cols-2 items-start" data-platform-count={platformsData.length}>
                 {platformsData.map(p => (
                     <PlatformCard
                         key={p.account.id}
@@ -1630,7 +1630,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Allocation Settings — essential fields first */}
                     <div className="bg-white p-6 rounded-lg shadow">
@@ -1893,19 +1893,19 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                         </span>
                                     </div>
                                 </div>
-                                <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-                                    <dt className="text-gray-600">Total Investment:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.totalInvestment)}</dd>
-                                    <dt className="text-gray-600">Core Allocation:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.coreInvestment)}</dd>
-                                    <dt className="text-gray-600">Upside Allocation:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.upsideInvestment)}</dd>
-                                    <dt className="text-gray-600">Speculative Allocation:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.speculativeInvestment)}</dd>
-                                    <dt className="text-gray-600">Redirected Funds:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.redirectedInvestment)}</dd>
-                                    <dt className="text-gray-600">Unused Funds:</dt>
-                                    <dd className="font-mono text-right">{formatCurrencyString(executionResult.unusedUpsideFunds)}</dd>
+                                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 min-w-0">
+                                    <dt className="metric-label text-gray-600">Total Investment:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.totalInvestment)}</dd>
+                                    <dt className="metric-label text-gray-600">Core Allocation:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.coreInvestment)}</dd>
+                                    <dt className="metric-label text-gray-600">Upside Allocation:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.upsideInvestment)}</dd>
+                                    <dt className="metric-label text-gray-600">Speculative Allocation:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.speculativeInvestment)}</dd>
+                                    <dt className="metric-label text-gray-600">Redirected Funds:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.redirectedInvestment)}</dd>
+                                    <dt className="metric-label text-gray-600">Unused Funds:</dt>
+                                    <dd className="metric-value font-mono text-right">{formatCurrencyString(executionResult.unusedUpsideFunds)}</dd>
                                 </dl>
                             </div>
 
@@ -2160,7 +2160,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
              </div>
         </header>
 
-        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" aria-label="Investment summary">
+        <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
                 title="Total Value"
                 value={formatCurrencyString(totalValue)}

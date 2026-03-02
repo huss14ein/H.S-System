@@ -468,7 +468,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
       <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
       
-       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+       <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (
             <GoalCard 
                 key={goal.id} 

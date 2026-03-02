@@ -54,7 +54,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             ))}
                         </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                         <div>
                             <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
                             <input id="budget-threshold" type="number" value={localSettings.budgetThreshold}
@@ -76,30 +76,30 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     <InfoHint text="These values drive Investment Plan, Wealth Ultra, and Recovery Plan. Sleeve targets and tickers are set in Investment Plan." />
                     Source: App defaults (front-end config)
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">FX rate (USD→SAR)</p>
-                        <p className="font-semibold">{(data.wealthUltraConfig?.fxRate ?? 0.27).toFixed(4)}</p>
+                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 text-sm min-w-0">
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">FX rate (USD→SAR)</p>
+                        <p className="metric-value font-semibold w-full">{(data.wealthUltraConfig?.fxRate ?? 0.27).toFixed(4)}</p>
                     </div>
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">Cash reserve %</p>
-                        <p className="font-semibold">{data.wealthUltraConfig?.cashReservePct ?? 10}%</p>
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Cash reserve %</p>
+                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.cashReservePct ?? 10}%</p>
                     </div>
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">Max per ticker %</p>
-                        <p className="font-semibold">{data.wealthUltraConfig?.maxPerTickerPct ?? 20}%</p>
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Max per ticker %</p>
+                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.maxPerTickerPct ?? 20}%</p>
                     </div>
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">Target 1 (exit %)</p>
-                        <p className="font-semibold">{data.wealthUltraConfig?.defaultTarget1Pct ?? 15}%</p>
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Target 1 (exit %)</p>
+                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTarget1Pct ?? 15}%</p>
                     </div>
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">Target 2 (exit %)</p>
-                        <p className="font-semibold">{data.wealthUltraConfig?.defaultTarget2Pct ?? 25}%</p>
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Target 2 (exit %)</p>
+                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTarget2Pct ?? 25}%</p>
                     </div>
-                    <div className="rounded-lg bg-slate-50 p-3">
-                        <p className="text-gray-500">Trailing stop %</p>
-                        <p className="font-semibold">{data.wealthUltraConfig?.defaultTrailingPct ?? 10}%</p>
+                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Trailing stop %</p>
+                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTrailingPct ?? 10}%</p>
                     </div>
                 </div>
                 {setActivePage && (

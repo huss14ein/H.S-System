@@ -199,7 +199,7 @@ const Forecast: React.FC = () => {
                 <p className="text-xs text-blue-700 mt-3">Assumptions are deterministic and educational (not financial advice). Use multiple runs (conservative/base/aggressive) to compare outcomes.</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start">
                 <SectionCard title="Forecast Assumptions" className="lg:col-span-1 sticky top-24 space-y-4">
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
@@ -242,7 +242,7 @@ const Forecast: React.FC = () => {
                     {summary && !isLoading && (
                         <>
                         <p className="text-sm text-gray-600">Scenario preset used: <span className="font-semibold text-dark">{scenarioPreset}</span></p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                             <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} tooltip="Estimated total net worth at the end of the forecast period." />
                             <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} tooltip="Estimated investment portfolio value at the end of the forecast period." />
                         </div>
@@ -285,7 +285,7 @@ const Forecast: React.FC = () => {
                     {goalProjections.length > 0 && !isLoading && (
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-lg font-semibold text-dark mb-4">Goal Projections</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                                 {goalProjections.map(proj => (
                                     <div key={proj.name} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
                                         <FlagIcon className={`h-6 w-6 flex-shrink-0 ${proj.met ? 'text-green-500' : 'text-gray-400'}`} />

@@ -131,7 +131,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
         const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
         const incomePlanned = incomeActuals.map((actual) => actual > 0 ? actual : incomeAvg);
-        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string; addManually?: boolean }) => r.enabled && r.type === 'income' && !r.addManually).reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
+        // Recurring income: include both auto and manual so plan reflects full expected recurring (actuals already in Transactions)
+        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'income').reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
         for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
         const incomeRow: PlanRow = {
             type: 'income',
@@ -175,8 +176,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             byCategory.get(category)!.actual[monthIndex] += Math.abs(Number(t.amount)) || 0;
         });
 
-        // Recurring expenses: add expected amount to planned for each category (every month); exclude addManually (not auto-recorded)
-        recurringTransactions.filter((r: { enabled: boolean; type: string; addManually?: boolean }) => r.enabled && r.type === 'expense' && !r.addManually).forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
+        // Recurring expenses: add expected amount to planned for each category (every month); include both auto and manual so plan aligns with recurring from Transactions
+        recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'expense').forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
             const cat = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
             if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
             const row = byCategory.get(cat)!;
@@ -362,7 +363,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     return (
         <PageLayout
             title="Annual Financial Plan"
-            description="Income and expenses are captured from Transactions; limits from Budgets; investment from Investment Plan. Liquid cash from Accounts. Plan is fully integrated with your data."
+            description="Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan. Fully integrated with your data."
             action={
                 <div className="flex flex-wrap items-center justify-end gap-4">
                     <div className="flex items-center gap-2">
@@ -380,21 +381,21 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             }
         >
-            {/* Data sources: plan is built from Transactions, Budgets, Investment Plan */}
+            {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
-                <span className="font-semibold text-slate-800">Plan data from:</span>
+                <span className="font-semibold text-slate-800">Plan data aligned with:</span>
                 {setActivePage && (
                     <>
-                        <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                        <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Actuals & recurring (auto or manual)">
                             <BanknotesIcon className="h-4 w-4" /> Transactions
                         </button>
                         <span className="text-slate-400">·</span>
-                        <button type="button" onClick={() => setActivePage('Budgets')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                        <button type="button" onClick={() => setActivePage('Budgets')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Planned limits">
                             Budgets
                         </button>
                         <span className="text-slate-400">·</span>
-                        <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
-                            <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan & trades
+                        <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Monthly investment planned & actual buys">
+                            <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan
                         </button>
                         <span className="text-slate-400">·</span>
                         <button type="button" onClick={() => setActivePage('Accounts')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
@@ -402,7 +403,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </button>
                     </>
                 )}
-                <span className="text-xs text-slate-500 ml-auto">Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan.</span>
+                <span className="text-xs text-slate-500 ml-auto">Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.</span>
             </div>
 
             {/* Liquid cash from Accounts (cash flow context) */}
@@ -411,9 +412,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
                 return liquidCash !== 0 ? (
-                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50">
-                        <p className="text-xs font-medium text-emerald-800 uppercase tracking-wide">Liquid cash (Checking + Savings)</p>
-                        <p className="text-xl font-bold text-emerald-800 tabular-nums mt-0.5">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
+                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
+                        <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
                     </div>
                 ) : null;
@@ -421,31 +422,31 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Executive summary */}
             {totals && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className={`p-4 rounded-xl border-2 ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Projected surplus</p>
-                        <p className={`text-xl font-bold ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {formatCurrencyString(totals.projectedNet, { digits: 0 })}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">Income − expenses (plan)</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Actual net (YTD)</p>
-                        <p className={`text-xl font-bold ${totals.actualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Actual net (YTD)</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.actualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {formatCurrencyString(totals.actualNet, { digits: 0 })}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">From transactions this year</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Vs plan</p>
-                        <p className={`text-xl font-bold ${totals.variancePct >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Vs plan</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.variancePct >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {totals.projectedNet !== 0 ? `${totals.variancePct >= 0 ? '+' : ''}${totals.variancePct.toFixed(0)}%` : '—'}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">Actual vs projected</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Months over budget</p>
-                        <p className={`text-xl font-bold ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Months over budget</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {insights.monthsOverBudget}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">Category-months above plan</p>
@@ -674,8 +675,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
              <SinkingFunds />
             
-            {/* Plan Grid */}
-            <div className="bg-white shadow rounded-lg overflow-x-auto">
+            {/* Plan Grid: actuals from Transactions, planned from Budgets + recurring; investment from Investment Plan */}
+            <div className="space-y-2">
+                <p className="text-xs text-slate-500">Grid: <span className="text-gray-600">top</span> = actual (Transactions) · <span className="font-medium text-slate-700">bottom</span> = planned (Budgets + recurring). Investment row planned from Investment Plan, actual from buy trades.</p>
+                <div className="bg-white shadow rounded-lg overflow-x-auto">
                 <table className="min-w-full text-sm">
                     <thead className="bg-gray-100 text-dark">
                         <tr>
@@ -732,6 +735,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         })}
                     </tbody>
                 </table>
+                </div>
             </div>
             
             <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} onSave={handleSaveEvent} />

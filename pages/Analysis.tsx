@@ -186,7 +186,7 @@ const Analysis: React.FC = () => {
         <PageLayout title="Financial Analysis">
             <AIAdvisor pageContext="analysis" contextData={contextData} />
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 mt-6">
                 <SectionCard title="Spending by Budget Category" className="min-h-[380px] flex flex-col">
                     <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
                         <SpendingByCategoryChart />

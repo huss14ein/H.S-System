@@ -283,7 +283,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
                 <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Sum of unpaid money you owe." />
                 <Card title="Money Owed to You" value={formatCurrencyString(totalReceivable)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of unpaid amounts others owe you." />
                 <Card title="Net (Receivables − Debt)" value={formatCurrencyString(netPosition)} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Positive = you are owed more than you owe; negative = you owe more than you are owed." />
@@ -295,7 +295,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 {debts.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {debts.map(liab => (
                             <DebtCard
                                 key={liab.id}
@@ -316,7 +316,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 {receivables.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No receivables for this filter. Click &quot;Add Money Owed to Me&quot; or switch filter to Paid/All.</p>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
                             <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l, 'receivable')} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
                         ))}

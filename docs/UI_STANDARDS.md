@@ -14,6 +14,10 @@ Use these patterns so all pages look and behave consistently.
 - **Usage**: Import `DraggableResizableGrid`, pass a unique `layoutKey` (e.g. `"dashboard-kpi"`, `"assets-summary"`) and an `items` array of `{ id, content, defaultW?, defaultH?, minW?, minH? }`. Grid is 12 columns; `defaultW`/`defaultH` are in grid units. Drag anywhere on the item to move; use the resize handle on the bottom-right to resize.
 - **Where used**: Dashboard (KPI cards), Assets (summary cards). Use the same pattern on Budgets, Summary, or any page with a set of cards/sections you want reorderable and resizable.
 
+## Metric boxes and card labels
+
+- **Single-line labels/values**: Use `.metric-label` and `.metric-value` (in `index.css`) on any small box or table cell where the text must stay on one line. They apply `white-space: nowrap`, `overflow: hidden`, and `text-overflow: ellipsis` so labels like "Available Cash" or "Unrealized P/L" never wrap to two lines (e.g. "AVAILABL E CASH"). Use on platform metric boxes, holding details, dashboard cards, and similar areas across all pages.
+
 ## Content blocks
 
 - **SectionCard** (`components/SectionCard.tsx`): Main content blocks. Use for:

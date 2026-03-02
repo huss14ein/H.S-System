@@ -57,7 +57,7 @@ const AIRebalancerView: React.FC = () => {
                 <p className="text-xs text-red-600 mt-2 font-semibold">Disclaimer: This is not financial advice. For educational purposes only.</p>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 {/* Configuration Panel */}
                 <div className="lg:col-span-1 section-card space-y-6">
                     <div>

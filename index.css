@@ -126,9 +126,9 @@
     .section-card {
         @apply bg-white rounded-xl shadow-md border border-slate-200/80 p-4 sm:p-5 md:p-6 min-w-0 max-w-full overflow-hidden;
     }
-    /* DraggableResizableGrid: item wrapper so content fills cell and resize handle is usable */
+    /* DraggableResizableGrid: item wrapper so content fills cell and resize handle is usable; no horizontal scroll on cards */
     .rgl-item-wrapper {
-        @apply w-full h-full min-h-[80px] flex flex-col;
+        @apply w-full h-full min-h-[80px] flex flex-col overflow-x-hidden;
     }
     .rgl-container .react-grid-item > .react-resizable-handle {
         @apply opacity-60 hover:opacity-100;
@@ -149,6 +149,55 @@
     }
     .section-title {
         @apply text-base sm:text-lg font-semibold text-dark mb-4 flex items-center gap-2 min-w-0 break-words;
+    }
+    /* Single-line labels/values in metric boxes and cards — no awkward two-line wrapping */
+    .metric-label {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+    .metric-value {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+    /* Dynamic spacing: viewport-scaled + content-aware for platform cards and metric boxes */
+    .platform-cards-grid {
+        --platform-gap: clamp(0.75rem, 2.5vw, 1.5rem);
+        gap: var(--platform-gap);
+    }
+    /* Slightly larger gap when 1–2 cards so layout doesn’t feel cramped */
+    .platform-cards-grid[data-platform-count="1"],
+    .platform-cards-grid[data-platform-count="2"] {
+        --platform-gap: clamp(1rem, 3.5vw, 2rem);
+    }
+    .platform-card {
+        --card-pad: clamp(0.75rem, 2vw, 1.25rem);
+        --metric-gap: clamp(0.375rem, 1.25vw, 0.75rem);
+        --section-gap: clamp(0.75rem, 2vw, 1.25rem);
+    }
+    .platform-card .platform-card-header {
+        padding: var(--card-pad);
+    }
+    .platform-card .platform-card-header > .flex {
+        gap: clamp(0.5rem, 1.5vw, 1rem);
+    }
+    .platform-card .platform-metrics {
+        margin-top: var(--section-gap);
+        gap: var(--metric-gap);
+    }
+    .platform-card .platform-card-body {
+        padding: var(--card-pad);
+        display: flex;
+        flex-direction: column;
+        gap: var(--section-gap);
+    }
+    /* Reusable dynamic gap for card/section grids across all pages */
+    .cards-grid {
+        --cards-gap: clamp(0.75rem, 2.5vw, 1.5rem);
+        gap: var(--cards-gap);
     }
     .btn-primary {
         @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
@@ -197,6 +246,15 @@
     }
     .alert-info {
         @apply bg-blue-50 border-l-4 border-primary text-blue-800 p-4 rounded-r-xl;
+    }
+
+    /* Single-line labels/values: no mid-word wrap; ellipsis when overflow (cards, metric boxes, tables) */
+    .metric-label,
+    .metric-value {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
     }
 
     /* Chart containers: consistent layout so ResponsiveContainer can size correctly */

@@ -108,18 +108,18 @@ function RecoveryPlanViewContent() {
         </details>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-        <div className="section-card">
-          <p className="text-slate-500 text-sm">Losing positions</p>
-          <p className="text-lg font-semibold text-dark">{losingPositions.length}</p>
+      <div className="cards-grid grid grid-cols-1 md:grid-cols-3 text-sm min-w-0">
+        <div className="section-card min-w-0 overflow-hidden flex flex-col">
+          <p className="metric-label text-slate-500 text-sm w-full">Losing positions</p>
+          <p className="metric-value text-lg font-semibold text-dark w-full">{losingPositions.length}</p>
         </div>
-        <div className="section-card border-l-4 border-emerald-400">
-          <p className="text-slate-600 text-sm">Recovery eligible</p>
-          <p className="text-lg font-semibold text-emerald-700">{qualifiedPositions.length}</p>
+        <div className="section-card border-l-4 border-emerald-400 min-w-0 overflow-hidden flex flex-col">
+          <p className="metric-label text-slate-600 text-sm w-full">Recovery eligible</p>
+          <p className="metric-value text-lg font-semibold text-emerald-700 w-full">{qualifiedPositions.length}</p>
         </div>
-        <div className="section-card">
-          <p className="text-slate-500 text-sm">Deployable cash</p>
-          <p className="text-lg font-semibold text-dark">{formatCurrencyString(deployableCash)}</p>
+        <div className="section-card min-w-0 overflow-hidden flex flex-col">
+          <p className="metric-label text-slate-500 text-sm w-full">Deployable cash</p>
+          <p className="metric-value text-lg font-semibold text-dark w-full">{formatCurrencyString(deployableCash)}</p>
         </div>
       </div>
 
@@ -179,7 +179,7 @@ function RecoveryPlanViewContent() {
         <div className="bg-white rounded-xl shadow border border-gray-100 p-6 space-y-6">
           <h3 className="text-lg font-semibold text-dark">{selected.holding.symbol} — Recovery Plan</h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          <div className="cards-grid grid grid-cols-1 md:grid-cols-2 text-sm">
             <div className="p-4 rounded-lg bg-slate-50 border border-slate-100">
               <p className="text-gray-500 mb-1">Current</p>
               <p>Shares: {selected.holding.quantity} · Avg cost: {formatCurrencyString(selected.holding.avgCost)} · Price: {formatCurrencyString(selectedPlan.currentPrice)}</p>

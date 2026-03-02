@@ -76,7 +76,7 @@ const DividendTrackerView: React.FC = () => {
                 <h2 className="text-2xl font-bold text-dark">Dividend Tracker</h2>
                 <p className="text-gray-500 mt-1">Monitor your passive income from dividend-paying investments.</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                 <Card title="Dividend Income (YTD)" value={formatCurrencyString(dividendIncomeYTD)} indicatorColor="green" valueColor="text-emerald-700" icon={<TrophyIcon className="h-5 w-5 text-emerald-600" />} tooltip="Dividend income received so far this year." />
                 <Card title="Projected Annual Income" value={formatCurrencyString(projectedAnnualIncome)} indicatorColor="green" valueColor="text-indigo-700" icon={<BanknotesIcon className="h-5 w-5 text-indigo-600" />} tooltip="Based on current holdings and their dividend yields." />
                 <Card title="Average Portfolio Yield" value={`${averageYield.toFixed(2)}%`} indicatorColor="yellow" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Projected annual dividend income as a percentage of your total investment value."/>
@@ -115,7 +115,7 @@ const DividendTrackerView: React.FC = () => {
                 </ChartContainer>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <div className="section-card">
                     <h3 className="section-title mb-4">Recent Dividend Payments</h3>
                     <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-sm">

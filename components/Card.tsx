@@ -89,8 +89,8 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       }}
     >
       {/* Header: title + icon/tooltip — same layout for all cards */}
-      <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0">
-        <h3 className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 uppercase tracking-wide truncate`}>{title}</h3>
+      <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
+        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 uppercase tracking-wide`}>{title}</h3>
         <div className="flex-shrink-0 flex items-center gap-0.5">
           {icon}
           {tooltip && (
@@ -105,10 +105,10 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
         </div>
       </div>
       {/* Value: single line, no wrap, truncate with ellipsis */}
-      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center">
-        <p className={`${compact ? 'text-xl' : 'text-2xl'} font-extrabold tabular-nums whitespace-nowrap overflow-hidden text-ellipsis min-w-0 ${valueToneClass}`}>{value}</p>
+      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0">
+        <p className={`metric-value ${compact ? 'text-xl' : 'text-2xl'} font-extrabold tabular-nums ${valueToneClass}`}>{value}</p>
         {trend && (
-          <div className={`flex items-center gap-1 ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor} whitespace-nowrap overflow-hidden text-ellipsis min-w-0`}>
+          <div className={`metric-value flex items-center gap-1 ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-3.5 w-3.5 flex-shrink-0"/>}
             {isNegative && <ArrowTrendingDownIcon className="h-3.5 w-3.5 flex-shrink-0"/>}
             <span className="truncate">{trend}</span>

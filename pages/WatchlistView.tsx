@@ -349,7 +349,7 @@ const WatchlistView: React.FC = () => {
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
     return (
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="mt-6 cards-grid grid grid-cols-1 lg:grid-cols-3">
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:col-span-3">
                 <div className="bg-gradient-to-br from-white to-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-xs text-gray-500">Positive Movers</p><p className="text-xl font-semibold text-emerald-700">{watchlistInsights.positiveMovers}</p></div>

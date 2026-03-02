@@ -118,13 +118,13 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                 </div>
             </div>
             {asset.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
-            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-                <div><dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div><dt className="text-slate-500">Purchase Price</dt><dd className="font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
-                    <div><dt className="text-slate-500">Unrealized G/L</dt><dd className="font-semibold">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{unrealizedGain >= 0 ? ' ' : ' '}({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 min-w-0 overflow-hidden">
+                <div><dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
+                <div className="grid grid-cols-2 gap-3 text-sm min-w-0">
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Purchase Price</dt><dd className="metric-value font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Unrealized G/L</dt><dd className="metric-value font-semibold">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
                 </div>
-                {asset.isRental && asset.monthlyRent != null && <div><dt className="text-slate-500">Monthly Rent</dt><dd className="font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
+                {asset.isRental && asset.monthlyRent != null && <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Monthly Rent</dt><dd className="metric-value font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
             </div>
             <div className="border-t mt-4 pt-4 flex items-center justify-between gap-2 flex-wrap">
                 {linkedGoal ? <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />{linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
@@ -355,24 +355,24 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                 </div>
             </div>
             {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full w-fit">{holding.owner}</span>}
-            <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-3 min-w-0 overflow-hidden">
                 <div>
-                    <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt>
-                    <dd className="font-bold text-dark text-xl tabular-nums mt-0.5 break-all">{formatCurrencyString(holding.currentValue)}</dd>
+                    <dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt>
+                    <dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(holding.currentValue)}</dd>
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                    <div className="min-w-0">
-                        <dt className="text-slate-500 text-xs">Purchase Value</dt>
-                        <dd className="font-medium text-slate-700 break-all">{formatCurrencyString(holding.purchaseValue)}</dd>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm min-w-0">
+                    <div className="min-w-0 overflow-hidden">
+                        <dt className="metric-label text-slate-500 text-xs">Purchase Value</dt>
+                        <dd className="metric-value font-medium text-slate-700">{formatCurrencyString(holding.purchaseValue)}</dd>
                     </div>
-                    <div className="min-w-0">
-                        <dt className="text-slate-500 text-xs">Unrealized G/L</dt>
-                        <dd className="font-semibold break-all"><span>{formatCurrency(unrealizedGain, { colorize: true })}</span>{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGain >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</dd>
+                    <div className="min-w-0 overflow-hidden">
+                        <dt className="metric-label text-slate-500 text-xs">Unrealized G/L</dt>
+                        <dd className="metric-value font-semibold whitespace-nowrap"><span>{formatCurrency(unrealizedGain, { colorize: true })}</span>{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGain >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</dd>
                     </div>
                 </div>
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-                <dt className="text-slate-500 text-xs">Link to goal</dt>
+                <dt className="metric-label text-slate-500 text-xs">Link to goal</dt>
                 <dd>
                     <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="w-full text-sm border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-2 pl-2 pr-8 min-w-0" aria-label={`Link ${holding.name} to goal`}>
                         <option value="none">Not linked</option>
@@ -484,7 +484,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             />
 
             <SectionCard title="Physical Assets">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedAssets.map((asset) => (
                         <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />
                     ))}
@@ -529,7 +529,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         </ul>
                     </div>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
+                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 min-w-0">
                     {orderedCommodities.map((h) => (
                         <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
                     ))}

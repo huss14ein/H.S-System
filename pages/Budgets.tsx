@@ -608,32 +608,32 @@ const Budgets: React.FC = () => {
                         <option value="AmountLow">Lowest amount</option>
                     </select>
                 </div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    <div className="rounded border p-2 bg-amber-50">Pending: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Pending').length}</span></div>
-                    <div className="rounded border p-2 bg-green-50">Finalized: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Finalized').length}</span></div>
-                    <div className="rounded border p-2 bg-rose-50">Rejected: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Rejected').length}</span></div>
-                    <div className="rounded border p-2 bg-slate-50">Shown: <span className="font-semibold">{sortedFilteredRequests.length}</span></div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs min-w-0">
+                    <div className="rounded border p-2 bg-amber-50 min-w-0 overflow-hidden"><span className="metric-label">Pending:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Pending').length}</span></div>
+                    <div className="rounded border p-2 bg-green-50 min-w-0 overflow-hidden"><span className="metric-label">Finalized:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Finalized').length}</span></div>
+                    <div className="rounded border p-2 bg-rose-50 min-w-0 overflow-hidden"><span className="metric-label">Rejected:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Rejected').length}</span></div>
+                    <div className="rounded border p-2 bg-slate-50 min-w-0 overflow-hidden"><span className="metric-label">Shown:</span> <span className="metric-value font-semibold">{sortedFilteredRequests.length}</span></div>
                 </div>
             </SectionCard>
 
             <SectionCard title="Budget Intelligence">
                 <h2 className="text-lg font-semibold mb-3">Budget Intelligence</h2>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
-                    <div className="rounded-lg border bg-slate-50 p-3">
-                        <p className="text-gray-500">Portfolio Budget</p>
-                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
+                    <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
+                        <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
                     </div>
-                    <div className="rounded-lg border bg-indigo-50 p-3">
-                        <p className="text-gray-500">Current Spend</p>
-                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
+                    <div className="rounded-lg border bg-indigo-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Current Spend</p>
+                        <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
                     </div>
-                    <div className="rounded-lg border bg-amber-50 p-3">
-                        <p className="text-gray-500">Needs Attention</p>
-                        <p className="text-lg font-semibold">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
+                    <div className="rounded-lg border bg-amber-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Needs Attention</p>
+                        <p className="metric-value text-lg font-semibold w-full">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
                     </div>
-                    <div className="rounded-lg border bg-emerald-50 p-3">
-                        <p className="text-gray-500">Healthy Budgets</p>
-                        <p className="text-lg font-semibold">{budgetInsights.healthyCount}</p>
+                    <div className="rounded-lg border bg-emerald-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Healthy Budgets</p>
+                        <p className="metric-value text-lg font-semibold w-full">{budgetInsights.healthyCount}</p>
                     </div>
                 </div>
                 {budgetInsights.topChange && (
@@ -846,7 +846,7 @@ const Budgets: React.FC = () => {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                 {orderedBudgetData.map((budget) => (
                     <div key={budget.id} className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}>
                         <div className="flex-grow">

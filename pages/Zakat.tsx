@@ -135,7 +135,7 @@ const Zakat: React.FC = () => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 items-start">
                 <div className="space-y-6">
                     <SectionCard title="Zakatable Assets">
                          <div className="space-y-3">

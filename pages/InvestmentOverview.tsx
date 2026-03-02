@@ -75,7 +75,7 @@ const InvestmentOverview: React.FC = () => {
                 {!isAiLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <div className="section-card flex flex-col min-h-[420px]">
                     <h3 className="section-title mb-1">Portfolio Allocation</h3>
                     <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>

@@ -149,7 +149,7 @@ const Summary: React.FC = () => {
 
     return (
         <PageLayout title="Financial Summary" description="Net worth, key metrics, and AI-generated financial persona with report card and suggestions.">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
                     <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
                     <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
@@ -158,7 +158,7 @@ const Summary: React.FC = () => {
                     </p>
                 </div>
 
-                <div className="lg:col-span-2 grid grid-cols-2 gap-6">
+                <div className="lg:col-span-2 cards-grid grid grid-cols-2">
                     <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
                     <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
                     <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
@@ -172,7 +172,7 @@ const Summary: React.FC = () => {
                 </div>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <div className="section-card flex flex-col h-[450px]">
                     <NetWorthCompositionChart title="Historical Net Worth" />
                 </div>
@@ -215,7 +215,7 @@ const Summary: React.FC = () => {
                         </div>
                         <div>
                             <h3 className="text-xl font-semibold text-dark mb-4 text-center">Financial Health Report Card</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                                 {analysis.reportCard.map(item => (
                                     <div key={item.metric} className={`p-4 rounded-lg border-l-4 ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}>
                                         <div className="flex items-start justify-between">

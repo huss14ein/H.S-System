@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useState, useCallback } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
 import Card from '../components/Card';
 import DraggableResizableGrid from '../components/DraggableResizableGrid';
 import { Transaction, Page, Budget, Account } from '../types';
@@ -497,7 +497,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
             <AIFeed />
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
                     <h3 className="section-title mb-4">Net Worth Composition</h3>
                     <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
@@ -506,7 +506,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-5">
                  <div className="lg:col-span-3 section-card-hover flex flex-col" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
                     <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
@@ -523,12 +523,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  </div>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <AccountsOverview accounts={data.accounts} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
                 <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
