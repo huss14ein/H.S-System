@@ -35,6 +35,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import type { HoldingFundamentals } from '../services/finnhubService';
+import { getHoldingFundamentals } from '../services/finnhubService';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -465,6 +467,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const [isLoading, setIsLoading] = useState(false);
     const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
+    const [fundamentals, setFundamentals] = useState<HoldingFundamentals | null>(null);
+    const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(false);
+    const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
 
     const handleGetAIAnalysis = useCallback(async () => {
         if (!holding) return;
@@ -489,11 +494,43 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         }
     }, [holding, isOpen, aiAnalysis, isLoading]);
 
+    useEffect(() => {
+        if (!holding || !isOpen) return;
+        let cancelled = false;
+        setIsFundamentalsLoading(true);
+        setFundamentalsError(null);
+        getHoldingFundamentals(holding.symbol)
+            .then((data) => {
+                if (!cancelled) {
+                    setFundamentals(data);
+                }
+            })
+            .catch((e) => {
+                if (!cancelled) {
+                    setFundamentalsError(e instanceof Error ? e.message : 'Unable to load upcoming events.');
+                }
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setIsFundamentalsLoading(false);
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [holding?.symbol, isOpen]);
+
     if (!holding) return null;
 
     const portfolioCurrency: TradeCurrency = (portfolio?.currency as TradeCurrency) || 'USD';
+    const fundamentalsCurrencyRaw = (fundamentals?.currency || '').toUpperCase();
+    const fundamentalsCurrency: TradeCurrency =
+        fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
+
     const fmt = (val: number, opts?: { digits?: number }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
     const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
+    const fmtFundamentals = (val: number, opts?: { digits?: number }) =>
+        formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
 
     const displayName = holding.name || (holding as any).name || holding.symbol;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
@@ -581,6 +618,70 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         </div>
                     </div>
                 )}
+
+                {/* Upcoming financials & income */}
+                <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                        <p className="text-sm font-semibold text-slate-700 truncate">Next financial statement & dividends</p>
+                        {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
+                    </div>
+                    {fundamentalsError && (
+                        <p className="text-xs text-rose-600 mb-2">Could not load event details right now.</p>
+                    )}
+                    <div className="grid gap-3 sm:grid-cols-2 text-sm">
+                        <div className="space-y-1">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Next financial statement</p>
+                            {fundamentals?.nextEarnings?.date ? (
+                                <>
+                                    <p className="text-slate-800">
+                                        {new Date(fundamentals.nextEarnings.date).toLocaleDateString(undefined, {
+                                            year: 'numeric',
+                                            month: 'short',
+                                            day: 'numeric',
+                                        })}
+                                        {fundamentals.nextEarnings.quarter != null && fundamentals.nextEarnings.year != null && (
+                                            <span className="text-xs text-slate-500 ml-1">
+                                                · Q{fundamentals.nextEarnings.quarter} {fundamentals.nextEarnings.year}
+                                            </span>
+                                        )}
+                                    </p>
+                                    {typeof fundamentals.nextEarnings.revenueEstimate === 'number' && fundamentals.nextEarnings.revenueEstimate > 0 && (
+                                        <p className="text-xs text-slate-600">
+                                            Expected revenue ({fundamentalsCurrency}):{' '}
+                                            {fmtFundamentals(fundamentals.nextEarnings.revenueEstimate, { digits: 0 })}
+                                        </p>
+                                    )}
+                                </>
+                            ) : (
+                                <p className="text-xs text-slate-500">No upcoming earnings date available.</p>
+                            )}
+                        </div>
+                        <div className="space-y-1">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dividends</p>
+                            {fundamentals?.dividend ? (
+                                <>
+                                    {typeof fundamentals.dividend.dividendYieldPct === 'number' && fundamentals.dividend.dividendYieldPct > 0 && (
+                                        <p className="text-slate-800">
+                                            Dividend yield: {fundamentals.dividend.dividendYieldPct.toFixed(2)}%
+                                        </p>
+                                    )}
+                                    {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
+                                        fundamentals.dividend.dividendPerShareAnnual > 0 && (
+                                            <p className="text-xs text-slate-600">
+                                                Est. annual dividends on your position ({fundamentalsCurrency}):{' '}
+                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual * holding.quantity, { digits: 0 })}
+                                            </p>
+                                        )}
+                                    {!fundamentals.dividend.dividendYieldPct && !fundamentals.dividend.dividendPerShareAnnual && (
+                                        <p className="text-xs text-slate-500">No dividend data available.</p>
+                                    )}
+                                </>
+                            ) : (
+                                <p className="text-xs text-slate-500">No dividend data available.</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
 
                 {/* Price trend chart */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">

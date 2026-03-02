@@ -24,7 +24,6 @@ import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
-import { Bars3Icon } from '../components/icons/Bars3Icon';
 
 interface ExtendedBudget extends Budget {
     spent: number;

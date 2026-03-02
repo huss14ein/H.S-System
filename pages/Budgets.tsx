@@ -350,10 +350,6 @@ const Budgets: React.FC = () => {
         const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
         const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
 
-        // #region agent log
-        fetch('http://127.0.0.1:7588/ingest/0d63d062-ed8c-4e4d-b1d0-bd68927fb5ac',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fc0108'},body:JSON.stringify({sessionId:'fc0108',runId:'initial',hypothesisId:'H1',location:'Budgets.tsx:budgetInsights',message:'Budget insights snapshot',data:{totalLimit, totalSpent, count: budgetData.length},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
 

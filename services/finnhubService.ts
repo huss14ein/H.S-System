@@ -311,6 +311,88 @@ export async function getEarningsCalendar(from: string, to: string): Promise<Ear
   }
 }
 
+export interface HoldingFundamentals {
+  symbol: string;
+  currency?: string;
+  nextEarnings?: {
+    date?: string;
+    period?: string;
+    quarter?: number;
+    year?: number;
+    revenueEstimate?: number | null;
+  };
+  dividend?: {
+    dividendYieldPct?: number | null;
+    dividendPerShareAnnual?: number | null;
+  };
+}
+
+/** Convenience helper: upcoming earnings (revenue estimate) + dividend yield metrics for a symbol. */
+export async function getHoldingFundamentals(symbol: string): Promise<HoldingFundamentals | null> {
+  if (!symbol) return null;
+  const today = new Date();
+  const from = today.toISOString().split('T')[0];
+  const oneYearAhead = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
+  const to = oneYearAhead.toISOString().split('T')[0];
+
+  const [earningsList, metrics, profile] = await Promise.all([
+    getEarningsCalendar(from, to).then((list) =>
+      list.filter((e) => e.symbol.toUpperCase() === symbol.toUpperCase() && e.date)
+    ),
+    getBasicFinancials(symbol),
+    getCompanyProfile(symbol),
+  ]);
+
+  let nextEarnings: HoldingFundamentals['nextEarnings'];
+  if (earningsList.length > 0) {
+    const sorted = [...earningsList].sort((a, b) => {
+      const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
+      const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
+      return da - db;
+    });
+    const first = sorted[0];
+    nextEarnings = {
+      date: first.date,
+      period: first.period,
+      quarter: first.quarter,
+      year: first.year,
+      revenueEstimate: first.revenueEstimate ?? null,
+    };
+  }
+
+  let dividend: HoldingFundamentals['dividend'];
+  const m = metrics?.metric as Record<string, number | string> | undefined;
+  if (m) {
+    const rawYield =
+      Number(m['dividendYieldIndicatedAnnual'] as number) ||
+      Number(m['dividendYield'] as number) ||
+      Number(m['dividendYieldTTM'] as number) ||
+      Number(m['dividendYieldForward'] as number);
+    const rawPerShare =
+      Number(m['dividendPerShareTTM'] as number) ||
+      Number(m['dividendPerShareAnnual'] as number) ||
+      Number(m['dividendPerShareIndicatedAnnual'] as number);
+
+    const dividendYieldPct = Number.isFinite(rawYield) && rawYield !== 0 ? rawYield : null;
+    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare !== 0 ? rawPerShare : null;
+
+    if (dividendYieldPct != null || dividendPerShareAnnual != null) {
+      dividend = { dividendYieldPct, dividendPerShareAnnual };
+    }
+  }
+
+  const currencyFromProfile = profile?.currency;
+  const currencyFromMetrics = (metrics?.metric?.['currency'] as string | undefined) || undefined;
+  const currency = (currencyFromProfile || currencyFromMetrics || '').toUpperCase() || undefined;
+
+  return {
+    symbol,
+    currency,
+    nextEarnings,
+    dividend,
+  };
+}
+
 // --- Insider transactions ---
 export interface InsiderTransaction {
   name: string;
