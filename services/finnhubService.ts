@@ -126,6 +126,7 @@ async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
     const rows = lines.slice(1).map((line) => line.split(','));
     const withDate: { date: number; close: number }[] = [];
     for (const row of rows) {
+      if (row.length < 5) continue;
       const dateStr = row[0];
       const close = Number(row[4]);
       if (!Number.isFinite(close) || close <= 0) continue;
@@ -142,7 +143,7 @@ async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
   }
 }
 
-/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. Uses Finnhub; for Saudi (.SR/.SA) falls back to Stooq when Finnhub returns no data. */
+/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. Uses Finnhub first; falls back to Stooq when Finnhub returns no data (Saudi .SR/.SA or any symbol). */
 export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
   try {
     const finnhubSymbol = toFinnhubSymbol(symbol);
@@ -151,25 +152,18 @@ export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> 
     const token = getToken();
     const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
     const res = await finnhubFetch(url);
-    if (!res.ok) {
-      if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
-      return [];
-    }
+    if (!res.ok) return getStooqCandles1M(symbol);
     const data = await res.json();
     const t = data?.t as number[] | undefined;
     const c = data?.c as number[] | undefined;
-    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) {
-      if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
-      return [];
-    }
+    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) return getStooqCandles1M(symbol);
     const pairs = t.map((ts, i) => ({ ts, price: Number(c[i]) })).filter((p) => Number.isFinite(p.price) && p.price > 0);
     pairs.sort((a, b) => a.ts - b.ts);
     const points = pairs.map((p, i) => ({ day: i, price: p.price }));
-    if (points.length === 0 && /\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
+    if (points.length === 0) return getStooqCandles1M(symbol);
     return points;
   } catch {
-    if (/\.(SR|SA)$/i.test(symbol)) return getStooqCandles1M(symbol);
-    return [];
+    return getStooqCandles1M(symbol);
   }
 }
 

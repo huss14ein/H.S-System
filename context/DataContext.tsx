@@ -93,9 +93,11 @@ interface DataContextType {
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
+  /** Increments when Clear All Data is run; use in effects that fetch user-specific data (e.g. budget_requests) so they refetch after clear. */
+  dataResetKey: number;
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
-  /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). */
-  getAvailableCashForAccount: (accountId: string) => number;
+  /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). Returns by currency so SAR and USD are not mixed. */
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
   /** Total deployable = Checking + Savings balances + sum of available cash in each Investment platform. */
   totalDeployableCash: number;
 }
@@ -338,6 +340,7 @@ function investmentPlanOverridesToRow(plan: InvestmentPlanSettings): Record<stri
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
+    const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data.transactions);
@@ -562,10 +565,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades',
             'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
             'recurring_transactions',
+            'budget_requests',
         ];
         // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
+        setDataResetKey((k) => k + 1);
         setLoading(false);
     };
 
@@ -1522,27 +1527,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const availableCashByAccountId = useMemo(() => {
-        const map: Record<string, number> = {};
+        const map: Record<string, { SAR: number; USD: number }> = {};
         (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
             const accId = t.accountId ?? (t as any).account_id;
             if (!accId) return;
-            if (!(accId in map)) map[accId] = 0;
+            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
             const amt = t.total ?? 0;
-            if (t.type === 'deposit' || t.type === 'sell' || t.type === 'dividend') map[accId] += amt;
-            else if (t.type === 'withdrawal' || t.type === 'buy') map[accId] -= amt;
+            const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
+            const delta = t.type === 'deposit' || t.type === 'sell' || t.type === 'dividend' ? amt : (t.type === 'withdrawal' || t.type === 'buy' ? -amt : 0);
+            map[accId][cur] += delta;
+        });
+        Object.keys(map).forEach(accId => {
+            map[accId].SAR = Math.max(0, map[accId].SAR);
+            map[accId].USD = Math.max(0, map[accId].USD);
         });
         return map;
     }, [data.investmentTransactions]);
 
-    const getAvailableCashForAccount = useCallback((accountId: string) => Math.max(0, availableCashByAccountId[accountId] ?? 0), [availableCashByAccountId]);
+    const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
+        const v = availableCashByAccountId[accountId] ?? { SAR: 0, USD: 0 };
+        return { SAR: v.SAR, USD: v.USD };
+    }, [availableCashByAccountId]);
 
     const totalDeployableCash = useMemo(() => {
         const bank = (data.accounts ?? []).filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
-        const platformCash = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => s + getAvailableCashForAccount(a.id), 0);
+        const platformCash = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
+            const cash = getAvailableCashForAccount(a.id);
+            return s + cash.SAR + cash.USD;
+        }, 0);
         return bank + platformCash;
     }, [data.accounts, getAvailableCashForAccount]);
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data, loading, dataResetKey, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

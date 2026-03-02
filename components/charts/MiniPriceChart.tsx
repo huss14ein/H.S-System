@@ -50,7 +50,7 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
     const startPrice = data.length > 0 ? data[0].price : 0;
     const endPrice = data.length > 0 ? data[data.length - 1].price : 0;
     const isRealData = Boolean(historicalData && historicalData.length > 0);
-    const trendPct = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : null;
+    const trendPct = startPrice > 0 && data.length >= 2 ? ((endPrice - startPrice) / startPrice) * 100 : null;
 
     return (
         <div className="w-full min-w-[120px]">

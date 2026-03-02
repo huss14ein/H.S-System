@@ -483,8 +483,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 rowHeight={100}
             />
 
-            <SectionCard title="Physical Assets">
-                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+            <SectionCard title="Physical Assets" className="overflow-visible">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedAssets.map((asset) => (
                         <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />
                     ))}
@@ -508,7 +508,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     </button>
                 }
             >
-                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4">
+                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0 overflow-x-hidden">
                     <p className="text-sm text-slate-700 leading-relaxed">
                         Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI or fallback APIs (Finnhub/Stooq).
                         <InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." />
@@ -529,7 +529,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         </ul>
                     </div>
                 )}
-                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 min-w-0">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedCommodities.map((h) => (
                         <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
                     ))}

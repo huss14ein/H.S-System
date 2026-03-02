@@ -7,6 +7,7 @@ import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from
 import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -16,6 +17,12 @@ const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
   Upside: 'bg-amber-500',
   Spec: 'bg-rose-500',
+};
+
+const SLEEVE_BG: Record<WealthUltraSleeve, string> = {
+  Core: 'bg-blue-50 border-blue-100',
+  Upside: 'bg-amber-50 border-amber-100',
+  Spec: 'bg-rose-50 border-rose-100',
 };
 
 /** Build full Wealth Ultra config from app data. Auto-derives sleeve tickers from Portfolio Universe or holdings when plan lists are empty. */
@@ -200,6 +207,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     specBreach,
     specBuysDisabled,
     orders,
+    portfolioHealth,
   } = engineState;
 
   const totalSAR = totalPortfolioValue / config.fxRate;
@@ -208,6 +216,8 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const top5Losers = positions.filter(p => p.plPct < 0).sort((a, b) => a.plPct - b.plPct).slice(0, 5);
   const positionCount = positions.length;
   const portfolioCount = (data.investments || []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
+  const buyOrders = orders.filter(o => o.type === 'BUY');
+  const sellOrders = orders.filter(o => o.type === 'SELL');
 
   const riskDistribution = useMemo(() => {
     const tiers: WealthUltraRiskTier[] = ['Low', 'Med', 'High', 'Spec'];
@@ -233,37 +243,56 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-96">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4">
+        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" />
+        <p className="text-slate-500 font-medium">Loading Wealth Ultra engine…</p>
       </div>
     );
   }
 
   const positionsSortedByPl = useMemo(() => [...positions].sort((a, b) => b.plPct - a.plPct), [positions]);
 
+  const healthColor = portfolioHealth.score >= 85 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : portfolioHealth.score >= 65 ? 'text-amber-600 bg-amber-50 border-amber-200' : portfolioHealth.score >= 40 ? 'text-amber-700 bg-amber-100 border-amber-300' : 'text-rose-600 bg-rose-50 border-rose-200';
+
   const gridItems = useMemo(
     () => [
       {
-        id: 'data-source',
+        id: 'hero',
         content: (
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700 h-full">
-            <strong>Data source:</strong> Positions from <strong>Investments</strong> (all portfolios) · Sleeves & targets from <strong>Investment Plan</strong> and <strong>Portfolio Universe</strong> · Cash from <strong>Accounts</strong>.
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-primary/5 p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Wealth Ultra</h1>
+                <p className="text-slate-600 mt-1 max-w-xl">Rule-based allocation, sleeve drift, and orders from your Investment Plan. One view for deployable cash, targets, and next moves.</p>
+              </div>
+              <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border ${healthColor} shrink-0`}>
+                {portfolioHealth.score >= 85 ? <CheckCircleIcon className="h-6 w-6 text-emerald-600 shrink-0" /> : <ExclamationTriangleIcon className="h-6 w-6 shrink-0" />}
+                <div>
+                  <p className="font-bold text-sm">{portfolioHealth.label}</p>
+                  <p className="text-xs opacity-90">{portfolioHealth.summary}</p>
+                </div>
+              </div>
+            </div>
             {positionCount > 0 && (
-              <span className="ml-1">Tracking <strong>{positionCount}</strong> position{positionCount !== 1 ? 's' : ''}{portfolioCount > 0 ? ` across ${portfolioCount} portfolio${portfolioCount !== 1 ? 's' : ''}` : ''}.</span>
+              <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
+                Tracking <strong>{positionCount}</strong> position{positionCount !== 1 ? 's' : ''}{portfolioCount > 0 ? ` across ${portfolioCount} portfolio${portfolioCount !== 1 ? 's' : ''}` : ''}. Data: Investments + Plan + Universe + Accounts.
+              </p>
             )}
           </div>
         ),
         defaultW: 12,
-        defaultH: 1,
+        defaultH: 2,
         minW: 12,
         minH: 1,
       },
       {
-        id: 'summary-cards',
+        id: 'kpis',
         content: (
-          <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 h-full">
-            <Card title="Total Portfolio Value" value={formatCurrencyString(totalPortfolioValue)} trend={totalSAR.toLocaleString('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 0 }) + ' (SAR)'} density="comfortable" tooltip="Total value of all portfolio positions in your base currency." />
-            <Card title="Cash Planner" value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'WITHIN LIMIT' : 'OVER BUDGET'} trend={`Deployable: ${formatCurrencyString(deployableCash)} · Planned: ${formatCurrencyString(totalPlannedBuyCost)}`} density="comfortable" indicatorColor={cashPlannerStatus === 'OVER_BUDGET' ? 'red' : 'green'} tooltip="Compares deployable cash to planned buy cost." />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card title="Total portfolio value" value={formatCurrencyString(totalPortfolioValue)} trend={`≈ ${totalSAR.toLocaleString('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 0 })} SAR`} density="comfortable" tooltip="All positions at current prices." />
+            <Card title="Deployable cash" value={formatCurrencyString(deployableCash)} density="comfortable" tooltip="Cash available for buys after reserve." />
+            <Card title="Planned buys" value={formatCurrencyString(totalPlannedBuyCost)} density="comfortable" tooltip="Total cost of suggested buy orders." />
+            <Card title="Cash plan" value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'Within limit' : 'Over budget'} indicatorColor={cashPlannerStatus === 'WITHIN_LIMIT' ? 'green' : 'red'} density="comfortable" tooltip="Planned buys vs deployable cash." />
           </div>
         ),
         defaultW: 12,
@@ -275,30 +304,84 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         id: 'sleeve-allocation',
         content: (
           <SectionCard title="Sleeve allocation & drift">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-gray-600">
-                    <th className="py-2 pr-4">Sleeve</th>
-                    <th className="py-2 pr-4">Market value</th>
-                    <th className="py-2 pr-4">Allocation %</th>
-                    <th className="py-2 pr-4">Target %</th>
-                    <th className="py-2 pr-4">Drift %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allocations.map(a => (
-                    <tr key={a.sleeve} className="border-b border-gray-100">
-                      <td className="py-2"><span className={`inline-block w-3 h-3 rounded-full ${SLEEVE_COLORS[a.sleeve]} mr-2`} />{a.sleeve}</td>
-                      <td className="py-2">{formatCurrencyString(a.marketValue)}</td>
-                      <td className="py-2">{a.allocationPct.toFixed(1)}%</td>
-                      <td className="py-2">{a.targetPct.toFixed(1)}%</td>
-                      <td className={`py-2 font-medium ${Math.abs(a.driftPct) > 5 ? 'text-amber-600' : ''}`}>{a.driftPct >= 0 ? '+' : ''}{a.driftPct.toFixed(1)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <p className="text-xs text-slate-500 mb-4">Current vs target. Drift &gt;5% suggests rebalancing.</p>
+            <div className="space-y-4">
+              {allocations.map(a => {
+                const driftAbs = Math.abs(a.driftPct);
+                const hasDrift = driftAbs > 5;
+                return (
+                  <div key={a.sleeve} className={`rounded-xl border p-4 ${SLEEVE_BG[a.sleeve]}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="flex items-center gap-2 font-semibold text-slate-800">
+                        <span className={`w-3 h-3 rounded-full ${SLEEVE_COLORS[a.sleeve]}`} />
+                        {a.sleeve}
+                      </span>
+                      <span className={`text-sm font-medium tabular-nums ${hasDrift ? 'text-amber-700' : 'text-slate-600'}`}>
+                        {a.allocationPct.toFixed(1)}% actual · target {a.targetPct.toFixed(1)}% {hasDrift && `(${a.driftPct >= 0 ? '+' : ''}${a.driftPct.toFixed(1)}% drift)`}
+                      </span>
+                    </div>
+                    <div className="h-2.5 bg-white/80 rounded-full overflow-hidden">
+                      <div className="h-full flex rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-l-full ${a.sleeve === 'Core' ? 'bg-blue-500' : a.sleeve === 'Upside' ? 'bg-amber-500' : 'bg-rose-500'}`}
+                          style={{ width: `${Math.min(100, a.allocationPct)}%` }}
+                        />
+                        <div className="h-full flex-1 bg-slate-100" />
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1.5">{formatCurrencyString(a.marketValue)}</p>
+                  </div>
+                );
+              })}
             </div>
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 4,
+        minW: 6,
+        minH: 2,
+      },
+      {
+        id: 'orders',
+        content: (
+          <SectionCard title="Orders ready" className="border-primary/20 bg-primary/5">
+            <p className="text-xs text-slate-600 mb-4">Suggested limit orders from the engine. Export to JSON or use as a checklist when placing trades.</p>
+            {orders.length > 0 ? (
+              <div className="space-y-3">
+                {buyOrders.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Buys ({buyOrders.length})</p>
+                    <ul className="space-y-2">
+                      {buyOrders.map((o, i) => (
+                        <li key={i} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
+                          <span className="font-semibold text-emerald-700">BUY</span>
+                          <span className="font-mono font-medium">{o.ticker}</span>
+                          <span className="text-slate-600">Qty: {o.qty}</span>
+                          <span className="text-slate-600">Limit: {formatCurrencyString(o.limitPrice ?? 0)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {sellOrders.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sells / exits ({sellOrders.length})</p>
+                    <ul className="space-y-2">
+                      {sellOrders.map((o, i) => (
+                        <li key={i} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
+                          <span className="font-semibold text-rose-600">SELL</span>
+                          <span className="font-mono font-medium">{o.ticker}</span>
+                          <span className="text-slate-600">Qty: {o.qty}</span>
+                          {(o.target1Price ?? o.target2Price ?? o.trailingStopPrice) && <span className="text-slate-500 text-xs">Targets / trailing in export</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 py-4">No orders generated. Add positions and optional buy ladders in Recovery Plan or Investments.</p>
+            )}
           </SectionCard>
         ),
         defaultW: 12,
@@ -307,35 +390,101 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         minH: 2,
       },
       {
-        id: 'all-positions',
+        id: 'next-move',
         content: (
-          <SectionCard title="All positions (P&L tracked)">
-            <p className="text-xs text-slate-500 mb-4">Source: your holdings from Investments. P&L % = (market value − cost basis) / cost basis.</p>
+          <SectionCard title="Next move — Monthly Core">
+            <p className="text-sm text-slate-700">{monthlyDeployment.reason}</p>
+            <p className="mt-2 text-lg font-bold text-slate-900 tabular-nums">Amount: {formatCurrencyString(monthlyDeployment.amountToDeploy)}</p>
+            {monthlyDeployment.suggestedTicker && <p className="text-sm text-primary font-medium mt-1">Suggested ticker: {monthlyDeployment.suggestedTicker}</p>}
+          </SectionCard>
+        ),
+        defaultW: 6,
+        defaultH: 2,
+        minW: 4,
+        minH: 1,
+      },
+      {
+        id: 'spec-risk',
+        content: (
+          <SectionCard title="Spec sleeve">
+            {specBreach && <p className="text-amber-700 font-medium flex items-center gap-2"><ExclamationTriangleIcon className="h-5 w-5 shrink-0" /> Spec over target — new Spec buys disabled</p>}
+            {specBuysDisabled && !specBreach && <p className="text-slate-600 text-sm">Spec buys disabled by policy.</p>}
+            {!specBreach && !specBuysDisabled && <p className="text-emerald-600 text-sm font-medium flex items-center gap-2"><CheckCircleIcon className="h-5 w-5" /> Within target</p>}
+          </SectionCard>
+        ),
+        defaultW: 6,
+        defaultH: 2,
+        minW: 4,
+        minH: 1,
+      },
+      {
+        id: 'alerts',
+        content: (
+          <SectionCard title="Alerts & recommendations">
+            <p className="text-xs text-slate-500 mb-3">Prioritized: act on critical first, then warnings; use info for context.</p>
+            {alerts.length > 0 ? (
+              <ul className="space-y-3 max-h-[380px] overflow-y-auto">
+                {alerts.map((a, i) => {
+                  const isCritical = a.severity === 'critical';
+                  const isWarning = a.severity === 'warning';
+                  const bg = isCritical ? 'bg-rose-50 border-rose-200' : isWarning ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200';
+                  const titleColor = isCritical ? 'text-rose-800' : isWarning ? 'text-amber-800' : 'text-slate-800';
+                  const label = isCritical ? 'Act now' : isWarning ? 'Review' : 'FYI';
+                  return (
+                    <li key={i} className={`rounded-xl border p-3 text-sm ${bg}`}>
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <ExclamationTriangleIcon className={`h-4 w-4 shrink-0 ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-slate-500'}`} />
+                        {a.title && <span className={`font-semibold ${titleColor}`}>{a.title}</span>}
+                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
+                      </div>
+                      <p className="text-slate-700">{a.message}</p>
+                      {a.actionHint && <p className="text-xs font-medium text-slate-600 mt-2 pt-2 border-t border-slate-200/80">→ {a.actionHint}</p>}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500 flex items-center gap-2"><CheckCircleIcon className="h-5 w-5 text-emerald-500" /> No alerts. Plan and allocation are in sync.</p>
+            )}
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 3,
+        minW: 6,
+        minH: 1,
+      },
+      {
+        id: 'positions',
+        content: (
+          <SectionCard title="All positions">
+            <p className="text-xs text-slate-500 mb-3">P&L % = (market value − cost) / cost. Sorted by return.</p>
             {positions.length > 0 ? (
-              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+              <div className="overflow-x-auto max-h-72 overflow-y-auto">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-white border-b">
-                    <tr className="text-left text-gray-600">
-                      <th className="py-2 pr-3">Ticker</th>
-                      <th className="py-2 pr-3">Sleeve</th>
-                      <th className="py-2 pr-3 text-right">Value</th>
-                      <th className="py-2 pr-3 text-right">P&L %</th>
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                    <tr className="text-left text-slate-600">
+                      <th className="py-2.5 pr-3 font-semibold">Ticker</th>
+                      <th className="py-2.5 pr-3 font-semibold">Sleeve</th>
+                      <th className="py-2.5 pr-3 font-semibold">Strategy</th>
+                      <th className="py-2.5 pr-3 text-right font-semibold">Value</th>
+                      <th className="py-2.5 pr-3 text-right font-semibold">P&L %</th>
                     </tr>
                   </thead>
                   <tbody>
                     {positionsSortedByPl.map(p => (
-                      <tr key={p.ticker} className="border-b border-gray-100">
-                        <td className="py-1.5 font-medium">{p.ticker}</td>
-                        <td className="py-1.5"><span className={`inline-block w-2 h-2 rounded-full ${SLEEVE_COLORS[p.sleeveType]} mr-1.5`} />{p.sleeveType}</td>
-                        <td className="py-1.5 text-right tabular-nums">{formatCurrencyString(p.marketValue)}</td>
-                        <td className={`py-1.5 text-right tabular-nums font-medium ${p.plPct > 0 ? 'text-emerald-600' : p.plPct < 0 ? 'text-rose-600' : 'text-slate-500'}`}>{p.plPct > 0 ? '+' : ''}{p.plPct.toFixed(1)}%</td>
+                      <tr key={p.ticker} className="border-b border-slate-100 hover:bg-slate-50/50">
+                        <td className="py-2 font-medium text-slate-800">{p.ticker}</td>
+                        <td className="py-2"><span className={`inline-block w-2.5 h-2.5 rounded-full ${SLEEVE_COLORS[p.sleeveType]} mr-1.5`} />{p.sleeveType}</td>
+                        <td className="py-2 text-slate-600">{p.strategyMode}</td>
+                        <td className="py-2 text-right tabular-nums font-medium">{formatCurrencyString(p.marketValue)}</td>
+                        <td className={`py-2 text-right tabular-nums font-semibold ${p.plPct > 0 ? 'text-emerald-600' : p.plPct < 0 ? 'text-rose-600' : 'text-slate-500'}`}>{p.plPct > 0 ? '+' : ''}{p.plPct.toFixed(1)}%</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <p className="empty-state text-sm text-slate-500">No positions yet. Add holdings in Investments.</p>
+              <p className="text-slate-500 py-6 text-center">No positions. Add holdings in Investments.</p>
             )}
           </SectionCard>
         ),
@@ -347,69 +496,67 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'gainers',
         content: (
-          <SectionCard title="Top 5 gainers">
-            <p className="text-xs text-slate-500 mb-4">Only positive P&L; flat or no-cost excluded.</p>
+          <SectionCard title="Top gainers">
             <ul className="space-y-2">
               {top5Gainers.map(p => (
-                <li key={p.ticker} className="flex justify-between items-center text-sm">
-                  <span className="font-medium">{p.ticker}</span>
-                  <span className="text-emerald-600 font-medium">+{p.plPct.toFixed(1)}%</span>
+                <li key={p.ticker} className="flex justify-between items-center text-sm py-1">
+                  <span className="font-medium text-slate-800">{p.ticker}</span>
+                  <span className="text-emerald-600 font-semibold tabular-nums">+{p.plPct.toFixed(1)}%</span>
                 </li>
               ))}
-              {top5Gainers.length === 0 && <p className="empty-state text-sm text-slate-500">No gains.</p>}
+              {top5Gainers.length === 0 && <p className="text-slate-500 text-sm">No gains yet.</p>}
             </ul>
           </SectionCard>
         ),
         defaultW: 6,
-        defaultH: 3,
+        defaultH: 2,
         minW: 3,
-        minH: 2,
+        minH: 1,
       },
       {
         id: 'losers',
         content: (
-          <SectionCard title="Top 5 losers">
-            <p className="text-xs text-slate-500 mb-4">Only negative P&L; flat or no-cost excluded.</p>
+          <SectionCard title="Top losers">
             <ul className="space-y-2">
               {top5Losers.map(p => (
-                <li key={p.ticker} className="flex justify-between items-center text-sm">
-                  <span className="font-medium">{p.ticker}</span>
-                  <span className="text-rose-600 font-medium">{p.plPct.toFixed(1)}%</span>
+                <li key={p.ticker} className="flex justify-between items-center text-sm py-1">
+                  <span className="font-medium text-slate-800">{p.ticker}</span>
+                  <span className="text-rose-600 font-semibold tabular-nums">{p.plPct.toFixed(1)}%</span>
                 </li>
               ))}
-              {top5Losers.length === 0 && <p className="empty-state text-sm text-slate-500">No losses.</p>}
+              {top5Losers.length === 0 && <p className="text-slate-500 text-sm">No losses.</p>}
             </ul>
           </SectionCard>
         ),
         defaultW: 6,
-        defaultH: 3,
+        defaultH: 2,
         minW: 3,
-        minH: 2,
+        minH: 1,
       },
       {
         id: 'capital-efficiency',
         content: (
-          <SectionCard title="Capital efficiency ranking (return % × risk weight)">
-            <p className="text-xs text-slate-500 mb-3">Score = unrealized return % × risk weight. Weights used: Med=1.25 (Core), High=1.5 (Upside), Spec=2 (Speculative). Sorted by score descending; higher = better risk-adjusted return.</p>
-            <ul className="space-y-2 max-h-48 overflow-y-auto">
+          <SectionCard title="Capital efficiency (return % × risk weight)">
+            <p className="text-xs text-slate-500 mb-3">Higher score = better risk-adjusted return. Weights: Med 1.25, High 1.5, Spec 2.</p>
+            <ul className="space-y-2 max-h-44 overflow-y-auto">
               {capitalEfficiencyRanked.slice(0, 10).map((p, i) => {
                 const tier = p.riskTier ?? 'Med';
                 const weight = getRiskWeight(config, tier);
                 const score = capitalEfficiencyScore(p.plPct, tier, config);
                 return (
-                  <li key={p.ticker} className="flex justify-between items-center text-sm gap-2 min-w-0">
-                    <span className="min-w-0 truncate"><span className="text-gray-400 mr-2">{i + 1}.</span><span className="font-medium">{p.ticker}</span> <span className="text-gray-500">({tier})</span></span>
+                  <li key={p.ticker} className="flex justify-between items-center text-sm gap-2 min-w-0 py-1">
+                    <span className="min-w-0 truncate"><span className="text-slate-400 mr-2">{i + 1}.</span><span className="font-medium">{p.ticker}</span> <span className="text-slate-500">({tier})</span></span>
                     <span className="shrink-0 text-right tabular-nums">
                       <span className={p.plPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{p.plPct >= 0 ? '+' : ''}{p.plPct.toFixed(1)}%</span>
-                      <span className="text-gray-400 mx-1">×</span>
-                      <span className="text-gray-600">{weight}</span>
-                      <span className="text-gray-400 mx-1">=</span>
-                      <span className={score >= 0 ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>{score.toFixed(1)}</span>
+                      <span className="text-slate-400 mx-1">×</span>
+                      <span className="text-slate-600">{weight}</span>
+                      <span className="text-slate-400 mx-1">=</span>
+                      <span className={score >= 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>{score.toFixed(1)}</span>
                     </span>
                   </li>
                 );
               })}
-              {capitalEfficiencyRanked.length === 0 && <p className="empty-state text-sm">No positions</p>}
+              {capitalEfficiencyRanked.length === 0 && <p className="text-slate-500 text-sm">No positions.</p>}
             </ul>
           </SectionCard>
         ),
@@ -422,96 +569,29 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         id: 'risk-distribution',
         content: (
           <SectionCard title="Risk distribution">
-            <p className="text-xs text-slate-500 mb-3">By sleeve: Med = Core, High = Upside, Spec = Speculative. Values = sum of position market values in each tier.</p>
             <div className="flex flex-wrap gap-4">
               {(['Low', 'Med', 'High', 'Spec'] as WealthUltraRiskTier[]).map(tier => {
                 const stat = riskDistribution[tier] ?? { count: 0, value: 0 };
                 return (
-                  <div key={tier} className="bg-gray-50 rounded-lg px-4 py-2 min-w-[120px]">
-                    <span className="text-sm font-medium text-gray-700">{tier}</span>
-                    <span className="ml-2 text-sm text-gray-500">{stat.count} position{stat.count !== 1 ? 's' : ''}</span>
-                    <p className="text-sm font-semibold text-dark mt-1">{formatCurrencyString(stat.value)}</p>
+                  <div key={tier} className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 min-w-[120px]">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{tier}</p>
+                    <p className="text-sm text-slate-600 mt-0.5">{stat.count} position{stat.count !== 1 ? 's' : ''}</p>
+                    <p className="text-lg font-bold text-slate-800 tabular-nums mt-1">{formatCurrencyString(stat.value)}</p>
                   </div>
                 );
               })}
             </div>
           </SectionCard>
         ),
-        defaultW: 6,
-        defaultH: 2,
-        minW: 4,
-        minH: 1,
-      },
-      {
-        id: 'monthly-deployment',
-        content: (
-          <SectionCard title="Monthly Core deployment">
-            <p className="text-sm text-gray-600">{monthlyDeployment.reason}</p>
-            <p className="mt-2 font-medium">Amount: {formatCurrencyString(monthlyDeployment.amountToDeploy)}</p>
-            {monthlyDeployment.suggestedTicker && <p className="text-sm text-primary">Suggested ticker: {monthlyDeployment.suggestedTicker}</p>}
-          </SectionCard>
-        ),
-        defaultW: 6,
-        defaultH: 2,
-        minW: 4,
-        minH: 1,
-      },
-      {
-        id: 'spec-risk',
-        content: (
-          <SectionCard title="Spec risk">
-            {specBreach && <p className="text-amber-700 font-medium flex items-center gap-2"><ExclamationTriangleIcon className="h-5 w-5" /> Spec breach — new Spec buys disabled</p>}
-            {specBuysDisabled && !specBreach && <p className="text-gray-600 text-sm">Spec buys disabled by policy.</p>}
-            {!specBreach && !specBuysDisabled && <p className="text-success text-sm">Within target.</p>}
-          </SectionCard>
-        ),
-        defaultW: 6,
-        defaultH: 2,
-        minW: 4,
-        minH: 1,
-      },
-      {
-        id: 'alerts',
-        content: (
-          <SectionCard title="Alerts & recommendations">
-            <p className="text-xs text-slate-500 mb-3">Prioritized by impact: act on critical first, then review warnings; use info for opportunities and context.</p>
-            {alerts.length > 0 ? (
-              <ul className="space-y-3 max-h-[420px] overflow-y-auto">
-                {alerts.map((a, i) => {
-                  const isCritical = a.severity === 'critical';
-                  const isWarning = a.severity === 'warning';
-                  const bg = isCritical ? 'bg-rose-50 border-rose-200' : isWarning ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200';
-                  const titleColor = isCritical ? 'text-rose-800' : isWarning ? 'text-amber-800' : 'text-slate-800';
-                  const label = isCritical ? 'Act now' : isWarning ? 'Review' : 'FYI / Opportunity';
-                  return (
-                    <li key={i} className={`flex flex-col gap-1.5 rounded-lg border p-3 text-sm ${bg}`}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <ExclamationTriangleIcon className={`h-4 w-4 flex-shrink-0 ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-slate-500'}`} />
-                        {a.title && <span className={`font-semibold ${titleColor}`}>{a.title}</span>}
-                        <span className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
-                      </div>
-                      <p className="text-slate-700">{a.message}</p>
-                      {a.actionHint && (
-                        <p className="text-xs font-medium text-slate-600 mt-0.5 pt-1.5 border-t border-slate-200/80">
-                          → {a.actionHint}
-                        </p>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="text-sm text-slate-500">No alerts. Your plan and allocation are in sync.</p>
-            )}
-          </SectionCard>
-        ),
         defaultW: 12,
         defaultH: 2,
-        minW: 6,
+        minW: 4,
         minH: 1,
       },
     ],
     [
+      portfolioHealth,
+      healthColor,
       positionCount,
       portfolioCount,
       totalPortfolioValue,
@@ -521,6 +601,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       totalPlannedBuyCost,
       formatCurrencyString,
       allocations,
+      orders,
+      buyOrders,
+      sellOrders,
+      monthlyDeployment,
+      specBreach,
+      specBuysDisabled,
+      alerts,
       positions.length,
       positionsSortedByPl,
       top5Gainers,
@@ -528,24 +615,20 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       capitalEfficiencyRanked,
       config,
       riskDistribution,
-      monthlyDeployment,
-      specBreach,
-      specBuysDisabled,
-      alerts,
     ]
   );
 
   return (
     <PageLayout
       title="Wealth Ultra Portfolio Engine"
-      description="Rule-based allocation, sleeve drift, and orders from your Investment Plan and holdings. Drag sections to reorder; resize by hovering and using the corner handle (no visible buttons)."
+      description="Smart allocation, sleeve drift, and orders from your Investment Plan. One view for deployable cash, targets, and next moves."
       action={
         <div className="flex flex-wrap items-center gap-2">
           {triggerPageAction && (
             <button
               type="button"
               onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
-              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm flex items-center gap-2"
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
             >
               <PencilIcon className="h-5 w-5" />
               Edit plan & budget
@@ -554,7 +637,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <button
             type="button"
             onClick={handleExportOrders}
-            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm"
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium transition-colors"
           >
             Export orders (JSON)
           </button>

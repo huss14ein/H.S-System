@@ -122,7 +122,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 }
 
 const Budgets: React.FC = () => {
-    const { data, loading, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
@@ -211,7 +211,7 @@ const Budgets: React.FC = () => {
         };
 
         loadGovernance();
-    }, [auth?.user?.id]);
+    }, [auth?.user?.id, dataResetKey]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();

@@ -45,7 +45,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const totalValue = useMemo(() => data.reduce((sum, entry) => sum + entry.value, 0), [data]);
   
   return (
-     <div className="w-full h-full relative">
+    <div className="w-full h-full min-h-[200px] relative">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
@@ -66,12 +66,12 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip totalValue={totalValue} />} />
-          <Legend iconType="circle" />
+          <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
         </PieChart>
       </ResponsiveContainer>
-       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
-          <p className="text-sm text-gray-500">Total Value</p>
-          <p className="text-3xl font-bold text-dark">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Value</p>
+        <p className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center break-words max-w-[90%]">{formatCurrencyString(totalValue, { digits: 0 })}</p>
       </div>
     </div>
   );

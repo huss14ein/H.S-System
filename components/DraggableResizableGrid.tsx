@@ -43,6 +43,8 @@ export interface DraggableResizableGridProps {
   isResizable?: boolean;
   /** If true, resize handle is hidden until the user hovers over a grid item (no visible buttons) */
   handlesOnHoverOnly?: boolean;
+  /** CSS selector for the drag handle element. If set, only that element starts a drag; clicking the rest of the item won't trigger drag (e.g. so card clicks can navigate). */
+  draggableHandle?: string;
 }
 
 function buildDefaultLayout(items: GridItemConfig[], cols: number): Layout {
@@ -101,6 +103,7 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
   isDraggable = true,
   isResizable = true,
   handlesOnHoverOnly = false,
+  draggableHandle,
 }) => {
   const { width, containerRef, mounted } = useContainerWidth({
     measureBeforeMount: false,
@@ -155,6 +158,7 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
           containerPadding={margin}
           isDraggable={isDraggable}
           isResizable={isResizable}
+          draggableHandle={draggableHandle}
           compactType="vertical"
           preventCollision={false}
           useCSSTransforms

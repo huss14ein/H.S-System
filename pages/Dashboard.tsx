@@ -24,6 +24,7 @@ import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import { Bars3Icon } from '../components/icons/Bars3Icon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -470,14 +471,28 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 );
             })()}
             
+            <p className="text-xs text-slate-500 mb-1">Drag the <span className="inline-flex align-middle"><Bars3Icon className="h-3.5 w-3.5 mx-0.5" /></span> handle on a card to reorder; click the card to open that page.</p>
             <DraggableResizableGrid
                 layoutKey="dashboard-kpi"
+                draggableHandle=".dashboard-kpi-drag-handle"
                 items={KPI_CARD_ORDER.map((cardKey) => ({
                     id: cardKey,
-                    content: <div className="min-h-[132px] flex flex-col h-full">{kpiCards[cardKey]}</div>,
-                    defaultW: 2,
+                    content: (
+                        <div className="min-h-[132px] flex flex-col h-full relative">
+                            <button
+                                type="button"
+                                className="dashboard-kpi-drag-handle absolute top-2 right-2 z-10 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label="Drag to reorder card"
+                            >
+                                <Bars3Icon className="h-5 w-5" />
+                            </button>
+                            <div className="flex-1 min-h-0 pt-8">{kpiCards[cardKey]}</div>
+                        </div>
+                    ),
+                    defaultW: 4,
                     defaultH: 2,
-                    minW: 1,
+                    minW: 2,
                     minH: 1,
                 }))}
                 cols={12}

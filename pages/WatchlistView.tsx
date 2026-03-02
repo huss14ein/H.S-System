@@ -238,7 +238,11 @@ const WatchlistItemRow: React.FC<{
 };
 
 
-const WatchlistView: React.FC = () => {
+interface WatchlistViewProps {
+  onNavigateToTab?: (tab: string) => void;
+}
+
+const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -349,15 +353,33 @@ const WatchlistView: React.FC = () => {
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
     return (
-        <div className="mt-6 cards-grid grid grid-cols-1 lg:grid-cols-3">
+        <div className="mt-6 space-y-6">
+            {/* Hero */}
+            <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
+                <h2 className="text-xl font-bold text-slate-800">Watchlist</h2>
+                <p className="text-sm text-slate-600 mt-1 max-w-2xl">
+                    Track symbols, prices, and 1M trend. Set price alerts and get AI trade insights and watchlist tips. Sync tickers with <strong>Investment Plan</strong> and <strong>Portfolio Universe</strong> for allocation.
+                </p>
+                {onNavigateToTab && (
+                    <div className="flex flex-wrap items-center gap-2 pt-3">
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Related:</span>
+                        <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="text-sm font-medium text-primary hover:underline">Portfolios</button>
+                        <span className="text-slate-300">·</span>
+                        <button type="button" onClick={() => onNavigateToTab('Investment Plan')} className="text-sm font-medium text-primary hover:underline">Investment Plan</button>
+                        <span className="text-slate-300">·</span>
+                        <button type="button" onClick={() => onNavigateToTab('Recovery Plan')} className="text-sm font-medium text-primary hover:underline">Recovery Plan</button>
+                    </div>
+                )}
+            </section>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:col-span-3">
-                <div className="bg-gradient-to-br from-white to-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-xs text-gray-500">Positive Movers</p><p className="text-xl font-semibold text-emerald-700">{watchlistInsights.positiveMovers}</p></div>
-                <div className="bg-gradient-to-br from-white to-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-xs text-gray-500">Negative Movers</p><p className="text-xl font-semibold text-rose-700">{watchlistInsights.negativeMovers}</p></div>
-                <div className="bg-gradient-to-br from-white to-amber-50 border border-amber-100 rounded-lg p-3"><p className="text-xs text-gray-500">Active Alerts</p><p className="text-xl font-semibold text-amber-700">{watchlistInsights.alertCoverage}/{watchlistInsights.total}</p></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-4"><p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Positive Movers</p><p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{watchlistInsights.positiveMovers}</p></div>
+                <div className="rounded-xl border border-rose-100 bg-gradient-to-br from-white to-rose-50 p-4"><p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Negative Movers</p><p className="text-2xl font-bold text-rose-700 tabular-nums mt-1">{watchlistInsights.negativeMovers}</p></div>
+                <div className="rounded-xl border border-amber-100 bg-gradient-to-br from-white to-amber-50 p-4"><p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Alerts</p><p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{watchlistInsights.alertCoverage}/{watchlistInsights.total}</p></div>
             </div>
 
-            <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
                     <div className="flex items-center gap-3">
                         <h2 className="text-xl font-semibold text-dark">My Watchlist</h2>
@@ -365,8 +387,8 @@ const WatchlistView: React.FC = () => {
                     </div>
                     <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
                 </div>
-                <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1M trend <InfoHint text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
@@ -386,11 +408,11 @@ const WatchlistView: React.FC = () => {
                         })}
                     </tbody>
                 </table>
-                {data.watchlist.length === 0 && (<div className="empty-state text-center py-10">Your watchlist is empty. Add symbols to track prices and get AI tips.</div>)}</div>
+                {data.watchlist.length === 0 && (<div className="text-center py-10 text-slate-500">Your watchlist is empty. Add symbols to track prices and get AI tips.</div>)}</div>
             </div>
 
             <div className="lg:col-span-1 space-y-4">
-                <div className="bg-white p-4 rounded-lg shadow border border-slate-200">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-primary"/>AI Trade Insights</h4>
                     <p className="text-xs text-slate-600 mb-3">Educational feedback on your recent trades, patterns, and portfolio impact.</p>
                     {recentTransactions.length > 0 ? (
@@ -405,7 +427,7 @@ const WatchlistView: React.FC = () => {
                         <p className="text-xs text-slate-500">Record trades from Investments to get AI feedback here.</p>
                     )}
                 </div>
-                <div className="bg-white p-4 rounded-lg shadow border border-slate-200">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-amber-500"/>Watchlist Tips</h4>
                     <p className="text-xs text-slate-600 mb-3">AI suggestions for your watchlist symbols (diversification, themes, concepts).</p>
                     <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
@@ -415,6 +437,7 @@ const WatchlistView: React.FC = () => {
                     {aiWatchlistTips && <div className="mt-3 prose prose-sm max-w-none text-left max-h-[220px] overflow-y-auto rounded-lg bg-amber-50/80 p-3 border border-amber-100"><SafeMarkdownRenderer content={aiWatchlistTips} /></div>}
                 </div>
                 <p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
+            </div>
             </div>
 
             <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />

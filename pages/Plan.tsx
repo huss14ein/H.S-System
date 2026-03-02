@@ -185,7 +185,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             for (let m = 0; m < 12; m++) row.planned[m] += amt;
         });
 
+        // Only show expense categories that have a reference: planned (from budgets/recurring) or actual (from transactions)
         let expenseRows: PlanRow[] = Array.from(byCategory.entries())
+            .filter(([, { planned, actual }]) => planned.some(x => x > 0) || actual.some(x => x > 0))
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([category, { planned, actual }]) => ({
                 type: 'expense' as const,
@@ -193,10 +195,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 monthly_planned: planned.some(x => x > 0) ? planned : Array(12).fill(0),
                 monthly_actual: actual,
             }));
-
-        if (expenseRows.length === 0) {
-            expenseRows = [{ type: 'expense', category: 'Expenses', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) }];
-        }
 
         // Monthly investment: from Investment Plan (planned) + Investment Transactions (actual buys)
         const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;

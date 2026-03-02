@@ -964,6 +964,16 @@ Markdown only.`;
     } catch (error) { return formatAiError(error); }
 };
 
+export function buildFallbackAnalystReport(holding: Holding): string {
+    const name = holding.name || holding.symbol;
+    const qty = holding.quantity ?? 0;
+    const cost = (holding.avgCost ?? 0) * qty;
+    const value = holding.currentValue ?? 0;
+    const gainLoss = value - cost;
+    const gainLossPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
+    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n*AI analyst report was unavailable. Use **Generate Report** again for news and sentiment when available.*`;
+}
+
 export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
     const cached = getFromCache(cacheKey);
@@ -988,7 +998,8 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        throw new Error(formatAiError(error));
+        // Rethrow so the UI can show formatAiError and still set fallback content (Analyst Report always works)
+        throw error;
     }
 };
 
