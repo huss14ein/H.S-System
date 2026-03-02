@@ -1,25 +1,49 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { NAVIGATION_ITEMS } from '../constants';
 import { Page } from '../types';
+import { DataContext } from '../context/DataContext';
 import { MagnifyingGlassIcon } from './icons/MagnifyingGlassIcon';
+import { HeadsetIcon } from './icons/HeadsetIcon';
+import { ArrowDownTrayIcon } from './icons/ArrowDownTrayIcon';
 
 interface CommandPaletteProps {
     isOpen: boolean;
     setIsOpen: (isOpen: boolean) => void;
     setActivePage: (page: Page) => void;
+    onOpenLiveAdvisor?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, onOpenLiveAdvisor }) => {
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
+    const { data } = useContext(DataContext)!;
 
     const commands = useMemo(() => {
-        return NAVIGATION_ITEMS.map(item => ({
+        const nav = NAVIGATION_ITEMS.map(item => ({
             name: `Go to ${item.name}`,
-            action: () => setActivePage(item.name),
+            action: () => { setActivePage(item.name); setIsOpen(false); },
             icon: item.icon,
         }));
-    }, [setActivePage]);
+        const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
+        if (onOpenLiveAdvisor) {
+            quick.push({ name: 'Open AI Advisor', action: () => { onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
+        }
+        quick.push({
+            name: 'Export my data (backup)',
+            action: () => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `finova-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
+        return [...quick, ...nav];
+    }, [setActivePage, setIsOpen, onOpenLiveAdvisor, data]);
 
     const filteredCommands = useMemo(() => {
         if (!query) return commands;
@@ -84,14 +108,15 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                     <input
                         type="text"
                         placeholder="Search for pages or actions..."
-                        className="w-full bg-transparent border-0 focus:ring-0 text-lg placeholder-gray-400"
+                        className="w-full bg-transparent border-0 focus:ring-2 focus:ring-primary focus:outline-none rounded text-lg placeholder-gray-400"
                         value={query}
                         onChange={e => setQuery(e.target.value)}
                         autoFocus
                     />
-                     <kbd className="ml-4 mr-2 text-xs font-semibold text-gray-400 border rounded px-2 py-1">ESC</kbd>
+                     <kbd className="ml-2 text-xs font-medium text-slate-400 border border-slate-200 rounded px-1.5 py-0.5 hidden sm:inline">ESC</kbd>
                 </div>
-                <ul className="max-h-96 overflow-y-auto p-2">
+                <p className="px-3 py-1.5 text-xs text-slate-500 border-t border-slate-100">Quick: Open AI Advisor · Export data · Go to any page</p>
+                <ul className="max-h-80 overflow-y-auto p-2">
                     {filteredCommands.length > 0 ? (
                         filteredCommands.map((command, index) => (
                            <li

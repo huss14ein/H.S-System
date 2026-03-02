@@ -1,11 +1,15 @@
 import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line, ReferenceLine } from 'recharts';
+import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import Card from '../components/Card';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -181,14 +185,11 @@ const Forecast: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="text-center">
-                <h1 className="text-3xl font-bold text-dark">Financial Forecast</h1>
-                <p className="text-gray-500 mt-1">Project your financial future based on your current savings habits and market assumptions.</p>
-            </div>
-
-
-            <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+        <PageLayout
+            title="Financial Forecast"
+            description="Project your financial future based on your current savings habits and market assumptions."
+        >
+            <div className="alert-info mb-6">
                 <h2 className="text-base font-semibold text-blue-900 mb-2">How Scenario Planning Works</h2>
                 <ul className="text-sm text-blue-800 space-y-1 list-disc pl-5">
                     <li>The model compounds monthly savings into investment value using your annual growth assumption.</li>
@@ -198,9 +199,8 @@ const Forecast: React.FC = () => {
                 <p className="text-xs text-blue-700 mt-3">Assumptions are deterministic and educational (not financial advice). Use multiple runs (conservative/base/aggressive) to compare outcomes.</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow space-y-4 sticky top-24">
-                    <h3 className="text-lg font-semibold text-dark border-b pb-2">Forecast Assumptions</h3>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start">
+                <SectionCard title="Forecast Assumptions" className="lg:col-span-1 sticky top-24 space-y-4">
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
                         {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
@@ -219,40 +219,39 @@ const Forecast: React.FC = () => {
                     </div>
                     <div>
                         <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
-                        <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="input-base mt-1" />
                         <p className="text-xs text-gray-500 mt-1">Calculated average is {formatCurrencyString(averageMonthlySavings)}.</p>
                     </div>
                     <div>
                         <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
-                        <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
                     <div>
                         <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Assume your monthly savings grow by this percent each year (e.g. raises)." /></label>
-                        <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
-                    <button onClick={handleRunForecast} disabled={isLoading} className="w-full flex items-center justify-center px-4 py-3 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors font-semibold">
-                        <SparklesIcon className="h-5 w-5 mr-2" />
+                    <button type="button" onClick={handleRunForecast} disabled={isLoading} className="w-full btn-primary flex items-center justify-center gap-2 font-semibold disabled:opacity-50">
+                        <SparklesIcon className="h-5 w-5" />
                         {isLoading ? 'Calculating...' : 'Run Forecast'}
                     </button>
-                </div>
+                </SectionCard>
 
                 <div className="lg:col-span-3 space-y-6">
-                    {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><p className="text-gray-500">Generating your financial forecast...</p></div>}
+                    {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><LoadingSpinner message="Generating your financial forecast..." /></div>}
 
                     {summary && !isLoading && (
                         <>
                         <p className="text-sm text-gray-600">Scenario preset used: <span className="font-semibold text-dark">{scenarioPreset}</span></p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} />
-                            <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} />
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
+                            <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} tooltip="Estimated total net worth at the end of the forecast period." />
+                            <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} tooltip="Estimated investment portfolio value at the end of the forecast period." />
                         </div>
                         </>
                     )}
 
 
                     {Object.values(comparisonResults).some(Boolean) && !isLoading && (
-                        <div className="bg-white p-6 rounded-lg shadow">
-                            <h3 className="text-lg font-semibold text-dark mb-4">Scenario Comparison ({horizon}-Year Horizon)</h3>
+                        <SectionCard title={`Scenario Comparison (${horizon}-Year Horizon)`}>
                             <div className="overflow-x-auto">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -280,13 +279,13 @@ const Forecast: React.FC = () => {
                                 </table>
                             </div>
                             <p className="text-xs text-gray-500 mt-3">Tip: Run all three presets to compare conservative, base, and aggressive outcomes side-by-side.</p>
-                        </div>
+                        </SectionCard>
                     )}
                     
                     {goalProjections.length > 0 && !isLoading && (
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-lg font-semibold text-dark mb-4">Goal Projections</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                                 {goalProjections.map(proj => (
                                     <div key={proj.name} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
                                         <FlagIcon className={`h-6 w-6 flex-shrink-0 ${proj.met ? 'text-green-500' : 'text-gray-400'}`} />
@@ -305,34 +304,37 @@ const Forecast: React.FC = () => {
                     )}
 
                     {forecastData.length > 0 && !isLoading ? (
-                        <div className="bg-white p-6 rounded-lg shadow h-[600px]">
-                            <h3 className="text-lg font-semibold text-dark mb-4">Financial Projections</h3>
-                            <ResponsiveContainer width="100%" height="90%">
-                                <ComposedChart data={forecastData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="name" fontSize={12} />
-                                    <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
-                                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}/>
-                                    <Legend />
-                                    <defs>
-                                        <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/><stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1}/></linearGradient>
-                                    </defs>
-                                    {goalReferenceLines.map(line => (
-                                         <ReferenceLine key={line.label} y={line.y} stroke="#e11d48" strokeDasharray="4 4" >
-                                             <Legend payload={[{ value: line.label, type: 'line', color: '#e11d48' }]} />
-                                         </ReferenceLine>
-                                    ))}
-                                    <Area type="monotone" dataKey="Investment Value" stackId="1" stroke="#8b5cf6" fill="url(#colorInvest)" name="Total Investments" />
-                                    <Line type="monotone" dataKey="Net Worth" stroke="#1e3a8a" strokeWidth={3} name="Net Worth" dot={false} />
-                                </ComposedChart>
-                            </ResponsiveContainer>
+                        <div className="section-card flex flex-col h-[500px] sm:h-[600px]">
+                            <h3 className="section-title mb-4">Financial Projections</h3>
+                            <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={forecastData} margin={{ ...CHART_MARGIN, right: 24, left: 20, bottom: 5 }}>
+                                        <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={56} />
+                                        <Tooltip
+                                            formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}
+                                            contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
+                                        />
+                                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                                        <defs>
+                                            <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={CHART_COLORS.secondary} stopOpacity={0.4}/><stop offset="95%" stopColor={CHART_COLORS.secondary} stopOpacity={0.1}/></linearGradient>
+                                        </defs>
+                                        {goalReferenceLines.map(line => (
+                                             <ReferenceLine key={line.label} y={line.y} stroke={CHART_COLORS.negative} strokeDasharray="4 4" label={{ value: line.label, position: 'right', fill: CHART_COLORS.axis, fontSize: 11 }} />
+                                        ))}
+                                        <Area type="monotone" dataKey="Investment Value" stackId="1" stroke={CHART_COLORS.secondary} fill="url(#colorInvest)" name="Total Investments" />
+                                        <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={3} name="Net Worth" dot={false} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
                     ) : (
-                         !isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><p className="text-gray-500">Configure assumptions, run a base case, then adjust growth/savings to compare conservative vs aggressive scenarios.</p></div>
+                         !isLoading && <div className="section-card text-center py-12"><p className="text-slate-500 text-sm">Configure assumptions, run a base case, then adjust growth/savings to compare conservative vs aggressive scenarios.</p></div>
                     )}
                 </div>
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

@@ -10,7 +10,8 @@ import { ZakatPayment } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
-
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -31,17 +32,17 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label htmlFor="zakat-amount" className="block text-sm font-medium text-gray-700">Amount Paid</label>
-                    <input type="number" id="zakat-amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input type="number" id="zakat-amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="input-base mt-1" />
                 </div>
                  <div>
                     <label htmlFor="zakat-date" className="block text-sm font-medium text-gray-700">Date</label>
-                    <input type="date" id="zakat-date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input type="date" id="zakat-date" value={date} onChange={e => setDate(e.target.value)} required className="input-base mt-1" />
                 </div>
                  <div>
                     <label htmlFor="zakat-notes" className="block text-sm font-medium text-gray-700">Notes (Optional)</label>
-                    <input type="text" id="zakat-notes" value={notes} onChange={e => setNotes(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input type="text" id="zakat-notes" value={notes} onChange={e => setNotes(e.target.value)} className="input-base mt-1" />
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Record Payment</button>
+                <button type="submit" className="w-full btn-primary">Record Payment</button>
             </form>
         </Modal>
     );
@@ -72,10 +73,17 @@ const Zakat: React.FC = () => {
 
     const goldPrice = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
     const nisabAmountSetting = (data?.settings as any)?.nisabAmount ?? (data?.settings as any)?.nisab_amount;
+    // Use local form values for immediate feedback; fallback to saved settings so nisab actually affects calculation
     const nisab = useMemo(() => {
-        if (nisabAmountSetting != null && Number.isFinite(Number(nisabAmountSetting))) return Number(nisabAmountSetting);
-        return goldPrice * 85;
-    }, [goldPrice, nisabAmountSetting]);
+        if (useNisabAmount) {
+            const local = parseFloat(localNisabAmount);
+            if (Number.isFinite(local) && local > 0) return local;
+            if (nisabAmountSetting != null && Number.isFinite(Number(nisabAmountSetting))) return Number(nisabAmountSetting);
+        }
+        const localGold = parseFloat(localGoldPrice);
+        const effectiveGold = Number.isFinite(localGold) && localGold > 0 ? localGold : goldPrice;
+        return effectiveGold * 85;
+    }, [useNisabAmount, localNisabAmount, nisabAmountSetting, localGoldPrice, goldPrice]);
 
     const zakatableAssets = useMemo(() => {
         const accounts = data?.accounts ?? [];
@@ -91,8 +99,9 @@ const Zakat: React.FC = () => {
     const deductibleLiabilities = useMemo(() => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
-        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
-        const trackedLiabilities = liabilities.filter(l => l.status === 'Active').reduce((sum, liability) => sum + Math.abs(liability.amount), 0);
+        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
+        const trackedLiabilities = liabilities.filter(l => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum, liability) => sum + Math.abs(liability.amount ?? 0), 0);
         const total = shortTermDebts + trackedLiabilities + otherDebts;
         return { shortTermDebts, trackedLiabilities, otherDebts, total };
     }, [otherDebts, data?.accounts, data?.liabilities]);
@@ -112,26 +121,23 @@ const Zakat: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="text-center">
-                <h1 className="text-3xl font-bold text-dark">Zakat Calculator</h1>
-                <p className="text-gray-500 mt-1">Estimate your annual Zakat based on your tracked assets and liabilities.</p>
-                 <div className="mt-4 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 p-4 max-w-3xl mx-auto text-sm text-left rounded-r-lg">
-                    <div className="flex">
-                        <div className="py-1"><InformationCircleIcon className="h-5 w-5 text-yellow-400 mr-3"/></div>
-                        <div>
-                            <p className="font-bold">Disclaimer:</p>
-                            <p>This calculator provides an estimation for educational purposes only. Please consult a qualified religious scholar for accurate guidance.</p>
-                        </div>
+        <PageLayout
+            title="Zakat Calculator"
+            description="Estimate your annual Zakat based on your tracked assets and liabilities."
+        >
+            <div className="alert-warning max-w-3xl mb-6">
+                <div className="flex">
+                    <div className="py-1"><InformationCircleIcon className="h-5 w-5 text-amber-500 mr-3 flex-shrink-0"/></div>
+                    <div>
+                        <p className="font-bold">Disclaimer:</p>
+                        <p>This calculator provides an estimation for educational purposes only. Please consult a qualified religious scholar for accurate guidance.</p>
                     </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                {/* Column 1: Assets & Liabilities */}
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 items-start">
                 <div className="space-y-6">
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <h3 className="font-semibold text-dark mb-4">Zakatable Assets</h3>
+                    <SectionCard title="Zakatable Assets">
                          <div className="space-y-3">
                             <div className="flex justify-between text-sm pt-2">
                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Cash</span>
@@ -150,24 +156,21 @@ const Zakat: React.FC = () => {
                                 <p>Includes cash, 'Zakatable' investments, and 'Zakatable' commodities. You can change an asset's Zakat classification on the 'Investments' and 'Commodities' pages.</p>
                             </div>
                         </div>
-                    </div>
-                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h3 className="font-semibold text-dark mb-4">Deductible Liabilities</h3>
+                    </SectionCard>
+                    <SectionCard title="Deductible Liabilities">
                         <div className="space-y-3">
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Credit Card Debt</span><span>{formatCurrencyString(deductibleLiabilities.shortTermDebts)}</span></div>
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities)}</span></div>
                             <div>
                                 <label htmlFor="other-debts" className="block text-sm font-medium text-gray-700">Other Short-Term Debts</label>
-                                <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                                <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="input-base mt-1" />
                             </div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Liabilities</span><span>{formatCurrencyString(deductibleLiabilities.total)}</span></div>
                         </div>
-                    </div>
+                    </SectionCard>
                 </div>
 
-                {/* Column 2: Calculation & Summary */}
-                <div className="bg-white p-6 rounded-lg shadow space-y-4">
-                    <h3 className="font-semibold text-dark mb-4">Calculation</h3>
+                <SectionCard title="Calculation" className="space-y-4">
                      <div className="space-y-3">
                         <div className="flex items-center gap-2">
                             <input type="checkbox" id="use-nisab-amount" checked={useNisabAmount} onChange={(e) => { const checked = e.target.checked; setUseNisabAmount(checked); if (!checked) updateSettings({ nisabAmount: undefined }); }} className="h-4 w-4 text-primary rounded border-gray-300" />
@@ -176,12 +179,12 @@ const Zakat: React.FC = () => {
                         {useNisabAmount ? (
                             <div>
                                 <label htmlFor="nisab-amount" className="block text-sm font-medium text-gray-700 flex items-center">Nisab amount <InfoHint text="Minimum wealth threshold in your currency. If your net zakatable wealth is below this, you do not owe Zakat. Can be set directly (e.g. from local authority) instead of using gold price × 85 grams." /></label>
-                                <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { const v = parseFloat(localNisabAmount); if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); }} className="mt-1 w-full p-2 border border-gray-300 rounded-md" min="0" step="1" />
+                                <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { const v = parseFloat(localNisabAmount); if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); }} className="input-base mt-1" min="0" step="1" />
                             </div>
                         ) : (
                             <div>
                                 <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700 flex items-center">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: Nisab = price × 85 grams. If your net zakatable wealth is below that value, you do not owe Zakat." /></label>
-                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="input-base mt-1" />
                             </div>
                         )}
                     </div>
@@ -194,7 +197,7 @@ const Zakat: React.FC = () => {
                         {isNisabMet ? ( <><CheckCircleIcon className="h-6 w-6 text-green-500" /><span className="font-semibold text-green-600">Nisab Threshold Met</span></> ) : ( <><XCircleIcon className="h-6 w-6 text-red-500" /><span className="font-semibold text-red-500">Nisab Threshold Not Met</span></> )}
                     </div>
                     <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue)} />
-                </div>
+                </SectionCard>
                 
                  {/* Column 3: Payment Ledger */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
@@ -231,13 +234,13 @@ const Zakat: React.FC = () => {
                                 {p.notes && <p className="text-xs text-gray-600 italic text-right truncate" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
-                        {(data?.zakatPayments ?? []).length === 0 && <p className="text-sm text-center text-gray-500 py-4">No payments recorded yet.</p>}
+                        {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
                     </div>
                 </div>
             </div>
 
             <ZakatPaymentModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSave={addZakatPayment} />
-        </div>
+        </PageLayout>
     );
 };
 

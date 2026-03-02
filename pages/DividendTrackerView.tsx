@@ -1,18 +1,23 @@
 import React, { useMemo, useContext, useState, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
+import ChartContainer from '../components/charts/ChartContainer';
 import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { getAIDividendAnalysis } from '../services/geminiService';
+import { getAIDividendAnalysis, formatAiError } from '../services/geminiService';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 
 const DividendTrackerView: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
+    const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
     const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
@@ -53,9 +58,16 @@ const DividendTrackerView: React.FC = () => {
 
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);
-        const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
-        setAiAnalysis(analysis);
-        setIsLoading(false);
+        setAiError(null);
+        try {
+            const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
+            setAiAnalysis(analysis);
+        } catch (err) {
+            setAiError(formatAiError(err));
+            setAiAnalysis('');
+        } finally {
+            setIsLoading(false);
+        }
     }, [dividendIncomeYTD, projectedAnnualIncome, topPayers]);
 
     return (
@@ -64,10 +76,10 @@ const DividendTrackerView: React.FC = () => {
                 <h2 className="text-2xl font-bold text-dark">Dividend Tracker</h2>
                 <p className="text-gray-500 mt-1">Monitor your passive income from dividend-paying investments.</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <Card title="Dividend Income (YTD)" value={formatCurrencyString(dividendIncomeYTD)} />
-                <Card title="Projected Annual Income" value={formatCurrencyString(projectedAnnualIncome)} tooltip="Based on current holdings and their dividend yields." />
-                <Card title="Average Portfolio Yield" value={`${averageYield.toFixed(2)}%`} tooltip="Projected annual dividend income as a percentage of your total investment value."/>
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
+                <Card title="Dividend Income (YTD)" value={formatCurrencyString(dividendIncomeYTD)} indicatorColor="green" valueColor="text-emerald-700" icon={<TrophyIcon className="h-5 w-5 text-emerald-600" />} tooltip="Dividend income received so far this year." />
+                <Card title="Projected Annual Income" value={formatCurrencyString(projectedAnnualIncome)} indicatorColor="green" valueColor="text-indigo-700" icon={<BanknotesIcon className="h-5 w-5 text-indigo-600" />} tooltip="Based on current holdings and their dividend yields." />
+                <Card title="Average Portfolio Yield" value={`${averageYield.toFixed(2)}%`} indicatorColor="yellow" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Projected annual dividend income as a percentage of your total investment value."/>
             </div>
             
             <div className="bg-white p-6 rounded-lg shadow">
@@ -78,28 +90,34 @@ const DividendTrackerView: React.FC = () => {
                         {isLoading ? 'Analyzing...' : 'Generate Analysis'}
                     </button>
                 </div>
+                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGetAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                  {isLoading && <p className="text-sm text-center text-gray-500 py-4">Analyzing your dividend strategy...</p>}
                  {!isLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                 {!isLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an expert summary of your dividend income.</p>}
+                 {!isLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-gray-500 py-4">Click "Generate Analysis" for an expert summary of your dividend income.</p>}
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow h-[400px]">
-                <h3 className="text-lg font-semibold text-dark mb-4">Monthly Dividend Income (Last 12 Months)</h3>
-                <ResponsiveContainer width="100%" height="90%">
-                    <BarChart data={monthlyDividendsChartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis tickFormatter={(val) => new Intl.NumberFormat('en-US', { notation: 'compact' }).format(val as number)} />
-                        <Tooltip formatter={(val: number) => formatCurrencyString(val, { digits: 2 })} />
-                        <Legend />
-                        <Bar dataKey="Dividend Income" fill="#8b5cf6" />
-                    </BarChart>
-                </ResponsiveContainer>
+            <div className="section-card flex flex-col h-[400px]">
+                <h3 className="section-title mb-4">Monthly Dividend Income (Last 12 Months)</h3>
+                <ChartContainer height="100%" isEmpty={!monthlyDividendsChartData?.length} emptyMessage="No dividend income data for the last 12 months." className="flex-1 min-h-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyDividendsChartData} margin={CHART_MARGIN}>
+                            <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                            <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                            <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={48} />
+                            <Tooltip
+                                formatter={(val: number) => formatCurrencyString(val, { digits: 2 })}
+                                contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
+                            />
+                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                            <Bar dataKey="Dividend Income" fill={CHART_COLORS.secondary} name="Dividend Income" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                </ChartContainer>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Recent Dividend Payments</h3>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+                <div className="section-card">
+                    <h3 className="section-title mb-4">Recent Dividend Payments</h3>
                     <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-sm">
                         <thead className="bg-gray-50"><tr className="text-left text-xs font-medium text-gray-500 uppercase">
                             <th className="px-4 py-2">Date</th><th className="px-4 py-2">Symbol</th><th className="px-4 py-2 text-right">Amount</th>
@@ -113,8 +131,8 @@ const DividendTrackerView: React.FC = () => {
                     {recentDividendTransactions.length === 0 && <p className="text-center text-gray-500 py-8">No dividend transactions recorded.</p>}
                 </div>
 
-                <div className="bg-white p-6 rounded-lg shadow">
-                     <h3 className="text-lg font-semibold text-dark mb-4 flex items-center"><TrophyIcon className="h-5 w-5 mr-2 text-yellow-500"/>Top 5 Dividend Payers</h3>
+                <div className="section-card">
+                     <h3 className="section-title mb-4 flex items-center"><TrophyIcon className="h-5 w-5 mr-2 text-yellow-500"/>Top 5 Dividend Payers</h3>
                      <p className="text-sm text-gray-500 -mt-3 mb-4">Based on projected annual income.</p>
                      <ul className="space-y-3">
                         {topPayers.map(payer => (

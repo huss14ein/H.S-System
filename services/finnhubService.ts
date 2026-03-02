@@ -82,6 +82,91 @@ function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   });
 }
 
+/** Saudi Tadawul symbols use .SR suffix. Returns exchange and currency for display. */
+export function getExchangeAndCurrencyForSymbol(symbol: string): { exchange: string; currency: string } | null {
+  const s = (symbol || '').trim().toUpperCase();
+  if (/\.SR$/i.test(s)) return { exchange: 'Tadawul', currency: 'SAR' };
+  if (/\.SA$/i.test(s)) return { exchange: 'Saudi', currency: 'SAR' };
+  return null;
+}
+
+/** Normalize symbol for Finnhub (US upper, crypto mapped). */
+function toFinnhubSymbol(symbol: string): string {
+  const upper = (symbol || '').toUpperCase().trim();
+  if (!upper) return upper;
+  if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
+  if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+  return upper;
+}
+
+/** 1-month daily candle data for charting. Points are day index (0 = oldest) and close price. */
+export interface CandlePoint {
+  day: number;
+  price: number;
+}
+
+/** Stooq symbol for historical CSV: Saudi 2222.SR -> 2222.sr, US AAPL -> aapl.us, BRK.A -> brk-a */
+function toStooqSymbol(symbol: string): string {
+  const s = (symbol || '').trim();
+  if (/\.(SR|SA)$/i.test(s)) return s.toLowerCase();
+  const hadDot = s.includes('.');
+  const lower = s.toLowerCase().replace(/\./g, '-');
+  return hadDot ? lower : lower + '.us';
+}
+
+/** Fetch ~1 month of daily close prices from Stooq (no API key). Used when Finnhub has no data (e.g. Tadawul). */
+async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
+  const stooqSym = toStooqSymbol(symbol);
+  try {
+    const res = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+    if (!res.ok) return [];
+    const csv = await res.text();
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return [];
+    const rows = lines.slice(1).map((line) => line.split(','));
+    const withDate: { date: number; close: number }[] = [];
+    for (const row of rows) {
+      if (row.length < 5) continue;
+      const dateStr = row[0];
+      const close = Number(row[4]);
+      if (!Number.isFinite(close) || close <= 0) continue;
+      const date = dateStr ? new Date(dateStr).getTime() : NaN;
+      if (!Number.isFinite(date)) continue;
+      withDate.push({ date, close });
+    }
+    if (withDate.length === 0) return [];
+    withDate.sort((a, b) => a.date - b.date);
+    const last31 = withDate.slice(-31);
+    return last31.map((p, i) => ({ day: i, price: p.close }));
+  } catch {
+    return [];
+  }
+}
+
+/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. Uses Finnhub first; falls back to Stooq when Finnhub returns no data (Saudi .SR/.SA or any symbol). */
+export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
+  try {
+    const finnhubSymbol = toFinnhubSymbol(symbol);
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - 31 * 24 * 60 * 60;
+    const token = getToken();
+    const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
+    const res = await finnhubFetch(url);
+    if (!res.ok) return getStooqCandles1M(symbol);
+    const data = await res.json();
+    const t = data?.t as number[] | undefined;
+    const c = data?.c as number[] | undefined;
+    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) return getStooqCandles1M(symbol);
+    const pairs = t.map((ts, i) => ({ ts, price: Number(c[i]) })).filter((p) => Number.isFinite(p.price) && p.price > 0);
+    pairs.sort((a, b) => a.ts - b.ts);
+    const points = pairs.map((p, i) => ({ day: i, price: p.price }));
+    if (points.length === 0) return getStooqCandles1M(symbol);
+    return points;
+  } catch {
+    return getStooqCandles1M(symbol);
+  }
+}
+
 // --- Market status (exchange open/closed) ---
 export interface MarketStatusItem {
   exchange: string;
@@ -182,9 +267,11 @@ export interface QuoteWith52W {
 
 export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
   try {
-    const data = await get<QuoteWith52W>('/quote', { symbol: symbol.toUpperCase() });
-    if (data && Number.isFinite(data.c)) return data;
-    return null;
+    const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: symbol.toUpperCase() });
+    if (!data) return null;
+    const price = Number(data.c ?? data.pc ?? data.p);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    return { ...data, c: price, d: Number(data.d ?? 0), dp: Number(data.dp ?? 0), h: Number(data.h ?? price), l: Number(data.l ?? price), o: Number(data.o ?? price), pc: Number(data.pc ?? price) };
   } catch {
     return null;
   }
@@ -222,6 +309,88 @@ export async function getEarningsCalendar(from: string, to: string): Promise<Ear
   } catch {
     return [];
   }
+}
+
+export interface HoldingFundamentals {
+  symbol: string;
+  currency?: string;
+  nextEarnings?: {
+    date?: string;
+    period?: string;
+    quarter?: number;
+    year?: number;
+    revenueEstimate?: number | null;
+  };
+  dividend?: {
+    dividendYieldPct?: number | null;
+    dividendPerShareAnnual?: number | null;
+  };
+}
+
+/** Convenience helper: upcoming earnings (revenue estimate) + dividend yield metrics for a symbol. */
+export async function getHoldingFundamentals(symbol: string): Promise<HoldingFundamentals | null> {
+  if (!symbol) return null;
+  const today = new Date();
+  const from = today.toISOString().split('T')[0];
+  const oneYearAhead = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
+  const to = oneYearAhead.toISOString().split('T')[0];
+
+  const [earningsList, metrics, profile] = await Promise.all([
+    getEarningsCalendar(from, to).then((list) =>
+      list.filter((e) => e.symbol.toUpperCase() === symbol.toUpperCase() && e.date)
+    ),
+    getBasicFinancials(symbol),
+    getCompanyProfile(symbol),
+  ]);
+
+  let nextEarnings: HoldingFundamentals['nextEarnings'];
+  if (earningsList.length > 0) {
+    const sorted = [...earningsList].sort((a, b) => {
+      const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
+      const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
+      return da - db;
+    });
+    const first = sorted[0];
+    nextEarnings = {
+      date: first.date,
+      period: first.period,
+      quarter: first.quarter,
+      year: first.year,
+      revenueEstimate: first.revenueEstimate ?? null,
+    };
+  }
+
+  let dividend: HoldingFundamentals['dividend'];
+  const m = metrics?.metric as Record<string, number | string> | undefined;
+  if (m) {
+    const rawYield =
+      Number(m['dividendYieldIndicatedAnnual'] as number) ||
+      Number(m['dividendYield'] as number) ||
+      Number(m['dividendYieldTTM'] as number) ||
+      Number(m['dividendYieldForward'] as number);
+    const rawPerShare =
+      Number(m['dividendPerShareTTM'] as number) ||
+      Number(m['dividendPerShareAnnual'] as number) ||
+      Number(m['dividendPerShareIndicatedAnnual'] as number);
+
+    const dividendYieldPct = Number.isFinite(rawYield) && rawYield !== 0 ? rawYield : null;
+    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare !== 0 ? rawPerShare : null;
+
+    if (dividendYieldPct != null || dividendPerShareAnnual != null) {
+      dividend = { dividendYieldPct, dividendPerShareAnnual };
+    }
+  }
+
+  const currencyFromProfile = profile?.currency;
+  const currencyFromMetrics = (metrics?.metric?.['currency'] as string | undefined) || undefined;
+  const currency = (currencyFromProfile || currencyFromMetrics || '').toUpperCase() || undefined;
+
+  return {
+    symbol,
+    currency,
+    nextEarnings,
+    dividend,
+  };
 }
 
 // --- Insider transactions ---

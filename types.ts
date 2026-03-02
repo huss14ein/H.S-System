@@ -64,7 +64,7 @@ export interface Liability {
   id: string;
   user_id?: string;
   name: string;
-  type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan';
+  type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan' | 'Receivable';
   amount: number;
   status: 'Active' | 'Paid';
   goalId?: string;
@@ -88,6 +88,8 @@ export interface Transaction {
   categoryId?: string;
   note?: string;
   rejectionReason?: string;
+  /** Set when transaction was auto-created from a recurring rule. */
+  recurringId?: string;
 }
 
 export type HoldingAssetClass =
@@ -128,21 +130,27 @@ export interface InvestmentPortfolio {
   user_id?: string;
   name: string;
   accountId: string;
+  /** Base currency for this portfolio (all holding values are in this currency). Default USD for US markets. */
+  currency?: TradeCurrency;
   holdings: Holding[];
   goalId?: string;
   owner?: string;
 }
+
+export type TradeCurrency = 'USD' | 'SAR';
 
 export interface InvestmentTransaction {
   id: string;
   user_id?: string;
   accountId: string;
   date: string;
-  type: 'buy' | 'sell' | 'dividend';
+  type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal';
   symbol: string;
   quantity: number;
   price: number;
   total: number;
+  /** Currency the trade was recorded in (display & reporting). */
+  currency?: TradeCurrency;
 }
 
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */
@@ -155,8 +163,8 @@ export interface Budget {
   limit: number;
   month: number; // 1-12
   year: number;
-  /** When 'yearly', limit is the total per year (e.g. housing). When missing or 'monthly', limit is per month. */
-  period?: 'monthly' | 'yearly';
+  /** When 'yearly', limit is total per year. When 'weekly'/'daily', limit is per week/day. When missing or 'monthly', limit is per month. */
+  period?: 'monthly' | 'yearly' | 'weekly' | 'daily';
   /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
   tier?: BudgetTier;
 }
@@ -232,11 +240,15 @@ export interface ZakatPayment {
     notes?: string;
 }
 
+export type PriceAlertCurrency = 'USD' | 'SAR';
+
 export interface PriceAlert {
   id: string;
   user_id?: string;
   symbol: string;
   targetPrice: number;
+  /** Currency for the target price (selected when adding the alert). */
+  currency?: PriceAlertCurrency;
   status: 'active' | 'triggered';
   createdAt: string;
 }
@@ -266,12 +278,30 @@ export interface PlannedTrade {
   notes?: string;
 }
 
+/** Template for monthly recurring transactions (e.g. salary deposit, rent). */
+export interface RecurringTransaction {
+  id: string;
+  user_id?: string;
+  description: string;
+  amount: number; // positive; type determines income vs expense
+  type: 'income' | 'expense';
+  accountId: string;
+  budgetCategory?: string;
+  category: string;
+  /** Day of month (1–28) when the transaction should be created. */
+  dayOfMonth: number;
+  enabled: boolean;
+  /** When true, do not auto-record on the day; user must apply manually from Transactions. When false (default), system records on dayOfMonth automatically. */
+  addManually?: boolean;
+}
+
 export interface FinancialData {
   accounts: Account[];
   assets: Asset[];
   liabilities: Liability[];
   goals: Goal[];
   transactions: Transaction[];
+  recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
   budgets: Budget[];
@@ -282,7 +312,7 @@ export interface FinancialData {
   priceAlerts: PriceAlert[];
   plannedTrades: PlannedTrade[];
   investmentPlan: InvestmentPlanSettings;
-  /** System-wide Wealth Ultra defaults (from wealth_ultra_config). General share/sleeve config. */
+  /** Wealth Ultra default parameters from app settings/config only (not from DB). */
   wealthUltraConfig?: WealthUltraSystemConfig | null;
   portfolioUniverse: UniverseTicker[];
   statusChangeLog: StatusChangeLog[];
@@ -372,7 +402,7 @@ export interface InvestmentPlanSettings {
   brokerConstraints: BrokerConstraints;
 }
 
-/** Wealth Ultra numeric config from system (wealth_ultra_config table). General, not code-specific. */
+/** Wealth Ultra default parameters (from app settings/config, not DB). General share/sleeve config. */
 export interface WealthUltraSystemConfig {
   fxRate: number;
   cashReservePct: number;
@@ -517,17 +547,38 @@ export interface WealthUltraOrder {
 }
 
 export type WealthUltraAlertType =
+  | 'sleeve_drift'            // over or under target
   | 'sleeve_overweight'
   | 'spec_breach'
   | 'max_per_ticker_breach'
   | 'over_budget'
   | 'position_trim_suggest'   // > +40%
-  | 'position_risk_review';   // < -30%
+  | 'position_risk_review'    // < -30%
+  | 'dip_buy_opportunity'     // Core/Upside down 15%+ (DipBuy mode)
+  | 'deployment_opportunity'  // monthly Core deploy has suggested ticker
+  | 'cash_reserve_low'        // deployable below reserve
+  | 'concentration_risk'      // top tickers too high % of portfolio
+  | 'spec_loss_review'        // Spec position large loss
+  | 'trailing_stop_near'      // price near trailing stop
+  | 'underperformer_review'   // worst capital efficiency — review holdings
+  | 'cash_deploy_prompt'      // deployable cash + Core under target
+  | 'portfolio_stress'        // many positions in meaningful loss
+  | 'portfolio_on_track';     // positive: allocation on target, no critical issues
+
+export type WealthUltraAlertSeverity = 'critical' | 'warning' | 'info';
 
 export interface WealthUltraAlert {
   type: WealthUltraAlertType;
   message: string;
+  /** Short actionable suggestion for the user. */
+  actionHint?: string;
+  /** Optional short title for UI (e.g. "Rebalance", "Opportunity"). */
+  title?: string;
+  /** critical = act soon; warning = review; info = opportunity or FYI. */
+  severity?: WealthUltraAlertSeverity;
   ticker?: string;
+  /** For grouped alerts (e.g. multiple trim candidates). */
+  tickers?: string[];
   sleeve?: WealthUltraSleeve;
   value?: number;
 }

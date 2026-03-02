@@ -19,13 +19,21 @@ import type { Holding } from '../types';
 // --- Position metrics ---
 
 export function positionMetrics(holding: Holding, currentPrice: number) {
-  const shares = holding.quantity;
-  const avgCost = holding.avgCost;
+  const shares = Number(holding.quantity) || 0;
+  const avgCost = Number(holding.avgCost) ?? 0;
   const costBasis = shares * avgCost;
   const marketValue = shares * currentPrice;
   const plUsd = marketValue - costBasis;
   const plPct = costBasis > 0 ? (plUsd / costBasis) * 100 : 0;
-  return { costBasis, marketValue, plUsd, plPct, shares, avgCost, currentPrice };
+  return {
+    costBasis: Number.isFinite(costBasis) ? costBasis : 0,
+    marketValue: Number.isFinite(marketValue) ? marketValue : 0,
+    plUsd: Number.isFinite(plUsd) ? plUsd : 0,
+    plPct: Number.isFinite(plPct) ? plPct : 0,
+    shares,
+    avgCost,
+    currentPrice,
+  };
 }
 
 // --- Default config ---
@@ -213,7 +221,7 @@ export function buildRecoveryPlan(
   const totalPlannedCost = ladder.reduce((sum, l) => sum + l.cost, 0);
   const { newShares, newAvgCost } = computeNewAverage(
     holding.quantity,
-    holding.avgCost,
+    holding.avgCost ?? 0,
     ladder
   );
   const exitPlan = generateExitPlan(

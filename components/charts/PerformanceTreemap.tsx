@@ -1,5 +1,6 @@
 import React from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
+import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
 const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, gainLossPercent, color }) => {
     const textColor = 'white';
@@ -31,14 +32,15 @@ const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, ga
     );
 };
 
-const TreemapTooltip: React.FC<any> = ({ active, payload }) => {
+const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?: (n: number) => string }> = ({ active, payload, formatValue }) => {
     if (active && payload && payload.length) {
         const { name, size, gainLossPercent } = payload[0].payload;
+        const fmt = formatValue ?? ((n: number) => new Intl.NumberFormat('en-US', { style: 'currency', minimumFractionDigits: 0 }).format(n));
         return (
-            <div className="bg-white/80 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-lg text-sm">
-                <p className="font-bold text-dark">{name}</p>
-                <p className="text-gray-600">Market Value: {`SAR ${size.toLocaleString()}`}</p>
-                <p className={gainLossPercent >= 0 ? 'text-green-600' : 'text-red-600'}>
+            <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[140px]">
+                <p className="font-semibold text-slate-800 truncate">{name}</p>
+                <p className="text-slate-600">Market value: {fmt(size)}</p>
+                <p className={gainLossPercent >= 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>
                     Performance: {gainLossPercent.toFixed(2)}%
                 </p>
             </div>
@@ -48,7 +50,8 @@ const TreemapTooltip: React.FC<any> = ({ active, payload }) => {
 };
 
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
-    
+    const { formatCurrencyString } = useFormatCurrency();
+
     const getColor = (percentage: number) => {
         if (isNaN(percentage) || !isFinite(percentage)) {
             return '#9ca3af'; // slate-400, a neutral gray
@@ -104,7 +107,7 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
                 stroke="#fff"
                 content={<CustomizedContent />}
             >
-                <Tooltip content={<TreemapTooltip />} />
+                <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
             </Treemap>
         </ResponsiveContainer>
     );

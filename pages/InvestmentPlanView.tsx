@@ -384,7 +384,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
 
 
 
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-3 cards-grid">
                 {strategyGuides.map((guide) => (
                     <div key={guide.key} className="bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-lg p-4 shadow-sm">
                         <h3 className="text-sm font-semibold text-slate-900">{guide.title}</h3>
@@ -464,7 +464,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 cards-grid">
                 <div className="bg-white border border-gray-200 rounded-lg p-4">
                     <p className="text-xs uppercase text-gray-500">Planned Trades</p>
                     <p className="text-2xl font-bold text-dark mt-1">{(data.plannedTrades ?? []).length}</p>

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getGoalAIPlan } from '../services/geminiService';
-import { Goal } from '../types';
+import { Goal, Page } from '../types';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -17,6 +17,8 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -102,25 +104,25 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Goal Name <InfoHint text="A clear name (e.g. Emergency Fund, World Trip) helps track progress and link assets." /></label>
-                    <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <input type="text" placeholder="Goal Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Target Amount <InfoHint text="The total amount you want to reach. Progress is calculated from linked assets and savings." /></label>
-                    <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <input type="number" placeholder="Target Amount" value={targetAmount} onChange={e => setTargetAmount(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Deadline <InfoHint text="Target date to reach this goal. Used to compute required monthly savings and status (On Track / At Risk)." /></label>
-                    <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
+                    <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Priority <InfoHint text="High/Medium/Low affects how the system suggests allocating savings across multiple goals." /></label>
-                    <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="w-full p-2 border border-gray-300 rounded-md">
+                    <select value={priority} onChange={e => setPriority(e.target.value as 'High' | 'Medium' | 'Low')} className="select-base">
                         <option value="High">High Priority</option>
                         <option value="Medium">Medium Priority</option>
                         <option value="Low">Low Priority</option>
                     </select>
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Goal</button>
+                <button type="submit" className="w-full btn-primary">Save Goal</button>
             </form>
         </Modal>
     );
@@ -133,7 +135,7 @@ const GoalStatus: React.FC<{ status: 'On Track' | 'Needs Attention' | 'At Risk' 
     return (<div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium ${bg} ${text}`}>{icon}<span>{status}</span></div>);
 }
 
-const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; }> = ({ goal, onEdit, onDelete, monthlySavings }) => {
+const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [aiPlan, setAiPlan] = useState<string>('');
@@ -212,8 +214,8 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                         </p>
                     </div>
                      <div className="flex-shrink-0 flex items-center -mt-2 -mr-2">
-                        <button onClick={onEdit} className="p-2 text-gray-400 hover:text-primary"><PencilIcon className="h-4 w-4"/></button>
-                        <button onClick={onDelete} className="p-2 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={onEdit} className="p-2 text-gray-400 hover:text-primary" aria-label="Edit goal"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={onDelete} className="p-2 text-gray-400 hover:text-danger" aria-label="Delete goal"><TrashIcon className="h-4 w-4"/></button>
                     </div>
                 </div>
             </div>
@@ -235,9 +237,14 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
             {/* Status and Contributions */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center bg-gray-50 p-4 rounded-lg">
-                <div className="text-center md:text-left">
+                <div className="text-center md:text-left space-y-1">
                     <p className="text-sm text-gray-600 mb-2">Status ({monthsLeft} months left)</p>
                     <GoalStatus status={status} />
+                    {projectedMonthlyContribution > 0 && (goal.targetAmount - calculatedCurrentAmount) > 0 && (
+                        <p className="text-xs text-slate-600 mt-2">
+                            At current rate: <span className="font-semibold text-dark">~{Math.ceil((goal.targetAmount - calculatedCurrentAmount) / projectedMonthlyContribution)} months</span> to goal
+                        </p>
+                    )}
                 </div>
                 <div className="space-y-2">
                     <div>
@@ -281,6 +288,13 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 )}
             </div>
             
+            {onSeeInPlan && (
+                <div className="pt-2 border-t border-gray-200">
+                    <button type="button" onClick={onSeeInPlan} className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg transition-colors">
+                        <LinkIcon className="h-4 w-4" /> See impact in Plan
+                    </button>
+                </div>
+            )}
             <div className="bg-indigo-50 p-4 rounded-lg">
                 <div className="flex items-center justify-between"><div><h4 className="font-semibold text-indigo-800">Savings Plan</h4><p className="text-xs text-indigo-700/80">From your expert advisor</p></div><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
@@ -290,7 +304,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     );
 };
 
-const Goals: React.FC = () => {
+const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -407,11 +421,21 @@ const Goals: React.FC = () => {
     }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center"><h1 className="text-3xl font-bold text-dark">Goal Command Center</h1><button onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center gap-2"><PlusCircleIcon className="h-5 w-5"/>Add New Goal</button></div>
-      
-       <div className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow border border-slate-100">
-        <h3 className="text-lg font-semibold text-dark mb-4">Overall Goal Progress</h3>
+    <PageLayout
+      title="Goal Command Center"
+      description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
+      action={
+        <div className="flex items-center gap-2">
+          {setActivePage && (
+            <button type="button" onClick={() => setActivePage('Plan')} className="btn-outline flex items-center gap-1.5">
+              <LinkIcon className="h-4 w-4" /> See impact in Plan
+            </button>
+          )}
+          <button type="button" onClick={() => handleOpenModal()} className="btn-primary flex items-center gap-2"><PlusCircleIcon className="h-5 w-5"/>Add New Goal</button>
+        </div>
+      }
+    >
+      <SectionCard title="Overall Goal Progress" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100">
         <GoalProgressBar progress={overallProgress} colorClass="bg-primary" />
         <div className="flex justify-between items-baseline text-sm mt-2">
             <div>
@@ -423,10 +447,9 @@ const Goals: React.FC = () => {
                 <span className="font-semibold text-dark">{formatCurrencyString(totalTargetAmount)}</span>
             </div>
         </div>
-      </div>
-      
-      <div className="bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow border border-slate-100">
-        <h3 className="text-lg font-semibold text-dark mb-2">Savings Allocation Strategy</h3>
+      </SectionCard>
+
+      <SectionCard title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100">
         <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
             {goalsByPriority.map(goal => (
@@ -439,13 +462,13 @@ const Goals: React.FC = () => {
         </div>
         <div className="border-t mt-4 pt-4 flex justify-between items-center">
              <div><span className="font-semibold">Total Allocated: </span><span className={`font-bold ${totalAllocation > 100 ? 'text-danger' : 'text-success'}`}>{totalAllocation}%</span>{totalAllocation > 100 && <p className="text-xs text-danger">Total cannot exceed 100%.</p>}</div>
-             <button onClick={handleSaveAllocations} disabled={totalAllocation > 100} className="px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 transition-colors text-sm">Save Strategy</button>
+             <button type="button" onClick={handleSaveAllocations} disabled={totalAllocation > 100} className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed">Save Strategy</button>
         </div>
-      </div>
+      </SectionCard>
 
       <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
       
-       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+       <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (
             <GoalCard 
                 key={goal.id} 
@@ -453,13 +476,14 @@ const Goals: React.FC = () => {
                 onEdit={() => handleOpenModal(goal)}
                 onDelete={() => handleOpenDeleteModal(goal)}
                 monthlySavings={averageMonthlySavings}
+                onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
             />
         ))}
       </div>
       
       <GoalModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveGoal} goalToEdit={goalToEdit} />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={goalToDelete?.name || ''} />
-    </div>
+    </PageLayout>
   );
 };
 

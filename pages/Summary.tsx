@@ -9,10 +9,12 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import PageLayout from '../components/PageLayout';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -69,21 +71,23 @@ const Summary: React.FC = () => {
         const assets = data?.assets ?? [];
         const commodityHoldings = data?.commodityHoldings ?? [];
         const investments = data?.investments ?? [];
-        const totalDebt = liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const cashSavingsAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
+        const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+        const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
         const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
+        const totalInvestmentsValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
         const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
-                           accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
-                           totalCommodities;
-        const netWorth = totalAssets - totalDebt;
+                           cashAndSavingsPositive +
+                           totalCommodities +
+                           totalInvestmentsValue;
+        const netWorth = totalAssets - totalDebt + totalReceivable;
         const debtToAssetRatio = totalAssets > 0 ? totalDebt / totalAssets : 0;
         
         const netWorthPrevMonth = netWorth - monthlyPnL;
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + acc.balance, 0);
-        const coreExpenses = transactions.filter(t => t.expenseType === 'Core').reduce((sum, t) => sum + Math.abs(t.amount), 0) / 12; // Average monthly core
-        const emergencyFundMonths = coreExpenses > 0 ? cash / coreExpenses : savingsRate >= 0 ? 99 : 0;
-
         const allHoldings = investments.flatMap(p => p.holdings || []);
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
@@ -99,21 +103,23 @@ const Summary: React.FC = () => {
         if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
         else if (investmentConcentration < 0.2) investmentStyle = 'Conservative (High concentration in funds/ETFs)';
 
-        let efStatus: 'red' | 'yellow' | 'green' = 'red';
-        let efTrend = 'Critical';
-        if (emergencyFundMonths >= 3) {
-            efStatus = 'green';
-            efTrend = 'Healthy';
-        } else if (emergencyFundMonths >= 1) {
-            efStatus = 'yellow';
-            efTrend = 'Low';
-        }
-
         return { 
-            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle, efStatus, efTrend, netWorthTrend },
+            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
             investmentTreemapData
         };
     }, [data]);
+
+    const emergencyFund = useEmergencyFund(data);
+    const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
+    const efTrend = emergencyFund.status === 'healthy' ? 'Healthy' : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Low' : 'Critical';
+    const financialMetricsWithEf = useMemo(() => ({
+        ...financialMetrics,
+        emergencyFundMonths: emergencyFund.monthsCovered,
+        efStatus,
+        efTrend,
+        emergencyShortfall: emergencyFund.shortfall,
+        emergencyTargetAmount: emergencyFund.targetAmount,
+    }), [financialMetrics, emergencyFund.monthsCovered, emergencyFund.shortfall, emergencyFund.targetAmount, efStatus, efTrend]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
@@ -121,17 +127,17 @@ const Summary: React.FC = () => {
         setAnalysis(null);
         try {
             const result = await getAIFinancialPersona(
-                financialMetrics.savingsRate, 
-                financialMetrics.debtToAssetRatio, 
-                financialMetrics.emergencyFundMonths, 
-                financialMetrics.investmentStyle
+                financialMetricsWithEf.savingsRate, 
+                financialMetricsWithEf.debtToAssetRatio, 
+                financialMetricsWithEf.emergencyFundMonths, 
+                financialMetricsWithEf.investmentStyle
             );
             setAnalysis(result);
         } catch (err) {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [financialMetrics]);
+    }, [financialMetricsWithEf]);
 
     if (loading) {
         return (
@@ -142,50 +148,48 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <div className="space-y-8">
-            <h1 className="text-3xl font-bold text-dark">Financial Summary</h1>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg flex flex-col justify-center items-center text-center border-t-4 border-primary">
+        <PageLayout title="Financial Summary" description="Net worth, key metrics, and AI-generated financial persona with report card and suggestions.">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
+                <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
                     <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
-                    <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetrics.netWorth, { digits: 0 })}</p>
-                    <p className={`${financialMetrics.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
-                        {financialMetrics.netWorthTrend >= 0 ? '+' : ''}{financialMetrics.netWorthTrend.toFixed(1)}% vs last month
+                    <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
+                    <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
+                        {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
                     </p>
                 </div>
 
-                <div className="lg:col-span-2 grid grid-cols-2 gap-6">
-                    <Card title="This Month's Income" value={formatCurrencyString(financialMetrics.monthlyIncome)} valueColor="text-success" />
-                    <Card title="This Month's Expenses" value={formatCurrencyString(financialMetrics.monthlyExpenses)} valueColor="text-danger" />
-                    <Card title="Savings Rate" value={`${(financialMetrics.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
+                <div className="lg:col-span-2 cards-grid grid grid-cols-2">
+                    <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
+                    <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
+                    <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
                     <Card 
                         title="Emergency Fund" 
-                        value={`${financialMetrics.emergencyFundMonths.toFixed(1)} months`}
-                        tooltip="Covers months of core expenses. 3-6 months is recommended."
-                        trend={financialMetrics.efTrend}
-                        indicatorColor={financialMetrics.efStatus}
+                        value={`${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months`}
+                        tooltip={`Liquid cash covers ${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`}
+                        trend={financialMetricsWithEf.efTrend}
+                        indicatorColor={financialMetricsWithEf.efStatus as 'green' | 'yellow' | 'red'}
                     />
                 </div>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="h-[450px] bg-white rounded-lg shadow-lg">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+                <div className="section-card flex flex-col h-[450px]">
                     <NetWorthCompositionChart title="Historical Net Worth" />
                 </div>
-                 <div className="bg-white p-6 rounded-lg shadow h-[450px]">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>
-                    <div className="h-[380px]">
+                <div className="section-card flex flex-col h-[450px]">
+                    <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
+                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
-                            <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg text-gray-500">No investment data available.</div>
+                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
                         )}
                     </div>
                 </div>
             </div>
             
 
-            <div className="bg-white p-6 rounded-lg shadow max-w-full mx-auto">
+            <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
@@ -195,9 +199,10 @@ const Summary: React.FC = () => {
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
                 {!isLoading && error && (
-                    <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
+                    <div className="alert-error">
                          <h4 className="font-bold">AI Analysis Error</h4>
                          <SafeMarkdownRenderer content={error} />
+                         <button type="button" onClick={handleGenerateAnalysis} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                     </div>
                 )}
                 {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your expert financial persona and report card.</div>}
@@ -210,7 +215,7 @@ const Summary: React.FC = () => {
                         </div>
                         <div>
                             <h3 className="text-xl font-semibold text-dark mb-4 text-center">Financial Health Report Card</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                                 {analysis.reportCard.map(item => (
                                     <div key={item.metric} className={`p-4 rounded-lg border-l-4 ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}>
                                         <div className="flex items-start justify-between">
@@ -234,7 +239,7 @@ const Summary: React.FC = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

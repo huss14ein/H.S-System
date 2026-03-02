@@ -25,6 +25,12 @@ export type WealthUltraEngineInput = {
   sleeveOverrides?: Record<string, 'Core' | 'Upside' | 'Spec'>;
 };
 
+export interface WealthUltraPortfolioHealth {
+  score: number;
+  label: string;
+  summary: string;
+}
+
 export interface WealthUltraEngineState {
   config: WealthUltraConfig;
   positions: WealthUltraPosition[];
@@ -39,6 +45,7 @@ export interface WealthUltraEngineState {
   specBuysDisabled: boolean;
   capitalEfficiencyRanked: WealthUltraPosition[];
   alerts: WealthUltraAlert[];
+  portfolioHealth: WealthUltraPortfolioHealth;
 }
 
 export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltraEngineState {
@@ -64,7 +71,15 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
   const specBreach = isSpecBreach(config, specAlloc);
   const specBuysDisabled = shouldDisableNewSpecBuys(config, specAlloc);
   const capitalEfficiencyRanked = rankByCapitalEfficiency(positions, config);
-  const alerts = runAlertEngine(config, positions, allocations);
+  const alerts = runAlertEngine(config, positions, allocations, monthlyDeployment);
+
+  const portfolioHealth = computePortfolioHealth(
+    config,
+    allocations,
+    cashPlannerStatus,
+    specBreach,
+    alerts
+  );
 
   return {
     config,
@@ -80,7 +95,67 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
     specBuysDisabled,
     capitalEfficiencyRanked,
     alerts,
+    portfolioHealth,
   };
+}
+
+function computePortfolioHealth(
+  config: WealthUltraConfig,
+  allocations: WealthUltraSleeveAllocation[],
+  cashPlannerStatus: 'WITHIN_LIMIT' | 'OVER_BUDGET',
+  specBreach: boolean,
+  alerts: WealthUltraAlert[]
+): WealthUltraPortfolioHealth {
+  // config is currently only used for future scoring heuristics; reference to satisfy strict noUnusedParameters.
+  void config;
+  let score = 100;
+  const reasons: string[] = [];
+
+  if (cashPlannerStatus === 'OVER_BUDGET') {
+    score -= 30;
+    reasons.push('Planned buys over deployable cash');
+  }
+  if (specBreach) {
+    score -= 20;
+    reasons.push('Spec sleeve over target');
+  }
+  const criticalCount = alerts.filter(a => a.severity === 'critical').length;
+  const warningCount = alerts.filter(a => a.severity === 'warning').length;
+  if (criticalCount > 0) {
+    score -= Math.min(25, criticalCount * 10);
+    reasons.push(`${criticalCount} critical alert${criticalCount !== 1 ? 's' : ''}`);
+  }
+  if (warningCount > 0) {
+    score -= Math.min(15, warningCount * 5);
+    if (!reasons.length) reasons.push(`${warningCount} warning${warningCount !== 1 ? 's' : ''}`);
+  }
+  for (const a of allocations) {
+    const absDrift = Math.abs(a.driftPct);
+    if (absDrift > 10) {
+      score -= Math.min(10, Math.floor(absDrift / 2));
+      if (!reasons.some(r => r.includes('drift'))) reasons.push('Sleeve drift from target');
+    }
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  let label: string;
+  let summary: string;
+  if (score >= 85) {
+    label = 'In sync';
+    summary = 'Allocation and cash plan are on track. Use opportunities below to refine.';
+  } else if (score >= 65) {
+    label = 'Minor review';
+    summary = reasons.length ? reasons.slice(0, 2).join('; ') + '.' : 'Small drift or warnings.';
+  } else if (score >= 40) {
+    label = 'Rebalance suggested';
+    summary = reasons.length ? reasons.join('; ') + '.' : 'Review alerts and orders.';
+  } else {
+    label = 'Action needed';
+    summary = 'Address critical alerts and cash plan first.';
+  }
+
+  return { score, label, summary };
 }
 
 export {

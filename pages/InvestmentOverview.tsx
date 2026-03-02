@@ -4,7 +4,7 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { Holding } from '../types';
 import AllocationBarChart from '../components/charts/AllocationBarChart';
-import { getAIInvestmentOverviewAnalysis } from '../services/geminiService';
+import { getAIInvestmentOverviewAnalysis, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
@@ -41,53 +41,74 @@ const InvestmentOverview: React.FC = () => {
     }, [data]);
 
     const [aiAnalysis, setAiAnalysis] = useState('');
+    const [aiError, setAiError] = useState<string | null>(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
-        const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
-        const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
-        setAiAnalysis(result);
-        setIsAiLoading(false);
+        setAiError(null);
+        try {
+            const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
+            const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
+            setAiAnalysis(result);
+        } catch (err) {
+            setAiError(formatAiError(err));
+            setAiAnalysis('');
+        } finally {
+            setIsAiLoading(false);
+        }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation]);
 
     return (
         <div className="space-y-6 mt-4">
-            <div className="bg-white p-6 rounded-lg shadow">
+            <div className="section-card">
                 <div className="flex justify-between items-center mb-4">
-                    <div><h3 className="text-lg font-semibold text-dark">SWOT Analysis</h3><p className="text-xs text-slate-500">From your expert investment advisor</p></div>
-                    <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="flex items-center px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">
+                    <div><h3 className="section-title !mb-1">SWOT Analysis</h3><p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p></div>
+                    <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="btn-primary">
                         <SparklesIcon className="h-4 w-4 mr-2" />
                         {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
                     </button>
                 </div>
-                {isAiLoading && <p className="text-sm text-center text-gray-500 py-4">Performing strategic analysis on your portfolio...</p>}
+                {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
+                {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {!isAiLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                {!isAiLoading && !aiAnalysis && <p className="text-sm text-center text-gray-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
+                {!isAiLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-lg shadow h-[450px]">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Portfolio Allocation</h3>
-                     <p className="text-sm text-gray-500 -mt-4 mb-4">How your total investment value is distributed across portfolios.</p>
-                    <div className="h-[350px] flex items-center justify-center"><AllocationPieChart data={portfolioAllocation} /></div>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+                <div className="section-card flex flex-col min-h-[420px]">
+                    <h3 className="section-title mb-1">Portfolio Allocation</h3>
+                    <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
+                    <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden flex items-center justify-center">
+                        {portfolioAllocation?.length ? (
+                            <div className="w-full h-full">
+                                <AllocationPieChart data={portfolioAllocation} />
+                            </div>
+                        ) : (
+                            <div className="empty-state flex items-center justify-center h-full w-full">No portfolio allocation data.</div>
+                        )}
+                    </div>
                 </div>
-                <div className="bg-white p-6 rounded-lg shadow h-[450px]">
-                    <h3 className="text-lg font-semibold text-dark mb-4">Allocation by Asset Class</h3>
-                    <p className="text-sm text-gray-500 -mt-4 mb-4">The mix of asset types across all your investments.</p>
-                    <div className="h-[350px]"><AllocationBarChart data={assetClassAllocation} /></div>
+                <div className="section-card flex flex-col min-h-[420px]">
+                    <h3 className="section-title mb-1">Allocation by Asset Class</h3>
+                    <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
+                    <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
+                        <AllocationBarChart data={assetClassAllocation} />
+                    </div>
                 </div>
             </div>
-             <div className="bg-white p-6 rounded-lg shadow h-[450px]">
-                <h3 className="text-lg font-semibold text-dark mb-4">Consolidated Holdings Performance</h3>
-                <p className="text-sm text-gray-500 -mt-4 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
-                {allHoldingsWithGains.length > 0 ? (
-                    <PerformanceTreemap data={allHoldingsWithGains} />
-                ) : (
-                    <div className="flex items-center justify-center h-full text-gray-500">
-                        <p>No holdings to display in the treemap.</p>
-                    </div>
-                )}
+            <div className="section-card flex flex-col min-h-[420px]">
+                <h3 className="section-title mb-1">Consolidated Holdings Performance</h3>
+                <p className="text-sm text-slate-500 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
+                <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
+                    {allHoldingsWithGains.length > 0 ? (
+                        <PerformanceTreemap data={allHoldingsWithGains} />
+                    ) : (
+                        <div className="flex items-center justify-center h-full text-slate-500 text-sm empty-state">
+                            No holdings to display in the treemap.
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

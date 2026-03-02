@@ -13,6 +13,9 @@ import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
 
 interface BudgetModalProps {
     isOpen: boolean;
@@ -43,7 +46,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         if (budgetToEdit) {
             setCategory(budgetToEdit.category);
             setLimit(String(budgetToEdit.limit));
-            setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : 'Monthly');
+            setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
         } else {
             setCategory('');
@@ -57,22 +60,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
         const isYearly = limitPeriod === 'Yearly';
-        const storedLimit = isYearly
-            ? rawLimit
-            : limitPeriod === 'Monthly'
-                ? rawLimit
-                : limitPeriod === 'Weekly'
-                    ? rawLimit * 4.345
-                    : rawLimit * 30;
+        const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
         onSave({
             category,
-            limit: storedLimit,
+            limit: rawLimit,
             month,
             year,
-            period: isYearly ? 'yearly' : 'monthly',
+            period,
             tier,
         }, !!budgetToEdit);
         onClose();
@@ -100,7 +97,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                 </div>
                 <div>
                     <label htmlFor="budget-tier" className="block text-sm font-medium text-gray-700 flex items-center">Budget Type <InfoHint text="Core: essential spending (e.g. rent, food). Supporting: important but flexible. Optional: discretionary." /></label>
-                    <select id="budget-tier" value={tier} onChange={(e) => setTier(e.target.value as 'Core' | 'Supporting' | 'Optional')} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                    <select id="budget-tier" value={tier} onChange={(e) => setTier(e.target.value as 'Core' | 'Supporting' | 'Optional')} className="select-base">
                         <option value="Core">Core (essential)</option>
                         <option value="Supporting">Supporting</option>
                         <option value="Optional">Optional</option>
@@ -108,25 +105,25 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                 </div>
                  <div>
                     <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
-                    <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
+                    <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="input-base" />
                 </div>
                 <div>
                     <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is and applies to all months of the year." /></label>
-                    <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
+                    <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="select-base">
                         <option value="Monthly">Monthly</option>
                         <option value="Weekly">Weekly</option>
                         <option value="Daily">Daily</option>
                         <option value="Yearly">Yearly (all months)</option>
                     </select>
                 </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Budget</button>
+                <button type="submit" className="w-full btn-primary">Save Budget</button>
             </form>
         </Modal>
     );
 }
 
 const Budgets: React.FC = () => {
-    const { data, loading, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
@@ -215,7 +212,7 @@ const Budgets: React.FC = () => {
         };
 
         loadGovernance();
-    }, [auth?.user?.id]);
+    }, [auth?.user?.id, dataResetKey]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -289,7 +286,8 @@ const Budgets: React.FC = () => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + b.limit));
+            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
 
             return Array.from(yearlyLimitByCategory.entries())
                 .map(([category, yearlyLimit]) => {
@@ -306,7 +304,7 @@ const Budgets: React.FC = () => {
                         spent,
                         limit: yearlyLimit,
                         displayLimit: yearlyLimit,
-                        monthlyLimit: yearlyLimit,
+                        monthlyLimit: yearlyLimit / 12,
                         percentage,
                         colorClass,
                     };
@@ -315,7 +313,7 @@ const Budgets: React.FC = () => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
+                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
                 const spent = spending.get(budget.category) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -345,11 +343,14 @@ const Budgets: React.FC = () => {
     const budgetInsights = useMemo(() => {
         const totalLimit = budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0);
         const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
+        /** Money saved from budget = sum of (limit - spent) for categories where we're under. Same as max(0, totalLimit - totalSpent) when no category is over. */
+        const totalSavedFromBudget = Math.max(0, totalLimit - totalSpent);
         const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
         const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
         const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
         const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
-        return { totalLimit, totalSpent, healthyCount, watchCount, criticalCount, topChange };
+
+        return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
@@ -376,8 +377,8 @@ const Budgets: React.FC = () => {
 
 
     const normalizeToMonthly = (amount: number, period: 'Monthly' | 'Weekly' | 'Daily' | 'Yearly') => {
-        if (period === 'Weekly') return amount * 4.345;
-        if (period === 'Daily') return amount * 30;
+        if (period === 'Weekly') return amount * (52 / 12);
+        if (period === 'Daily') return amount * (365 / 12);
         if (period === 'Yearly') return amount / 12;
         return amount;
     };
@@ -388,6 +389,79 @@ const Budgets: React.FC = () => {
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
         }
+    };
+
+    const handleSmartFillBudgets = () => {
+        if (!isAdmin) return;
+        const allTx = (data?.transactions ?? []).filter((t) => t.type === 'expense' && !!t.budgetCategory);
+        if (allTx.length === 0) {
+            alert('No expense history with budget categories found to smart-fill from.');
+            return;
+        }
+        const now = new Date(currentYear, currentMonth - 1, 1);
+        const threeMonthsAgo = new Date(now);
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+        const byCategory = new Map<string, { total: number; months: Set<string> }>();
+        allTx.forEach((t) => {
+            const d = new Date(t.date);
+            if (d < threeMonthsAgo || d > now) return;
+            const cat = t.budgetCategory!;
+            const key = `${d.getFullYear()}-${d.getMonth()}`;
+            const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
+            entry.total += Math.abs(t.amount);
+            entry.months.add(key);
+            byCategory.set(cat, entry);
+        });
+
+        const suggestions: { category: string; monthly: number }[] = [];
+        byCategory.forEach((v, category) => {
+            const monthCount = v.months.size || 1;
+            const avg = v.total / monthCount;
+            if (avg > 0) {
+                suggestions.push({ category, monthly: Math.round(avg) });
+            }
+        });
+
+        if (suggestions.length === 0) {
+            alert('Not enough recent history to suggest budgets.');
+            return;
+        }
+
+        const existingForMonth = new Set(
+            (data?.budgets ?? [])
+                .filter((b) => b.year === currentYear && b.month === currentMonth)
+                .map((b) => b.category)
+        );
+
+        const toCreate = suggestions.filter((s) => !existingForMonth.has(s.category));
+        if (toCreate.length === 0) {
+            alert('All categories already have budgets this month. Nothing to smart-fill.');
+            return;
+        }
+
+        if (
+            !window.confirm(
+                `Smart-fill will create ${toCreate.length} budgets for this month using the last ~3 months of spending averages. Continue?`
+            )
+        ) {
+            return;
+        }
+
+        const CORE_CATEGORIES = ['Housing', 'Rent', 'Food', 'Transportation', 'Utilities', 'Health', 'Education'];
+
+        toCreate.forEach((s) => {
+            const tier: BudgetTier =
+                CORE_CATEGORIES.some((name) => s.category.toLowerCase().includes(name.toLowerCase())) ? 'Core' : 'Optional';
+            addBudget({
+                category: s.category,
+                limit: s.monthly,
+                month: currentMonth,
+                year: currentYear,
+                period: 'monthly',
+                tier,
+            } as any);
+        });
     };
     const submitBudgetRequest = async () => {
         if (!supabase || !auth?.user) return;
@@ -564,29 +638,35 @@ const Budgets: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-wrap justify-between items-center gap-4">
-                <h1 className="text-3xl font-bold text-dark">Budgets ({budgetView})</h1>
-                                <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">View:</span>
-                    <select value={budgetView} onChange={(e) => setBudgetView(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="px-2 py-1 border rounded text-sm">
-                        <option value="Monthly">Monthly</option>
-                        <option value="Weekly">Weekly</option>
-                        <option value="Daily">Daily</option>
-                        <option value="Yearly">Yearly</option>
-                    </select>
+        <PageLayout
+            title={`Budgets (${budgetView})`}
+            description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
+            action={
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-slate-500">View:</span>
+                        <select value={budgetView} onChange={(e) => setBudgetView(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="select-base w-auto min-w-[120px]">
+                            <option value="Monthly">Monthly</option>
+                            <option value="Weekly">Weekly</option>
+                            <option value="Daily">Daily</option>
+                            <option value="Yearly">Yearly</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Previous month"><ChevronLeftIcon className="h-5 w-5"/></button>
+                        <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                        <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
+                    </div>
+                    <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
+                        <SparklesIcon className="h-5 w-5" />
+                        Smart-fill from history
+                    </button>
+                    <button type="button" disabled={!isAdmin} onClick={handleCopyBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
+                    <button type="button" disabled={!isAdmin} onClick={() => handleOpenModal()} className="btn-primary disabled:opacity-50">Add Budget</button>
                 </div>
-<div className="flex items-center gap-2">
-                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon className="h-5 w-5"/></button>
-                    <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
-                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon className="h-5 w-5"/></button>
-                </div>
-                 <div className="flex items-center gap-2">
-                    <button disabled={!isAdmin} onClick={handleCopyBudgets} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
-                    <button disabled={!isAdmin} onClick={() => handleOpenModal()} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm disabled:opacity-50">Add Budget</button>
-                 </div>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4 border border-slate-200">
+            }
+        >
+            <SectionCard>
                 <div className="flex flex-wrap gap-3 items-center">
                     <input
                         value={requestSearch}
@@ -607,32 +687,32 @@ const Budgets: React.FC = () => {
                         <option value="AmountLow">Lowest amount</option>
                     </select>
                 </div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    <div className="rounded border p-2 bg-amber-50">Pending: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Pending').length}</span></div>
-                    <div className="rounded border p-2 bg-green-50">Finalized: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Finalized').length}</span></div>
-                    <div className="rounded border p-2 bg-rose-50">Rejected: <span className="font-semibold">{budgetRequests.filter((r) => r.status === 'Rejected').length}</span></div>
-                    <div className="rounded border p-2 bg-slate-50">Shown: <span className="font-semibold">{sortedFilteredRequests.length}</span></div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs min-w-0">
+                    <div className="rounded border p-2 bg-amber-50 min-w-0 overflow-hidden"><span className="metric-label">Pending:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Pending').length}</span></div>
+                    <div className="rounded border p-2 bg-green-50 min-w-0 overflow-hidden"><span className="metric-label">Finalized:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Finalized').length}</span></div>
+                    <div className="rounded border p-2 bg-rose-50 min-w-0 overflow-hidden"><span className="metric-label">Rejected:</span> <span className="metric-value font-semibold">{budgetRequests.filter((r) => r.status === 'Rejected').length}</span></div>
+                    <div className="rounded border p-2 bg-slate-50 min-w-0 overflow-hidden"><span className="metric-label">Shown:</span> <span className="metric-value font-semibold">{sortedFilteredRequests.length}</span></div>
                 </div>
-            </div>
+            </SectionCard>
 
-            <div className="bg-white rounded-lg shadow p-4 border border-slate-200">
+            <SectionCard title="Budget Intelligence">
                 <h2 className="text-lg font-semibold mb-3">Budget Intelligence</h2>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
-                    <div className="rounded-lg border bg-slate-50 p-3">
-                        <p className="text-gray-500">Portfolio Budget</p>
-                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
+                    <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
+                        <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
                     </div>
-                    <div className="rounded-lg border bg-indigo-50 p-3">
-                        <p className="text-gray-500">Current Spend</p>
-                        <p className="text-lg font-semibold">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
+                    <div className="rounded-lg border bg-indigo-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Current Spend</p>
+                        <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
                     </div>
-                    <div className="rounded-lg border bg-amber-50 p-3">
-                        <p className="text-gray-500">Needs Attention</p>
-                        <p className="text-lg font-semibold">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
+                    <div className="rounded-lg border bg-amber-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Needs Attention</p>
+                        <p className="metric-value text-lg font-semibold w-full">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
                     </div>
-                    <div className="rounded-lg border bg-emerald-50 p-3">
-                        <p className="text-gray-500">Healthy Budgets</p>
-                        <p className="text-lg font-semibold">{budgetInsights.healthyCount}</p>
+                    <div className="rounded-lg border bg-emerald-50 p-3 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-gray-500 w-full">Healthy Budgets</p>
+                        <p className="metric-value text-lg font-semibold w-full">{budgetInsights.healthyCount}</p>
                     </div>
                 </div>
                 {budgetInsights.topChange && (
@@ -640,39 +720,68 @@ const Budgets: React.FC = () => {
                         Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta ?? 0, { digits: 0 })} vs previous period).
                     </p>
                 )}
-            </div>
+            </SectionCard>
 
-            {!isAdmin && (
-                <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
-                    <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit new-category or limit-increase proposals with context notes for admin approval." /></h2>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                        <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="p-2 border rounded">
-                            <option value="NewCategory">New Category</option>
-                            <option value="IncreaseLimit">Increase Limit</option>
-                        </select>
-                        {requestType === 'NewCategory' ? (
-                            <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Category name" className="p-2 border rounded" />
-                        ) : (
-                            <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="p-2 border rounded">
-                                <option value="">Select category</option>
-                                {governanceCategories
-                                    .filter((c) => permittedCategories.includes(c.name))
-                                    .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                        )}
-                        <input type="number" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Proposed amount" className="p-2 border rounded" />
-                        <select value={requestAmountPeriod} onChange={(e) => setRequestAmountPeriod(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="p-2 border rounded">
-                            <option value="Monthly">Monthly</option>
-                            <option value="Weekly">Weekly</option>
-                            <option value="Daily">Daily</option>
-                            <option value="Yearly">Yearly</option>
-                        </select>
-                        <input value={requestNote} onChange={(e) => setRequestNote(e.target.value)} placeholder="Reason / note (optional)" className="p-2 border rounded md:col-span-2" />
-                        <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded">Submit</button>
+            {!isAdmin && (() => {
+                const selectedCategoryName = requestType === 'IncreaseLimit' && requestCategoryId ? (governanceCategories.find(c => c.id === requestCategoryId)?.name ?? '') : '';
+                const currentBudgetRow = requestType === 'IncreaseLimit' && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
+                const currentLimit = currentBudgetRow?.monthlyLimit ?? 0;
+                const currentSpent = currentBudgetRow?.spent ?? 0;
+                return (
+                    <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
+                        <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit new-category or limit-increase proposals with context notes for admin approval." /></h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Request type</label>
+                                <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="w-full p-2 border rounded">
+                                    <option value="NewCategory">New Category</option>
+                                    <option value="IncreaseLimit">Increase Limit</option>
+                                </select>
+                            </div>
+                            {requestType === 'NewCategory' ? (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Category name</label>
+                                    <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="e.g. Travel, Education" className="w-full p-2 border rounded" />
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Category to increase</label>
+                                    <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
+                                        <option value="">Select category</option>
+                                        {governanceCategories.filter((c) => permittedCategories.includes(c.name)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    {currentBudgetRow && (
+                                        <p className="mt-1 text-xs text-gray-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
+                                    )}
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Proposed amount ({requestAmountPeriod})</label>
+                                <div className="flex gap-2">
+                                    <input type="number" min="0" step="1" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Amount" className="flex-1 p-2 border rounded" />
+                                    <select value={requestAmountPeriod} onChange={(e) => setRequestAmountPeriod(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="p-2 border rounded w-28">
+                                        <option value="Monthly">Monthly</option>
+                                        <option value="Weekly">Weekly</option>
+                                        <option value="Daily">Daily</option>
+                                        <option value="Yearly">Yearly</option>
+                                    </select>
+                                </div>
+                                {requestType === 'IncreaseLimit' && currentSpent > 0 && (
+                                    <button type="button" onClick={() => setRequestAmount(String(Math.ceil(currentSpent)))} className="mt-1 text-xs text-primary hover:underline">Suggest: use current spend ({formatCurrencyString(currentSpent, { digits: 0 })})</button>
+                                )}
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Reason / note (optional)</label>
+                                <input value={requestNote} onChange={(e) => setRequestNote(e.target.value)} placeholder="e.g. Higher travel expected next quarter" className="w-full p-2 border rounded" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Submit request</button>
+                            </div>
+                        </div>
+                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked.</p>
                     </div>
-                    <p className="mt-2 text-xs text-gray-500">Supports Monthly, Weekly, Daily, and Yearly inputs. All requests are normalized to a monthly limit for approval consistency.</p>
-                </div>
-            )}
+                );
+            })()}
 
             {!isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-blue-50 to-sky-50 rounded-lg shadow p-5 border border-blue-200">
@@ -802,7 +911,21 @@ const Budgets: React.FC = () => {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {budgetData.length > 0 && (
+                <div className="section-card border-l-4 border-emerald-500/60">
+                    <h3 className="section-title text-base">Money saved from budget</h3>
+                    <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
+                    <p className="text-sm text-slate-600 mt-1">
+                        {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
+                        {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
+                        {budgetView === 'Daily' && 'Today you stayed under your daily budget by this amount. '}
+                        {budgetView === 'Yearly' && `So far in ${currentYear} you are under your yearly budget by this amount. `}
+                        This money remains in your accounts; it is part of your actual cash flow and can go toward goals, investments, or savings.
+                    </p>
+                </div>
+            )}
+
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                 {orderedBudgetData.map((budget) => (
                     <div key={budget.id} className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}>
                         <div className="flex-grow">
@@ -813,13 +936,13 @@ const Budgets: React.FC = () => {
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : ''}</span>
+                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? 1} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${budget.monthlyLimit - budget.spent >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                    {budget.monthlyLimit - budget.spent >= 0 
-                                        ? `${formatCurrencyString(budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
-                                        : `${formatCurrencyString(Math.abs(budget.monthlyLimit - budget.spent), { digits: 0 })} over`
+                                <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
+                                <p className={`text-right text-sm mt-1 ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                    {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 
+                                        ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
+                                        : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`
                                     }
                                 </p>
                                 <div className="mt-2 flex items-center justify-between text-xs">
@@ -846,7 +969,7 @@ const Budgets: React.FC = () => {
                 </div>
             )}
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
-        </div>
+        </PageLayout>
     );
 };
 

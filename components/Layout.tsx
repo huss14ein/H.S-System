@@ -35,7 +35,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
-      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} />
+      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
       
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full">
         <div className="max-w-7xl mx-auto w-full animate-fadeIn">
@@ -48,6 +48,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
         setActivePage={setActivePage}
+        onOpenLiveAdvisor={() => { setIsCommandPaletteOpen(false); setIsLiveAdvisorOpen(true); }}
       />
        <LiveAdvisorModal 
         isOpen={isLiveAdvisorOpen}

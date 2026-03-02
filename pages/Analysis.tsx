@@ -4,6 +4,12 @@ import { DataContext } from '../context/DataContext';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
+import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
+import { CHART_COLORS, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber } from '../components/charts/chartTheme';
+import ChartContainer from '../components/charts/ChartContainer';
+
+const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
 // Spending by Category Chart
 const SpendingByCategoryChart: React.FC = () => {
@@ -19,19 +25,20 @@ const SpendingByCategoryChart: React.FC = () => {
             });
         return Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
     }, [data?.transactions]);
-
-    const COLORS = ['#1e40af', '#3b82f6', '#93c5fd', '#60a5fa', '#bfdbfe'];
+    const isEmpty = !chartData?.length;
 
     return (
-        <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-                <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} fill="#8884d8">
-                    {chartData.map((_entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                </Pie>
-                <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} />
-                <Legend />
-            </PieChart>
-        </ResponsiveContainer>
+        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No spending by category for this period.">
+            <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                    <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} paddingAngle={2}>
+                        {chartData.map((_entry, index) => <Cell key={`cell-${index}`} fill={CHART_COLORS.categorical[index % CHART_COLORS.categorical.length]} stroke="white" strokeWidth={1} />)}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+            </ResponsiveContainer>
+        </ChartContainer>
     );
 };
 
@@ -51,23 +58,25 @@ const IncomeExpenseTrendChart: React.FC = () => {
             }
             trends.set(month, current);
         });
-        // Convert map to array and sort chronologically
         return Array.from(trends, ([name, value]) => ({ name, date: new Date(name), ...value }))
             .sort((a, b) => a.date.getTime() - b.date.getTime());
     }, [data?.transactions]);
+    const isEmpty = !chartData?.length;
 
     return (
-        <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
-                <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} />
-                <Legend />
-                <Line type="monotone" dataKey="income" stroke="#22c55e" strokeWidth={2} name="Income" />
-                <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} name="Expenses" />
-            </LineChart>
-        </ResponsiveContainer>
+        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No income vs expense trend data.">
+            <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                    <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                    <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                    <Line type="monotone" dataKey="income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Income" dot={{ fill: CHART_COLORS.positive }} />
+                    <Line type="monotone" dataKey="expenses" stroke={CHART_COLORS.negative} strokeWidth={2} name="Expenses" dot={{ fill: CHART_COLORS.negative }} />
+                </LineChart>
+            </ResponsiveContainer>
+        </ChartContainer>
     );
 }
 
@@ -75,38 +84,43 @@ const IncomeExpenseTrendChart: React.FC = () => {
 const AssetLiabilityChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-     const chartData = useMemo(() => {
+    const chartData = useMemo(() => {
         const inv = data?.investments ?? [];
         const acc = data?.accounts ?? [];
         const ast = data?.assets ?? [];
         const liab = data?.liabilities ?? [];
         const totalInvestments = inv.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance), 0);
+        const totalCash = acc.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
         const totalPhysicalAssets = ast.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = liab.reduce((sum, l) => sum + Math.abs(l.amount), 0) + acc.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, a) => sum + Math.abs(a.balance), 0);
-        
+        const totalDebt = liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0) + acc.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, a) => sum + Math.abs(a.balance ?? 0), 0);
+        const totalReceivable = liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
         return [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
             { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Liabilities', value: totalLiabilities },
+            { name: 'Receivables', value: totalReceivable },
+            { name: 'Debt', value: totalDebt },
         ];
     }, [data]);
-    
+    const isEmpty = !chartData?.length;
+    const getBarColor = (name: string) => name === 'Debt' ? CHART_COLORS.liability : name === 'Receivables' ? CHART_COLORS.positive : CHART_COLORS.primary;
+
     return (
-        <ResponsiveContainer width="100%" height={300}>
-             <BarChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis tickFormatter={(value) => new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(value as number)} />
-                <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}/>
-                <Bar dataKey="value" name="Value">
-                    {chartData.map((entry) => (
-                        <Cell key={`cell-${entry.name}`} fill={entry.name === 'Liabilities' ? '#f87171' : '#3b82f6'} />
-                    ))}
-                </Bar>
-            </BarChart>
-        </ResponsiveContainer>
+        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No asset/liability data.">
+            <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                    <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                    <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
+                    <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]}>
+                        {chartData.map((entry) => (
+                            <Cell key={`cell-${entry.name}`} fill={getBarColor(entry.name)} />
+                        ))}
+                    </Bar>
+                </BarChart>
+            </ResponsiveContainer>
+        </ChartContainer>
     );
 }
 
@@ -145,14 +159,16 @@ const Analysis: React.FC = () => {
 
         // Composition Data
         const totalInvestments = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-        const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const totalCash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
         const totalPhysicalAssets = assets.reduce((sum, asset) => sum + asset.value, 0);
-        const totalLiabilities = liabilities.reduce((sum, liab) => sum + Math.abs(liab.amount), 0) + accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + Math.abs(acc.balance), 0);
+        const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivable = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
         const compositionData = [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },
             { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Liabilities', value: totalLiabilities },
+            { name: 'Receivables', value: totalReceivable },
+            { name: 'Debt', value: totalDebt },
         ];
         
         return { spendingData, trendData, compositionData };
@@ -167,26 +183,27 @@ const Analysis: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-dark">Financial Analysis</h1>
-            
+        <PageLayout title="Financial Analysis">
             <AIAdvisor pageContext="analysis" contextData={contextData} />
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4">Spending by Budget Category</h3>
-                    <SpendingByCategoryChart />
-                </div>
-                <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4">Monthly Income vs. Expense</h3>
-                    <IncomeExpenseTrendChart />
-                </div>
-                 <div className="bg-white p-6 rounded-lg shadow lg:col-span-2">
-                    <h3 className="text-lg font-semibold mb-4">Current Financial Position</h3>
-                    <AssetLiabilityChart />
-                </div>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 mt-6">
+                <SectionCard title="Spending by Budget Category" className="min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <SpendingByCategoryChart />
+                    </div>
+                </SectionCard>
+                <SectionCard title="Monthly Income vs. Expense" className="min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <IncomeExpenseTrendChart />
+                    </div>
+                </SectionCard>
+                <SectionCard title="Current Financial Position" className="lg:col-span-2 min-h-[380px] flex flex-col">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                        <AssetLiabilityChart />
+                    </div>
+                </SectionCard>
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

@@ -1,5 +1,6 @@
-import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
+import React, { useMemo, useContext, useState, useCallback } from 'react';
 import Card from '../components/Card';
+import DraggableResizableGrid from '../components/DraggableResizableGrid';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
@@ -21,10 +22,13 @@ import { useAI } from '../context/AiContext';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
     percentage: number;
+    monthlyLimit?: number;
 }
 
 const AIExecutiveSummary: React.FC = () => {
@@ -48,7 +52,7 @@ const AIExecutiveSummary: React.FC = () => {
     }, [data]);
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-secondary">
+        <div className="section-card border-t-4 border-secondary">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                 <div className="flex flex-col">
                     <div className="flex items-center space-x-3">
@@ -75,6 +79,7 @@ const AIExecutiveSummary: React.FC = () => {
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
                     <h4 className="font-bold">Summary Error</h4>
                     <SafeMarkdownRenderer content={error} />
+                    <button type="button" onClick={handleGenerate} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                 </div>
             )}
 
@@ -103,8 +108,8 @@ const AIExecutiveSummary: React.FC = () => {
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={onClick}>
-            <h3 className="text-lg font-semibold mb-4 text-dark flex items-center"><BuildingLibraryIcon className="h-5 w-5 mr-2 text-primary"/> Accounts Overview</h3>
+        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
+            <h3 className="section-title"><BuildingLibraryIcon className="h-5 w-5 text-primary"/> Accounts Overview</h3>
             <ul className="space-y-3">
                 {accounts.map(acc => (
                     <li key={acc.id} className="flex justify-between items-center text-sm">
@@ -157,7 +162,7 @@ const UpcomingBills: React.FC = () => {
     }, [data.transactions]);
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="section-card">
             <h3 className="text-lg font-semibold mb-4 text-dark flex items-center"><CalendarDaysIcon className="h-5 w-5 mr-2 text-primary"/> Upcoming Bills</h3>
             {upcomingBills.length > 0 ? (
                 <ul className="space-y-3">
@@ -183,7 +188,7 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], onClick: () =>
     const { formatCurrency } = useFormatCurrency();
     const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={onClick}>
+        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
             <h3 className="text-lg font-semibold mb-4 text-dark">Recent Transactions</h3>
             <ul className="space-y-4">
                 {transactions.slice(0, 5).map((t, index) => (
@@ -219,7 +224,7 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     };
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={onClick}>
+        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
             <h3 className="text-lg font-semibold mb-4 text-dark">Budget Health (This Month)</h3>
             <div className="space-y-4">
                 {budgets.slice(0, 4).map(budget => {
@@ -233,10 +238,10 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
                                     {status.text}
                                 </span>
                             </div>
-                            <ProgressBar value={budget.spent} max={budget.limit} color={status.colorClass} />
+                            <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? budget.limit} color={status.colorClass} />
                             <div className="flex justify-between items-baseline text-xs text-gray-500 mt-1">
                                 <span>
-                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.limit, { digits: 0 })}
+                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.monthlyLimit ?? budget.limit, { digits: 0 })}
                                     <span className="font-medium text-gray-600"> ({budget.percentage.toFixed(0)}%)</span>
                                 </span>
                                 <span>
@@ -251,36 +256,15 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     );
 };
 
-type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
 
-const KpiCardMenu: React.FC<{ cardKey: KpiCardKey; index: number; total: number; isWide: boolean; onResize: () => void; onMoveUp: () => void; onMoveDown: () => void }> = ({ index, total, isWide, onResize, onMoveUp, onMoveDown }) => {
-    const [open, setOpen] = useState(false);
-    const ref = React.useRef<HTMLDivElement>(null);
-    React.useEffect(() => {
-        if (!open) return;
-        const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-        document.addEventListener('mousedown', fn); return () => document.removeEventListener('mousedown', fn);
-    }, [open]);
-    return (
-        <div className="absolute top-2 right-2 z-10" ref={ref}>
-            <button type="button" onClick={() => setOpen((o) => !o)} className="p-1.5 rounded bg-white/90 border text-gray-500 hover:text-primary" title="Layout options" aria-label="Card options">⋮</button>
-            {open && (
-                <div className="absolute right-0 top-full mt-1 py-1 w-36 bg-white border rounded-lg shadow-lg z-20 text-left">
-                    <button type="button" onClick={() => { onMoveUp(); setOpen(false); }} disabled={index === 0} className="w-full px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40">↑ Move up</button>
-                    <button type="button" onClick={() => { onMoveDown(); setOpen(false); }} disabled={index === total - 1} className="w-full px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40">↓ Move down</button>
-                    <hr className="my-1" />
-                    <button type="button" onClick={() => { onResize(); setOpen(false); }} className="w-full px-3 py-2 text-sm hover:bg-gray-50">{isWide ? 'Small' : 'Wide'}</button>
-                </div>
-            )}
-        </div>
-    );
-};
+const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
+    const emergencyFund = useEmergencyFund(data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-    const [draggingKpiCard, setDraggingKpiCard] = useState<KpiCardKey | null>(null);
     const kpiDensity = 'compact' as const;
 
     const investmentProgress = useMemo(() => {
@@ -302,106 +286,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     }, [data]);
 
 
-    const [kpiCardOrder, setKpiCardOrder] = useState<Array<KpiCardKey>>(() => {
-        const defaultOrder: Array<KpiCardKey> = [
-            'netWorth',
-            'monthlyPnL',
-            'budgetVariance',
-            'investmentRoi',
-            'investmentPlan',
-        ];
-        if (typeof window === 'undefined') return defaultOrder;
+    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
-            const raw = window.localStorage.getItem('dashboard-kpi-card-order');
-            if (!raw) return defaultOrder;
-            const parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) return defaultOrder;
-            const retained = parsed.filter((key: string) => defaultOrder.includes(key as any)) as typeof defaultOrder;
-            const missing = defaultOrder.filter(key => !retained.includes(key));
-            return [...retained, ...missing];
-        } catch {
-            return defaultOrder;
-        }
-    });
-
-
-    const [kpiCardSize, setKpiCardSize] = useState<Record<KpiCardKey, 'normal' | 'wide'>>(() => {
-        const defaults: Record<KpiCardKey, 'normal' | 'wide'> = {
-            netWorth: 'normal',
-            monthlyPnL: 'normal',
-            budgetVariance: 'normal',
-            investmentRoi: 'normal',
-            investmentPlan: 'normal',
-        };
-        if (typeof window === 'undefined') return defaults;
-        try {
-            const raw = window.localStorage.getItem('dashboard-kpi-card-size');
-            if (!raw) return defaults;
-            const parsed = JSON.parse(raw);
-            return { ...defaults, ...(parsed || {}) };
-        } catch {
-            return defaults;
-        }
-    });
-
-    useEffect(() => {
-        const defaultOrder: Array<KpiCardKey> = [
-            'netWorth',
-            'monthlyPnL',
-            'budgetVariance',
-            'investmentRoi',
-            'investmentPlan',
-        ];
-        setKpiCardOrder(prev => {
-            const retained = prev.filter(key => defaultOrder.includes(key));
-            const missing = defaultOrder.filter(key => !retained.includes(key));
-            return [...retained, ...missing];
-        });
-    }, []);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        window.localStorage.setItem('dashboard-kpi-card-order', JSON.stringify(kpiCardOrder));
-    }, [kpiCardOrder]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        window.localStorage.setItem('dashboard-kpi-card-size', JSON.stringify(kpiCardSize));
-    }, [kpiCardSize]);
-
-    const moveKpiCard = (id: KpiCardKey, direction: 'up' | 'down') => {
-        setKpiCardOrder(prev => {
-            const index = prev.indexOf(id);
-            if (index < 0) return prev;
-            const nextIndex = direction === 'up' ? index - 1 : index + 1;
-            if (nextIndex < 0 || nextIndex >= prev.length) return prev;
-            const next = [...prev];
-            [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-            return next;
-        });
-    };
-
-    const handleKpiDragStart = (cardKey: KpiCardKey) => {
-        setDraggingKpiCard(cardKey);
-    };
-
-    const handleKpiDrop = (targetKey: KpiCardKey) => {
-        if (!draggingKpiCard || draggingKpiCard === targetKey) return;
-        setKpiCardOrder(prev => {
-            const sourceIndex = prev.indexOf(draggingKpiCard);
-            const targetIndex = prev.indexOf(targetKey);
-            if (sourceIndex < 0 || targetIndex < 0) return prev;
-            const next = [...prev];
-            const [moved] = next.splice(sourceIndex, 1);
-            next.splice(targetIndex, 0, moved);
-            return next;
-        });
-        setDraggingKpiCard(null);
-    };
-
-    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions } = useMemo(() => {
-        try {
-            if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
+            if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
 
             const now = new Date();
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -412,7 +299,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
             const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
             const monthlyPnL = monthlyIncome - monthlyExpenses;
-            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + (b.period === 'yearly' ? b.limit / 12 : b.limit), 0);
+            const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
             const budgetVariance = totalBudget - monthlyExpenses;
             
             // Previous Month P&L for trend
@@ -422,13 +310,19 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             });
             const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
             
-            // Net Worth and Trend
+            // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
             const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) + 
-                               (data.accounts || []).filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0) +
-                               totalCommodities;
-            const totalLiabilities = (data.liabilities || []).reduce((sum, liab) => sum + liab.amount, 0) + (data.accounts || []).filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
-            const netWorth = totalAssets + totalLiabilities;
+            const totalInvestmentsValue = (data.investments || []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+            const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) +
+                               cashAndSavingsPositive +
+                               totalCommodities +
+                               totalInvestmentsValue;
+            const totalDebt = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+            const totalReceivable = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
+            const netWorth = totalAssets - totalDebt + totalReceivable;
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
             
@@ -440,7 +334,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const totalInvestmentsValue = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
             const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
             const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
             const netCapital = totalInvested - totalWithdrawn;
@@ -456,8 +349,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlyBudgets = (data.budgets || [])
                 .map(budget => {
                     const spent = monthlySpending.get(budget.category) || 0;
-                    const percentage = budget.limit > 0 ? (spent / budget.limit) * 100 : 0;
-                    return { ...budget, spent, percentage };
+                    const monthlyLimit = budgetToMonthly(budget);
+                    const percentage = monthlyLimit > 0 ? (spent / monthlyLimit) * 100 : 0;
+                    return { ...budget, spent, percentage, monthlyLimit };
                 })
                 .sort((a, b) => b.percentage - a.percentage);
             
@@ -477,11 +371,28 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             
             const recentTransactions = [...(data.transactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+            // 30-day projected cash: current cash + average monthly net (last 6 months)
+            const cashAccounts = (data.accounts || []).filter(a => ['Checking', 'Savings'].includes(a.type));
+            const currentCash = cashAccounts.reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+            const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+            const recentTx = (data.transactions || []).filter(t => new Date(t.date) >= sixMonthsAgo);
+            const monthlyNets = new Map<string, number>();
+            recentTx.forEach(t => {
+                const key = t.date.slice(0, 7);
+                monthlyNets.set(key, (monthlyNets.get(key) || 0) + t.amount);
+            });
+            const avgMonthlyNet = monthlyNets.size > 0
+                ? Array.from(monthlyNets.values()).reduce((a, b) => a + b, 0) / monthlyNets.size
+                : monthlyPnL;
+            const projectedCash30d = currentCash + avgMonthlyNet;
+
             return {
                 kpiSummary: {
                     netWorth, monthlyPnL, budgetVariance, roi, netWorthTrend,
                     pnlTrend: lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0,
                 },
+                projectedCash30d,
+                currentCash,
                 monthlyBudgets,
                 investmentTreemapData,
                 monthlyCashflowData,
@@ -490,20 +401,26 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             };
         } catch (e) {
             console.error("Dashboard calculation error:", e);
-            return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [] };
+            return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
     }, [data, data?.commodityHoldings]);
     
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
 
-    const kpiCards = useMemo(() => ({
-        netWorth: <Card density={kpiDensity} title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-gray-400" />} />,
-        monthlyPnL: <Card density={kpiDensity} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, {colorize: true})} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'SURPLUS' : 'DEFICIT'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-gray-400" />} />,
-        budgetVariance: <Card density={kpiDensity} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, {colorize: true})} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'UNDER' : 'OVER'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="How much you are under or over your total monthly budget." onClick={() => setActivePage('Transactions')} icon={<PiggyBankIcon className="h-5 w-5 text-gray-400" />} />,
-        investmentRoi: <Card density={kpiDensity} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-gray-400" />} />,
-        investmentPlan: <Card density={kpiDensity} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={`${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })}`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip="Progress towards your monthly investment goal." onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
-    }), [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, setActivePage, kpiDensity]);
+    const kpiCards = useMemo(() => {
+        const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
+        const efTrend = emergencyFund.status === 'healthy' ? `${EMERGENCY_FUND_TARGET_MONTHS} mo target met` : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Build more' : 'Critical';
+        const efColor = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
+        return {
+            netWorth: <Card {...cardProps} title="Net Worth" value={formatCurrencyString(kpiSummary.netWorth || 0)} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-slate-400" />} />,
+            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
+            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={`${emergencyFund.monthsCovered.toFixed(1)} mo`} trend={efTrend} indicatorColor={efColor} tooltip={`Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+        };
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity]);
     
     if (loading) {
         return (
@@ -514,13 +431,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     }
 
     return (
-        <div className="space-y-6">
+        <div className="page-container">
             <AIExecutiveSummary />
 
             {uncategorizedTransactions.length > 0 && (
                 <div 
-                    className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 p-4 rounded-r-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+                    className="alert-warning cursor-pointer hover:shadow-md transition-shadow"
                     onClick={() => setIsReviewModalOpen(true)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && setIsReviewModalOpen(true)}
                 >
                     <div className="flex items-center">
                         <div className="py-1"><ExclamationTriangleIcon className="h-6 w-6 text-yellow-500 mr-3"/></div>
@@ -531,65 +451,127 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                     </div>
                 </div>
             )}
-            
-            <p className="text-xs text-gray-500">Drag the ⋮⋮ handle to reorder; use the ⋮ menu for move or resize.</p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 items-stretch auto-rows-fr">
-                {kpiCardOrder.map((cardKey, index) => (
-                    <div
-                        key={cardKey}
-                        className={`relative flex gap-1 ${draggingKpiCard === cardKey ? 'opacity-70' : ''} ${kpiCardSize[cardKey] === 'wide' ? 'md:col-span-2' : 'md:col-span-1'}`}
-                        draggable
-                        onDragStart={() => handleKpiDragStart(cardKey)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={() => handleKpiDrop(cardKey)}
-                        onDragEnd={() => setDraggingKpiCard(null)}
-                    >
-                        <div className="flex-shrink-0 cursor-grab active:cursor-grabbing pt-2 text-gray-400 hover:text-gray-600 touch-none" title="Drag to reorder" aria-hidden>
-                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0V9a1 1 0 011-1zm0 6a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm6-12a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1zm0 6a1 1 0 01-1 1h-1a1 1 0 110 2h1a1 1 0 011 1z" /></svg>
-                        </div>
-                        <div className="flex-1 min-w-0 relative">
-                            <KpiCardMenu cardKey={cardKey} index={index} total={kpiCardOrder.length} isWide={kpiCardSize[cardKey] === 'wide'} onResize={() => setKpiCardSize(prev => ({ ...prev, [cardKey]: prev[cardKey] === 'wide' ? 'normal' : 'wide' }))} onMoveUp={() => moveKpiCard(cardKey, 'up')} onMoveDown={() => moveKpiCard(cardKey, 'down')} />
-                            {kpiCards[cardKey]}
-                        </div>
+            {(() => {
+                const today = new Date().getDate();
+                const isDueToday = (r: { dayOfMonth: number }) =>
+                    r.dayOfMonth === today || (today >= 28 && r.dayOfMonth === 28);
+                const dueToday = (data?.recurringTransactions ?? []).filter((r: { enabled: boolean; dayOfMonth: number; addManually?: boolean }) => r.enabled && isDueToday(r) && !r.addManually);
+                return dueToday.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                        <CalendarDaysIcon className="h-5 w-5 text-slate-500" />
+                        <span className="text-slate-700"><strong>{dueToday.length}</strong> recurring {dueToday.length === 1 ? 'item' : 'items'} due today</span>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline ml-1">
+                                View in Transactions →
+                            </button>
+                        )}
                     </div>
-                ))}
-            </div>
+                );
+            })()}
+            
+            <p className="text-xs text-slate-500 mb-1">
+                Drag the subtle grip in the top-right of a card to reorder; click the card to open that page.
+            </p>
+            <DraggableResizableGrid
+                layoutKey="dashboard-kpi"
+                draggableHandle=".dashboard-kpi-drag-handle"
+                items={KPI_CARD_ORDER.map((cardKey) => ({
+                    id: cardKey,
+                    content: (
+                        <div className="min-h-[132px] flex flex-col h-full relative">
+                            <button
+                                type="button"
+                                className="dashboard-kpi-drag-handle absolute top-2 right-2 z-10 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label="Drag to reorder card"
+                            >
+                                <span className="inline-flex flex-col gap-[2px]">
+                                    <span className="flex gap-[2px]">
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                    </span>
+                                    <span className="flex gap-[2px]">
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                    </span>
+                                    <span className="flex gap-[2px]">
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
+                                    </span>
+                                </span>
+                            </button>
+                            <div className="flex-1 min-h-0 pt-8">{kpiCards[cardKey]}</div>
+                        </div>
+                    ),
+                    defaultW: 4,
+                    defaultH: 2,
+                    minW: 2,
+                    minH: 1,
+                }))}
+                cols={12}
+                rowHeight={72}
+            />
+
+            {data?.accounts?.length > 0 && (
+                <div className="section-card border-l-4 border-primary/40">
+                    <h3 className="section-title text-base">Cash & emergency fund</h3>
+                    <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(projectedCash30d ?? currentCash ?? 0)}</p>
+                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current + average monthly flow).</p>
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {formatCurrencyString(emergencyFund.emergencyCash)} liquid cash = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : 'Target met.'}</p>
+                    </div>
+                </div>
+            )}
 
             <AIFeed />
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-3 bg-white p-6 rounded-lg shadow-md h-[400px]">
-                    <NetWorthCompositionChart title="Net Worth Composition" />
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
+                <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
+                    <h3 className="section-title mb-4">Net Worth Composition</h3>
+                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                        <NetWorthCompositionChart title="Net Worth Composition" />
+                    </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                 <div className="lg:col-span-3 bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={() => setActivePage('Transactions')}>
-                    <h3 className="text-lg font-semibold text-dark mb-4">Monthly Cash Flow</h3>
-                    <div className="h-80"><CashflowChart data={monthlyCashflowData} /></div>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-5">
+                 <div className="lg:col-span-3 section-card-hover flex flex-col" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
+                    <h3 className="section-title">Monthly Cash Flow</h3>
+                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
                  </div>
-                 <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer" onClick={() => setActivePage('Investments')}>
-                    <h3 className="text-lg font-semibold text-dark mb-4">Investment Allocation & Performance</h3>
-                    <div className="h-80">
+                 <div className="lg:col-span-2 section-card-hover flex flex-col" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
+                    <h3 className="section-title">Investment Allocation & Performance</h3>
+                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
-                            <div className="flex items-center justify-center h-full text-gray-500">No investment data available.</div>
+                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
                         )}
                     </div>
                  </div>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <AccountsOverview accounts={data.accounts} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
                 <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
+
+            {setActivePage && (
+                <div className="section-card border border-slate-200/80 bg-slate-50/50">
+                    <h3 className="section-title text-base mb-2">Quick next steps</h3>
+                    <ul className="flex flex-wrap gap-3 text-sm text-slate-600">
+                        <li><button type="button" onClick={() => setActivePage('Transactions')} className="text-primary hover:underline font-medium">Categorize transactions</button> to keep budgets accurate</li>
+                        <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium">Update your Plan</button> to reflect income and expenses</li>
+                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium">View Summary</button> for AI persona and report card</li>
+                    </ul>
+                </div>
+            )}
             
             <TransactionReviewModal 
                 isOpen={isReviewModalOpen}

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights } from '../services/geminiService'; // Assuming these exist and are tailored
+import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
@@ -18,16 +18,24 @@ interface AIAdvisorProps {
 const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any): Promise<string> => {
     switch (context) {
         case 'dashboard': {
-            const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
-            const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
-            const netWorth = totalAssets + totalLiabilities;
-             const totalInvestmentsValue = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
-             const totalInvested = data.investmentTransactions.filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-             const totalWithdrawn = Math.abs(data.investmentTransactions.filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
-             const netCapital = totalInvested - totalWithdrawn;
-             const totalGainLoss = totalInvestmentsValue - netCapital;
-             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
-            const summary = { netWorth, roi: roi, assetMix: [], liquidNetWorth:0, liabilitiesCoverage: totalLiabilities, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
+            const assets = data.assets ?? [];
+            const accounts = data.accounts ?? [];
+            const liabilities = data.liabilities ?? [];
+            const totalCommodities = (data.commodityHoldings ?? []).reduce((sum, ch) => sum + ch.currentValue, 0);
+            const totalInvestmentsValue = (data.investments ?? []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const cashSavings = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const cashPositive = cashSavings.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+            const cashNegative = cashSavings.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+            const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) + cashPositive + totalCommodities + totalInvestmentsValue;
+            const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, l) => sum + Math.abs(l.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashNegative;
+            const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
+            const netWorth = totalAssets - totalDebt + totalReceivable;
+            const totalInvested = (data.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
+            const totalWithdrawn = Math.abs((data.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+            const netCapital = totalInvested - totalWithdrawn;
+            const totalGainLoss = totalInvestmentsValue - netCapital;
+            const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
+            const summary = { netWorth, roi, assetMix: [], liquidNetWorth: cashPositive, liabilitiesCoverage: totalDebt, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
             return getAIAnalysis(summary);
         }
         case 'investments':
@@ -72,7 +80,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
             setInsight(result);
         } catch (error) {
             console.error("AI analysis failed:", error);
-            setInsight("Sorry, an error occurred while generating the analysis.");
+            setInsight(formatAiError(error));
         }
         setIsLoading(false);
     }, [pageContext, data, contextData]);

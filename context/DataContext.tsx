@@ -1,12 +1,14 @@
-import React, { createContext, useState, ReactNode, useEffect, useContext, useRef } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, WealthUltraSystemConfig, SleeveDefinition } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction } from '../types';
 import { getMockData } from '../data/mockData';
+import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 
-// Define an empty state for when data is loading or for new users
+// Default parameters live in app settings/config (here and wealth-ultra/config), not in the DB.
+// DB only stores user overrides; we merge with these defaults when reading.
 const initialData: FinancialData = {
-    accounts: [], assets: [], liabilities: [], goals: [], transactions: [],
+    accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
@@ -34,7 +36,7 @@ const initialData: FinancialData = {
     portfolioUniverse: [],
     statusChangeLog: [],
     executionLogs: [],
-    wealthUltraConfig: null
+    wealthUltraConfig: getDefaultWealthUltraSystemConfig()
 };
 
 interface DataContextType {
@@ -57,6 +59,11 @@ interface DataContextType {
   addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>) => Promise<void>;
   updateTransaction: (transaction: Transaction) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
+  addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
+  updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
+  deleteRecurringTransaction: (id: string) => Promise<void>;
+  applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
+  applyRecurringDueToday: () => Promise<number>;
   addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => Promise<void>;
   updatePlatform: (platform: Account) => Promise<void>;
   deletePlatform: (platformId: string) => Promise<void>;
@@ -65,7 +72,7 @@ interface DataContextType {
   deletePortfolio: (portfolioId: string) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>, executedPlanId?: string) => Promise<void>;
+  recordTrade: (trade: { portfolioId?: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
@@ -86,7 +93,13 @@ interface DataContextType {
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
+  /** Increments when Clear All Data is run; use in effects that fetch user-specific data (e.g. budget_requests) so they refetch after clear. */
+  dataResetKey: number;
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
+  /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). Returns by currency so SAR and USD are not mixed. */
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+  /** Total deployable = Checking + Savings balances + sum of available cash in each Investment platform. */
+  totalDeployableCash: number;
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
@@ -114,6 +127,18 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     return row;
 }
 
+/** Build DB row with only overrides (values that differ from app defaults). Defaults live in initialData.settings, not in DB. */
+function settingsOverridesToRow(merged: Settings, explicitClears?: Partial<Settings>): Record<string, unknown> {
+    const defaultRow = settingsToRow(initialData.settings);
+    const mergedRow = settingsToRow(merged);
+    const row: Record<string, unknown> = {};
+    for (const k of Object.keys(mergedRow) as (keyof typeof mergedRow)[]) {
+        if (mergedRow[k] !== defaultRow[k]) row[k] = mergedRow[k];
+    }
+    if (explicitClears && 'nisabAmount' in explicitClears && explicitClears.nisabAmount === undefined) row.nisab_amount = null;
+    return row;
+}
+
 function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
     if (!raw || !Array.isArray(raw)) return undefined;
     const arr = raw.map((s: any) => ({
@@ -123,22 +148,6 @@ function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
         tickers: Array.isArray(s?.tickers) ? s.tickers.map((t: any) => String(t).toUpperCase()) : [],
     })).filter((s: { id: string }) => s.id);
     return arr.length ? arr : undefined;
-}
-
-function normalizeWealthUltraConfig(raw: any): WealthUltraSystemConfig | null {
-    if (!raw || typeof raw !== 'object') return null;
-    return {
-        fxRate: Number(raw.fx_rate ?? raw.fxRate ?? 0.27),
-        cashReservePct: Number(raw.cash_reserve_pct ?? raw.cashReservePct ?? 10),
-        maxPerTickerPct: Number(raw.max_per_ticker_pct ?? raw.maxPerTickerPct ?? 20),
-        riskWeightLow: Number(raw.risk_weight_low ?? raw.riskWeightLow ?? 1),
-        riskWeightMed: Number(raw.risk_weight_med ?? raw.riskWeightMed ?? 1.25),
-        riskWeightHigh: Number(raw.risk_weight_high ?? raw.riskWeightHigh ?? 1.5),
-        riskWeightSpec: Number(raw.risk_weight_spec ?? raw.riskWeightSpec ?? 2),
-        defaultTarget1Pct: Number(raw.default_target_1_pct ?? raw.defaultTarget1Pct ?? 15),
-        defaultTarget2Pct: Number(raw.default_target_2_pct ?? raw.defaultTarget2Pct ?? 25),
-        defaultTrailingPct: Number(raw.default_trailing_pct ?? raw.defaultTrailingPct ?? 10),
-    };
 }
 
 function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
@@ -198,6 +207,7 @@ function normalizeAccount(raw: any): Account {
     const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
     const balance = Number(raw.balance ?? 0);
     return {
+        ...(raw as Record<string, unknown>),
         id,
         user_id: raw.user_id,
         name: name || (id ? `Account ${id.slice(0, 8)}` : 'Account'),
@@ -205,6 +215,86 @@ function normalizeAccount(raw: any): Account {
         balance,
         owner: raw.owner,
         platformDetails: raw.platformDetails ?? raw.platform_details,
+    };
+}
+
+function normalizePriceAlert(raw: any): PriceAlert {
+    if (!raw) return {} as PriceAlert;
+    const currency = raw.currency ?? raw.target_currency;
+    const targetPriceRaw = raw.target_price ?? raw.targetPrice ?? 0;
+    const targetPrice = typeof targetPriceRaw === 'string' ? parseFloat(targetPriceRaw) : Number(targetPriceRaw);
+    return {
+        id: String(raw.id ?? ''),
+        user_id: raw.user_id,
+        symbol: String(raw.symbol ?? ''),
+        targetPrice: Number.isFinite(targetPrice) ? targetPrice : 0,
+        currency: currency === 'SAR' || currency === 'USD' ? currency : undefined,
+        status: (raw.status === 'triggered' ? 'triggered' : 'active') as 'active' | 'triggered',
+        createdAt: raw.created_at ?? raw.createdAt ?? new Date().toISOString(),
+    };
+}
+
+function resolveAccountId(candidate: string | undefined, accounts: Account[]): string | undefined {
+    const c = (candidate ?? '').trim();
+    if (!c) return undefined;
+    const direct = accounts.find(a => a.id === c);
+    if (direct) return direct.id;
+    const external = accounts.find(a => ((a as any).account_id ?? (a as any).accountId) === c);
+    return external?.id;
+}
+
+/** Map portfolio to DB row (snake_case). Supabase schema uses account_id, not accountId. */
+function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { name: string; accountId: string }): Record<string, unknown> {
+    const row: Record<string, unknown> = {
+        name: portfolio.name,
+        account_id: portfolio.accountId,
+    };
+    if (portfolio.goalId != null) row.goal_id = portfolio.goalId;
+    if (portfolio.owner != null) row.owner = portfolio.owner;
+    if (portfolio.currency != null) row.currency = portfolio.currency;
+    return row;
+}
+
+/** Map holding to DB row (snake_case). Schema uses avg_cost, current_value, realized_pnl, zakah_class, portfolio_id. */
+function holdingToRow(holding: Partial<Holding> & { symbol: string; quantity: number }): Record<string, unknown> {
+    const row: Record<string, unknown> = {
+        portfolio_id: holding.portfolio_id ?? (holding as any).portfolioId,
+        symbol: holding.symbol,
+        name: holding.name ?? '',
+        quantity: Number(holding.quantity ?? 0),
+        avg_cost: Number(holding.avgCost ?? (holding as any).avg_cost ?? 0),
+        current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
+        realized_pnl: Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0),
+        zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
+    };
+    return row;
+}
+
+/** Normalize DB holding row to app Holding shape (camelCase). */
+function normalizeHoldingFromRow(row: any): Holding {
+    return {
+        ...row,
+        portfolio_id: row.portfolio_id ?? row.portfolioId,
+        avgCost: row.avg_cost ?? row.avgCost ?? 0,
+        currentValue: row.current_value ?? row.currentValue ?? 0,
+        realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
+        zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
+    };
+}
+
+/** Map commodity holding to DB row (snake_case). Schema uses purchase_value, current_value, zakah_class. name must be non-null. */
+function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: string; quantity: number }): Record<string, unknown> {
+    const raw = holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim();
+    const name = (raw && String(raw).trim()) ? String(raw).trim() : 'Other';
+    return {
+        name,
+        quantity: Number(holding.quantity ?? 0),
+        unit: holding.unit ?? 'unit',
+        symbol: holding.symbol,
+        owner: holding.owner ?? null,
+        purchase_value: Number(holding.purchaseValue ?? (holding as any).purchase_value ?? 0),
+        current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
+        zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
     };
 }
 
@@ -232,11 +322,29 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
     return row;
 }
 
+/** Build DB row with only overrides (values that differ from app defaults). Defaults live in initialData.investmentPlan, not in DB. */
+function investmentPlanOverridesToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
+    const defaultRow = investmentPlanToRow(initialData.investmentPlan);
+    const planRow = investmentPlanToRow(plan);
+    const row: Record<string, unknown> = {};
+    for (const k of Object.keys(planRow) as (keyof typeof planRow)[]) {
+        if (k === 'user_id') continue;
+        const a = planRow[k];
+        const b = defaultRow[k];
+        const same = a === b || (JSON.stringify(a) === JSON.stringify(b));
+        if (!same) row[k] = a;
+    }
+    return row;
+}
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
+    const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
+    const transactionsRef = useRef<FinancialData['transactions']>(data.transactions);
+    transactionsRef.current = data.transactions;
 
     const normalizeHolding = (holding: any): Holding => ({
         ...holding,
@@ -254,15 +362,40 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => ({
         ...transaction,
         accountId: transaction.accountId || transaction.account_id,
+        currency: transaction.currency ?? undefined,
     });
 
-    const normalizeCommodityHolding = (holding: any): CommodityHolding => ({
-        ...holding,
-        purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
-        currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
-        zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
-        goalId: holding.goalId ?? holding.goal_id,
-    });
+    const normalizeCommodityHolding = (holding: any): CommodityHolding => {
+        const name = holding.name ?? holding.Name;
+        const trimmed = String(name ?? '').trim();
+        if (!trimmed) {
+            return {
+                ...holding,
+                name: 'Other' as CommodityHolding['name'],
+                purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
+                currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+                zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+                goalId: holding.goalId ?? holding.goal_id,
+            };
+        }
+        const allowedNames = ['Gold', 'Silver', 'Bitcoin'] as const;
+        const validName = allowedNames.find(a => a.toLowerCase() === trimmed.toLowerCase()) ?? 'Other';
+        return {
+            ...holding,
+            name: validName as CommodityHolding['name'],
+            purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
+            currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+            zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
+            goalId: holding.goalId ?? holding.goal_id,
+        };
+    };
+
+    const normalizeLiability = (raw: any): Liability => {
+        const type = (raw.type === 'Receivable' ? 'Receivable' : raw.type) as Liability['type'];
+        const rawAmount = Number(raw.amount ?? 0);
+        const amount = type === 'Receivable' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
+        return { ...raw, type, amount, goalId: raw.goalId ?? raw.goal_id };
+    };
 
     const normalizeTransaction = (transaction: any): Transaction => ({
         ...transaction,
@@ -270,22 +403,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         budgetCategory: transaction.budgetCategory ?? transaction.budget_category,
         categoryId: transaction.categoryId ?? transaction.category_id,
         rejectionReason: transaction.rejectionReason ?? transaction.rejection_reason,
+        recurringId: transaction.recurringId ?? transaction.recurring_id,
+    });
+
+    const normalizeRecurringTransaction = (raw: any, resolvedAccountId?: string): RecurringTransaction => ({
+        id: raw.id,
+        user_id: raw.user_id,
+        description: raw.description ?? '',
+        amount: Number(raw.amount ?? 0),
+        type: (raw.type === 'income' || raw.type === 'expense') ? raw.type : 'expense',
+        accountId: resolvedAccountId ?? raw.accountId ?? raw.account_id ?? '',
+        budgetCategory: raw.budgetCategory ?? raw.budget_category,
+        category: raw.category ?? '',
+        dayOfMonth: Math.min(28, Math.max(1, Number(raw.dayOfMonth ?? raw.day_of_month ?? 1))),
+        enabled: raw.enabled !== false,
+        addManually: raw.addManually === true || raw.add_manually === true,
     });
 
     const isMissingColumnError = (error: any) => {
         const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
-
-    const extractMissingColumnName = (error: any): string | null => {
-        const source = `${error?.message || ''} ${error?.details || ''}`;
-        const quoted = source.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
-        if (quoted?.[1]) return quoted[1];
-        const pgrst = source.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i);
-        return pgrst?.[1] || null;
-    };
-
-    const payloadSignature = (payload: Record<string, unknown>) => Object.keys(payload).sort().join(', ');
 
     const goalPayloadVariants = (goal: Goal) => {
         const base = {
@@ -301,84 +439,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ];
     };
 
-    const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => ([
-        {
-            account_id: trade.accountId,
-            date: trade.date,
-            type: trade.type,
-            symbol: trade.symbol,
-            quantity: trade.quantity,
-            price: trade.price,
-            total: trade.total,
-        },
-        {
-            accountId: trade.accountId,
-            date: trade.date,
-            type: trade.type,
-            symbol: trade.symbol,
-            quantity: trade.quantity,
-            price: trade.price,
-            total: trade.total,
-        }
-    ]);
-
-    const commodityPayloadVariants = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
-        const payloadBase = {
-            name: holding.name,
-            quantity: holding.quantity,
-            unit: holding.unit,
-            symbol: holding.symbol,
-            owner: holding.owner,
-        };
-
-        const baseVariants = [
-            {
-                ...payloadBase,
-                purchase_value: holding.purchaseValue,
-                current_value: holding.currentValue,
-                zakah_class: holding.zakahClass,
-            },
-            {
-                ...payloadBase,
-                purchaseValue: holding.purchaseValue,
-                currentValue: holding.currentValue,
-                zakahClass: holding.zakahClass,
-            },
-            {
-                ...payloadBase,
-                purchasevalue: holding.purchaseValue,
-                currentvalue: holding.currentValue,
-                zakahclass: holding.zakahClass,
-            },
-            {
-                ...payloadBase,
-                purchase_value: holding.purchaseValue,
-                currentValue: holding.currentValue,
-                zakahClass: holding.zakahClass,
-            },
-            {
-                ...payloadBase,
-                purchaseValue: holding.purchaseValue,
-                current_value: holding.currentValue,
-                zakah_class: holding.zakahClass,
-            },
-        ];
-
-        const allVariants = [
-            ...baseVariants,
-            ...baseVariants.map(({ owner, ...payload }) => payload),
-        ];
-
-        const dedupedVariants: Record<string, unknown>[] = [];
-        const seen = new Set<string>();
-        for (const payload of allVariants) {
-            const signature = payloadSignature(payload as Record<string, unknown>);
-            if (seen.has(signature)) continue;
-            seen.add(signature);
-            dedupedVariants.push(payload as Record<string, unknown>);
-        }
-
-        return dedupedVariants;
+    const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => {
+        const baseRow = { account_id: trade.accountId, date: trade.date, type: trade.type, symbol: trade.symbol, quantity: trade.quantity, price: trade.price, total: trade.total };
+        const withCurrency = trade.currency ? { ...baseRow, currency: trade.currency } : baseRow;
+        return [withCurrency, baseRow];
     };
 
     const fetchData = async () => {
@@ -389,11 +453,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         setLoading(true);
         try {
-            const [
-                accounts, assets, liabilities, goals, transactions, investments,
-                investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades,
-                investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig
-            ] = await Promise.all([
+            // recurring_transactions may not exist if migration not run; fetch so it never rejects
+            const recurringPromise = db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
+                .then((r: any) => r, () => ({ data: [] as any[], error: { code: 'PGRST205', message: 'Table not found' } }));
+
+            const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
                 db.from('assets').select('*').eq('user_id', auth.user.id),
                 db.from('liabilities').select('*').eq('user_id', auth.user.id),
@@ -403,7 +467,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('investment_transactions').select('*').eq('user_id', auth.user.id),
                 db.from('budgets').select('*').eq('user_id', auth.user.id),
                 db.from('watchlist').select('*').eq('user_id', auth.user.id),
-                db.from('settings').select('*').eq('user_id', auth.user.id).single(),
+                db.from('settings').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('zakat_payments').select('*').eq('user_id', auth.user.id),
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
@@ -412,39 +476,62 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
-                db.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle()
-            ]);
-
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, wealthUltraConfig };
+                recurringPromise
+            ];
+            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions'] as const;
+            const settled = await Promise.allSettled(fetchPromises);
+            const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
+            const results = settled.map((s, i) => {
+                if (s.status === 'fulfilled') return s.value as any;
+                console.error(`Error fetching ${keys[i]}:`, s.reason);
+                return emptyResult(s.reason);
+            });
+            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions] = results;
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions };
             Object.entries(allFetches).forEach(([key, value]) => {
-              if(value.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error); // Ignore "0 rows" error for settings
+              if (value?.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error);
             });
 
+            const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
+
             setData({
-                accounts: ((accounts.data as any[]) || []).map(normalizeAccount),
+                accounts: normalizedAccounts,
                 assets: assets.data || [],
-                liabilities: liabilities.data || [],
+                liabilities: ((liabilities.data as any[]) || []).map(normalizeLiability),
                 goals: goals.data || [],
                 transactions: (transactions.data || []).map(normalizeTransaction),
-                investments: ((investments.data as any) || []).map((portfolio: any) => ({
-                    ...portfolio,
-                    accountId: portfolio.accountId || portfolio.account_id,
-                    holdings: (portfolio.holdings || []).map(normalizeHolding)
-                })),
-                investmentTransactions: (investmentTransactions.data || []).map(normalizeInvestmentTransaction),
+                investments: ((investments.data as any) || []).map((portfolio: any) => {
+                    const rawAccountId = portfolio.accountId || portfolio.account_id;
+                    const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
+                    return {
+                        ...portfolio,
+                        accountId: resolved,
+                        currency: portfolio.currency ?? 'USD',
+                        holdings: (portfolio.holdings || []).map(normalizeHolding),
+                    };
+                }),
+                investmentTransactions: (investmentTransactions.data || []).map((t: any) => {
+                    const norm = normalizeInvestmentTransaction(t);
+                    const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
+                    return resolved ? { ...norm, accountId: resolved } : norm;
+                }),
                 budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
                 commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
                 watchlist: watchlist.data || [],
-                settings: normalizeSettings(settings.data || initialData.settings),
+                settings: normalizeSettings((settings as any).data ?? initialData.settings),
                 zakatPayments: zakatPayments.data || [],
-                priceAlerts: priceAlerts.data || [],
+                priceAlerts: (priceAlerts.data || []).map(normalizePriceAlert),
                 plannedTrades: plannedTrades.data || [],
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
-                wealthUltraConfig: normalizeWealthUltraConfig((wealthUltraConfig as any).data),
+                // Default parameters from app settings/config only; we do not read wealth_ultra_config from DB
+                wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
                 portfolioUniverse: (portfolioUniverse as any).data || [],
                 statusChangeLog: (statusChangeLog as any).data || [],
-                executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog)
+                executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog),
+                recurringTransactions: (recurringTransactions as any).error ? [] : ((recurringTransactions as any).data || []).map((r: any) =>
+                    normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
+                )
             });
         } catch (error) {
             console.error("Error fetching financial data:", error);
@@ -464,7 +551,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         return () => clearTimeout(timeoutId);
     }, [auth?.user]);
-    
+
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
 
@@ -477,9 +564,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist',
             'zakat_payments', 'price_alerts', 'settings', 'commodity_holdings', 'planned_trades',
             'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
+            'recurring_transactions',
+            'budget_requests',
         ];
-        await Promise.all(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
+        // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
+        await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
+        setDataResetKey((k) => k + 1);
         setLoading(false);
     };
 
@@ -507,10 +598,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('budgets').insert(mock.budgets.map(({ id, ...b }) => ({ ...b, user_id: userId }))),
                 db.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
                 db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
-                db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...c, user_id: userId }))),
+                db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...commodityHoldingToRow(c), user_id: userId }))),
                 db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
                 db.from('settings').insert([{ ...mock.settings, user_id: userId }]),
             ]);
+            await db.from('price_alerts').insert([
+                { user_id: userId, symbol: 'AAPL', target_price: 200, status: 'active', created_at: new Date().toISOString() },
+                { user_id: userId, symbol: '7010.SR', target_price: 45, status: 'active', created_at: new Date().toISOString() },
+            ]).then(() => {}, () => {});
 
             // Accounts
             const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(({ id, ...a }) => ({...a, user_id: userId}))).select();
@@ -521,16 +616,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Transactions
             await db.from('transactions').insert(mock.transactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
 
+            // Recurring transactions (demo data for Transactions page)
+            if (mock.recurringTransactions?.length) {
+                await db.from('recurring_transactions').insert(mock.recurringTransactions.map(({ id, accountId, ...r }) => ({
+                    user_id: userId,
+                    description: r.description,
+                    amount: r.amount,
+                    type: r.type,
+                    account_id: accountIdMap.get(accountId)!,
+                    budget_category: r.budgetCategory ?? null,
+                    category: r.category,
+                    day_of_month: r.dayOfMonth,
+                    enabled: r.enabled,
+                }))).then(() => {}, () => {});
+            }
+
             // Portfolios
-            const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, accountId: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
+            const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, account_id: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
             if (portError || !newPortfolios) throw portError || new Error("Failed to create portfolios");
 
             const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
             
-            // Holdings and Investment Transactions
-            const holdingsToInsert = mock.investments.flatMap(p => p.holdings.map(({ id, ...h }) => ({...h, portfolio_id: portfolioIdMap.get(p.id)!, user_id: userId })));
+            // Holdings and Investment Transactions (snake_case for DB)
+            const holdingsToInsert = mock.investments.flatMap(p =>
+                p.holdings.map(({ id, ...h }) => ({ ...holdingToRow({ ...h, portfolio_id: portfolioIdMap.get(p.id)! }), user_id: userId }))
+            );
             await db.from('holdings').insert(holdingsToInsert);
-            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
+            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
 
             alert("Demo data loaded successfully!");
         } catch(error) {
@@ -663,10 +775,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const db = supabase;
       const payload = withUser(budget);
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
+      // Retry once with same payload. Do not convert yearly limit to monthly or reload will show wrong value (DB would store monthly amount with period=yearly).
       if (error && (payload as any).period) {
-        const fallback: any = { ...payload, limit: (payload as any).period === 'yearly' ? (payload.limit / 12) : payload.limit };
-        delete fallback.period;
-        const retry = await db.from('budgets').insert(fallback).select().single();
+        const retry = await db.from('budgets').insert(payload).select().single();
         newBudget = retry.data;
         error = retry.error;
       }
@@ -676,16 +787,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       if (newBudget) {
         const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier };
-        if ((budget as Budget).period === 'yearly') withPeriod.limit = budget.limit;
+        if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
       }
     };
     const updateBudget = async (budget: Budget) => {
-      if(!supabase || !auth?.user) return;
+      if (!supabase || !auth?.user) return;
       const db = supabase;
-      const { error } = await db.from('budgets').update(budget).match({ user_id: auth.user.id, category: budget.category, month: budget.month, year: budget.year });
-      if(error) console.error("Error updating budget:", error);
-      else setData(prev => ({ ...prev, budgets: prev.budgets.map(b => (b.category === budget.category && b.month === budget.month && b.year === budget.year) ? budget : b) }));
+      const { category, month, year, limit, period, tier } = budget;
+      const payload: Record<string, unknown> = {
+        limit,
+        period,
+        tier,
+      };
+      const { error } = await db
+        .from('budgets')
+        .update(payload)
+        .match({ user_id: auth.user.id, category, month, year });
+      if (error) {
+        console.error('Error updating budget:', error);
+        return;
+      }
+      setData((prev) => ({
+        ...prev,
+        budgets: prev.budgets.map((b) =>
+          b.category === category && b.month === month && b.year === year
+            ? { ...b, limit, period, tier }
+            : b
+        ),
+      }));
     };
     const deleteBudget = async (category: string, month: number, year: number) => {
       if(!supabase || !auth?.user) return;
@@ -730,7 +860,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { data: newTx, error } = await db.from('transactions').insert(withUser(transaction)).select().single();
+        const row: Record<string, unknown> = { ...transaction };
+        const recId = (transaction as { recurringId?: string }).recurringId;
+        if (recId != null) {
+            row.recurring_id = recId;
+            delete row.recurringId;
+        }
+        const budgetCat = (transaction as { budgetCategory?: string }).budgetCategory;
+        if (budgetCat !== undefined) {
+            row.budget_category = budgetCat;
+            delete row.budgetCategory;
+        }
+        const accId = transaction.accountId;
+        if (accId !== undefined) {
+            row.account_id = accId;
+            delete row.accountId;
+        }
+        const { data: newTx, error } = await db.from('transactions').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding transaction:", error);
             alert(`Failed to add transaction: ${error.message}`);
@@ -741,7 +887,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('transactions').update(transaction).match({ id: transaction.id, user_id: auth.user.id });
+        const updateRow: Record<string, unknown> = { ...transaction };
+        const recId = (transaction as { recurringId?: string }).recurringId;
+        if (recId !== undefined) {
+            updateRow.recurring_id = recId;
+            delete updateRow.recurringId;
+        }
+        if (transaction.budgetCategory !== undefined) {
+            updateRow.budget_category = transaction.budgetCategory;
+            delete updateRow.budgetCategory;
+        }
+        if (transaction.accountId !== undefined) {
+            updateRow.account_id = transaction.accountId;
+            delete updateRow.accountId;
+        }
+        const { error } = await db.from('transactions').update(updateRow).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalizeTransaction({ ...t, ...transaction }) : t) }));
     };
@@ -752,6 +912,176 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(error) console.error("Error deleting transaction:", error);
         else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
     };
+
+    // --- Recurring transactions ---
+    const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => {
+        if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const row = {
+            description: recurring.description,
+            amount: recurring.amount,
+            type: recurring.type,
+            account_id: recurring.accountId,
+            budget_category: recurring.budgetCategory ?? null,
+            category: recurring.category,
+            day_of_month: recurring.dayOfMonth,
+            enabled: recurring.enabled,
+            add_manually: recurring.addManually === true,
+        };
+        const { data: inserted, error } = await db.from('recurring_transactions').insert(withUser(row)).select().single();
+        if (error) {
+            console.error("Error adding recurring transaction:", error);
+            alert(`Failed to add recurring: ${error.message}`);
+            throw error;
+        }
+        if (inserted) {
+            const normalized = normalizeRecurringTransaction(inserted, resolveAccountId((inserted as any).account_id, data.accounts) ?? (inserted as any).account_id);
+            setData(prev => ({ ...prev, recurringTransactions: [...prev.recurringTransactions, normalized] }));
+        }
+    };
+
+    const updateRecurringTransaction = async (recurring: RecurringTransaction) => {
+        if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const row = {
+            description: recurring.description,
+            amount: recurring.amount,
+            type: recurring.type,
+            account_id: recurring.accountId,
+            budget_category: recurring.budgetCategory ?? null,
+            category: recurring.category,
+            day_of_month: recurring.dayOfMonth,
+            enabled: recurring.enabled,
+            add_manually: recurring.addManually === true,
+        };
+        const { error } = await db.from('recurring_transactions').update(row).match({ id: recurring.id, user_id: auth.user.id });
+        if (error) console.error("Error updating recurring:", error);
+        else setData(prev => ({
+            ...prev,
+            recurringTransactions: prev.recurringTransactions.map(r =>
+                r.id === recurring.id ? { ...recurring } : r
+            ),
+        }));
+    };
+
+    const deleteRecurringTransaction = async (id: string) => {
+        if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const { error } = await db.from('recurring_transactions').delete().match({ id, user_id: auth.user.id });
+        if (error) console.error("Error deleting recurring:", error);
+        else setData(prev => ({ ...prev, recurringTransactions: prev.recurringTransactions.filter(r => r.id !== id) }));
+    };
+
+    const applyRecurringForMonth = async (year: number, month: number): Promise<{ applied: number; skipped: number }> => {
+        if (!supabase || !auth?.user) return { applied: 0, skipped: 0 };
+        const enabled = data.recurringTransactions.filter(r => r.enabled && !(r.addManually === true));
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = (d: number) => String(d).padStart(2, '0');
+        let applied = 0;
+        let skipped = 0;
+        for (const rule of enabled) {
+            const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
+            const monthPrefix = `${year}-${monthStr}-`;
+            // For EOM rules (dayOfMonth 28), treat any transaction on 28–31 in this month as already applied (matches applyRecurringDueToday which uses effectiveDateStr 28th on days 29–31)
+            const already = data.transactions.some(t => {
+                const rid = t.recurringId ?? (t as any).recurring_id;
+                if (rid !== rule.id) return false;
+                if (!t.date.startsWith(monthPrefix)) return false;
+                if (rule.dayOfMonth === 28) {
+                    const day = parseInt(t.date.slice(8, 10), 10);
+                    if (day >= 28) return true;
+                }
+                return t.date.startsWith(date);
+            });
+            if (already) {
+                skipped++;
+                continue;
+            }
+            const amount = rule.type === 'income' ? rule.amount : -rule.amount;
+            try {
+                await addTransaction({
+                    date,
+                    description: rule.description,
+                    amount,
+                    category: rule.category,
+                    accountId: rule.accountId,
+                    budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
+                    type: rule.type,
+                    recurringId: rule.id,
+                });
+                applied++;
+            } catch (_) {
+                // already alerted in addTransaction
+            }
+        }
+        return { applied, skipped };
+    };
+
+    /** Apply recurring rules that are due today (dayOfMonth === today) and not addManually. Called after data load, once per day.
+     * dayOfMonth is stored clamped to 1–28, so on the 29th/30th/31st we treat dayOfMonth 28 as due (end-of-month); we use effectiveDateStr 28th so duplicates are detected by applyRecurringForMonth. */
+    const applyRecurringDueToday = useCallback(async (): Promise<number> => {
+        if (!supabase || !auth?.user) return 0;
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = today.getMonth() + 1;
+        const day = today.getDate();
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = (d: number) => String(d).padStart(2, '0');
+        // dayOfMonth is clamped to 1–28, so (dayOfMonth > lastDayOfMonth) is never true; only exact match and EOM-28 apply
+        const isDueToday = (r: { dayOfMonth: number }) =>
+            r.dayOfMonth === day || (day >= 28 && r.dayOfMonth === 28);
+        const toApply = data.recurringTransactions.filter(
+            r => r.enabled && !(r.addManually === true) && isDueToday(r)
+        );
+        let applied = 0;
+        const todayStr = `${year}-${monthStr}-${dayStr(day)}`;
+        const appliedThisRun = new Set<string>();
+        for (const rule of toApply) {
+            // Use effective due date so we match applyRecurringForMonth: dayOfMonth 28 on 29th–31st → 28th
+            const effectiveDateStr = (day >= 28 && rule.dayOfMonth === 28)
+                ? `${year}-${monthStr}-28`
+                : todayStr;
+            const key = `${rule.id}:${effectiveDateStr}`;
+            if (appliedThisRun.has(key)) continue;
+            const already = (transactionsRef.current ?? []).some(
+                t => (t.recurringId ?? (t as any).recurring_id) === rule.id &&
+                    t.date.startsWith(effectiveDateStr)
+            );
+            if (already) continue;
+            const amount = rule.type === 'income' ? rule.amount : -rule.amount;
+            try {
+                await addTransaction({
+                    date: effectiveDateStr,
+                    description: rule.description,
+                    amount,
+                    category: rule.category,
+                    accountId: rule.accountId,
+                    budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
+                    type: rule.type,
+                    recurringId: rule.id,
+                });
+                appliedThisRun.add(key);
+                applied++;
+            } catch (err) {
+                // Re-throw so the effect's .catch() runs and clears the sessionStorage lock, allowing retry later
+                throw err;
+            }
+        }
+        return applied;
+    }, [data.recurringTransactions, addTransaction, supabase, auth?.user]);
+
+    // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
+    // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
+    useEffect(() => {
+        if (loading || !auth?.user || !data.recurringTransactions?.length) return;
+        const todayStr = new Date().toDateString();
+        const storageKey = `recurring_auto_apply_${auth.user.id}`;
+        if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(storageKey) === todayStr) return;
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey, todayStr);
+        applyRecurringDueToday().catch(() => {
+            if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
+        });
+    }, [loading, auth?.user, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => {
@@ -790,18 +1120,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(portfolio)).select().single();
+        const row = investmentPortfolioToRow(portfolio);
+        const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding portfolio:", error);
             alert(`Failed to add portfolio: ${error.message}`);
             throw error;
         }
-        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, holdings: [] }] }));
+        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, accountId: (newPortfolio as any).account_id ?? (newPortfolio as any).accountId, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('investment_portfolios').update(portfolio).match({ id: portfolio.id, user_id: auth.user.id });
+        const row = investmentPortfolioToRow(portfolio);
+        const { error } = await db.from('investment_portfolios').update(row).match({ id: portfolio.id, user_id: auth.user.id });
         if(error) console.error("Error updating portfolio:", error);
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => p.id === portfolio.id ? { ...p, ...portfolio } : p) }));
     };
@@ -814,14 +1146,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const addHolding = async (holding: Omit<Holding, 'id' | 'user_id'>) => {
         if (!supabase) return;
-        const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(holding)).select().single();
+        const row = holdingToRow(holding);
+        const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
         if (error) { console.error("Error adding holding:", error); throw error; }
         if (newHolding) {
+            const normalized = normalizeHoldingFromRow(newHolding);
             setData(prev => ({
                 ...prev,
                 investments: prev.investments.map(p =>
-                    p.id === newHolding.portfolio_id
-                        ? { ...p, holdings: [...p.holdings, newHolding] }
+                    p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
+                        ? { ...p, holdings: [...p.holdings, normalized] }
                         : p
                 )
             }));
@@ -830,7 +1164,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('holdings').update(holding).match({ id: holding.id, user_id: auth.user.id });
+        const row = holdingToRow(holding);
+        const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if(error) { console.error(error); throw error; }
         else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
     };
@@ -858,37 +1193,49 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             };
         });
     };
-    const recordTrade = async (trade: { portfolioId: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'total' | 'user_id'>, executedPlanId?: string) => {
+    const recordTrade = async (trade: { portfolioId?: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => {
         if (!supabase || !auth?.user) return;
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
         }
 
+        const isCashFlow = trade.type === 'deposit' || trade.type === 'withdrawal';
+
         tradeSubmissionInFlightRef.current = true;
         try {
             const { portfolioId, name, ...tradeData } = trade;
 
-        // 1. Validate portfolio/holding state before persisting transaction
-        const portfolio = data.investments.find(p => p.id === portfolioId);
-        if (!portfolio) throw new Error("Portfolio not found");
-        const normalizedSymbol = tradeData.symbol.trim().toUpperCase();
-        const existingHolding = portfolio.holdings.find(h => h.symbol.trim().toUpperCase() === normalizedSymbol);
-        if (tradeData.type === 'sell') {
-            if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
-            if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
+        let accountIdForInsert: string;
+        let portfolio: InvestmentPortfolio | undefined;
+        let existingHolding: Holding | undefined;
+        let normalizedSymbol: string;
+
+        if (isCashFlow) {
+            accountIdForInsert = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            if (!accountIdForInsert) throw new Error("Please select the platform (account).");
+            const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
+            if (!accountExists) throw new Error("Selected account is not in the system.");
+            normalizedSymbol = 'CASH';
+        } else {
+            portfolio = data.investments.find(p => p.id === portfolioId);
+            if (!portfolio) throw new Error("Portfolio not found");
+            normalizedSymbol = (tradeData.symbol || '').trim().toUpperCase();
+            existingHolding = portfolio.holdings.find((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
+            if (tradeData.type === 'sell') {
+                if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
+                if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
+            }
+            accountIdForInsert = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts) ?? resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
+            const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
+            if (!accountExists) throw new Error("Selected account is not in the system (or portfolio points to a deleted account).");
         }
 
-        // Use the portfolio's account so the FK matches the account that owns the portfolio in the DB
-        const accountIdForInsert = portfolio.accountId || trade.accountId;
-        if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
-        const accountExists = data.accounts.some((a: { id?: string }) => (a.id ?? (a as any).account_id) === accountIdForInsert);
-        if (!accountExists) throw new Error("Selected account is not in the system. Please refresh the page, ensure you have an Investment account in Accounts, and try again.");
-
         // 2. Log the transaction to the database
-        const tradeTotal = tradeData.quantity * tradeData.price;
+        const tradeTotal = isCashFlow ? (trade.total ?? 0) : (tradeData.quantity * tradeData.price);
         let newTransaction: any = null;
         let txError: any = null;
-        const tradePayload = { ...tradeData, accountId: accountIdForInsert, symbol: normalizedSymbol, total: tradeTotal };
+        const tradePayload = { ...tradeData, accountId: accountIdForInsert, symbol: normalizedSymbol, quantity: isCashFlow ? 0 : tradeData.quantity, price: isCashFlow ? 0 : tradeData.price, total: tradeTotal };
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
@@ -901,8 +1248,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
         }
 
-        // 3. Process trade logic
+        // 3. Process trade logic (skip for deposit/withdrawal)
+        if (isCashFlow) {
+            tradeSubmissionInFlightRef.current = false;
+            return;
+        }
+
         try {
+            if (!portfolio) throw new Error('Portfolio not found');
             if (tradeData.type === 'buy') {
                 if (existingHolding) {
                     const newTotalValue = (existingHolding.avgCost * existingHolding.quantity) + (tradeData.price * tradeData.quantity);
@@ -987,50 +1340,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.filter(p => p.id !== planId) })); }
     };
 
-    // --- Commodities ---
+    // --- Commodities --- (snake_case: purchase_value, current_value, zakah_class; name required)
     const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
         if (!supabase) return;
         if (holding.purchaseValue <= 0) {
             throw new Error("Purchase Value must be a positive number.");
         }
-        let newHolding: any = null;
-        let error: any = null;
-        const attemptedPayloadSignatures: string[] = [];
-        for (const payload of commodityPayloadVariants(holding)) {
-            attemptedPayloadSignatures.push(payloadSignature(payload as Record<string, unknown>));
-            const result = await supabase.from('commodity_holdings').insert(withUser(payload)).select().single();
-            newHolding = result.data;
-            error = result.error;
-            if (!error) break;
-            if (!isMissingColumnError(error)) break;
-        }
+        const row = commodityHoldingToRow(holding);
+        const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
-            const missingColumn = extractMissingColumnName(error);
-            console.error("Error adding commodity:", error, { attemptedPayloadSignatures });
-            const diagnostics = missingColumn
-                ? ` Missing column detected: ${missingColumn}.`
-                : '';
-            throw new Error(`Failed to add commodity holding.${diagnostics} Tried ${attemptedPayloadSignatures.length} payload variants. Last error: ${error.message || error.details || "Unknown error"}`);
+            console.error("Error adding commodity:", error);
+            throw error;
         }
-        else if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
+        if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
     };
     const updateCommodityHolding = async (holding: CommodityHolding) => {
         if (!supabase || !auth?.user) return;
         if (holding.purchaseValue <= 0) {
             throw new Error("Purchase Value must be a positive number.");
         }
-        let error: any = null;
-        for (const payload of commodityPayloadVariants(holding)) {
-            const result = await supabase.from('commodity_holdings').update(payload).match({ id: holding.id, user_id: auth.user.id });
-            error = result.error;
-            if (!error) break;
-            if (!isMissingColumnError(error)) break;
-        }
+        const row = commodityHoldingToRow(holding);
+        const { error } = await supabase.from('commodity_holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if (error) {
             console.error(error);
             throw error;
         }
-        else setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
+        setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
     };
     const deleteCommodityHolding = async (holdingId: string) => {
         if (!supabase || !auth?.user) return;
@@ -1040,42 +1375,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
-        const valuePayloadVariants = [
-            updates.map(u => ({
-                id: u.id,
-                currentValue: u.currentValue,
-                user_id: auth.user!.id,
-            })),
-            updates.map(u => ({
-                id: u.id,
-                current_value: u.currentValue,
-                user_id: auth.user!.id,
-            })),
-            updates.map(u => ({
-                id: u.id,
-                currentvalue: u.currentValue,
-                user_id: auth.user!.id,
-            })),
-        ];
-
-        let error: any = null;
-        for (const payload of valuePayloadVariants) {
-            const result = await supabase.from('commodity_holdings').upsert(payload, { onConflict: 'id' });
-            error = result.error;
-            if (!error) break;
-            if (!isMissingColumnError(error)) break;
-        }
-
+        // Only update current_value; do not include name to avoid overwriting DB names with 'Other' when holding isn't in client cache
+        const payload = updates.map(u => ({
+            id: u.id,
+            current_value: u.currentValue,
+            user_id: auth.user!.id,
+        }));
+        const { error } = await supabase.from('commodity_holdings').upsert(payload, { onConflict: 'id' });
         if (error) {
             console.error("Error batch updating commodity values:", error);
             return;
         }
-
         setData(prevData => {
             const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
             return {
                 ...prevData,
-                commodityHoldings: prevData.commodityHoldings.map(h => 
+                commodityHoldings: prevData.commodityHoldings.map(h =>
                     updatesMap.has(h.id) ? { ...h, currentValue: updatesMap.get(h.id)! } : h
                 )
             };
@@ -1099,15 +1414,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
         if(!supabase) return;
         const db = supabase;
-        const newAlert = { ...alert, status: 'active' as const, createdAt: new Date().toISOString() };
-        const { data: created, error } = await db.from('price_alerts').insert(withUser(newAlert)).select().single();
+        const createdAt = new Date().toISOString();
+        const targetPrice = typeof alert.targetPrice === 'number' && Number.isFinite(alert.targetPrice) ? alert.targetPrice : parseFloat(String(alert.targetPrice)) || 0;
+        const row: Record<string, unknown> = { ...withUser({}), symbol: alert.symbol, target_price: targetPrice, status: 'active', created_at: createdAt };
+        if (alert.currency) row.currency = alert.currency;
+        const { data: created, error } = await db.from('price_alerts').insert(row).select().single();
         if(error) console.error(error);
-        else if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, created] }));
+        else if(created) setData(prev => ({ ...prev, priceAlerts: [...prev.priceAlerts, normalizePriceAlert(created)] }));
     };
     const updatePriceAlert = async (alert: PriceAlert) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        await db.from('price_alerts').update(alert).match({ id: alert.id, user_id: auth.user.id });
+        const row: Record<string, unknown> = { status: alert.status };
+        if (alert.targetPrice != null) row.target_price = alert.targetPrice;
+        if (alert.currency != null) row.currency = alert.currency;
+        await db.from('price_alerts').update(row).match({ id: alert.id, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.map(a => a.id === alert.id ? alert : a) }));
     };
     const deletePriceAlert = async (alertId: string) => {
@@ -1126,7 +1447,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
         const merged = { ...data.settings, ...settingsUpdate };
-        const row = { ...settingsToRow(merged), user_id: auth.user.id };
+        const overrides = settingsOverridesToRow(merged, settingsUpdate);
+        const row = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         if (error) {
             console.error("Error updating settings:", error);
@@ -1137,7 +1459,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
         if (!supabase || !auth?.user) return;
-        const planWithUser = { ...investmentPlanToRow(plan), user_id: auth.user.id };
+        const overrides = investmentPlanOverridesToRow(plan);
+        const planWithUser = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
         if (error) {
             console.error("Error saving investment plan:", error);
@@ -1222,7 +1545,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const value = { data, loading, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog };
+    const availableCashByAccountId = useMemo(() => {
+        const map: Record<string, { SAR: number; USD: number }> = {};
+        (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
+            const accId = t.accountId ?? (t as any).account_id;
+            if (!accId) return;
+            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
+            const amt = t.total ?? 0;
+            const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
+            const delta = t.type === 'deposit' || t.type === 'sell' || t.type === 'dividend' ? amt : (t.type === 'withdrawal' || t.type === 'buy' ? -amt : 0);
+            map[accId][cur] += delta;
+        });
+        Object.keys(map).forEach(accId => {
+            map[accId].SAR = Math.max(0, map[accId].SAR);
+            map[accId].USD = Math.max(0, map[accId].USD);
+        });
+        return map;
+    }, [data.investmentTransactions]);
+
+    const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
+        const v = availableCashByAccountId[accountId] ?? { SAR: 0, USD: 0 };
+        return { SAR: v.SAR, USD: v.USD };
+    }, [availableCashByAccountId]);
+
+    const totalDeployableCash = useMemo(() => {
+        const bank = (data.accounts ?? []).filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const platformCash = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
+            const cash = getAvailableCashForAccount(a.id);
+            return s + cash.SAR + cash.USD;
+        }, 0);
+        return bank + platformCash;
+    }, [data.accounts, getAvailableCashForAccount]);
+
+    const value = { data, loading, dataResetKey, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

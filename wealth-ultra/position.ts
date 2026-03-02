@@ -20,6 +20,8 @@ export function tickerToSleeve(ticker: string, config?: Pick<WealthUltraConfig, 
   return 'Core';
 }
 
+/** Maps sleeve to risk tier for risk distribution and capital efficiency (return % × risk weight).
+ * Core → Med (1.25), Upside → High (1.5), Spec → Spec (2.0). Keeps risk weights and alert severity appropriate. */
 export function tickerToRiskTier(ticker: string, config?: Pick<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 'specTickers'>): WealthUltraRiskTier {
   const sleeve = tickerToSleeve(ticker, config);
   if (sleeve === 'Spec') return 'Spec';
@@ -37,11 +39,14 @@ export function buildWealthUltraPositions(
     const sym = (h.symbol || '').toUpperCase();
     const sleeve = sleeveOverrides?.[sym] ?? tickerToSleeve(sym, config);
     const riskTier = tickerToRiskTier(sym, config);
-    const currentPrice = priceMap[sym] ?? (h.quantity > 0 ? h.currentValue / h.quantity : h.avgCost);
-    const marketValue = h.quantity * currentPrice;
-    const plDollar = marketValue - h.quantity * h.avgCost;
-    const costBasis = h.quantity * h.avgCost;
-    const plPct = costBasis > 0 ? (plDollar / costBasis) * 100 : 0;
+    const qty = Number(h.quantity) || 0;
+    const avgCost = Number(h.avgCost) || 0;
+    const currentPrice = priceMap[sym] ?? (qty > 0 && h.currentValue != null ? (Number(h.currentValue) || 0) / qty : avgCost);
+    const marketValue = qty * currentPrice;
+    const costBasis = qty * avgCost;
+    const plDollar = marketValue - costBasis;
+    const plPctRaw = costBasis > 0 ? (plDollar / costBasis) * 100 : 0;
+    const plPct = Number.isFinite(plPctRaw) ? plPctRaw : 0;
     let strategyMode: WealthUltraStrategyMode = 'Hold';
     if (plPct >= 40) strategyMode = 'Trim';
     else if (plPct <= -30) strategyMode = 'Exit';
@@ -52,8 +57,8 @@ export function buildWealthUltraPositions(
       sleeveType: sleeve,
       riskTier,
       strategyMode,
-      currentShares: h.quantity,
-      avgCost: h.avgCost,
+      currentShares: qty,
+      avgCost,
       currentPrice,
       marketValue,
       plDollar,
