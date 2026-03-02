@@ -476,6 +476,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         
         const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
 
+        // #region agent log
+        fetch('http://127.0.0.1:7588/ingest/0d63d062-ed8c-4e4d-b1d0-bd68927fb5ac',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fc0108'},body:JSON.stringify({sessionId:'fc0108',runId:'initial',hypothesisId:'H3',location:'Transactions.tsx:cashflow',message:'Cashflow snapshot',data:{count:filteredTransactions.length,monthlyIncome,monthlyExpenses,netCashflow},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
     }, [filteredTransactions]);
     

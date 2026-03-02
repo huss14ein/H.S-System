@@ -4,7 +4,7 @@ import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
-import type { Holding } from '../types';
+import type { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
 import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
 import {
   buildRecoveryPlan,
@@ -27,11 +27,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const { formatCurrencyString } = useFormatCurrency();
 
   const allHoldingsWithPortfolio = useMemo(() => {
-    const list: { holding: Holding; portfolioName: string }[] = [];
-    (data.investments ?? []).forEach((p: { name?: string; holdings?: Holding[] }) => {
-      (p.holdings ?? []).filter((h: Holding) => (Number(h.quantity) || 0) > 0).forEach((h: Holding) => {
-        list.push({ holding: h, portfolioName: p.name ?? 'Portfolio' });
-      });
+    const list: { holding: Holding; portfolioName: string; currency: TradeCurrency }[] = [];
+    (data.investments ?? []).forEach((p: InvestmentPortfolio) => {
+      const portfolioCurrency: TradeCurrency =
+        p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
+      (p.holdings ?? [])
+        .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
+        .forEach((h: Holding) => {
+          list.push({
+            holding: h,
+            portfolioName: p.name ?? 'Portfolio',
+            currency: portfolioCurrency,
+          });
+        });
     });
     return list;
   }, [data.investments]);
@@ -84,7 +92,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   }, [universe, data.investmentPlan]);
 
   const positionsWithRecovery = useMemo(() => {
-    return allHoldingsWithPortfolio.map(({ holding, portfolioName }) => {
+    return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
       const sym = (holding.symbol || '').toUpperCase();
       const qty = Number(holding.quantity) || 0;
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
@@ -97,7 +105,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const positionConfig: RecoveryPositionConfig = defaultPositionConfig(sym, sleeveType, riskTier, 5000);
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, globalConfig);
-      return { holding, portfolioName, currentPrice, positionConfig, plan };
+      return { holding, portfolioName, currency, currentPrice, positionConfig, plan };
     });
   }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec]);
 
@@ -174,8 +182,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{qualifiedPositions.length}</p>
         </SectionCard>
         <SectionCard className="min-w-0">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deployable cash</p>
-          <p className="text-xl font-bold text-slate-800 tabular-nums mt-1">{formatCurrencyString(deployableCash)}</p>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deployable cash (SAR + USD)</p>
+          <p className="text-xl font-bold text-slate-800 tabular-nums mt-1">
+            {formatCurrencyString(deployableCash)}
+          </p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Approximate total across currencies. Per-position values below use each portfolio&apos;s base currency.
+          </p>
         </SectionCard>
       </div>
 
@@ -198,7 +211,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                   <td colSpan={5} className="px-4 py-10 text-center text-slate-500">No losing positions. Recovery plan applies only when a position is in loss.</td>
                 </tr>
               ) : (
-                losingPositions.map(({ holding, portfolioName, plan }) => (
+                losingPositions.map(({ holding, portfolioName, currency, plan }) => (
                   <tr key={holding.id} className={isSelected(holding.id) ? 'bg-primary/5' : 'hover:bg-slate-50'}>
                     <td className="px-4 py-3">
                       <span className="font-semibold text-slate-800">{holding.symbol}</span>
@@ -208,7 +221,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                       {plan.plPct >= 0 ? '+' : ''}{plan.plPct.toFixed(1)}%
                     </td>
                     <td className="px-4 py-3 text-right text-slate-600 tabular-nums">
-                      {formatCurrencyString(plan.costBasis)} → {formatCurrencyString(plan.marketValue)}
+                      {formatCurrencyString(plan.costBasis, { inCurrency: currency })} →{' '}
+                      {formatCurrencyString(plan.marketValue, { inCurrency: currency })}
                     </td>
                     <td className="px-4 py-3 text-center">
                       {plan.qualified ? (
@@ -239,18 +253,48 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
       {selected && selectedPlan && (
         <SectionCard title={`${selected.holding.symbol} — Recovery Plan`} className="space-y-5">
-          <p className="text-sm text-slate-600">Portfolio: {selected.portfolioName}</p>
+          <p className="text-sm text-slate-600">
+            Portfolio: {selected.portfolioName}{' '}
+            <span className="text-xs text-slate-500">
+              · Currency: {selected.currency ?? 'USD'}
+            </span>
+          </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Current</p>
-              <p className="text-sm text-slate-700">Shares: {selected.holding.quantity} · Avg cost: {formatCurrencyString(selected.holding.avgCost ?? 0)} · Price: {formatCurrencyString(selectedPlan.currentPrice)}</p>
-              <p className="mt-2 font-semibold text-slate-800">P/L: {formatCurrencyString(selectedPlan.plUsd)} ({selectedPlan.plPct.toFixed(1)}%)</p>
+              <p className="text-sm text-slate-700">
+                Shares: {selected.holding.quantity} · Avg cost:{' '}
+                {formatCurrencyString(selected.holding.avgCost ?? 0, {
+                  inCurrency: selected.currency ?? 'USD',
+                })}{' '}
+                · Price:{' '}
+                {formatCurrencyString(selectedPlan.currentPrice, {
+                  inCurrency: selected.currency ?? 'USD',
+                })}
+              </p>
+              <p className="mt-2 font-semibold text-slate-800">
+                P/L:{' '}
+                {formatCurrencyString(selectedPlan.plUsd, {
+                  inCurrency: selected.currency ?? 'USD',
+                })}{' '}
+                ({selectedPlan.plPct.toFixed(1)}%)
+              </p>
             </div>
             <div className="p-4 rounded-xl bg-emerald-50/80 border border-emerald-100">
               <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1">After ladder fills <InfoHint text="New average cost and share count if all planned buy orders are filled." /></p>
-              <p className="text-sm text-slate-700">New shares: {selectedPlan.newShares} · New avg cost: {formatCurrencyString(selectedPlan.newAvgCost)}</p>
-              <p className="mt-2 font-semibold text-emerald-800">Planned recovery cost: {formatCurrencyString(selectedPlan.totalPlannedCost)}</p>
+              <p className="text-sm text-slate-700">
+                New shares: {selectedPlan.newShares} · New avg cost:{' '}
+                {formatCurrencyString(selectedPlan.newAvgCost, {
+                  inCurrency: selected.currency ?? 'USD',
+                })}
+              </p>
+              <p className="mt-2 font-semibold text-emerald-800">
+                Planned recovery cost:{' '}
+                {formatCurrencyString(selectedPlan.totalPlannedCost, {
+                  inCurrency: selected.currency ?? 'USD',
+                })}
+              </p>
             </div>
           </div>
 
@@ -261,7 +305,20 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                 <thead className="bg-slate-50"><tr><th className="px-3 py-2 text-left font-semibold text-slate-700">Level</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Qty</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Price</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Cost</th></tr></thead>
                 <tbody className="bg-white">
                   {selectedPlan.ladder.map(l => (
-                    <tr key={l.level} className="border-t border-slate-100"><td className="px-3 py-2">L{l.level}</td><td className="px-3 py-2 text-right tabular-nums">{l.qty}</td><td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(l.price)}</td><td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(l.cost)}</td></tr>
+                    <tr key={l.level} className="border-t border-slate-100">
+                      <td className="px-3 py-2">L{l.level}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatCurrencyString(l.price, {
+                          inCurrency: selected.currency ?? 'USD',
+                        })}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium">
+                        {formatCurrencyString(l.cost, {
+                          inCurrency: selected.currency ?? 'USD',
+                        })}
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -271,15 +328,33 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <div>
             <h4 className="font-semibold text-slate-800 mb-2 flex items-center gap-1">Exit targets (optional) <InfoHint text="Target 1/2 and trailing stop based on new average cost. Apply when you want to auto-suggest exit prices." /></h4>
             <div className="flex flex-wrap gap-3 text-sm">
-              {selectedPlan.exitPlan.applyTarget1 && selectedPlan.exitPlan.target1Price != null && (
-                <span className="px-3 py-1.5 rounded-lg bg-violet-50 text-violet-800 font-medium">Target 1: {selectedPlan.exitPlan.target1Pct}% → {formatCurrencyString(selectedPlan.exitPlan.target1Price)}</span>
-              )}
-              {selectedPlan.exitPlan.applyTarget2 && selectedPlan.exitPlan.target2Price != null && (
-                <span className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-800 font-medium">Target 2: {selectedPlan.exitPlan.target2Pct}% → {formatCurrencyString(selectedPlan.exitPlan.target2Price)}</span>
-              )}
-              {selectedPlan.exitPlan.applyTrailing && selectedPlan.exitPlan.trailStopPrice != null && (
-                <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 font-medium">Trailing: {selectedPlan.exitPlan.trailPct}% → {formatCurrencyString(selectedPlan.exitPlan.trailStopPrice)}</span>
-              )}
+              {selectedPlan.exitPlan.applyTarget1 &&
+                selectedPlan.exitPlan.target1Price != null && (
+                  <span className="px-3 py-1.5 rounded-lg bg-violet-50 text-violet-800 font-medium">
+                    Target 1: {selectedPlan.exitPlan.target1Pct}% →{' '}
+                    {formatCurrencyString(selectedPlan.exitPlan.target1Price, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                )}
+              {selectedPlan.exitPlan.applyTarget2 &&
+                selectedPlan.exitPlan.target2Price != null && (
+                  <span className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-800 font-medium">
+                    Target 2: {selectedPlan.exitPlan.target2Pct}% →{' '}
+                    {formatCurrencyString(selectedPlan.exitPlan.target2Price, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                )}
+              {selectedPlan.exitPlan.applyTrailing &&
+                selectedPlan.exitPlan.trailStopPrice != null && (
+                  <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 font-medium">
+                    Trailing: {selectedPlan.exitPlan.trailPct}% →{' '}
+                    {formatCurrencyString(selectedPlan.exitPlan.trailStopPrice, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                )}
             </div>
           </div>
 
@@ -300,10 +375,20 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
           <div className="space-y-2">
             {draftOrders.map((d, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm">
-                <span className="font-semibold text-slate-800">{d.type} {d.symbol}</span>
+              <div
+                key={i}
+                className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm"
+              >
+                <span className="font-semibold text-slate-800">
+                  {d.type} {d.symbol}
+                </span>
                 <span className="text-slate-600">Qty: {d.qty}</span>
-                <span className="text-slate-600">Limit: {formatCurrencyString(d.limitPrice)}</span>
+                <span className="text-slate-600">
+                  Limit:{' '}
+                  {formatCurrencyString(d.limitPrice, {
+                    inCurrency: selected?.currency ?? 'USD',
+                  })}
+                </span>
                 {d.label && <span className="text-slate-500">({d.label})</span>}
               </div>
             ))}

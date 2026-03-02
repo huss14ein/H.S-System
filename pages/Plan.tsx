@@ -264,6 +264,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const actualNet = totalActualIncome - totalActualExpenses;
         const variancePct = projectedNet !== 0 ? ((actualNet - projectedNet) / Math.abs(projectedNet)) * 100 : 0;
 
+        // #region agent log
+        fetch('http://127.0.0.1:7588/ingest/0d63d062-ed8c-4e4d-b1d0-bd68927fb5ac',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fc0108'},body:JSON.stringify({sessionId:'fc0108',runId:'initial',hypothesisId:'H2',location:'Plan.tsx:totals',message:'Plan totals snapshot',data:{totalPlannedIncome,totalPlannedExpenses,totalActualIncome,totalActualExpenses,projectedNet,actualNet,variancePct},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         return { totalPlannedIncome, totalPlannedExpenses, totalActualIncome, totalActualExpenses, projectedNet, actualNet, variancePct };
     }, [processedPlanData]);
 

@@ -15,6 +15,7 @@ import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
 
 interface BudgetModalProps {
     isOpen: boolean;
@@ -348,6 +349,11 @@ const Budgets: React.FC = () => {
         const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
         const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
         const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
+
+        // #region agent log
+        fetch('http://127.0.0.1:7588/ingest/0d63d062-ed8c-4e4d-b1d0-bd68927fb5ac',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fc0108'},body:JSON.stringify({sessionId:'fc0108',runId:'initial',hypothesisId:'H1',location:'Budgets.tsx:budgetInsights',message:'Budget insights snapshot',data:{totalLimit, totalSpent, count: budgetData.length},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
 
@@ -387,6 +393,79 @@ const Budgets: React.FC = () => {
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
         }
+    };
+
+    const handleSmartFillBudgets = () => {
+        if (!isAdmin) return;
+        const allTx = (data?.transactions ?? []).filter((t) => t.type === 'expense' && !!t.budgetCategory);
+        if (allTx.length === 0) {
+            alert('No expense history with budget categories found to smart-fill from.');
+            return;
+        }
+        const now = new Date(currentYear, currentMonth - 1, 1);
+        const threeMonthsAgo = new Date(now);
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+        const byCategory = new Map<string, { total: number; months: Set<string> }>();
+        allTx.forEach((t) => {
+            const d = new Date(t.date);
+            if (d < threeMonthsAgo || d > now) return;
+            const cat = t.budgetCategory!;
+            const key = `${d.getFullYear()}-${d.getMonth()}`;
+            const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
+            entry.total += Math.abs(t.amount);
+            entry.months.add(key);
+            byCategory.set(cat, entry);
+        });
+
+        const suggestions: { category: string; monthly: number }[] = [];
+        byCategory.forEach((v, category) => {
+            const monthCount = v.months.size || 1;
+            const avg = v.total / monthCount;
+            if (avg > 0) {
+                suggestions.push({ category, monthly: Math.round(avg) });
+            }
+        });
+
+        if (suggestions.length === 0) {
+            alert('Not enough recent history to suggest budgets.');
+            return;
+        }
+
+        const existingForMonth = new Set(
+            (data?.budgets ?? [])
+                .filter((b) => b.year === currentYear && b.month === currentMonth)
+                .map((b) => b.category)
+        );
+
+        const toCreate = suggestions.filter((s) => !existingForMonth.has(s.category));
+        if (toCreate.length === 0) {
+            alert('All categories already have budgets this month. Nothing to smart-fill.');
+            return;
+        }
+
+        if (
+            !window.confirm(
+                `Smart-fill will create ${toCreate.length} budgets for this month using the last ~3 months of spending averages. Continue?`
+            )
+        ) {
+            return;
+        }
+
+        const CORE_CATEGORIES = ['Housing', 'Rent', 'Food', 'Transportation', 'Utilities', 'Health', 'Education'];
+
+        toCreate.forEach((s) => {
+            const tier: BudgetTier =
+                CORE_CATEGORIES.some((name) => s.category.toLowerCase().includes(name.toLowerCase())) ? 'Core' : 'Optional';
+            addBudget({
+                category: s.category,
+                limit: s.monthly,
+                month: currentMonth,
+                year: currentYear,
+                period: 'monthly',
+                tier,
+            } as any);
+        });
     };
     const submitBudgetRequest = async () => {
         if (!supabase || !auth?.user) return;
@@ -582,6 +661,10 @@ const Budgets: React.FC = () => {
                         <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
+                    <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
+                        <SparklesIcon className="h-5 w-5" />
+                        Smart-fill from history
+                    </button>
                     <button type="button" disabled={!isAdmin} onClick={handleCopyBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
                     <button type="button" disabled={!isAdmin} onClick={() => handleOpenModal()} className="btn-primary disabled:opacity-50">Add Budget</button>
                 </div>

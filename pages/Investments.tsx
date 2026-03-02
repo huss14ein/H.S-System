@@ -1588,10 +1588,93 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const actionableCount = (data.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
 
+    const planHealth = useMemo(() => {
+        let score = 100;
+        const reasons: string[] = [];
+        const monthly = plan.monthlyBudget ?? 0;
+        const corePct = (plan.coreAllocation ?? 0) * 100;
+        const upsidePct = (plan.upsideAllocation ?? 0) * 100;
+
+        if (monthly <= 0) {
+            score -= 25;
+            reasons.push('Monthly budget not set');
+        }
+        if (allocationWarning) {
+            score -= 20;
+            reasons.push('Core + High-Upside not equal to 100%');
+        }
+        if (universeHealth.actionableCount === 0) {
+            score -= 30;
+            reasons.push('No Core / High-Upside tickers in universe');
+        }
+        if (Math.abs(universeHealth.monthlyWeightTotal - 1) > 0.05 && universeHealth.actionableCount > 0) {
+            score -= 10;
+            reasons.push('Universe weights not close to 100%');
+        }
+        if (minOrderWarning) {
+            score -= 10;
+            reasons.push('Broker minimum order conflicts with budget');
+        }
+        score = Math.max(0, Math.min(100, score));
+
+        let label: string;
+        let summary: string;
+        if (score >= 85) {
+            label = 'Ready to execute';
+            summary = 'Budget, allocations, and universe look solid. You can run Execute & View Results or Wealth Ultra.';
+        } else if (score >= 65) {
+            label = 'Minor tweaks';
+            summary = (reasons[0] || 'Small configuration gaps.') + (reasons[1] ? ` · ${reasons[1]}` : '');
+        } else {
+            label = 'Action needed';
+            summary = reasons.slice(0, 3).join(' · ') || 'Set budget, tickers, and weights before executing.';
+        }
+
+        return {
+            score,
+            label,
+            summary,
+            corePct,
+            upsidePct,
+        };
+    }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning]);
+
     const syncPlanFromUniverse = () => {
         const core = (data.portfolioUniverse || []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
         const upside = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
         setPlan(prev => ({ ...prev, corePortfolio: core, upsideSleeve: upside }));
+    };
+
+    const applySmartPlan = () => {
+        const hasHistory = suggestedMonthlyBudget > 0;
+        const monthly = hasHistory ? suggestedMonthlyBudget : plan.monthlyBudget || 0;
+
+        const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
+        const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
+
+        let coreAlloc = plan.coreAllocation ?? 0.7;
+        let upsideAlloc = plan.upsideAllocation ?? 0.3;
+
+        const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
+        const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
+        const totalWt = coreWt + upWt;
+        if (totalWt > 0) {
+            coreAlloc = coreWt / totalWt;
+            upsideAlloc = upWt / totalWt;
+        }
+
+        const nextMinOrder = monthly > 0 ? Math.round((monthly * 0.1) / 100) * 100 : plan.brokerConstraints.minimumOrderSize;
+
+        setPlan(prev => ({
+            ...prev,
+            monthlyBudget: monthly,
+            coreAllocation: coreAlloc,
+            upsideAllocation: upsideAlloc,
+            brokerConstraints: {
+                ...prev.brokerConstraints,
+                minimumOrderSize: nextMinOrder,
+            },
+        }));
     };
 
     const handleSave = () => {
@@ -1688,12 +1771,65 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 )}
             </div>
 
+            {/* Plan health — smart readiness summary */}
+            <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200">
+                            <span className="text-lg font-bold text-emerald-700 tabular-nums">{planHealth.score}</span>
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">{planHealth.label}</p>
+                            <p className="text-xs text-slate-600 mt-0.5">{planHealth.summary}</p>
+                        </div>
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 min-w-[200px]">
+                        <div>
+                            <dt className="font-medium text-slate-700">Monthly budget</dt>
+                            <dd className="font-mono tabular-nums text-slate-900">
+                                {formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt className="font-medium text-slate-700">Core / Upside mix</dt>
+                            <dd className="font-mono tabular-nums text-slate-900">
+                                {planHealth.corePct.toFixed(0)}% / {planHealth.upsidePct.toFixed(0)}%
+                            </dd>
+                        </div>
+                        <div>
+                            <dt className="font-medium text-slate-700">Actionable tickers</dt>
+                            <dd className="font-mono tabular-nums text-slate-900">
+                                {universeHealth.actionableCount}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt className="font-medium text-slate-700">Weight coverage</dt>
+                            <dd className="font-mono tabular-nums text-slate-900">
+                                {(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%
+                            </dd>
+                        </div>
+                    </dl>
+                </div>
+            </SectionCard>
+
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Allocation Settings — essential fields first */}
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold text-dark mb-4">Monthly Plan</h2>
-                        <p className="text-sm text-gray-500 mb-4">Set how much to invest each month and how to split it between Core (stable) and High-Upside (growth) tickers.</p>
+                    <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div>
+                                <h2 className="text-xl font-semibold text-dark">Monthly Plan</h2>
+                                <p className="text-sm text-gray-500 mt-1">Set how much to invest each month and how to split it between Core (stable) and High-Upside (growth) tickers.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={applySmartPlan}
+                                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-secondary"
+                            >
+                                <SparklesIcon className="h-4 w-4" />
+                                Smart-fill plan
+                            </button>
+                        </div>
                         {allocationWarning && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{allocationWarning}</div>
                         )}
