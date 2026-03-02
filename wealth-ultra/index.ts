@@ -106,6 +106,8 @@ function computePortfolioHealth(
   specBreach: boolean,
   alerts: WealthUltraAlert[]
 ): WealthUltraPortfolioHealth {
+  // config is currently only used for future scoring heuristics; reference to satisfy strict noUnusedParameters.
+  void config;
   let score = 100;
   const reasons: string[] = [];
 

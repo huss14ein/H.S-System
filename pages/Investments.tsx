@@ -183,7 +183,10 @@ const RecordTradeModal: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data.goals || [], [data.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
-    const selectedPortfolio = useMemo(() => portfolioId ? portfolios.find(p => p.id === portfolioId) : null);
+    const selectedPortfolio = useMemo(
+        () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
+        [portfolioId, portfolios]
+    );
     const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
@@ -782,7 +785,7 @@ export const PortfolioModal: React.FC<{
     );
 };
 
-const ExecutionHistoryView: React.FC<{ onFocusInvestmentPlan?: () => void; onNavigateToTab?: (tab: string) => void; onOpenWealthUltra?: () => void }> = ({ onFocusInvestmentPlan, onNavigateToTab, onOpenWealthUltra }) => {
+const ExecutionHistoryView: React.FC<{ onFocusInvestmentPlan?: () => void; onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void }> = ({ onFocusInvestmentPlan, onNavigateToTab, onOpenWealthUltra }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [selectedLog, setSelectedLog] = useState<InvestmentPlanExecutionLog | null>(null);
@@ -1204,7 +1207,6 @@ const PlatformView: React.FC<{
         }));
     }, [data, getAvailableCashForAccount]);
 
-    const { currency: displayCurrency } = useCurrency();
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
     const aggregateValue = platformsData.reduce((sum, p) => {
@@ -2213,16 +2215,22 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         />;
       case 'Investment Plan': return (
                 <InvestmentPlan
-                    onNavigateToTab={setActiveTab}
+                    onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
                     onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason }); setIsTradeModalOpen(true); }}
                 />
             );
-      case 'Execution History': return <ExecutionHistoryView onFocusInvestmentPlan={() => setActiveTab('Investment Plan')} onNavigateToTab={setActiveTab} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'Execution History': return (
+        <ExecutionHistoryView
+          onFocusInvestmentPlan={() => setActiveTab('Investment Plan')}
+          onNavigateToTab={(tab) => setActiveTab(tab)}
+          onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+        />
+      );
       case 'Dividend Tracker': return <DividendTrackerView />;
-      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={setActiveTab} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
-      case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={setActiveTab} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
-      case 'Watchlist': return <WatchlistView onNavigateToTab={setActiveTab} />;
+      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab)} />;
       default: return null;
     }
   };
