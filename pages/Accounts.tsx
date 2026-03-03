@@ -107,7 +107,7 @@ const AccountCardComponent: React.FC<{
                 <div className="flex items-center gap-3 min-w-0">
                     {getAccountIcon(account.type)}
                     <div className="min-w-0">
-                        <h3 className="font-semibold text-dark truncate">{account.name}</h3>
+                        <h3 className="font-semibold text-dark break-words">{account.name}</h3>
                         <p className="text-xs text-slate-500">
                             {account.type}
                             {linkedPortfoliosCount != null && linkedPortfoliosCount > 0 && (

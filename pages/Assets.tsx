@@ -108,7 +108,7 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                 <div className="flex items-center gap-3 min-w-0">
                     {getAssetIcon(asset.type)}
                     <div className="min-w-0">
-                        <h3 className="font-semibold text-dark truncate">{asset.name}</h3>
+                        <h3 className="font-semibold text-dark break-words">{asset.name}</h3>
                         <p className="text-xs text-slate-500">{asset.type}</p>
                     </div>
                 </div>

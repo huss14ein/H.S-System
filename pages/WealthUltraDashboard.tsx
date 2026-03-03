@@ -585,7 +585,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 const score = capitalEfficiencyScore(p.plPct, tier, config);
                 return (
                   <li key={p.ticker} className="flex justify-between items-center text-sm gap-2 min-w-0 py-1">
-                    <span className="min-w-0 truncate"><span className="text-slate-400 mr-2">{i + 1}.</span><span className="font-medium">{p.ticker}</span> <span className="text-slate-500">({tier})</span></span>
+                    <span className="min-w-0 break-words"><span className="text-slate-400 mr-2">{i + 1}.</span><span className="font-medium">{p.ticker}</span> <span className="text-slate-500">({tier})</span></span>
                     <span className="shrink-0 text-right tabular-nums">
                       <span className={p.plPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{p.plPct >= 0 ? '+' : ''}{p.plPct.toFixed(1)}%</span>
                       <span className="text-slate-400 mx-1">×</span>
