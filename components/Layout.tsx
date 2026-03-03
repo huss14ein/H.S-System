@@ -34,11 +34,11 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
 
 
   return (
-    <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/60 text-gray-800 flex flex-col">
       <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
       
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full">
-        <div className="max-w-7xl mx-auto w-full animate-fadeIn">
+        <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
             {children}
         </div>
       </main>

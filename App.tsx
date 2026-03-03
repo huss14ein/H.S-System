@@ -11,6 +11,7 @@ import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
+import AppErrorBoundary from './components/AppErrorBoundary';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -69,6 +70,15 @@ const App: React.FC = () => {
     if (!window.location.hash) window.location.replace('#Dashboard');
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  React.useEffect(() => {
+    const onUnhandled = () => {
+      // Keep app resilient after browser wake/sleep transitions and stale async callbacks.
+      setActivePageState((prev) => prev ?? 'Dashboard');
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    return () => window.removeEventListener('unhandledrejection', onUnhandled);
+  }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
   const [isLoginView, setIsLoginView] = useState(true);
   const auth = useContext(AuthContext);
@@ -121,9 +131,11 @@ const App: React.FC = () => {
             <NotificationsProvider>
               <MarketSimulator />
               <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-              <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                {renderPage()}
-              </Suspense>
+              <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
+                <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
+                  {renderPage()}
+                </Suspense>
+              </AppErrorBoundary>
               </Layout>
             </NotificationsProvider>
           </MarketDataProvider>

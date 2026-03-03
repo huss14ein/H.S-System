@@ -471,37 +471,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             })()}
             
             <p className="text-xs text-slate-500 mb-1">
-                Drag the subtle grip in the top-right of a card to reorder; click the card to open that page.
+                Drag cards to reorder them; click a card to open that page.
             </p>
             <DraggableResizableGrid
                 layoutKey="dashboard-kpi"
-                draggableHandle=".dashboard-kpi-drag-handle"
+                itemOverflowY="visible"
                 items={KPI_CARD_ORDER.map((cardKey) => ({
                     id: cardKey,
                     content: (
-                        <div className="min-h-[132px] flex flex-col h-full relative">
-                            <button
-                                type="button"
-                                className="dashboard-kpi-drag-handle absolute top-2 right-2 z-10 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                onClick={(e) => e.stopPropagation()}
-                                aria-label="Drag to reorder card"
-                            >
-                                <span className="inline-flex flex-col gap-[2px]">
-                                    <span className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                    </span>
-                                    <span className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                    </span>
-                                    <span className="flex gap-[2px]">
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                        <span className="w-1 h-1 rounded-full bg-slate-400" />
-                                    </span>
-                                </span>
-                            </button>
-                            <div className="flex-1 min-h-0 pt-8">{kpiCards[cardKey]}</div>
+                        <div className="min-h-[132px] flex flex-col h-full">
+                            <div className="flex-1 min-h-0">{kpiCards[cardKey]}</div>
                         </div>
                     ),
                     defaultW: 4,
