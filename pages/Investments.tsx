@@ -663,7 +663,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Upcoming financials & income */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-700 truncate">Next financial statement & dividends</p>
+                        <p className="text-sm font-semibold text-slate-700 break-words">Next financial statement & dividends</p>
                         {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
                     </div>
                     {fundamentalsError && (
@@ -726,7 +726,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Price trend chart */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
-                    <p className="text-sm font-semibold text-slate-700 mb-3 truncate">Price trend</p>
+                    <p className="text-sm font-semibold text-slate-700 mb-3 break-words">Price trend</p>
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
@@ -739,7 +739,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-amber-50/50 to-white p-5 min-w-0 overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3 min-w-0">
                         <div className="min-w-0">
-                            <h4 className="font-semibold text-slate-800 truncate">Analyst Report</h4>
+                            <h4 className="font-semibold text-slate-800 break-words">Analyst Report</h4>
                             <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
                         </div>
                         <button
@@ -1207,7 +1207,7 @@ const PlatformCard: React.FC<{
                         <div className="w-1 h-12 rounded-full bg-primary shrink-0" aria-hidden />
                         <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 truncate min-w-0" title={platform.name}>{platform.name}</h3>
+                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 break-words min-w-0" title={platform.name}>{platform.name}</h3>
                                 <span className="flex items-center gap-0.5 shrink-0">
                                     <button type="button" onClick={() => onEditPlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
@@ -1306,7 +1306,7 @@ const PlatformCard: React.FC<{
                                 <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
                                     <div className="min-w-0 flex-1 overflow-hidden">
-                                        <h4 className="font-bold text-slate-800 text-base truncate" title={portfolio.name}>{portfolio.name}</h4>
+                                        <h4 className="font-bold text-slate-800 text-base break-words" title={portfolio.name}>{portfolio.name}</h4>
                                         <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 break-words" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>

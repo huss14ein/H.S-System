@@ -157,6 +157,8 @@
         text-overflow: clip;
         min-width: 0;
         word-break: normal;
+        overflow-wrap: anywhere;
+        hyphens: auto;
     }
     .metric-value {
         white-space: normal;
@@ -164,6 +166,8 @@
         text-overflow: clip;
         min-width: 0;
         word-break: break-word;
+        overflow-wrap: anywhere;
+        hyphens: auto;
     }
     /* Dynamic spacing: viewport-scaled + content-aware for platform cards and metric boxes */
     .platform-cards-grid {
@@ -195,12 +199,16 @@
         overflow: visible;
         text-overflow: clip;
         word-break: normal;
+        overflow-wrap: anywhere;
+        hyphens: auto;
     }
     .platform-card .platform-metrics .metric-value {
         white-space: normal;
         overflow: visible;
         text-overflow: clip;
         word-break: normal;
+        overflow-wrap: anywhere;
+        hyphens: auto;
     }
     .platform-card .platform-card-body {
         padding: var(--card-pad);
@@ -213,6 +221,8 @@
         overflow: visible;
         text-overflow: clip;
         word-break: keep-all;
+        overflow-wrap: anywhere;
+        hyphens: auto;
         line-height: 1.2;
     }
     .share-detail-metric-value {
@@ -220,6 +230,8 @@
         overflow: visible;
         text-overflow: clip;
         word-break: break-word;
+        overflow-wrap: anywhere;
+        hyphens: auto;
         line-height: 1.2;
     }
     /* Reusable dynamic gap for card/section grids across all pages */
