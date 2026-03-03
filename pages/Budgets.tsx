@@ -886,7 +886,9 @@ const Budgets: React.FC = () => {
                                                 <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
                                                 <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
                                                 <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                                <td className="py-2 px-2 text-gray-600 max-w-[180px] truncate" title={r.note || r.request_note || ''}>{r.note || r.request_note || '—'}</td>
+                                                <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
+                                                    <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>

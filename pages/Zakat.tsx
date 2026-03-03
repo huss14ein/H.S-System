@@ -231,7 +231,7 @@ const Zakat: React.FC = () => {
                                         <p className="text-xs text-gray-500">{new Date(p.date).toLocaleDateString()}</p>
                                     </div>
                                 </div>
-                                {p.notes && <p className="text-xs text-gray-600 italic text-right truncate" title={p.notes}>{p.notes}</p>}
+                                {p.notes && <p className="text-xs text-gray-600 italic text-right clamp-2-lines break-words max-w-[220px]" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
                         {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}

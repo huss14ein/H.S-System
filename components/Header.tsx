@@ -271,8 +271,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   {isProfileOpen && (
                   <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl py-2 ring-1 ring-black ring-opacity-5 border border-gray-100 overflow-hidden">
                       <div className="px-4 py-3 bg-slate-50 border-b border-gray-100">
-                        <p className="text-sm font-bold text-gray-900 truncate">{auth?.user?.email}</p>
-                        <p className="text-gray-500 text-[10px] font-mono truncate mt-0.5 opacity-60">{auth?.user?.id}</p>
+                        <p className="text-sm font-bold text-gray-900 break-all leading-snug">{auth?.user?.email}</p>
+                        <p className="text-gray-500 text-[10px] font-mono mt-0.5 opacity-60 break-all">{auth?.user?.id}</p>
                       </div>
                       <div className="py-1">
                         <button onClick={() => { setActivePage('Settings'); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">Settings</button>

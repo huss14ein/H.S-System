@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
@@ -38,7 +38,7 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
         const fmt = formatValue ?? ((n: number) => new Intl.NumberFormat('en-US', { style: 'currency', minimumFractionDigits: 0 }).format(n));
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[140px]">
-                <p className="font-semibold text-slate-800 truncate">{name}</p>
+                <p className="font-semibold text-slate-800 break-words leading-tight" title={name}>{name}</p>
                 <p className="text-slate-600">Market value: {fmt(size)}</p>
                 <p className={gainLossPercent >= 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>
                     Performance: {gainLossPercent.toFixed(2)}%
@@ -79,14 +79,18 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
     };
     
-    const processedData = data
-        .filter(item => item.currentValue > 0)
-        .map(item => ({
-            name: item.symbol,
-            size: item.currentValue,
-            gainLossPercent: item.gainLossPercent,
-            color: getColor(item.gainLossPercent),
-        }));
+    const processedData = useMemo(() => (
+        data
+            .filter(item => item.currentValue > 0)
+            .map(item => ({
+                name: item.symbol,
+                size: item.currentValue,
+                gainLossPercent: item.gainLossPercent,
+                color: getColor(item.gainLossPercent),
+            }))
+    ), [data]);
+
+    const enableAnimation = processedData.length <= 60;
 
     if (!processedData.length) {
         return (
@@ -99,8 +103,8 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     return (
         <ResponsiveContainer width="100%" height="100%">
             <Treemap
-                isAnimationActive={true}
-                animationDuration={800}
+                isAnimationActive={enableAnimation}
+                animationDuration={enableAnimation ? 800 : 0}
                 data={processedData}
                 dataKey="size"
                 aspectRatio={4 / 3}
