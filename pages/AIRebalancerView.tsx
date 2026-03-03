@@ -7,6 +7,9 @@ import InfoHint from '../components/InfoHint';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
+import { useAI } from '../context/AiContext';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
@@ -17,6 +20,7 @@ interface AIRebalancerViewProps {
 
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra }) => {
   const { data } = useContext(DataContext)!;
+  const { isAiAvailable } = useAI();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data.investments[0]?.id || '');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
   const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
@@ -67,6 +71,12 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   return (
     <div className="mt-6 space-y-6">
       {/* Hero */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Portfolios</p><p className="mt-1 text-2xl font-bold text-slate-900">{data.investments.length}</p></div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Selected holdings</p><p className="mt-1 text-2xl font-bold text-slate-900">{selectedPortfolio?.holdings?.length ?? 0}</p></div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">AI status</p><p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} {isAiAvailable ? 'Operational' : 'Unavailable'}</p></div>
+      </div>
+
       <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
         <h2 className="text-xl font-bold text-slate-800">AI Portfolio Rebalancer</h2>
         <p className="text-sm text-slate-600 mt-1 max-w-2xl">
@@ -151,7 +161,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
           <button
             type="button"
             onClick={handleGeneratePlan}
-            disabled={isLoading}
+            disabled={isLoading || !isAiAvailable}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed font-semibold text-sm"
           >
             <ScaleIcon className="h-5 w-5" />
@@ -167,6 +177,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             className="min-h-[360px]"
           >
             <p className="text-xs text-slate-500 mb-4">From your expert investment advisor</p>
+            {!isAiAvailable && !isLoading && (<div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI features are disabled. Re-enable AI provider/API key for live rebalancing suggestions.</div>)}
             {planError && !isLoading && (
               <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <SafeMarkdownRenderer content={planError} />

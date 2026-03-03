@@ -150,18 +150,20 @@
     .section-title {
         @apply text-base sm:text-lg font-semibold text-dark mb-4 flex items-center gap-2 min-w-0 break-words;
     }
-    /* Single-line labels/values in metric boxes and cards — no awkward two-line wrapping */
+    /* System-wide readability baseline: allow metric labels/values to wrap instead of clipping. */
     .metric-label {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
         min-width: 0;
+        word-break: normal;
     }
     .metric-value {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
         min-width: 0;
+        word-break: break-word;
     }
     /* Dynamic spacing: viewport-scaled + content-aware for platform cards and metric boxes */
     .platform-cards-grid {
@@ -188,11 +190,37 @@
         margin-top: var(--section-gap);
         gap: var(--metric-gap);
     }
+    .platform-card .platform-metrics .metric-label {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: normal;
+    }
+    .platform-card .platform-metrics .metric-value {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: normal;
+    }
     .platform-card .platform-card-body {
         padding: var(--card-pad);
         display: flex;
         flex-direction: column;
         gap: var(--section-gap);
+    }
+    .share-detail-metric-label {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: keep-all;
+        line-height: 1.2;
+    }
+    .share-detail-metric-value {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: break-word;
+        line-height: 1.2;
     }
     /* Reusable dynamic gap for card/section grids across all pages */
     .cards-grid {

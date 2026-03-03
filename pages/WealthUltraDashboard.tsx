@@ -2,6 +2,7 @@ import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useAI } from '../context/AiContext';
 import { runWealthUltraEngine, exportOrdersJson, capitalEfficiencyScore, getDefaultWealthUltraConfig, getRiskWeight } from '../wealth-ultra';
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
 import type { Page } from '../types';
@@ -162,10 +163,11 @@ interface WealthUltraDashboardProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage: _setActivePage, triggerPageAction }) => {
+const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
+  const { isAiAvailable } = useAI();
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
@@ -259,11 +261,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'hero',
         content: (
-          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-primary/5 p-6">
+          <SectionCard title="Wealth Ultra engine" className="border-primary/20 bg-white">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Wealth Ultra</h1>
-                <p className="text-slate-600 mt-1 max-w-xl">Rule-based allocation, sleeve drift, and orders from your Investment Plan. One view for deployable cash, targets, and next moves.</p>
+                <p className="text-slate-600 mt-1 max-w-2xl">Rule-based allocation, sleeve drift, and orders generated from your Investment Plan in one operational workspace.</p>
               </div>
               <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border ${healthColor} shrink-0`}>
                 {portfolioHealth.score >= 85 ? <CheckCircleIcon className="h-6 w-6 text-emerald-600 shrink-0" /> : <ExclamationTriangleIcon className="h-6 w-6 shrink-0" />}
@@ -278,7 +279,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 Tracking <strong>{positionCount}</strong> position{positionCount !== 1 ? 's' : ''}{portfolioCount > 0 ? ` across ${portfolioCount} portfolio${portfolioCount !== 1 ? 's' : ''}` : ''}. Data: Investments + Plan + Universe + Accounts.
               </p>
             )}
-          </div>
+          </SectionCard>
         ),
         defaultW: 12,
         defaultH: 2,
@@ -383,7 +384,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'orders',
         content: (
-          <SectionCard title="Orders ready" className="border-primary/20 bg-primary/5">
+          <SectionCard title="Orders ready" className="border-primary/20 bg-white">
             <p className="text-xs text-slate-600 mb-4">Suggested limit orders from the engine. Export to JSON or use as a checklist when placing trades.</p>
             {orders.length > 0 ? (
               <div className="space-y-3">
@@ -462,7 +463,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <SectionCard title="Alerts & recommendations">
             <p className="text-xs text-slate-500 mb-3">Prioritized: act on critical first, then warnings; use info for context.</p>
             {alerts.length > 0 ? (
-              <ul className="space-y-3 max-h-[380px] overflow-y-auto">
+              <ul className="space-y-3">
                 {alerts.map((a, i) => {
                   const isCritical = a.severity === 'critical';
                   const isWarning = a.severity === 'warning';
@@ -498,7 +499,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <SectionCard title="All positions">
             <p className="text-xs text-slate-500 mb-3">P&L % = (market value − cost) / cost. Sorted by return.</p>
             {positions.length > 0 ? (
-              <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
                     <tr className="text-left text-slate-600">
@@ -577,7 +578,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         content: (
           <SectionCard title="Capital efficiency (return % × risk weight)">
             <p className="text-xs text-slate-500 mb-3">Higher score = better risk-adjusted return. Weights: Med 1.25, High 1.5, Spec 2.</p>
-            <ul className="space-y-2 max-h-44 overflow-y-auto">
+            <ul className="space-y-2">
               {capitalEfficiencyRanked.slice(0, 10).map((p, i) => {
                 const tier = p.riskTier ?? 'Med';
                 const weight = getRiskWeight(config, tier);
@@ -660,9 +661,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   return (
     <PageLayout
       title="Wealth Ultra Portfolio Engine"
-      description="Smart allocation, sleeve drift, and orders from your Investment Plan. One view for deployable cash, targets, and next moves."
+      description="Smart allocation, sleeve drift, and institutional-grade order planning. Unified with Investment Plan, execution flow, and live portfolio telemetry."
       action={
         <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
           {triggerPageAction && (
             <button
               type="button"
@@ -671,6 +673,15 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             >
               <PencilIcon className="h-5 w-5" />
               Edit plan & budget
+            </button>
+          )}
+          {setActivePage && (
+            <button
+              type="button"
+              onClick={() => setActivePage('Investments')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
+            >
+              Open Investments Hub
             </button>
           )}
           <button
@@ -688,6 +699,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         items={gridItems}
         cols={12}
         rowHeight={72}
+        itemOverflowY="visible"
         handlesOnHoverOnly
       />
     </PageLayout>

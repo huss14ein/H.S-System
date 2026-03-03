@@ -16,6 +16,9 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { useMarketData } from '../context/MarketDataContext';
 import LivePricesStatus from '../components/LivePricesStatus';
 import InfoHint from '../components/InfoHint';
+import { useAI } from '../context/AiContext';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 
 const ALERT_CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'USD', label: 'USD' },
@@ -302,6 +305,7 @@ interface WatchlistViewProps {
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
+    const { isAiAvailable } = useAI();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
@@ -453,7 +457,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
         <div className="mt-6 space-y-6">
             {/* Hero */}
             <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
-                <h2 className="text-xl font-bold text-slate-800">Watchlist</h2>
+                <div className="flex flex-wrap items-center gap-3"><h2 className="text-xl font-bold text-slate-800">Watchlist</h2><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span></div>
                 <p className="text-sm text-slate-600 mt-1 max-w-2xl">
                     Track symbols, prices, and 1M trend. Set price alerts and get AI trade insights and watchlist tips. Sync tickers with <strong>Investment Plan</strong> and <strong>Portfolio Universe</strong> for allocation.
                 </p>
@@ -516,7 +520,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     <p className="text-xs text-slate-600 mb-3">Educational feedback on your recent trades, patterns, and portfolio impact.</p>
                     {recentTransactions.length > 0 ? (
                         <>
-                            <button onClick={handleAnalyzeTrades} disabled={aiTradeLoading} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
+                            <button onClick={handleAnalyzeTrades} disabled={aiTradeLoading || !isAiAvailable} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
                                 <SparklesIcon className="h-4 w-4" /> {aiTradeLoading ? 'Analyzing...' : 'Analyze Trades'}
                             </button>
                             {aiTradeError && <div className="mt-2"><p className="text-xs text-red-600">{aiTradeError}</p><button type="button" onClick={handleAnalyzeTrades} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}
@@ -529,13 +533,13 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-amber-500"/>Watchlist Tips</h4>
                     <p className="text-xs text-slate-600 mb-3">AI suggestions for your watchlist symbols (diversification, themes, concepts).</p>
-                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
+                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length || !isAiAvailable} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
                         <SparklesIcon className="h-4 w-4" /> {aiWatchlistLoading ? 'Generating...' : 'Get Recommendations'}
                     </button>
                     {aiWatchlistError && <div className="mt-2"><p className="text-xs text-red-600">{aiWatchlistError}</p><button type="button" onClick={handleGetWatchlistTips} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}
                     {aiWatchlistTips && <div className="mt-3 prose prose-sm max-w-none text-left max-h-[220px] overflow-y-auto rounded-lg bg-amber-50/80 p-3 border border-amber-100"><SafeMarkdownRenderer content={aiWatchlistTips} /></div>}
                 </div>
-                <p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
+                {!isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Core watchlist tracking and alerts continue to work.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
             </div>
             </div>
 

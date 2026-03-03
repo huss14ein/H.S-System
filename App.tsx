@@ -11,6 +11,8 @@ import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
+import GlobalErrorBoundary from './components/GlobalErrorBoundary';
+import SystemActivityGuard from './components/SystemActivityGuard';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -119,12 +121,15 @@ const App: React.FC = () => {
         <CurrencyProvider>
           <MarketDataProvider>
             <NotificationsProvider>
+              <SystemActivityGuard />
               <MarketSimulator />
-              <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-              <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                {renderPage()}
-              </Suspense>
-              </Layout>
+              <GlobalErrorBoundary>
+                <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+                <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
+                  {renderPage()}
+                </Suspense>
+                </Layout>
+              </GlobalErrorBoundary>
             </NotificationsProvider>
           </MarketDataProvider>
         </CurrencyProvider>
