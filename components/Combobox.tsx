@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { CheckIcon } from './icons/CheckIcon';
 import { ChevronUpDownIcon } from './icons/ChevronUpDownIcon';
 
@@ -13,13 +13,14 @@ interface ComboboxProps {
 const Combobox: React.FC<ComboboxProps> = ({ items, selectedItem, onSelectItem, placeholder = "Select or create..." }) => {
     const [query, setQuery] = useState('');
     const [isOpen, setIsOpen] = useState(false);
+    const deferredQuery = useDeferredValue(query);
 
     const filteredItems = useMemo(() => {
-        if (query === '') {
+        if (deferredQuery === '') {
             return items;
         }
-        return items.filter(item => item.toLowerCase().includes(query.toLowerCase()));
-    }, [query, items]);
+        return items.filter(item => item.toLowerCase().includes(deferredQuery.toLowerCase()));
+    }, [deferredQuery, items]);
 
     const handleSelect = (item: string) => {
         onSelectItem(item);

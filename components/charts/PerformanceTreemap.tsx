@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
@@ -51,6 +51,16 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
 
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+        const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const syncPreference = () => setPrefersReducedMotion(mediaQuery.matches);
+        syncPreference();
+        mediaQuery.addEventListener('change', syncPreference);
+        return () => mediaQuery.removeEventListener('change', syncPreference);
+    }, []);
 
     const getColor = (percentage: number) => {
         if (isNaN(percentage) || !isFinite(percentage)) {
@@ -90,7 +100,7 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
             }))
     ), [data]);
 
-    const enableAnimation = processedData.length <= 60;
+    const enableAnimation = processedData.length <= 60 && !prefersReducedMotion;
 
     if (!processedData.length) {
         return (
