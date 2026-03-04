@@ -1941,6 +1941,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setIsExecuting(false);
     };
 
+    const canExecutePlan = (plan.monthlyBudget ?? 0) > 0 && actionableCount > 0;
+
     return (
         <div className="space-y-6">
             <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 sm:p-6">
@@ -2303,7 +2305,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     </div>
                     <div className="p-6">
                         {noActionableWarning && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">{noActionableWarning}</div>
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">
+                                {noActionableWarning}
+                            </div>
                         )}
                         {executionError && (
                             <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex flex-col gap-2">
@@ -2316,11 +2320,33 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             </div>
                         )}
                         <div className="flex flex-col sm:flex-row gap-2">
-                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="flex-1 flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Try AI first, then fall back to rule-based if needed'}>
+                            <button
+                                onClick={() => handleExecutePlan(false)}
+                                disabled={isExecuting || !canExecutePlan}
+                                className="flex-1 flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+                                title={
+                                    actionableCount === 0
+                                        ? 'Add Core or High-Upside tickers first'
+                                        : (plan.monthlyBudget ?? 0) <= 0
+                                        ? 'Set a positive monthly budget before executing'
+                                        : 'Try AI first, then fall back to rule-based if needed'
+                                }
+                            >
                                 <SparklesIcon className="h-5 w-5 mr-2" />
                                 {isExecuting ? 'Executing...' : 'Execute now'}
                             </button>
-                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
+                            <button
+                                onClick={() => handleExecutePlan(true)}
+                                disabled={isExecuting || !canExecutePlan}
+                                className="flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium"
+                                title={
+                                    actionableCount === 0
+                                        ? 'Add Core or High-Upside tickers first'
+                                        : (plan.monthlyBudget ?? 0) <= 0
+                                        ? 'Set a positive monthly budget before executing'
+                                        : 'Skip AI and use rule-based allocation only'
+                                }
+                            >
                                 Run rule-based only
                             </button>
                         </div>

@@ -60,4 +60,4 @@ const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline',
   );
 };
 
-export default LivePricesStatus;
+export default React.memo(LivePricesStatus);
