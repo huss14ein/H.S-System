@@ -588,6 +588,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
+    const isSukuk = holding.assetClass === 'Sukuk';
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
             <div className="space-y-6 min-w-0">
@@ -604,6 +606,16 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                             {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
                         </span>
                         <span className="text-sm text-slate-500 shrink-0">per share · {portfolioCurrency}</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 min-w-0">
+                        {holding.assetClass && (
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
+                                {isSukuk ? 'Sukuk · Islamic bond' : holding.assetClass}
+                            </span>
+                        )}
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>
+                            Zakat: {holding.zakahClass}
+                        </span>
                     </div>
                 </div>
 
@@ -1121,7 +1133,7 @@ const PlatformCard: React.FC<{
                     </button>
                 </div>
                 <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-2" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-center text-left min-h-[98px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
                         <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
@@ -1158,19 +1170,19 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-center text-left min-h-[98px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-center text-left min-h-[98px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-center text-left min-h-[98px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
                         <dd className={`metric-value w-full font-bold text-base sm:text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-center text-left min-h-[98px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
                         <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
@@ -1667,7 +1679,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const handlePlanChange = (field: keyof InvestmentPlanSettings, value: any) => {
         setPlan(prev => ({ ...prev, [field]: value }));
     };
-
+    
     const toClampedFraction = (rawPercent: string, fallbackFraction: number) => {
         const parsed = Number.parseFloat(rawPercent);
         if (!Number.isFinite(parsed)) return fallbackFraction;
@@ -1675,17 +1687,28 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         return clampedPercent / 100;
     };
 
+    const getEffectiveCoreAllocation = (p: InvestmentPlanSettings) =>
+        typeof p.coreAllocation === 'number' && Number.isFinite(p.coreAllocation) ? p.coreAllocation : 0.7;
+    const getEffectiveUpsideAllocation = (p: InvestmentPlanSettings) =>
+        typeof p.upsideAllocation === 'number' && Number.isFinite(p.upsideAllocation) ? p.upsideAllocation : 0.3;
+    
     const handleCoreAllocationPercentChange = (rawPercent: string) => {
         setPlan(prev => {
-            const core = toClampedFraction(rawPercent, prev.coreAllocation ?? 0.7);
-            return { ...prev, coreAllocation: core, upsideAllocation: Math.max(0, 1 - core) };
+            const baseCore = getEffectiveCoreAllocation(prev);
+            const core = toClampedFraction(rawPercent, baseCore);
+            const safeCore = Number.isFinite(core) ? core : baseCore;
+            const safeUpside = Math.max(0, 1 - safeCore);
+            return { ...prev, coreAllocation: safeCore, upsideAllocation: safeUpside };
         });
     };
-
+    
     const handleUpsideAllocationPercentChange = (rawPercent: string) => {
         setPlan(prev => {
-            const upside = toClampedFraction(rawPercent, prev.upsideAllocation ?? 0.3);
-            return { ...prev, upsideAllocation: upside, coreAllocation: Math.max(0, 1 - upside) };
+            const baseUpside = getEffectiveUpsideAllocation(prev);
+            const upside = toClampedFraction(rawPercent, baseUpside);
+            const safeUpside = Number.isFinite(upside) ? upside : baseUpside;
+            const safeCore = Math.max(0, 1 - safeUpside);
+            return { ...prev, upsideAllocation: safeUpside, coreAllocation: safeCore };
         });
     };
 
@@ -1734,8 +1757,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         }
     };
 
-    const allocationSum = (plan.coreAllocation + plan.upsideAllocation) * 100;
-    const allocationWarning = Math.abs(allocationSum - 100) > 0.5 ? `Core + High-Upside = ${allocationSum.toFixed(1)}%; should equal 100%. Remaining is treated as Spec.` : null;
+    const effectiveCoreAllocation = getEffectiveCoreAllocation(plan);
+    const effectiveUpsideAllocation = getEffectiveUpsideAllocation(plan);
+    const allocationSum = (effectiveCoreAllocation + effectiveUpsideAllocation) * 100;
+    const allocationWarning = Math.abs(allocationSum - 100) > 0.5
+        ? `Core + High-Upside = ${allocationSum.toFixed(1)}%; should equal 100%. Remaining is treated as Spec.`
+        : null;
 
     const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
     const budget = plan.monthlyBudget ?? 0;
@@ -1752,8 +1779,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         let score = 100;
         const reasons: string[] = [];
         const monthly = plan.monthlyBudget ?? 0;
-        const corePct = (plan.coreAllocation ?? 0) * 100;
-        const upsidePct = (plan.upsideAllocation ?? 0) * 100;
+        const corePct = effectiveCoreAllocation * 100;
+        const upsidePct = effectiveUpsideAllocation * 100;
 
         if (monthly <= 0) {
             score -= 25;
@@ -1796,8 +1823,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             summary,
             corePct,
             upsidePct,
+            reasons,
         };
-    }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning]);
+    }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning, effectiveCoreAllocation, effectiveUpsideAllocation]);
 
     const syncPlanFromUniverse = () => {
         const core = (data.portfolioUniverse || []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
@@ -1808,13 +1836,13 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const applySmartPlan = () => {
         const hasHistory = suggestedMonthlyBudget > 0;
         const monthly = hasHistory ? suggestedMonthlyBudget : plan.monthlyBudget || 0;
-
+    
         const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
         const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
-
-        let coreAlloc = plan.coreAllocation ?? 0.7;
-        let upsideAlloc = plan.upsideAllocation ?? 0.3;
-
+    
+        let coreAlloc = effectiveCoreAllocation;
+        let upsideAlloc = effectiveUpsideAllocation;
+    
         const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const totalWt = coreWt + upWt;
@@ -1822,9 +1850,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             coreAlloc = coreWt / totalWt;
             upsideAlloc = upWt / totalWt;
         }
-
-        const nextMinOrder = monthly > 0 ? Math.round((monthly * 0.1) / 100) * 100 : plan.brokerConstraints.minimumOrderSize;
-
+    
+        const nextMinOrder =
+            monthly > 0
+                ? Math.max(100, Math.round((monthly * 0.1) / 100) * 100)
+                : plan.brokerConstraints.minimumOrderSize;
+    
         setPlan(prev => ({
             ...prev,
             monthlyBudget: monthly,
@@ -1835,6 +1866,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 minimumOrderSize: nextMinOrder,
             },
         }));
+
+        // Ensure sleeves in the plan stay in sync with the current universe
+        syncPlanFromUniverse();
     };
 
     const handleSave = () => {
@@ -1907,6 +1941,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setIsExecuting(false);
     };
 
+    const canExecutePlan = (plan.monthlyBudget ?? 0) > 0 && actionableCount > 0;
+
     return (
         <div className="space-y-6">
             <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 sm:p-6">
@@ -1964,17 +2000,27 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             {/* Plan health — smart readiness summary */}
             <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200 shrink-0">
                             <span className="text-lg font-bold text-emerald-700 tabular-nums">{planHealth.score}</span>
                         </div>
-                        <div>
-                            <p className="text-sm font-semibold text-slate-800">{planHealth.label}</p>
-                            <p className="text-xs text-slate-600 mt-0.5">{planHealth.summary}</p>
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800 break-words">{planHealth.label}</p>
+                            <p className="text-xs text-slate-600 mt-0.5 break-words">{planHealth.summary}</p>
+                            {planHealth.reasons && planHealth.reasons.length > 0 && (
+                                <ul className="mt-2 text-xs text-slate-600 space-y-1">
+                                    {planHealth.reasons.slice(0, 3).map((reason) => (
+                                        <li key={reason} className="flex items-start gap-1.5">
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+                                            <span className="break-words">{reason}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
                         </div>
                     </div>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 min-w-[200px]">
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 min-w-[220px]">
                         <div>
                             <dt className="font-medium text-slate-700">Monthly budget</dt>
                             <dd className="font-mono tabular-nums text-slate-900">
@@ -2040,11 +2086,25 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Core Allocation (%) <InfoHint text="Share of monthly budget for stable Core assets (e.g. index funds); the rest goes to High-Upside." /></label>
-                                <input type="number" value={plan.coreAllocation * 100} onChange={e => handleCoreAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round(effectiveCoreAllocation * 100)}
+                                    onChange={e => handleCoreAllocationPercentChange(e.target.value)}
+                                    className="mt-1 w-full p-2 border rounded-md"
+                                />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
-                                <input type="number" value={plan.upsideAllocation * 100} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={Math.round(effectiveUpsideAllocation * 100)}
+                                    onChange={e => handleUpsideAllocationPercentChange(e.target.value)}
+                                    className="mt-1 w-full p-2 border rounded-md"
+                                />
                             </div>
                         </div>
 
@@ -2245,7 +2305,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     </div>
                     <div className="p-6">
                         {noActionableWarning && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">{noActionableWarning}</div>
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">
+                                {noActionableWarning}
+                            </div>
                         )}
                         {executionError && (
                             <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex flex-col gap-2">
@@ -2258,11 +2320,33 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             </div>
                         )}
                         <div className="flex flex-col sm:flex-row gap-2">
-                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="flex-1 flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Try AI first, then fall back to rule-based if needed'}>
+                            <button
+                                onClick={() => handleExecutePlan(false)}
+                                disabled={isExecuting || !canExecutePlan}
+                                className="flex-1 flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+                                title={
+                                    actionableCount === 0
+                                        ? 'Add Core or High-Upside tickers first'
+                                        : (plan.monthlyBudget ?? 0) <= 0
+                                        ? 'Set a positive monthly budget before executing'
+                                        : 'Try AI first, then fall back to rule-based if needed'
+                                }
+                            >
                                 <SparklesIcon className="h-5 w-5 mr-2" />
                                 {isExecuting ? 'Executing...' : 'Execute now'}
                             </button>
-                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
+                            <button
+                                onClick={() => handleExecutePlan(true)}
+                                disabled={isExecuting || !canExecutePlan}
+                                className="flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium"
+                                title={
+                                    actionableCount === 0
+                                        ? 'Add Core or High-Upside tickers first'
+                                        : (plan.monthlyBudget ?? 0) <= 0
+                                        ? 'Set a positive monthly budget before executing'
+                                        : 'Skip AI and use rule-based allocation only'
+                                }
+                            >
                                 Run rule-based only
                             </button>
                         </div>
