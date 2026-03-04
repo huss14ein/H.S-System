@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
+import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
 import { finnhubFetch } from './finnhubService';
 
@@ -346,17 +346,7 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
     }
 }
 
-const invokeClientSideGemini = async (payload: { model: string, contents: any, config?: any }, apiKey: string): Promise<any> => {
-    const ai = new GoogleGenAI({ apiKey });
-    const response: GenerateContentResponse = await ai.models.generateContent(payload);
-    return {
-        text: response.text,
-        candidates: response.candidates,
-        functionCalls: response.functionCalls,
-    };
-};
-
-// Unified AI invocation function. Uses proxy first (deployment-safe), with direct-key fallback when configured.
+// Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     const hasJsonSchema = payload.config?.responseMimeType === 'application/json';
     const mergedPayload = {
@@ -367,31 +357,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
         },
     };
 
-    const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-    if (import.meta.env.DEV && clientSideApiKey) {
-        try {
-            return await invokeClientSideGemini(mergedPayload, clientSideApiKey);
-        } catch (error) {
-            throw new Error(formatAiError(error));
-        }
-    }
-
-    try {
-        return await invokeGeminiProxy(mergedPayload);
-    } catch (proxyError) {
-        const details = formatAiError(proxyError);
-        const shouldTryDirectKey = Boolean(clientSideApiKey) && /quota|resource_exhausted|429|rate.?limit|unavailable|proxy|network|timeout/i.test(details);
-        if (!shouldTryDirectKey) {
-            throw proxyError;
-        }
-
-        try {
-            return await invokeClientSideGemini(mergedPayload, clientSideApiKey!);
-        } catch (directError) {
-            throw new Error(`${details} (Direct-key fallback failed: ${formatAiError(directError)})`);
-        }
-    }
+    return invokeGeminiProxy(mergedPayload);
 }
 
 
