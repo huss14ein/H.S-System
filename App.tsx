@@ -76,6 +76,15 @@ const App: React.FC = () => {
     if (!window.location.hash) window.location.replace('#Dashboard');
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  React.useEffect(() => {
+    const onUnhandled = () => {
+      // Keep app resilient after browser wake/sleep transitions and stale async callbacks.
+      setActivePageState((prev) => prev ?? 'Dashboard');
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    return () => window.removeEventListener('unhandledrejection', onUnhandled);
+  }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
   const [isLoginView, setIsLoginView] = useState(true);
   const auth = useContext(AuthContext);
@@ -128,13 +137,13 @@ const App: React.FC = () => {
             <NotificationsProvider>
               <SystemActivityGuard />
               <MarketSimulator />
-              <GlobalErrorBoundary>
-                <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+              <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+              <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
                 <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
                   {renderPage()}
                 </Suspense>
-                </Layout>
-              </GlobalErrorBoundary>
+              </AppErrorBoundary>
+              </Layout>
             </NotificationsProvider>
           </MarketDataProvider>
         </CurrencyProvider>
