@@ -267,6 +267,9 @@ function holdingToRow(holding: Partial<Holding> & { symbol: string; quantity: nu
         realized_pnl: Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
     };
+    if (holding.assetClass != null || (holding as any).asset_class != null) {
+        row.asset_class = holding.assetClass ?? (holding as any).asset_class;
+    }
     return row;
 }
 
@@ -279,6 +282,7 @@ function normalizeHoldingFromRow(row: any): Holding {
         currentValue: row.current_value ?? row.currentValue ?? 0,
         realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
+        assetClass: row.asset_class ?? row.assetClass,
     };
 }
 
@@ -1257,6 +1261,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             if (!portfolio) throw new Error('Portfolio not found');
             if (tradeData.type === 'buy') {
+                const inferredAssetClass: Holding['assetClass'] = /(^|\W)(sukuk|suk|صكوك)(\W|$)/i.test(`${tradeData.symbol} ${name || ''}`) ? 'Sukuk' : 'Stock';
                 if (existingHolding) {
                     const newTotalValue = (existingHolding.avgCost * existingHolding.quantity) + (tradeData.price * tradeData.quantity);
                     const newQuantity = existingHolding.quantity + tradeData.quantity;
@@ -1270,6 +1275,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         quantity: tradeData.quantity,
                         avgCost: tradeData.price,
                         currentValue: tradeData.price * tradeData.quantity,
+                        assetClass: inferredAssetClass,
                         zakahClass: 'Zakatable' as const,
                         realizedPnL: 0,
                     };
@@ -1375,19 +1381,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
-        // Only update current_value; do not include name to avoid overwriting DB names with 'Other' when holding isn't in client cache
-        const payload = updates.map(u => ({
-            id: u.id,
-            current_value: u.currentValue,
-            user_id: auth.user!.id,
-        }));
-        const { error } = await supabase.from('commodity_holdings').upsert(payload, { onConflict: 'id' });
-        if (error) {
-            console.error("Error batch updating commodity values:", error);
+        // Update only existing rows by id/user_id. Avoid upsert so we never attempt inserts
+        // that violate NOT NULL columns such as `name` when stale ids appear during refresh cycles.
+        const safeUpdates = updates.filter(u => !!u.id);
+        const results = await Promise.all(
+            safeUpdates.map(u =>
+                supabase
+                    .from('commodity_holdings')
+                    .update({ current_value: u.currentValue })
+                    .match({ id: u.id, user_id: auth.user!.id })
+            )
+        );
+        const failed = results.find(r => r.error);
+        if (failed?.error) {
+            console.error("Error batch updating commodity values:", failed.error);
             return;
         }
         setData(prevData => {
-            const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
+            const updatesMap = new Map(safeUpdates.map(u => [u.id, u.currentValue]));
             return {
                 ...prevData,
                 commodityHoldings: prevData.commodityHoldings.map(h =>
