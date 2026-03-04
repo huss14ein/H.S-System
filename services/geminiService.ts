@@ -346,7 +346,17 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
     }
 }
 
-// Unified AI invocation function. Decides whether to use client-side SDK or proxy.
+const invokeClientSideGemini = async (payload: { model: string, contents: any, config?: any }, apiKey: string): Promise<any> => {
+    const ai = new GoogleGenAI({ apiKey });
+    const response: GenerateContentResponse = await ai.models.generateContent(payload);
+    return {
+        text: response.text,
+        candidates: response.candidates,
+        functionCalls: response.functionCalls,
+    };
+};
+
+// Unified AI invocation function. Uses proxy first (deployment-safe), with direct-key fallback when configured.
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     const hasJsonSchema = payload.config?.responseMimeType === 'application/json';
     const mergedPayload = {
@@ -357,24 +367,30 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
         },
     };
 
-    // In dev mode, use the client-side key if available.
-    // In dev mode, use the client-side key if available. Otherwise, fall back to the proxy.
-    if (import.meta.env.DEV && import.meta.env.VITE_GEMINI_API_KEY) {
-        const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+    if (import.meta.env.DEV && clientSideApiKey) {
         try {
-            const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-            const response: GenerateContentResponse = await ai.models.generateContent(mergedPayload);
-            return {
-                text: response.text,
-                candidates: response.candidates,
-                functionCalls: response.functionCalls,
-            };
+            return await invokeClientSideGemini(mergedPayload, clientSideApiKey);
         } catch (error) {
             throw new Error(formatAiError(error));
         }
-    } else {
-        // In production, or for local dev without a specific client-side key, use the proxy.
-        return invokeGeminiProxy(mergedPayload);
+    }
+
+    try {
+        return await invokeGeminiProxy(mergedPayload);
+    } catch (proxyError) {
+        const details = formatAiError(proxyError);
+        const shouldTryDirectKey = Boolean(clientSideApiKey) && /quota|resource_exhausted|429|rate.?limit|unavailable|proxy|network|timeout/i.test(details);
+        if (!shouldTryDirectKey) {
+            throw proxyError;
+        }
+
+        try {
+            return await invokeClientSideGemini(mergedPayload, clientSideApiKey!);
+        } catch (directError) {
+            throw new Error(`${details} (Direct-key fallback failed: ${formatAiError(directError)})`);
+        }
     }
 }
 
