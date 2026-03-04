@@ -28,7 +28,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
-        setIsCommandPaletteOpen(prev => !prev);
+        setIsCommandPaletteOpen((prev) => !prev);
       }
     };
 
@@ -37,7 +37,6 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
@@ -63,18 +62,18 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
             {children}
         </div>
       </main>
-      
+
       <QuickActionsSidebar onAction={triggerPageAction} />
-      <CommandPalette 
+      <CommandPalette
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
         setActivePage={setActivePage}
-        onOpenLiveAdvisor={() => { setIsCommandPaletteOpen(false); setIsLiveAdvisorOpen(true); }}
+        onOpenLiveAdvisor={() => {
+          setIsCommandPaletteOpen(false);
+          setIsLiveAdvisorOpen(true);
+        }}
       />
-       <LiveAdvisorModal 
-        isOpen={isLiveAdvisorOpen}
-        onClose={() => setIsLiveAdvisorOpen(false)}
-      />
+      <LiveAdvisorModal isOpen={isLiveAdvisorOpen} onClose={() => setIsLiveAdvisorOpen(false)} />
     </div>
   );
 };
