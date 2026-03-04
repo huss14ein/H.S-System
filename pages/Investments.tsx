@@ -609,23 +609,23 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 min-w-0">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
+                <div className="grid grid-cols-2 2xl:grid-cols-4 gap-3.5 min-w-0">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap">{holding.quantity.toLocaleString()}</p>
+                        <p className="metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums whitespace-nowrap ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 whitespace-nowrap" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                        <p className={`share-detail-metric-value w-full mt-1 text-xl font-bold tabular-nums whitespace-nowrap leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="w-full text-xs text-slate-500 mt-2 leading-tight" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
@@ -762,7 +762,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysisError && !isLoading && (
-                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI was unavailable: {aiAnalysisError} Showing a position summary below. You can try again when the service is available.</p>
+                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI unavailable right now ({aiAnalysisError}). Showing a resilient fallback report below using your position data and Finnhub headlines when available. Configure AI/Finnhub keys to restore full analyst coverage.</p>
                     )}
                     {aiAnalysis && !isLoading && (
                         <div className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words">

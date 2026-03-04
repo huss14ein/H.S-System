@@ -985,8 +985,29 @@ export function buildFallbackAnalystReport(holding: Holding): string {
     const value = holding.currentValue ?? 0;
     const gainLoss = value - cost;
     const gainLossPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
-    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n*AI analyst report was unavailable. Use **Generate Report** again for news and sentiment when available.*`;
+    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n### Coverage status\n- AI analyst engine was unavailable for this request.\n- Showing a resilient fallback summary now.\n- If configured, Finnhub headlines are attached below.`;
 }
+
+async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<string> {
+    const base = buildFallbackAnalystReport(holding);
+    try {
+        const headlines = await getFinnhubCompanyNews([holding.symbol]);
+        if (headlines.length === 0) {
+            return `${base}\n\n### Finnhub latest headlines\n- No recent headlines were available for this symbol right now.`;
+        }
+
+        const top = headlines
+            .slice(0, 3)
+            .map((item) => `- **${item.source}**: ${item.headline} (${item.url})`)
+            .join('\n');
+
+        return `${base}\n\n### Finnhub latest headlines\n${top}`;
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Finnhub fallback unavailable.';
+        return `${base}\n\n### Finnhub latest headlines\n- Fallback data unavailable: ${reason}`;
+    }
+}
+
 
 export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
@@ -1016,7 +1037,7 @@ Markdown only.`;
         const isTemporaryAiOutage = /usage limit|quota|temporarily unavailable|resource_exhausted|rate.?limit/i.test(formatted);
         if (isTemporaryAiOutage) {
             const result = {
-                content: buildFallbackAnalystReport(holding),
+                content: await buildFallbackAnalystReportWithFinnhub(holding),
                 groundingChunks: [],
             };
             setToCache(cacheKey, result);
