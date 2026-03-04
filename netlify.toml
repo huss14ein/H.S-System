@@ -1,7 +1,6 @@
 [build]
   command = "npm run test && npm run build"
   publish = "dist"
-  functions = "netlify/functions"
 
 [functions]
   directory = "netlify/functions"
