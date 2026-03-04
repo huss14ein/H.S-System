@@ -1,6 +1,4 @@
-
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -28,7 +26,7 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
-        setIsCommandPaletteOpen(prev => !prev);
+        setIsCommandPaletteOpen((prev) => !prev);
       }
     };
 
@@ -37,7 +35,6 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
@@ -51,30 +48,33 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
       >
         Skip to main content
       </a>
-      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
-      
-      <main ref={mainContentRef} id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full">
-        <div className="max-w-7xl mx-auto w-full animate-slideInUp min-w-0">
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/60 text-gray-800 flex flex-col">
-      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
-      
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full">
-        <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
-            {children}
-        </div>
+      <Header
+        activePage={activePage}
+        setActivePage={setActivePage}
+        onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+      />
+
+      <main
+        ref={mainContentRef}
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full"
+      >
+        <div className="max-w-7xl mx-auto w-full animate-slideInUp min-w-0">{children}</div>
       </main>
-      
+
       <QuickActionsSidebar onAction={triggerPageAction} />
-      <CommandPalette 
+      <CommandPalette
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
         setActivePage={setActivePage}
-        onOpenLiveAdvisor={() => { setIsCommandPaletteOpen(false); setIsLiveAdvisorOpen(true); }}
+        onOpenLiveAdvisor={() => {
+          setIsCommandPaletteOpen(false);
+          setIsLiveAdvisorOpen(true);
+        }}
       />
-       <LiveAdvisorModal 
-        isOpen={isLiveAdvisorOpen}
-        onClose={() => setIsLiveAdvisorOpen(false)}
-      />
+      <LiveAdvisorModal isOpen={isLiveAdvisorOpen} onClose={() => setIsLiveAdvisorOpen(false)} />
     </div>
   );
 };
