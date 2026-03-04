@@ -106,7 +106,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       </div>
       {/* Value + trend: allow full visibility without clipping. */}
       <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0">
-        <p className={`metric-value ${compact ? 'text-xl' : 'text-2xl'} font-extrabold tabular-nums ${valueToneClass}`}>{value}</p>
+        <p className={`metric-value ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}>{value}</p>
         {trend && (
           <div className={`metric-value flex items-center gap-1 ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-3.5 w-3.5 flex-shrink-0"/>}
