@@ -12,7 +12,7 @@ import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
 import GlobalErrorBoundary from './components/GlobalErrorBoundary';
-import SystemActivityGuard from './components/SystemActivityGuard';
+import { SystemActivityGuard } from './components/SystemActivityGuard';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
