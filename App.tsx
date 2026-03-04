@@ -1,4 +1,4 @@
-import React, { useState, useContext, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useContext, useCallback, Suspense, lazy, startTransition } from 'react';
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
@@ -54,7 +54,9 @@ function getInitialPage(): Page {
 const App: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
   const setActivePage = useCallback((page: Page) => {
-    setActivePageState(page);
+    startTransition(() => {
+      setActivePageState(page);
+    });
     try {
       const hash = '#' + encodeURIComponent(page);
       if (window.location.hash !== hash) window.location.hash = hash;
@@ -63,9 +65,12 @@ const App: React.FC = () => {
 
   // Sync state from URL when user uses browser back/forward
   React.useEffect(() => {
+    if (typeof window === 'undefined') return;
     const onHashChange = () => {
       const page = getPageFromHash();
-      setActivePageState(page ?? 'Dashboard');
+      startTransition(() => {
+        setActivePageState(page ?? 'Dashboard');
+      });
     };
     window.addEventListener('hashchange', onHashChange);
     if (!window.location.hash) window.location.replace('#Dashboard');
