@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useMarketData } from '../context/MarketDataContext';
 
-const SystemActivityGuard: React.FC = () => {
+export const SystemActivityGuard: React.FC = () => {
   const { refreshPrices, isRefreshing } = useMarketData();
   const lastWakeRefreshRef = useRef(0);
 

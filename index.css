@@ -15,7 +15,7 @@
 
 @layer base {
   body {
-    @apply bg-light font-sans text-dark;
+    @apply bg-light font-sans text-dark antialiased text-[15px] leading-6;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -241,13 +241,13 @@
         overflow: hidden;
     }
     .share-detail-metric-value {
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
-        word-break: break-word;
-        overflow-wrap: anywhere;
-        hyphens: auto;
-        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        word-break: normal;
+        overflow-wrap: normal;
+        hyphens: none;
+        line-height: 1.25;
     }
     /* Reusable dynamic gap for card/section grids across all pages */
     .cards-grid {
