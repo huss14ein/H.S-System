@@ -1381,12 +1381,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const batchUpdateCommodityHoldingValues = async (updates: { id: string; currentValue: number }[]) => {
         if (!supabase || !auth?.user) return;
+        const db = supabase;
         // Update only existing rows by id/user_id. Avoid upsert so we never attempt inserts
         // that violate NOT NULL columns such as `name` when stale ids appear during refresh cycles.
         const safeUpdates = updates.filter(u => !!u.id);
         const results = await Promise.all(
             safeUpdates.map(u =>
-                supabase
+                db
                     .from('commodity_holdings')
                     .update({ current_value: u.currentValue })
                     .match({ id: u.id, user_id: auth.user!.id })
