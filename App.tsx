@@ -11,7 +11,7 @@ import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
-import { AppErrorBoundary } from './components/GlobalErrorBoundary';
+import GlobalErrorBoundary from './components/GlobalErrorBoundary';
 import { SystemActivityGuard } from './components/SystemActivityGuard';
 
 // --- Lazy Load Pages for Code Splitting ---
@@ -128,13 +128,13 @@ const App: React.FC = () => {
             <NotificationsProvider>
               <SystemActivityGuard />
               <MarketSimulator />
-              <AppErrorBoundary>
+              <GlobalErrorBoundary>
                 <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
                 <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
                   {renderPage()}
                 </Suspense>
                 </Layout>
-              </AppErrorBoundary>
+              </GlobalErrorBoundary>
             </NotificationsProvider>
           </MarketDataProvider>
         </CurrencyProvider>

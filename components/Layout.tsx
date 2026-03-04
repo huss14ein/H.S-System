@@ -38,16 +38,13 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
-      <a
-        href="#main-content"
-        onClick={(event) => {
-          event.preventDefault();
-          skipToMainContent();
-        }}
+      <button
+        type="button"
+        onClick={skipToMainContent}
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 bg-white border border-slate-300 px-3 py-2 rounded-lg text-sm"
       >
         Skip to main content
-      </a>
+      </button>
       <Header
         activePage={activePage}
         setActivePage={setActivePage}
