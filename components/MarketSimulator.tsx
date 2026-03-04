@@ -58,7 +58,6 @@ const MarketSimulator: React.FC = () => {
             
             if (isRealFetch) {
                 try {
-                    console.log("Fetching real-time prices for:", uniqueSymbols);
                     const [investmentPrices, commodityData] = await Promise.all([
                         uniqueSymbols.length > 0 ? getLivePrices(uniqueSymbols) : Promise.resolve({}),
                         allCommodities.length > 0 ? getAICommodityPrices(allCommodities) : Promise.resolve({ prices: [], groundingChunks: [] })

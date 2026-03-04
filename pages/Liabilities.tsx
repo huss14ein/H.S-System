@@ -15,7 +15,6 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 
-type LiabilityDirection = 'debt' | 'receivable';
 type StatusFilter = 'active' | 'paid' | 'all';
 
 function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolean {
@@ -25,8 +24,7 @@ function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolea
     return status === 'Paid';
 }
 
-const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null; defaultDirection?: LiabilityDirection }> = ({ isOpen, onClose, onSave, liabilityToEdit, defaultDirection = 'debt' }) => {
-    const [direction, setDirection] = useState<LiabilityDirection>(defaultDirection);
+const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Loan');
     const [amount, setAmount] = useState('');
@@ -34,20 +32,17 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
 
     React.useEffect(() => {
         if (liabilityToEdit) {
-            const isReceivable = liabilityToEdit.amount > 0 || liabilityToEdit.type === 'Receivable';
-            setDirection(isReceivable ? 'receivable' : 'debt');
             setName(liabilityToEdit.name);
             setType(liabilityToEdit.type === 'Receivable' ? 'Receivable' : liabilityToEdit.type);
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
         } else {
-            setDirection(defaultDirection);
             setName('');
-            setType(defaultDirection === 'receivable' ? 'Receivable' : 'Loan');
+            setType('Loan');
             setAmount('');
             setStatus('Active');
         }
-    }, [liabilityToEdit, isOpen, defaultDirection]);
+    }, [liabilityToEdit, isOpen]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -55,8 +50,8 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
         const newLiability: Liability = {
             id: liabilityToEdit ? liabilityToEdit.id : `liab${Date.now()}`,
             name,
-            type: direction === 'receivable' ? 'Receivable' : type,
-            amount: direction === 'receivable' ? value : -value,
+            type: type === 'Receivable' ? 'Receivable' : type,
+            amount: type === 'Receivable' ? value : -value,
             status,
             goalId: liabilityToEdit?.goalId,
         };
@@ -64,26 +59,11 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
         onClose();
     };
 
-    const isReceivable = direction === 'receivable';
+    const isReceivable = type === 'Receivable';
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={liabilityToEdit ? 'Edit Entry' : (isReceivable ? 'Add Money Owed to You' : 'Add Liability')}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                {!liabilityToEdit && (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Direction</label>
-                        <div className="flex gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="radio" name="direction" checked={direction === 'debt'} onChange={() => { setDirection('debt'); setType('Loan'); }} className="rounded border-gray-300 text-primary focus:ring-primary" />
-                                <span>I owe (debt)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="radio" name="direction" checked={direction === 'receivable'} onChange={() => { setDirection('receivable'); setType('Receivable'); }} className="rounded border-gray-300 text-primary focus:ring-primary" />
-                                <span>Money owed to me</span>
-                            </label>
-                        </div>
-                    </div>
-                )}
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                         {isReceivable ? 'Description (who owes you)' : 'Liability Name'}
@@ -201,7 +181,6 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { data, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [modalDefaultDirection, setModalDefaultDirection] = useState<LiabilityDirection>('debt');
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
@@ -229,9 +208,8 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
     }, [allDebts, allReceivables, data.assets, data.accounts]);
 
-    const handleOpenModal = (liability: Liability | null = null, direction: LiabilityDirection = 'debt') => {
+    const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
-        setModalDefaultDirection(liability ? (liability.amount > 0 ? 'receivable' : 'debt') : direction);
         setIsModalOpen(true);
     };
 
@@ -273,11 +251,8 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                         </select>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => handleOpenModal(null, 'debt')} className="btn-primary inline-flex items-center gap-2">
+                        <button type="button" onClick={() => handleOpenModal(null)} className="btn-primary inline-flex items-center gap-2">
                             <CreditCardIcon className="h-4 w-4" /> Add Liability
-                        </button>
-                        <button type="button" onClick={() => handleOpenModal(null, 'receivable')} className="btn-secondary border border-primary text-primary hover:bg-primary hover:text-white inline-flex items-center gap-2">
-                            <BanknotesIcon className="h-4 w-4" /> Add Money Owed to Me
                         </button>
                     </div>
                 </div>
@@ -300,7 +275,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                             <DebtCard
                                 key={liab.id}
                                 liability={liab}
-                                onEdit={l => handleOpenModal(l, 'debt')}
+                                onEdit={l => handleOpenModal(l)}
                                 onMarkPaid={handleMarkPaid}
                                 canMarkPaid={liabilityIds.has(liab.id)}
                                 canEdit={liabilityIds.has(liab.id)}
@@ -314,17 +289,17 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             <SectionCard title="Money Owed to Me" className="mt-6">
                 <p className="text-sm text-gray-500 mb-4">Amounts others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Mark as Paid to keep a reference.</p>
                 {receivables.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">No receivables for this filter. Click &quot;Add Money Owed to Me&quot; or switch filter to Paid/All.</p>
+                    <p className="text-center text-gray-500 py-8">No receivables for this filter. Switch filter to Paid/All to review historical items.</p>
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
-                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l, 'receivable')} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
+                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
                         ))}
                     </div>
                 )}
             </SectionCard>
 
-            <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} defaultDirection={modalDefaultDirection} />
+            <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} />
         </PageLayout>
     );
 };
