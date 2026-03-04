@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+
+
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -38,28 +40,26 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 flex flex-col">
-      <button
-        type="button"
-        onClick={skipToMainContent}
+      <a
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault();
+          skipToMainContent();
+        }}
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 bg-white border border-slate-300 px-3 py-2 rounded-lg text-sm"
       >
         Skip to main content
-      </button>
-      <Header
-        activePage={activePage}
-        setActivePage={setActivePage}
-        onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)}
-        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-      />
-
-      <main
-        ref={mainContentRef}
-        id="main-content"
-        tabIndex={-1}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full"
-      >
+      </a>
+      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
+      
+      <main ref={mainContentRef} id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full">
         <div className="max-w-7xl mx-auto w-full animate-slideInUp min-w-0">
-          {children}
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/60 text-gray-800 flex flex-col">
+      <Header activePage={activePage} setActivePage={setActivePage} onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
+      
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full">
+        <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
+            {children}
         </div>
       </main>
 
