@@ -192,15 +192,15 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             </div>
 
             <div className="flex items-center space-x-1 sm:space-x-2">
-              <div className="hidden sm:flex flex-col items-end mr-2">
+              <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
                   onClick={refreshPrices} 
                   disabled={isRefreshing}
-                  className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center space-x-2 ${isRefreshing ? 'animate-pulse' : ''}`}
+                  className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${isRefreshing ? 'animate-pulse' : ''}`}
                   title={isLive ? (lastUpdated ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.` : 'Live prices. Click to refresh.') : 'Simulated prices. Click to fetch live prices.'}
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <div className="flex flex-col items-start">
+                  <div className="flex flex-col items-end text-right leading-tight">
                     <span className="text-[10px] font-bold uppercase tracking-widest hidden xl:block">Refresh Prices</span>
                     <span className={`inline-flex items-center gap-1 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded hidden xl:flex ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={isLive ? 'Live market data' : 'Simulated (no API)'}>
                       <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-green-500' : 'bg-amber-500'}`} />
@@ -209,7 +209,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   </div>
                 </button>
                 {pricesStatusLabel && (
-                  <span className="text-[9px] text-gray-400 -mt-1 px-2 hidden xl:block" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
+                  <span className="text-[10px] text-gray-400 mt-0.5 hidden xl:block text-right leading-none w-full pr-2" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
                     {isRefreshing ? 'Updating…' : pricesStatusLabel}
                   </span>
                 )}

@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, buildFallbackAnalystReport, executeInvestmentPlanStrategy, formatAiError, getSuggestedAnalystEligibility } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
+import { InvestmentPortfolio, Holding, HoldingAssetClass, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
@@ -581,6 +581,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
 
     const displayName = holding.name || (holding as any).name || holding.symbol;
+    const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
     const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
@@ -600,31 +601,31 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
                         <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
-                        <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
+                        <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${priceTrendPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
                         </span>
-                        <span className="text-sm text-slate-500 shrink-0">per share · {portfolioCurrency}</span>
+                        <span className="text-sm text-slate-500 shrink-0">today · per share · {portfolioCurrency}</span>
                     </div>
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 min-w-0">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 min-w-0">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums">{holding.quantity.toLocaleString()}</p>
+                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums whitespace-nowrap ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 whitespace-nowrap" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
@@ -737,7 +738,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
-                        changePercent={holding.priceChangePercent ?? holding.gainLossPercent}
+                        changePercent={priceTrendPercent}
                         formatPrice={(p) => fmt(p)}
                     />
                 </div>
@@ -794,6 +795,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const { data } = useContext(DataContext)!;
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
+    const [assetClass, setAssetClass] = useState<HoldingAssetClass>('Stock');
     const [goalId, setGoalId] = useState<string | undefined>();
     
     useEffect(() => {
@@ -801,6 +803,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             const currentName = holding.name || (holding as any).name || '';
             setName(currentName);
             setZakahClass(holding.zakahClass);
+            setAssetClass((holding.assetClass as HoldingAssetClass) || 'Stock');
             setGoalId(holding.goalId);
             if (!currentName.trim() && holding.symbol.trim().length >= 2) {
                 fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
@@ -813,7 +816,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (holding) {
-            onSave({ ...holding, name, zakahClass, goalId });
+            onSave({ ...holding, name, zakahClass, assetClass, goalId });
             onClose();
         }
     };
@@ -822,6 +825,17 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
                 <div><label className="block text-sm font-medium text-gray-700">Holding Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Asset Class</label>
+                    <select value={assetClass} onChange={e => setAssetClass(e.target.value as HoldingAssetClass)} className="mt-1 w-full p-2 border border-gray-300 rounded-md">
+                        <option value="Stock">Stock</option>
+                        <option value="Sukuk">Sukuk</option>
+                        <option value="ETF">ETF</option>
+                        <option value="Mutual Fund">Mutual Fund</option>
+                        <option value="REIT">REIT</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <div>
                     <label htmlFor="goal-link" className="block text-sm font-medium text-gray-700">Link to Goal</label>
@@ -1736,6 +1750,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const allocationSum = (plan.coreAllocation + plan.upsideAllocation) * 100;
     const allocationWarning = Math.abs(allocationSum - 100) > 0.5 ? `Core + High-Upside = ${allocationSum.toFixed(1)}%; should equal 100%. Remaining is treated as Spec.` : null;
+    const planCurrency = plan.budgetCurrency ?? 'SAR';
+    const coreShareAmount = (plan.monthlyBudget ?? 0) * (plan.coreAllocation ?? 0);
+    const upsideShareAmount = (plan.monthlyBudget ?? 0) * (plan.upsideAllocation ?? 0);
 
     const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
     const budget = plan.monthlyBudget ?? 0;
@@ -1964,7 +1981,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             {/* Plan health — smart readiness summary */}
             <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200">
                             <span className="text-lg font-bold text-emerald-700 tabular-nums">{planHealth.score}</span>
@@ -1974,37 +1991,29 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <p className="text-xs text-slate-600 mt-0.5">{planHealth.summary}</p>
                         </div>
                     </div>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 min-w-[200px]">
-                        <div>
+                    <dl className="grid grid-cols-2 gap-2 sm:gap-3 text-xs text-slate-600 w-full lg:w-auto lg:min-w-[360px]">
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Monthly budget</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5 whitespace-nowrap">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Core / Upside mix</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {planHealth.corePct.toFixed(0)}% / {planHealth.upsidePct.toFixed(0)}%
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5 whitespace-nowrap">{planHealth.corePct.toFixed(0)}% / {planHealth.upsidePct.toFixed(0)}%</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Actionable tickers</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {universeHealth.actionableCount}
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5">{universeHealth.actionableCount}</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Weight coverage</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5">{(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%</dd>
                         </div>
                     </dl>
                 </div>
             </SectionCard>
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                <div className="lg:col-span-2 space-y-6">
+            <div className="cards-grid grid grid-cols-1 xl:grid-cols-5">
+                <div className="xl:col-span-3 space-y-6">
                     {/* Allocation Settings — essential fields first */}
                     <div className="bg-white p-6 rounded-lg shadow space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -2045,6 +2054,14 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
                                 <input type="number" value={plan.upsideAllocation * 100} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                        </div>
+
+                        <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                                <span className="font-semibold text-slate-700">Execution split ({planCurrency})</span>
+                                <span className="tabular-nums text-slate-700">Core {planHealth.corePct.toFixed(0)}% → <strong>{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
+                                <span className="tabular-nums text-slate-700">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong>{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
                             </div>
                         </div>
 
@@ -2238,7 +2255,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 </div>
 
                 {/* Execution & View Results — allocation from Monthly Plan + Portfolio Universe */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                         <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
                         <p className="text-sm text-slate-600">Run once and get a clear execution summary with direct trade actions.</p>
@@ -2271,7 +2288,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
                         {executionResult && (
                             <div className="mt-6 space-y-5">
-                                <p className="text-xs text-slate-500">All amounts in <strong>{plan.budgetCurrency ?? 'SAR'}</strong>. Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
+                                <p className="text-xs text-slate-500">All amounts in <strong>{planCurrency}</strong>. Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
 
                                 <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                                     <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
@@ -2288,23 +2305,37 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     {executionResult.status === 'failure' && (
                                         <p className="text-sm text-amber-800 mb-3">No allocation could be generated. Add Core or High-Upside tickers in Portfolio Universe and set weights, then run again.</p>
                                     )}
-                                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 min-w-0">
-                                        <dt className="text-gray-600 text-sm break-words">Monthly budget</dt>
-                                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-800">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Total deployed</dt>
-                                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-800">{formatCurrencyString(executionResult.totalInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Core</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">High-Upside</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Speculative</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Redirected</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Unused (not allocated)</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
+                                    <dl className="grid grid-cols-2 xl:grid-cols-3 gap-2 text-sm">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Monthly budget</dt>
+                                            <dd className="mt-1 font-mono font-semibold tabular-nums text-slate-800 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Total deployed</dt>
+                                            <dd className="mt-1 font-mono font-semibold tabular-nums text-slate-800 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Core</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">High-Upside</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Speculative</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Redirected</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0 col-span-2 xl:col-span-3">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Unused (not allocated)</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
                                     </dl>
-                                    <p className="text-xs text-slate-500 mt-2">Total deployed + Unused = Monthly budget (within rounding).</p>
+                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding).</p>
                                 </div>
 
                                 <div>
@@ -2312,25 +2343,25 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     {executionResult.trades.length === 0 ? (
                                         <p className="text-sm text-slate-500 py-2">No trades proposed (e.g. amounts below minimum order or no eligible tickers).</p>
                                     ) : (
-                                        <div className="overflow-x-auto rounded-lg border border-slate-200">
-                                            <table className="w-full text-sm">
+                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <table className="w-full table-fixed text-sm">
                                                 <thead>
                                                     <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
-                                                        <th className="px-3 py-2 font-semibold">Ticker</th>
+                                                        <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
                                                         <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
-                                                        <th className="px-3 py-2 font-semibold text-right">Amount ({plan.budgetCurrency ?? 'SAR'})</th>
-                                                        {onOpenRecordTrade && <th className="px-3 py-2 w-28" />}
+                                                        <th className="w-[30%] px-3 py-2 font-semibold text-right whitespace-nowrap">Amount ({planCurrency})</th>
+                                                        {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {executionResult.trades.map((trade, index) => (
-                                                        <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                                                            <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
-                                                            <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary">{formatCurrencyString(trade.amount, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</td>
+                                                        <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 align-top">
+                                                            <td className="px-3 py-2 font-semibold text-slate-800 whitespace-nowrap">{trade.ticker}</td>
+                                                            <td className="px-3 py-2 text-slate-600 break-words leading-snug">{trade.reason}</td>
+                                                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</td>
                                                             {onOpenRecordTrade && (
-                                                                <td className="px-3 py-2">
-                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-xs px-2 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                <td className="px-3 py-2 text-right">
+                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
                                                                 </td>
                                                             )}
                                                         </tr>

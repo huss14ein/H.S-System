@@ -212,12 +212,12 @@
         hyphens: auto;
     }
     .platform-card .platform-metrics .metric-value {
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         word-break: normal;
-        overflow-wrap: anywhere;
-        hyphens: auto;
+        overflow-wrap: normal;
+        hyphens: none;
     }
     .platform-card .platform-card-body {
         padding: var(--card-pad);

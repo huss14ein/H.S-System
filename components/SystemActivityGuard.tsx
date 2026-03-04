@@ -20,9 +20,13 @@ export const SystemActivityGuard: React.FC = () => {
 
     window.addEventListener('focus', maybeRefresh);
     document.addEventListener('visibilitychange', onVisibility);
+    const periodic = window.setInterval(() => {
+      if (document.visibilityState === 'visible') maybeRefresh();
+    }, 120000);
     return () => {
       window.removeEventListener('focus', maybeRefresh);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(periodic);
     };
   }, [refreshPrices, isRefreshing]);
 

@@ -36,6 +36,7 @@ export interface Account {
 
 export type AssetType =
   | 'Cash'
+  | 'Sukuk'
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
