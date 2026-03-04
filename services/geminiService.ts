@@ -90,7 +90,6 @@ const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 function getFromCache(key: string): any | null {
     const cached = aiAnalysisCache.get(key);
     if (cached && (Date.now() - cached.timestamp < CACHE_DURATION_MS)) {
-        console.log("Returning AI analysis from cache.");
         return cached.result;
     }
     aiAnalysisCache.delete(key); // Stale entry
@@ -1408,7 +1407,6 @@ export async function executeInvestmentPlanStrategy(
     if (options?.forceRuleBased) {
         return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe));
     }
-    console.log('Executing investment plan with:', { plan, universe });
 
     const coreTickers = universe.filter(t => t.status === 'Core');
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
