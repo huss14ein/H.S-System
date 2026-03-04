@@ -44,17 +44,20 @@ const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline',
   }
 
   return (
-    <div className={`flex items-center gap-2 text-xs text-gray-500 ${className}`}>
+    <div className={`inline-flex items-center gap-1.5 text-xs text-slate-500 ${className}`}>
       <span className={`inline-flex items-center gap-1.5 font-medium ${isLive ? 'text-green-700' : 'text-amber-700'}`}>
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isLive ? 'bg-green-500' : 'bg-amber-500'}`} title={isLive ? 'Live market prices' : 'Simulated prices'} />
+        <span
+          className={`w-2 h-2 rounded-full flex-shrink-0 ${isLive ? 'bg-green-500' : 'bg-amber-500'}`}
+          title={isLive ? 'Live market prices' : 'Simulated prices'}
+        />
         {isLive ? 'Live prices' : 'Simulated prices'}
       </span>
-      <span className="text-gray-400">·</span>
-      <span className="tabular-nums">
+      <span className="text-slate-400">·</span>
+      <span className="tabular-nums whitespace-nowrap">
         {isRefreshing ? 'Updating…' : `Updated ${relativeTime}`}
       </span>
     </div>
   );
 };
 
-export default LivePricesStatus;
+export default React.memo(LivePricesStatus);

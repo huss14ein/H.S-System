@@ -69,9 +69,11 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
           <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
         </PieChart>
       </ResponsiveContainer>
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Value</p>
-        <p className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center break-words max-w-[90%]">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+      <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
+        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide text-center">Total Value</p>
+        <p className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center break-words max-w-[90%]">
+          {formatCurrencyString(totalValue, { digits: 0 })}
+        </p>
       </div>
     </div>
   );
