@@ -23,6 +23,13 @@ interface RecoveryPlanViewProps {
   onOpenWealthUltra?: () => void;
 }
 
+const inferMarketCurrencyFromSymbol = (symbol?: string): TradeCurrency | null => {
+  const sym = (symbol ?? '').trim().toUpperCase();
+  if (!sym) return null;
+  if (sym.endsWith('.SR')) return 'SAR';
+  return 'USD';
+};
+
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data } = ctx;
@@ -34,15 +41,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; currency: TradeCurrency }[] = [];
     (data.investments ?? []).forEach((p: InvestmentPortfolio) => {
-      const portfolioCurrency: TradeCurrency =
-        p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
       (p.holdings ?? [])
         .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
         .forEach((h: Holding) => {
+          const portfolioCurrency: TradeCurrency =
+            p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
+          const symbolInferredCurrency = inferMarketCurrencyFromSymbol(h.symbol);
+          const effectiveCurrency = symbolInferredCurrency ?? portfolioCurrency;
           list.push({
             holding: h,
             portfolioName: p.name ?? 'Portfolio',
-            currency: portfolioCurrency,
+            currency: effectiveCurrency,
           });
         });
     });
@@ -297,7 +306,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <p className="text-sm text-slate-600">
             Portfolio: {selected.portfolioName}{' '}
             <span className="text-xs text-slate-500">
-              · Currency: {selected.currency ?? 'USD'}
+              · Display currency: {selected.currency ?? 'USD'}
             </span>
           </p>
 

@@ -209,7 +209,7 @@ const WatchlistItemRow: React.FC<{
         <tr className={`transition-colors duration-1000 ${flashClass}`}>
             <td className="px-4 py-2 whitespace-nowrap">
                 <div className="font-medium text-gray-900">{item.symbol}</div>
-                <div className="text-xs text-gray-500 truncate max-w-[150px]">{item.name}{market ? ` · ${market.exchange}` : ''}</div>
+                <div className="text-xs text-gray-500 break-words max-w-[220px]">{item.name}{market ? ` · ${market.exchange}` : ''}</div>
             </td>
             <td className="px-4 py-2 w-36">
                 <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} />

@@ -602,59 +602,59 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 min-w-0">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 flex flex-col items-center justify-center">
-                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Market Value</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums break-all" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 flex flex-col items-center justify-center">
-                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Quantity</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
                         <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 flex flex-col items-center justify-center">
-                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Avg. Cost</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums break-all" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-center min-w-0 flex flex-col items-center justify-center">
-                        <p className="metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Unrealized G/L</p>
-                        <p className={`metric-value w-full mt-1 text-lg font-bold tabular-nums break-all ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="metric-value w-full text-xs text-slate-500 mt-0.5 break-all" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
+                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
+                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
                 {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
                 {portfolioCurrency === 'USD' ? (
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
-                        <p className="metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
+                        <p className="share-detail-metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Market value</p>
-                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Cost basis</p>
-                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
-                                <p className={`metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
+                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
                             </div>
                         </div>
                     </div>
                 ) : (
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 overflow-hidden">
-                        <p className="metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
+                        <p className="share-detail-metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Market value</p>
-                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Cost basis</p>
-                                <p className="metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center">
-                                <p className="metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
-                                <p className={`metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                                <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
+                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
                             </div>
                         </div>
                     </div>
@@ -663,7 +663,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Upcoming financials & income */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-700 truncate">Next financial statement & dividends</p>
+                        <p className="text-sm font-semibold text-slate-700 break-words">Next financial statement & dividends</p>
                         {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
                     </div>
                     {fundamentalsError && (
@@ -726,7 +726,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Price trend chart */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
-                    <p className="text-sm font-semibold text-slate-700 mb-3 truncate">Price trend</p>
+                    <p className="text-sm font-semibold text-slate-700 mb-3 break-words">Price trend</p>
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
@@ -739,7 +739,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-amber-50/50 to-white p-5 min-w-0 overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3 min-w-0">
                         <div className="min-w-0">
-                            <h4 className="font-semibold text-slate-800 truncate">Analyst Report</h4>
+                            <h4 className="font-semibold text-slate-800 break-words">Analyst Report</h4>
                             <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
                         </div>
                         <button
@@ -1207,13 +1207,13 @@ const PlatformCard: React.FC<{
                         <div className="w-1 h-12 rounded-full bg-primary shrink-0" aria-hidden />
                         <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 truncate min-w-0" title={platform.name}>{platform.name}</h3>
+                                <h3 className="text-xl sm:text-2xl font-bold text-slate-800 break-words min-w-0" title={platform.name}>{platform.name}</h3>
                                 <span className="flex items-center gap-0.5 shrink-0">
                                     <button type="button" onClick={() => onEditPlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit platform" aria-label="Edit platform"><PencilIcon className="h-4 w-4" /></button>
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums truncate overflow-hidden" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums break-words" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}</p>
                             <p className="text-xs text-slate-500 mt-1 font-medium">{hasMixedCurrencies ? 'Mixed SAR/USD · ' : ''}Contains {portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} · {totalHoldings} holding{totalHoldings !== 1 ? 's' : ''}</p>
                         </div>
                     </div>
@@ -1221,9 +1221,9 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
-                <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Available Cash</dt>
+                <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-2" aria-label="Platform metrics">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
                         <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
                                 <span className="font-bold text-slate-500">—</span>
@@ -1259,25 +1259,25 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Unrealized P/L</dt>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
                         <dd className="metric-value w-full font-bold text-sm">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Daily P/L</dt>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
                         <dd className="metric-value w-full font-bold text-sm">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">ROI</dt>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
                         <dd className={`metric-value w-full font-bold text-sm tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Invested</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate max-w-full" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
+                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 text-center min-w-0 shadow-sm flex flex-col items-center justify-center">
-                        <dt className="metric-label w-full text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide break-words">Withdrawn</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums truncate max-w-full" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Withdrawn</dt>
+                        <dd className="metric-value w-full font-bold text-slate-800 text-sm mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </dl>
             </header>
@@ -1306,8 +1306,8 @@ const PlatformCard: React.FC<{
                                 <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
                                     <div className="min-w-0 flex-1 overflow-hidden">
-                                        <h4 className="font-bold text-slate-800 text-base truncate" title={portfolio.name}>{portfolio.name}</h4>
-                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 truncate overflow-hidden" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
+                                        <h4 className="font-bold text-slate-800 text-base break-words" title={portfolio.name}>{portfolio.name}</h4>
+                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 break-words" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>
                                         )}
@@ -1958,7 +1958,31 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             await saveExecutionLog(logEntry);
         } catch (error) {
             console.error("Error executing plan:", error);
-            setExecutionError(formatAiError(error));
+            const details = formatAiError(error);
+            const aiUnavailable = /usage limit|quota|temporarily unavailable|after retry|AI service/i.test(details);
+
+            if (!forceRuleBased && aiUnavailable) {
+                try {
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased: true });
+                    setExecutionResult(fallbackResult);
+                    setExecutionError(null);
+
+                    const logEntry: InvestmentPlanExecutionLog = {
+                        ...fallbackResult,
+                        log_details: `${fallbackResult.log_details}\n\n> AI unavailable during execution. Automatically switched to rule-based mode.`,
+                        id: `log-${Date.now()}`,
+                        user_id: '',
+                        created_at: new Date().toISOString(),
+                    };
+                    await saveExecutionLog(logEntry);
+                    setSaveMessage('AI service is temporarily unavailable. Executed successfully in rule-based mode.');
+                    setTimeout(() => setSaveMessage(null), 7000);
+                } catch (fallbackError) {
+                    setExecutionError(formatAiError(fallbackError));
+                }
+            } else {
+                setExecutionError(details);
+            }
         }
         setIsExecuting(false);
     };

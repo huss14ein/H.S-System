@@ -1,6 +1,6 @@
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -17,6 +17,12 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, triggerPageAction }) => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
+  const mainContentRef = useRef<HTMLElement>(null);
+
+  const skipToMainContent = () => {
+    mainContentRef.current?.focus();
+    mainContentRef.current?.scrollIntoView({ block: 'start' });
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -54,15 +60,6 @@ const Layout: React.FC<LayoutProps> = ({ children, activePage, setActivePage, tr
         isOpen={isLiveAdvisorOpen}
         onClose={() => setIsLiveAdvisorOpen(false)}
       />
-       <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.5s ease-out forwards;
-        }
-      `}</style>
     </div>
   );
 };

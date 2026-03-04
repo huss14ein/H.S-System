@@ -998,7 +998,16 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        // Rethrow so the UI can show formatAiError and still set fallback content (Analyst Report always works)
+        const formatted = formatAiError(error);
+        const isTemporaryAiOutage = /usage limit|quota|temporarily unavailable|resource_exhausted|rate.?limit/i.test(formatted);
+        if (isTemporaryAiOutage) {
+            const result = {
+                content: buildFallbackAnalystReport(holding),
+                groundingChunks: [],
+            };
+            setToCache(cacheKey, result);
+            return result;
+        }
         throw error;
     }
 };

@@ -19,7 +19,7 @@ interface ChartTooltipProps {
 const ChartTooltip: React.FC<ChartTooltipProps> = ({ title, items, footer, children }) => {
   return (
     <div className={CHART_TOOLTIP_CLASS}>
-      {title && <p className="font-semibold text-slate-800 truncate mb-1">{title}</p>}
+      {title && <p className="font-semibold text-slate-800 mb-1 break-words">{title}</p>}
       {items && items.length > 0 && (
         <ul className="space-y-0.5">
           {items.map((item, i) => (

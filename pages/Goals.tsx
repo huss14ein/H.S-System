@@ -278,7 +278,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     <ul className="space-y-1 max-h-24 overflow-y-auto text-sm pr-2">
                         {linkedAssets.map((asset, index) => (
                             <li key={`${asset.name}-${index}`} className="flex justify-between items-center">
-                                <span className="text-gray-600 truncate" title={asset.name}>{asset.name}</span>
+                                <span className="text-gray-600 break-words" title={asset.name}>{asset.name}</span>
                                 <span className="font-medium text-dark flex-shrink-0 ml-2">{formatCurrencyString(asset.value, { digits: 0 })}</span>
                             </li>
                         ))}

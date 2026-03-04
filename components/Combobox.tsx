@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { CheckIcon } from './icons/CheckIcon';
 import { ChevronUpDownIcon } from './icons/ChevronUpDownIcon';
 
@@ -13,13 +13,14 @@ interface ComboboxProps {
 const Combobox: React.FC<ComboboxProps> = ({ items, selectedItem, onSelectItem, placeholder = "Select or create..." }) => {
     const [query, setQuery] = useState('');
     const [isOpen, setIsOpen] = useState(false);
+    const deferredQuery = useDeferredValue(query);
 
     const filteredItems = useMemo(() => {
-        if (query === '') {
+        if (deferredQuery === '') {
             return items;
         }
-        return items.filter(item => item.toLowerCase().includes(query.toLowerCase()));
-    }, [query, items]);
+        return items.filter(item => item.toLowerCase().includes(deferredQuery.toLowerCase()));
+    }, [deferredQuery, items]);
 
     const handleSelect = (item: string) => {
         onSelectItem(item);
@@ -60,7 +61,7 @@ const Combobox: React.FC<ComboboxProps> = ({ items, selectedItem, onSelectItem, 
                             className="relative cursor-default select-none py-2 pl-10 pr-4 text-gray-900 hover:bg-primary hover:text-white"
                             onClick={() => handleSelect(item)}
                         >
-                           <span className={`block truncate ${selectedItem === item ? 'font-medium' : 'font-normal'}`}>{item}</span>
+                           <span className={`block break-words leading-snug pr-2 ${selectedItem === item ? 'font-medium' : 'font-normal'}`}>{item}</span>
                             {selectedItem === item && (
                                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-primary-dark">
                                     <CheckIcon className="h-5 w-5" aria-hidden="true" />
