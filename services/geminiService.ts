@@ -75,6 +75,9 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
     if (/API key not valid/i.test(message)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
+    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(message)) {
+        return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
+    }
     if (/model|404|not found|invalid model|unsupported/i.test(message)) {
         return `There was an issue with the specified AI model. ${message}`;
     }
@@ -296,11 +299,14 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
         const response = await fetch('/api/gemini-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+            signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -313,7 +319,11 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                 errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
             } catch (e) {
                 // If it's not JSON, it's likely an HTML error page from the hosting provider.
-                errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+                if (/Inactivity Timeout/i.test(errorBody)) {
+                    errorMessage = 'AI request timed out at the proxy (Inactivity Timeout).';
+                } else {
+                    errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+                }
             }
             throw new Error(errorMessage);
         }
@@ -323,11 +333,16 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 
     } catch (error) {
         console.error("Error invoking Netlify function:", error);
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error('AI request timed out while waiting for proxy response.');
+        }
         if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
              const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
              throw new Error(detailedMessage);
         }
         throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
@@ -1246,6 +1261,22 @@ export async function getSuggestedAnalystEligibility(
     universe: UniverseTicker[],
     currentPlan?: Partial<InvestmentPlanSettings>
 ): Promise<SuggestedAnalystEligibility> {
+    const fallbackFromUniverse = (): SuggestedAnalystEligibility => {
+        const coreCount = universe.filter(t => t.status === 'Core').length;
+        const upsideCount = universe.filter(t => t.status === 'High-Upside').length;
+        const total = Math.max(1, coreCount + upsideCount);
+        const upsideRatio = upsideCount / total;
+        const baseUpside = currentPlan?.minimumUpsidePercentage ?? DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage;
+        const tunedUpside = Math.round(Math.min(35, Math.max(18, baseUpside + (upsideRatio >= 0.5 ? 3 : 0))));
+        return {
+            minimumUpsidePercentage: tunedUpside,
+            stale_days: Math.min(90, Math.max(14, Math.round(currentPlan?.stale_days ?? DEFAULT_ANALYST_ELIGIBILITY.stale_days))),
+            min_coverage_threshold: Math.min(5, Math.max(2, Math.round(currentPlan?.min_coverage_threshold ?? DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold))),
+            redirect_policy: (currentPlan?.redirect_policy === 'priority' ? 'priority' : 'pro-rata'),
+            target_provider: String(currentPlan?.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider,
+        };
+    };
+
     try {
         const tickers = universe.slice(0, 30).map(t => t.ticker).join(', ') || 'none';
         const prompt = `You are Finova AI, an expert investment analyst. Suggest sensible default parameters for an investment plan's "Analyst & eligibility" rules.
@@ -1282,7 +1313,7 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
         const provider = String(raw.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider;
         return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider };
     } catch (_) {
-        return DEFAULT_ANALYST_ELIGIBILITY;
+        return fallbackFromUniverse();
     }
 }
 
@@ -1534,6 +1565,11 @@ export async function executeInvestmentPlanStrategy(
         throw new Error('AI did not return the expected function call.');
     };
 
+    const withAiFallbackNote = (result: InvestmentPlanExecutionResult, details: string): InvestmentPlanExecutionResult => ({
+        ...result,
+        log_details: `${result.log_details || ''}\n\n> AI execution unavailable. Automatically switched to rule-based mode.\n> Reason: ${details}`.trim(),
+    });
+
     try {
         return await executeWithModel(FAST_MODEL);
     } catch (error) {
@@ -1545,10 +1581,10 @@ export async function executeInvestmentPlanStrategy(
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
                 console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
-                return executeInvestmentPlanRuleBased(plan, universe);
+                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), formatAiError(retryError));
             }
         }
         console.warn('AI execution failed, falling back to rule-based (no AI):', error);
-        return executeInvestmentPlanRuleBased(plan, universe);
+        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), details);
     }
 }

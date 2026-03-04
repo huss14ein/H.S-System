@@ -25,7 +25,7 @@ import PageLayout from '../components/PageLayout';
 import DraggableResizableGrid from '../components/DraggableResizableGrid';
 
 // --- Physical Asset Components ---
-const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; }> = ({ isOpen, onClose, onSave, assetToEdit }) => {
+const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<AssetType>('Property');
     const [value, setValue] = useState('');
@@ -44,10 +44,10 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
             setOwner(assetToEdit.owner || '');
         } else {
-            setName(''); setType('Property'); setValue(''); setPurchasePrice('');
+            setName(''); setType(preferredType); setValue(''); setPurchasePrice('');
             setIsRental(false); setMonthlyRent(''); setOwner('');
         }
-    }, [assetToEdit, isOpen]);
+    }, [assetToEdit, isOpen, preferredType]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -69,6 +69,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             <form onSubmit={handleSubmit} className="space-y-4">
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="select-base">
+                    <option value="Sukuk">Sukuk (Islamic fixed income)</option>
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
                     <option value="Other">Other</option>
@@ -91,6 +92,7 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
         switch (type) {
+            case 'Sukuk': return <BanknotesIcon className="h-8 w-8 text-sky-600" />;
             case 'Property': return <HomeModernIcon className="h-8 w-8 text-indigo-500" />;
             case 'Vehicle': return <TruckIcon className="h-8 w-8 text-emerald-500" />;
             default: return <QuestionMarkCircleIcon className="h-8 w-8 text-slate-500" />;
@@ -103,13 +105,13 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
-        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow`}>
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow min-h-[290px]`}>
             <div className="flex items-start justify-between gap-2 min-h-[32px]">
                 <div className="flex items-center gap-3 min-w-0">
                     {getAssetIcon(asset.type)}
                     <div className="min-w-0">
                         <h3 className="font-semibold text-dark break-words">{asset.name}</h3>
-                        <p className="text-xs text-slate-500">{asset.type}</p>
+                        <p className="text-xs text-slate-500">{asset.type === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : asset.type}</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -122,8 +124,9 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                 <div><dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
                 <div className="grid grid-cols-2 gap-3 text-sm min-w-0">
                     <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Purchase Price</dt><dd className="metric-value font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
-                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Unrealized G/L</dt><dd className="metric-value font-semibold">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Unrealized G/L</dt><dd className="metric-value font-semibold whitespace-nowrap">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
                 </div>
+                {asset.type === 'Sukuk' && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">Tracked as Shariah-compliant fixed income in your asset allocation.</div>}
                 {asset.isRental && asset.monthlyRent != null && <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Monthly Rent</dt><dd className="metric-value font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
             </div>
             <div className="border-t mt-4 pt-4 flex items-center justify-between gap-2 flex-wrap">
@@ -340,7 +343,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
         }
     };
     return (
-        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl overflow-visible`}>
+        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl overflow-hidden min-h-[290px]`}>
             <div className="flex items-start justify-between gap-2 min-h-[40px]">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                     {getIcon(holding.name)}
@@ -398,6 +401,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
+    const [preferredAssetType, setPreferredAssetType] = useState<AssetType>('Property');
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
@@ -419,7 +423,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     }, [data.assets, data.commodityHoldings]);
 
     // Physical Asset Handlers
-    const handleOpenAssetModal = (asset: Asset | null = null) => { setAssetToEdit(asset); setIsAssetModalOpen(true); };
+    const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
     const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
     const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
     const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
@@ -464,12 +468,30 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const orderedCommodities = useMemo(() => [...data.commodityHoldings].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data.commodityHoldings]);
 
     const addActions = [
-        { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal() },
+        { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal(null, 'Property') },
+        { label: 'Sukuk', icon: BanknotesIcon, onClick: () => handleOpenAssetModal(null, 'Sukuk') },
         { label: 'Commodity', icon: CubeIcon, onClick: () => handleOpenCommodityModal() }
     ];
 
     return (
         <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
+
+            <SectionCard title="Sukuk in Finova" className="overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">How it is handled</p>
+                        <p className="text-slate-700 mt-1">Sukuk is treated as a first-class asset type and included in total assets, gain/loss, and goal-linking.</p>
+                    </div>
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">Investment integration</p>
+                        <p className="text-slate-700 mt-1">For portfolio holdings, open holding edit and set <strong>Asset Class = Sukuk</strong> so reports and execution views classify it correctly.</p>
+                    </div>
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">How to add Sukuk</p>
+                        <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong> (or Add Physical Asset and choose type Sukuk), enter value/purchase price, then optionally link it to a goal.</p>
+                    </div>
+                </div>
+            </SectionCard>
 
             <DraggableResizableGrid
                 layoutKey="assets-summary"
@@ -538,7 +560,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 </div>
             </SectionCard>
             
-            <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} />
+            <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data.goals} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>
