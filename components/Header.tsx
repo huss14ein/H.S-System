@@ -209,7 +209,18 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   </div>
                 </button>
                 {pricesStatusLabel && (
-                  <span className="text-[9px] text-gray-400 -mt-1 px-2 hidden xl:block" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
+                  <span
+                    className="text-[9px] text-gray-400 mt-0.5 text-right hidden xl:block"
+                    title={
+                      lastUpdated
+                        ? lastUpdated.toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })
+                        : ''
+                    }
+                  >
                     {isRefreshing ? 'Updating…' : pricesStatusLabel}
                   </span>
                 )}
