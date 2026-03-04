@@ -241,13 +241,14 @@
         overflow: hidden;
     }
     .share-detail-metric-value {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        word-break: normal;
-        overflow-wrap: normal;
-        hyphens: none;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        hyphens: auto;
         line-height: 1.25;
+        min-width: 0;
     }
     /* Reusable dynamic gap for card/section grids across all pages */
     .cards-grid {

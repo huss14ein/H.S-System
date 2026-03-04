@@ -40,9 +40,20 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
 };
 
 
+const formatCompactAmount = (value: number): string => {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(1)}T`;
+  if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toFixed(0);
+};
+
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
   const totalValue = useMemo(() => data.reduce((sum, entry) => sum + entry.value, 0), [data]);
+  const totalDisplay = useMemo(() => formatCompactAmount(totalValue), [totalValue]);
+  const totalFull = useMemo(() => formatCurrencyString(totalValue, { digits: 0 }), [formatCurrencyString, totalValue]);
   
   return (
     <div className="w-full h-full min-h-[200px] relative">
@@ -71,8 +82,11 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
       </ResponsiveContainer>
       <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
         <p className="text-sm font-medium text-gray-500 uppercase tracking-wide text-center">Total Value</p>
-        <p className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center break-words max-w-[90%]">
-          {formatCurrencyString(totalValue, { digits: 0 })}
+        <p
+          className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center whitespace-nowrap"
+          title={totalFull}
+        >
+          {totalDisplay}
         </p>
       </div>
     </div>
