@@ -52,4 +52,5 @@ class GlobalErrorBoundary extends React.Component<GlobalErrorBoundaryProps, Glob
   }
 }
 
+export { GlobalErrorBoundary as AppErrorBoundary };
 export default GlobalErrorBoundary;

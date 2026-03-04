@@ -393,7 +393,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Buys ({buyOrders.length})</p>
                     <ul className="space-y-2">
                       {buyOrders.map((o, i) => (
-                        <li key={i} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
+                        <li key={i} className="grid grid-cols-2 sm:grid-cols-4 items-center gap-2 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
                           <span className="font-semibold text-emerald-700">BUY</span>
                           <span className="font-mono font-medium">{o.ticker}</span>
                           <span className="text-slate-600">Qty: {o.qty}</span>
@@ -408,7 +408,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sells / exits ({sellOrders.length})</p>
                     <ul className="space-y-2">
                       {sellOrders.map((o, i) => (
-                        <li key={i} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
+                        <li key={i} className="grid grid-cols-2 sm:grid-cols-4 items-center gap-2 py-2 px-3 rounded-lg bg-white border border-slate-100 text-sm">
                           <span className="font-semibold text-rose-600">SELL</span>
                           <span className="font-mono font-medium">{o.ticker}</span>
                           <span className="text-slate-600">Qty: {o.qty}</span>
@@ -663,13 +663,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       title="Wealth Ultra Portfolio Engine"
       description="Smart allocation, sleeve drift, and institutional-grade order planning. Unified with Investment Plan, execution flow, and live portfolio telemetry."
       action={
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
           {triggerPageAction && (
             <button
               type="button"
               onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
             >
               <PencilIcon className="h-5 w-5" />
               Edit plan & budget
@@ -679,7 +679,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <button
               type="button"
               onClick={() => setActivePage('Investments')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
             >
               Open Investments Hub
             </button>
@@ -687,7 +687,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <button
             type="button"
             onClick={handleExportOrders}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium transition-colors"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium transition-colors"
           >
             Export orders (JSON)
           </button>
