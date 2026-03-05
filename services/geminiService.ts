@@ -991,10 +991,10 @@ async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<
 }
 
 
-export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
+export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefresh?: boolean }): Promise<{ content: string, groundingChunks: any[] }> => {
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
     const cached = getFromCache(cacheKey);
-    if (cached) return cached;
+    if (!options?.forceRefresh && cached) return cached;
 
     const primaryPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
 
@@ -1042,14 +1042,12 @@ ${finnhubBrief}` : 'If live headlines are unavailable, rely on position context 
             setToCache(cacheKey, retryResult);
             return retryResult;
         } catch (_retryError) {
-            const result = {
+            return {
                 content: `${await buildFallbackAnalystReportWithFinnhub(holding)}
 
 > Analyst engine note: ${details}`,
                 groundingChunks: [],
             };
-            setToCache(cacheKey, result);
-            return result;
         }
     }
 };

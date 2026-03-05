@@ -517,13 +517,13 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(false);
     const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
 
-    const handleGetAIAnalysis = useCallback(async () => {
+    const handleGetAIAnalysis = useCallback(async (forceRefresh = false) => {
         if (!holding) return;
         setIsLoading(true);
         setAiAnalysisError(null);
         setGroundingChunks([]);
         try {
-            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding);
+            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, { forceRefresh });
             setAiAnalysis(content || buildFallbackAnalystReport(holding));
             setGroundingChunks(chunks ?? []);
         } catch (e) {
@@ -542,11 +542,18 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
     const lastAnalystRequestRef = React.useRef<string | null>(null);
 
+
+    useEffect(() => {
+        if (!isOpen) {
+            lastAnalystRequestRef.current = null;
+        }
+    }, [isOpen]);
+
     useEffect(() => {
         if (!holding || !isOpen || isLoading) return;
         if (lastAnalystRequestRef.current === holding.id) return;
         lastAnalystRequestRef.current = holding.id;
-        handleGetAIAnalysis();
+        handleGetAIAnalysis(false);
     }, [holding, isOpen, isLoading, handleGetAIAnalysis]);
 
     useEffect(() => {
@@ -759,7 +766,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         </div>
                         <button
                             type="button"
-                            onClick={handleGetAIAnalysis}
+                            onClick={() => handleGetAIAnalysis(true)}
                             disabled={isLoading}
                             className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
                         >
@@ -769,7 +776,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysisError && !isLoading && (
-                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI unavailable right now ({aiAnalysisError}). Showing a resilient fallback report below using your position data and Finnhub headlines when available. Configure AI/Finnhub keys to restore full analyst coverage.</p>
+                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI analyst service is temporarily unavailable ({aiAnalysisError}). We loaded a resilient fallback report below. Use Generate Report to retry live AI analysis.</p>
                     )}
                     {aiAnalysis && !isLoading && (
                         <div className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words">
