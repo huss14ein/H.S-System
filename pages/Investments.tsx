@@ -101,30 +101,47 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
     
     const investmentProgress = useMemo(() => {
-        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0 };
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0, planCurrency: 'SAR' as TradeCurrency };
+
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * exchangeRate;
+            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / exchangeRate;
+            return amount;
+        };
+
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
+        const planCurrency: TradeCurrency = (data.investmentPlan.budgetCurrency as TradeCurrency) || 'SAR';
+
         const monthlyInvested = data.investmentTransactions
             .filter(t => {
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .reduce((sum, t) => sum + t.total, 0);
-        
+            .reduce((sum, t) => {
+                const txCurrency: TradeCurrency = t.currency === 'USD' || t.currency === 'SAR' ? t.currency : planCurrency;
+                return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
+            }, 0);
+
         const corePct = data.investmentPlan.coreAllocation ?? 0.7;
         const upsidePct = data.investmentPlan.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
+        const target = data.investmentPlan.monthlyBudget || 0;
         return {
-            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
             amount: monthlyInvested,
-            target: data.investmentPlan.monthlyBudget,
+            target,
             corePct,
             upsidePct,
             specPct,
+            planCurrency,
         };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     if (!data?.investmentPlan) return null;
 
@@ -141,7 +158,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             <button type="button" onClick={onEditPlan} className="text-sm font-medium text-primary hover:underline">Edit plan</button>
                         )}
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target)}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
+                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
                     
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -155,8 +172,8 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             />
                         </div>
                         <div className="flex justify-between text-xs text-gray-500">
-                            <span>Invested: {formatCurrencyString(investmentProgress.amount)}</span>
-                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount))}</span>
+                            <span>Invested: {formatCurrencyString(investmentProgress.amount, { inCurrency: investmentProgress.planCurrency })}</span>
+                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount), { inCurrency: investmentProgress.planCurrency })}</span>
                         </div>
                     </div>
                 </div>
@@ -164,18 +181,18 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 <div className={`grid gap-3 min-w-[240px] ${investmentProgress.specPct > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                     <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1 w-full">Core Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct, { inCurrency: investmentProgress.planCurrency })}</p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
                     </div>
                     <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1 w-full">Upside Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct, { inCurrency: investmentProgress.planCurrency })}</p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
                     </div>
                     {investmentProgress.specPct > 0 && (
                         <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                             <p className="metric-label text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1 w-full">Spec Target</p>
-                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
+                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct, { inCurrency: investmentProgress.planCurrency })}</p>
                             <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
                         </div>
                     )}
