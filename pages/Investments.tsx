@@ -201,6 +201,8 @@ const RecordTradeModal: React.FC<{
         price: number;
         tradeCurrency: TradeCurrency;
         executedPlanId: string;
+        accountId: string;
+        portfolioId: string;
         reason?: string;
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
@@ -263,11 +265,18 @@ const RecordTradeModal: React.FC<{
                 setType(initialData.tradeType || 'buy');
                 setSymbol(initialData.symbol || '');
                 setHoldingName(initialData.name || '');
-                setQuantity(initialData.quantity ? String(initialData.quantity) : '');
-                setPrice(initialData.price ? String(initialData.price) : '');
-                setAmountToInvest(initialData.amount || null);
+                const prefAmount = initialData.amount || null;
+                const prefQuantity = initialData.quantity ?? null;
+                const prefPrice = initialData.price ?? null;
+                const resolvedPrice = prefPrice ?? (prefAmount && prefQuantity && prefQuantity > 0 ? prefAmount / prefQuantity : null);
+                const resolvedQuantity = prefQuantity ?? (prefAmount && resolvedPrice && resolvedPrice > 0 ? prefAmount / resolvedPrice : null);
+                setQuantity(typeof resolvedQuantity === 'number' && Number.isFinite(resolvedQuantity) ? String(Number(resolvedQuantity.toFixed(8))) : '');
+                setPrice(typeof resolvedPrice === 'number' && Number.isFinite(resolvedPrice) ? String(Number(resolvedPrice.toFixed(8))) : '');
+                setAmountToInvest(prefAmount);
                 setExecutedPlanId(initialData.executedPlanId);
                 if (initialData.tradeCurrency) setTradeCurrency(initialData.tradeCurrency);
+                if (initialData.accountId) setAccountId(initialData.accountId);
+                if (initialData.portfolioId) setPortfolioId(initialData.portfolioId);
                 if (initialData.amount && !initialData.quantity && !initialData.price) {
                     setPrice('');
                     setQuantity('');
@@ -279,12 +288,16 @@ const RecordTradeModal: React.FC<{
     }, [isOpen, initialData, investmentAccounts, appCurrency]);
 
     useEffect(() => {
+        if (initialData?.portfolioId && portfoliosForAccount.some((p) => p.id === initialData.portfolioId)) {
+            setPortfolioId(initialData.portfolioId);
+            return;
+        }
         if (portfoliosForAccount.length > 0) {
             setPortfolioId(portfoliosForAccount[0].id);
         } else {
             setPortfolioId('');
         }
-    }, [portfoliosForAccount]);
+    }, [portfoliosForAccount, initialData?.portfolioId]);
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
@@ -2726,7 +2739,25 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 <InvestmentPlan
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
-                    onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason, price: trade.price, quantity: trade.quantity, tradeCurrency: trade.tradeCurrency }); setIsTradeModalOpen(true); }}
+                    onOpenRecordTrade={(trade) => {
+                        const normalizedSymbol = trade.ticker.trim().toUpperCase();
+                        const targetPortfolio = data.investments.find((portfolio) =>
+                            (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                        ) || data.investments.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || data.investments[0];
+                        setTradeInitialData({
+                            symbol: trade.ticker,
+                            amount: trade.amount,
+                            tradeType: 'buy' as const,
+                            reason: trade.reason,
+                            price: trade.price,
+                            quantity: trade.quantity,
+                            tradeCurrency: trade.tradeCurrency,
+                            accountId: targetPortfolio?.accountId,
+                            portfolioId: targetPortfolio?.id,
+                            name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
+                        });
+                        setIsTradeModalOpen(true);
+                    }}
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView />;
