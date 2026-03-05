@@ -1872,16 +1872,67 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const handleSave = () => {
-        if (allocationWarning && !window.confirm(`${allocationWarning}\n\nSave anyway?`)) return;
+        if (allocationWarning && !window.confirm(`${allocationWarning}
+
+Save anyway?`)) return;
         setSaveMessage(null);
         saveInvestmentPlan(plan);
         setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
         setTimeout(() => setSaveMessage(null), 6000);
     };
 
+    const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
+    const isActionableUniverseStatus = (status: TickerStatus) => status === 'Core' || status === 'High-Upside';
+
+    const autoConfigureUniverseWeights = useCallback(async () => {
+        const universe = [...(data.portfolioUniverse || [])];
+        if (universe.length === 0) return;
+
+        const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
+        const actionableCount = actionable.length;
+        const rawWeightsById = new Map(actionable.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
+        const rawTotal = Array.from(rawWeightsById.values()).reduce((sum, v) => sum + v, 0);
+        const fallbackWeight = actionableCount > 0 ? 1 / actionableCount : 0;
+
+        for (const ticker of universe) {
+            if (!isActionableUniverseStatus(ticker.status)) {
+                const shouldResetWeight = (ticker.monthly_weight ?? 0) !== 0;
+                const shouldDefaultMax = !ticker.max_position_weight || ticker.max_position_weight <= 0;
+                if (shouldResetWeight || shouldDefaultMax) {
+                    await updateUniverseTickerStatus(ticker.id, ticker.status, {
+                        monthly_weight: 0,
+                        max_position_weight: shouldDefaultMax ? 0.25 : ticker.max_position_weight,
+                    });
+                }
+                continue;
+            }
+
+            const sourceWeight = rawWeightsById.get(ticker.id) ?? 1;
+            const normalizedWeight = rawTotal > 0 ? (sourceWeight / rawTotal) : fallbackWeight;
+            const nextMax = (ticker.max_position_weight && ticker.max_position_weight > 0)
+                ? ticker.max_position_weight
+                : (ticker.status === 'Core' ? 0.25 : 0.2);
+
+            await updateUniverseTickerStatus(ticker.id, ticker.status, {
+                monthly_weight: Number(normalizedWeight.toFixed(6)),
+                max_position_weight: nextMax,
+            });
+        }
+
+        setSaveMessage('Universe weights auto-configured for actionable tickers.');
+        setTimeout(() => setSaveMessage(null), 5000);
+    }, [data.portfolioUniverse, updateUniverseTickerStatus]);
+
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
-        if (ticker.source === 'Universe' || ticker.source?.includes('Universe')) {
-            await updateUniverseTickerStatus(ticker.id, newStatus);
+        if (isUniverseTicker(ticker)) {
+            const defaultMax = isActionableUniverseStatus(newStatus)
+                ? (newStatus === 'Core' ? 0.25 : 0.2)
+                : 0.25;
+            await updateUniverseTickerStatus(ticker.id, newStatus, {
+                monthly_weight: isActionableUniverseStatus(newStatus) ? (ticker.monthly_weight ?? 0) : 0,
+                max_position_weight: ticker.max_position_weight && ticker.max_position_weight > 0 ? ticker.max_position_weight : defaultMax,
+            });
+            await autoConfigureUniverseWeights();
         } else {
             // Promote virtual ticker to universe
             await addUniverseTicker({
@@ -1889,6 +1940,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 name: ticker.name,
                 status: newStatus
             });
+            setSaveMessage('Ticker added to universe. Click Auto-configure weights to distribute defaults.');
+            setTimeout(() => setSaveMessage(null), 5000);
         }
     };
 
@@ -2210,6 +2263,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
                             )}
                             <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
+                            <button type="button" onClick={autoConfigureUniverseWeights} className="px-3 py-2 text-sm border border-emerald-300 text-emerald-700 rounded-md hover:bg-emerald-50">Auto-configure weights</button>
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
                             <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
@@ -2249,30 +2303,36 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                 </select>
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
-                                                    <>
-                                                        <input 
-                                                            type="number" 
-                                                            value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
-                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
-                                                            className="w-16 p-1 border rounded text-right text-xs"
-                                                            placeholder="0"
-                                                        />
-                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                    </>
+                                                {isUniverseTicker(ticker) ? (
+                                                    isActionableUniverseStatus(ticker.status) ? (
+                                                        <>
+                                                            <input 
+                                                                type="number" 
+                                                                value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
+                                                                onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
+                                                                onBlur={autoConfigureUniverseWeights}
+                                                                className="w-16 p-1 border rounded text-right text-xs"
+                                                                placeholder="auto"
+                                                            />
+                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses do not receive allocation">Auto</span>
+                                                    )
                                                 ) : (
                                                     <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
+                                                {isUniverseTicker(ticker) ? (
                                                     <>
                                                         <input 
                                                             type="number" 
                                                             value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
                                                             onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
+                                                            onBlur={autoConfigureUniverseWeights}
                                                             className="w-16 p-1 border rounded text-right text-xs"
-                                                            placeholder="0"
+                                                            placeholder="auto"
                                                         />
                                                         <span className="text-[10px] ml-1 text-gray-400">%</span>
                                                     </>
@@ -2281,7 +2341,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-right">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) && (
+                                                {isUniverseTicker(ticker) && (
                                                     <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
                                                 )}
                                             </td>
