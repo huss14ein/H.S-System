@@ -1512,6 +1512,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
+    const { exchangeRate } = useCurrency();
 
     const planFromData = data.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -1875,12 +1876,29 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         }
     };
 
+    const tickerCurrencyMap = useMemo<Record<string, TradeCurrency>>(() => {
+        const map: Record<string, TradeCurrency> = {};
+        (data.investments ?? []).forEach((portfolio) => {
+            const portfolioCurrency = (portfolio.currency === 'SAR' || portfolio.currency === 'USD') ? portfolio.currency : 'USD';
+            (portfolio.holdings ?? []).forEach((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                if (symbol) map[symbol] = portfolioCurrency;
+            });
+        });
+        return map;
+    }, [data.investments]);
+
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
         setExecutionResult(null);
         setExecutionError(null);
         try {
-            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased });
+            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, {
+                forceRuleBased,
+                planCurrency: plan.budgetCurrency,
+                tickerCurrencyMap,
+                fxRate: exchangeRate,
+            });
             setExecutionResult(result);
             setExecutionError(null);
 
@@ -1897,7 +1915,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             if (!forceRuleBased) {
                 try {
-                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased: true });
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, {
+                        forceRuleBased: true,
+                        planCurrency: plan.budgetCurrency,
+                        tickerCurrencyMap,
+                        fxRate: exchangeRate,
+                    });
                     setExecutionResult(fallbackResult);
                     setExecutionError(null);
 
@@ -2349,7 +2372,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                     <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
                                                         <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
                                                         <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
-                                                        <th className="w-[30%] px-3 py-2 font-semibold text-right whitespace-nowrap">Amount ({planCurrency})</th>
+                                                        <th className="w-[30%] px-3 py-2 font-semibold text-right whitespace-nowrap">Amount (Plan / Share Currency)</th>
                                                         {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
                                                     </tr>
                                                 </thead>
@@ -2358,7 +2381,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                         <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 align-top">
                                                             <td className="px-3 py-2 font-semibold text-slate-800 whitespace-nowrap">{trade.ticker}</td>
                                                             <td className="px-3 py-2 text-slate-600 break-words leading-snug">{trade.reason}</td>
-                                                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</td>
+                                                            <td className="px-3 py-2 text-right">
+                                                                <div className="font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</div>
+                                                                {trade.tradeCurrency && trade.tradeCurrency !== planCurrency && typeof trade.amountInTradeCurrency === 'number' && (
+                                                                    <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">≈ {formatCurrencyString(trade.amountInTradeCurrency, { inCurrency: trade.tradeCurrency, digits: 0 })} ({trade.tradeCurrency})</div>
+                                                                )}
+                                                            </td>
                                                             {onOpenRecordTrade && (
                                                                 <td className="px-3 py-2 text-right">
                                                                     <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>

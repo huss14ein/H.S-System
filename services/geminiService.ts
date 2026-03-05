@@ -1,5 +1,5 @@
 import { Type, FunctionDeclaration } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
 import { finnhubFetch } from './finnhubService';
 
 // --- Model Constants ---
@@ -1346,7 +1346,43 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
 }
 
 /** Rule-based execution (no AI): allocates budget by plan weights. Use when AI is unavailable or as fallback. */
-export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, universe: UniverseTicker[]): InvestmentPlanExecutionResult {
+type ExecutionCurrencyOptions = {
+    planCurrency?: TradeCurrency;
+    tickerCurrencyMap?: Record<string, TradeCurrency>;
+    fxRate?: number;
+};
+
+const inferTradeCurrencyFromTicker = (ticker: string): TradeCurrency => (/(\.SR|\.SA)$/i.test(ticker) ? 'SAR' : 'USD');
+
+const toTradeWithCurrency = (
+    trade: ProposedTrade,
+    opts: ExecutionCurrencyOptions
+): ProposedTrade => {
+    const planCurrency = opts.planCurrency ?? 'SAR';
+    const ticker = (trade.ticker || '').trim().toUpperCase();
+    const tradeCurrency = opts.tickerCurrencyMap?.[ticker] ?? inferTradeCurrencyFromTicker(trade.ticker);
+    const rate = opts.fxRate && opts.fxRate > 0 ? opts.fxRate : 3.75;
+    let converted = trade.amount;
+    if (tradeCurrency !== planCurrency) {
+        converted = tradeCurrency === 'USD' ? trade.amount / rate : trade.amount * rate;
+    }
+    return {
+        ...trade,
+        tradeCurrency,
+        amountInTradeCurrency: Math.max(0, Number(converted.toFixed(2))),
+    };
+};
+
+const enrichTradesWithCurrency = (result: InvestmentPlanExecutionResult, opts: ExecutionCurrencyOptions): InvestmentPlanExecutionResult => ({
+    ...result,
+    trades: (result.trades ?? []).map((trade) => toTradeWithCurrency(trade, opts)),
+});
+
+export function executeInvestmentPlanRuleBased(
+    plan: InvestmentPlanSettings,
+    universe: UniverseTicker[],
+    options?: ExecutionCurrencyOptions
+): InvestmentPlanExecutionResult {
     const date = new Date().toISOString();
     const coreTickers = universe.filter(t => t.status === 'Core');
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
@@ -1444,7 +1480,7 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
 - Tickers: Core ${coreTickers.length}, High-Upside ${upsideTickers.length}, Speculative ${speculativeTickers.length}.
 - No analyst targets or eligibility checks; allocation by weights only. Use AI execution for full logic.`;
 
-    return {
+    return enrichTradesWithCurrency({
         date,
         totalInvestment,
         coreInvestment,
@@ -1455,16 +1491,16 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
         trades,
         status: totalInvestment > 0 ? 'success' : 'failure',
         log_details,
-    };
+    }, { planCurrency: options?.planCurrency ?? plan.budgetCurrency, tickerCurrencyMap: options?.tickerCurrencyMap, fxRate: options?.fxRate ?? 3.75 });
 }
 
 export async function executeInvestmentPlanStrategy(
     plan: InvestmentPlanSettings,
     universe: UniverseTicker[],
-    options?: { forceRuleBased?: boolean }
+    options?: { forceRuleBased?: boolean } & ExecutionCurrencyOptions
 ): Promise<InvestmentPlanExecutionResult> {
     if (options?.forceRuleBased) {
-        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe));
+        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe, options));
     }
 
     const coreTickers = universe.filter(t => t.status === 'Core');
@@ -1585,10 +1621,14 @@ export async function executeInvestmentPlanStrategy(
         });
         if (result.functionCalls && result.functionCalls.length > 0) {
             const args = result.functionCalls[0].args;
-            return {
+            return enrichTradesWithCurrency({
                 date: new Date().toISOString(),
                 ...args,
-            } as InvestmentPlanExecutionResult;
+            } as InvestmentPlanExecutionResult, {
+                planCurrency: options?.planCurrency ?? plan.budgetCurrency,
+                tickerCurrencyMap: options?.tickerCurrencyMap,
+                fxRate: options?.fxRate ?? 3.75,
+            });
         }
         throw new Error('AI did not return the expected function call.');
     };
@@ -1609,10 +1649,10 @@ export async function executeInvestmentPlanStrategy(
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
                 console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
-                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), formatAiError(retryError));
+                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), formatAiError(retryError));
             }
         }
         console.warn('AI execution failed, falling back to rule-based (no AI):', error);
-        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), details);
+        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), details);
     }
 }
