@@ -613,7 +613,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         <span className="hidden sm:inline text-slate-500 shrink-0">·</span>
                         <span className="metric-label text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</span>
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 min-w-0">
                         <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
                         <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${priceTrendPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
@@ -624,19 +624,19 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 min-w-0">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
                         <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
                         <p className="metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
                         <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
                         <p className={`share-detail-metric-value w-full mt-1 text-xl font-bold tabular-nums whitespace-nowrap leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
                         <p className="w-full text-xs text-slate-500 mt-2 leading-tight" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
@@ -648,15 +648,15 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
                                 <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
                             </div>
@@ -666,15 +666,15 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
                                 <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
                             </div>
@@ -977,7 +977,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
-                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Amount</th>
                             <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
                         </tr>
                     </thead>
@@ -989,7 +989,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
                                     <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-center font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
                                 </tr>
                             );
@@ -1149,7 +1149,7 @@ const PlatformCard: React.FC<{
                     </button>
                 </div>
                 <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
                         <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
@@ -1186,23 +1186,23 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
                         <dd className={`metric-value w-full font-bold text-base sm:text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
                         <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Withdrawn</dt>
                         <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
@@ -1303,9 +1303,9 @@ const PlatformCard: React.FC<{
                                                                     </div>
                                                                 )}
                                                             </td>
-                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
                                                             <td className="px-3 py-3 text-center whitespace-nowrap">
                                                                 <span
                                                                     className={`inline-flex items-center justify-center gap-1 tabular-nums ${
@@ -1321,7 +1321,7 @@ const PlatformCard: React.FC<{
                                                                     </span>
                                                                 </span>
                                                             </td>
-                                                            <td className="px-3 py-3 text-right">
+                                                            <td className="px-3 py-3 text-center">
                                                                 <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
