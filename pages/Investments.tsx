@@ -199,6 +199,7 @@ const RecordTradeModal: React.FC<{
         quantity: number;
         amount: number;
         price: number;
+        tradeCurrency: TradeCurrency;
         executedPlanId: string;
         reason?: string;
     }> | null;
@@ -263,8 +264,10 @@ const RecordTradeModal: React.FC<{
                 setSymbol(initialData.symbol || '');
                 setHoldingName(initialData.name || '');
                 setQuantity(initialData.quantity ? String(initialData.quantity) : '');
+                setPrice(initialData.price ? String(initialData.price) : '');
                 setAmountToInvest(initialData.amount || null);
                 setExecutedPlanId(initialData.executedPlanId);
+                if (initialData.tradeCurrency) setTradeCurrency(initialData.tradeCurrency);
                 if (initialData.amount && !initialData.quantity && !initialData.price) {
                     setPrice('');
                     setQuantity('');
@@ -285,10 +288,14 @@ const RecordTradeModal: React.FC<{
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
+            if (initialData?.tradeCurrency) {
+                setTradeCurrency(initialData.tradeCurrency);
+                return;
+            }
             const portfolio = portfolios.find(p => p.id === portfolioId);
             setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
         }
-    }, [portfolioId, portfolios]);
+    }, [portfolioId, portfolios, initialData]);
     
     useEffect(() => {
         if (amountToInvest && price && type === 'buy') {
@@ -1508,11 +1515,12 @@ const ANALYST_DEFAULTS = {
     target_provider: 'TipRanks',
 };
 
-const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
+const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
 
     const planFromData = data.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -1956,6 +1964,35 @@ Save anyway?`)) return;
         });
         return map;
     }, [data.investments]);
+
+    const holdingPriceFallbackMap = useMemo<Record<string, number>>(() => {
+        const map: Record<string, number> = {};
+        (data.investments ?? []).forEach((portfolio) => {
+            (portfolio.holdings ?? []).forEach((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                if (!symbol) return;
+                const inferred = holding.quantity > 0 ? (holding.currentValue / holding.quantity) : (holding.avgCost || 0);
+                if (inferred > 0 && !Number.isNaN(inferred)) map[symbol] = inferred;
+            });
+        });
+        return map;
+    }, [data.investments]);
+
+    const getTradeExecutionSuggestion = useCallback((trade: InvestmentPlanExecutionResult['trades'][number]) => {
+        const symbol = (trade.ticker || '').trim().toUpperCase();
+        const tradeCurrency = trade.tradeCurrency || planCurrency;
+        const amountInTradeCurrency = tradeCurrency === planCurrency
+            ? trade.amount
+            : (typeof trade.amountInTradeCurrency === 'number' ? trade.amountInTradeCurrency : trade.amount);
+        const suggestedPrice = simulatedPrices[symbol]?.price || holdingPriceFallbackMap[symbol] || 0;
+        const suggestedQuantity = suggestedPrice > 0 ? amountInTradeCurrency / suggestedPrice : undefined;
+        return {
+            tradeCurrency,
+            amountInTradeCurrency,
+            suggestedPrice: suggestedPrice > 0 ? suggestedPrice : undefined,
+            suggestedQuantity,
+        };
+    }, [planCurrency, simulatedPrices, holdingPriceFallbackMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
@@ -2453,7 +2490,9 @@ Save anyway?`)) return;
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {executionResult.trades.map((trade, index) => (
+                                                    {executionResult.trades.map((trade, index) => {
+                                                        const suggestion = getTradeExecutionSuggestion(trade);
+                                                        return (
                                                         <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 align-top">
                                                             <td className="px-3 py-2 font-semibold text-slate-800 whitespace-nowrap">{trade.ticker}</td>
                                                             <td className="px-3 py-2 text-slate-600 break-words leading-snug">{trade.reason}</td>
@@ -2462,14 +2501,17 @@ Save anyway?`)) return;
                                                                 {trade.tradeCurrency && trade.tradeCurrency !== planCurrency && typeof trade.amountInTradeCurrency === 'number' && (
                                                                     <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">≈ {formatCurrencyString(trade.amountInTradeCurrency, { inCurrency: trade.tradeCurrency, digits: 0 })} ({trade.tradeCurrency})</div>
                                                                 )}
+                                                                {suggestion.suggestedPrice && suggestion.suggestedQuantity && (
+                                                                    <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">{suggestion.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(suggestion.suggestedPrice, { inCurrency: suggestion.tradeCurrency, digits: 2 })}</div>
+                                                                )}
                                                             </td>
                                                             {onOpenRecordTrade && (
                                                                 <td className="px-3 py-2 text-right">
-                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
                                                                 </td>
                                                             )}
                                                         </tr>
-                                                    ))}
+                                                    );})}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -2664,7 +2706,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 <InvestmentPlan
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
-                    onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason }); setIsTradeModalOpen(true); }}
+                    onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason, price: trade.price, quantity: trade.quantity, tradeCurrency: trade.tradeCurrency }); setIsTradeModalOpen(true); }}
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView />;
