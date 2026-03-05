@@ -609,7 +609,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
-                <div className="grid grid-cols-2 2xl:grid-cols-4 gap-3.5 min-w-0">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 min-w-0">
                     <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-start justify-between text-left min-h-[132px] shadow-sm">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
                         <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
@@ -1134,8 +1134,8 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
-                <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-2" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" aria-label="Platform metrics">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
                         <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
@@ -1172,23 +1172,23 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
                         <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
                         <dd className={`metric-value w-full font-bold text-base sm:text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
                         <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
+                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[108px]">
                         <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Withdrawn</dt>
                         <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
