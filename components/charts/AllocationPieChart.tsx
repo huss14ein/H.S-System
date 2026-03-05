@@ -54,8 +54,8 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
             cy="50%"
             labelLine={false}
             label={renderCustomizedLabel}
-            outerRadius="85%"
-            innerRadius="60%"
+            outerRadius="84%"
+            innerRadius="64%"
             dataKey="value"
             paddingAngle={3}
             isAnimationActive={true}
@@ -69,10 +69,10 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
           <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
         </PieChart>
       </ResponsiveContainer>
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-        <div className="rounded-2xl bg-white/95 border border-slate-200 shadow-sm px-4 py-3 text-center max-w-[88%]">
-          <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
-          <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+      <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[38%] max-w-[152px] min-w-[112px] -translate-x-1/2 -translate-y-1/2 aspect-square items-center justify-center rounded-full border border-slate-200 bg-white/95 text-center px-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.12em]">Total</p>
+          <p className="mt-1 text-sm sm:text-base font-bold text-dark tabular-nums whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
         </div>
       </div>
     </div>
