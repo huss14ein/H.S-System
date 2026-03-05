@@ -2033,9 +2033,7 @@ Save anyway?`)) return;
 
 
     const addOnOpportunities = useMemo(() => {
-        const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
-        const mapBySymbol = new Map((data.portfolioUniverse || []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
-        const opportunities: Array<{
+        type AddOnCandidate = {
             symbol: string;
             name: string;
             status: TickerStatus;
@@ -2044,15 +2042,18 @@ Save anyway?`)) return;
             gainLossPct: number;
             portfolioWeight: number;
             maxWeight: number;
-            suggestedPlanAmount: number;
+            capacityPlanAmount: number;
             tradeCurrency: TradeCurrency;
-            amountInTradeCurrency: number;
             pullbackPrice: number;
             deepPullbackPrice: number;
-            suggestedQuantity: number;
             confidence: 'High' | 'Medium';
             reason: string;
-        }> = [];
+            score: number;
+        };
+
+        const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
+        const mapBySymbol = new Map((data.portfolioUniverse || []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
+        const candidates: AddOnCandidate[] = [];
 
         const fx = exchangeRate > 0 ? exchangeRate : 3.75;
         const convertPlanToTrade = (amount: number, tradeCurrency: TradeCurrency): number => {
@@ -2062,50 +2063,54 @@ Save anyway?`)) return;
             return amount;
         };
 
+        const monthlyBudget = Math.max(0, plan.monthlyBudget || 0);
+        const addOnPoolBudget = monthlyBudget > 0 ? Math.round(monthlyBudget * 0.2) : 0;
+        if (addOnPoolBudget <= 0) return [];
+
         (data.investments || []).forEach((portfolio) => {
             const holdings = portfolio.holdings || [];
-            const portfolioValue = holdings.reduce((sum, h) => sum + (h.currentValue || 0), 0);
+            const liveHoldingValues = holdings.map((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                const livePrice = simulatedPrices[symbol]?.price || (holding.quantity > 0 ? (holding.currentValue / holding.quantity) : 0) || holding.avgCost || 0;
+                const liveValue = livePrice > 0 ? livePrice * (holding.quantity || 0) : (holding.currentValue || 0);
+                return { holding, symbol, livePrice, liveValue };
+            });
+
+            const portfolioValue = liveHoldingValues.reduce((sum, x) => sum + (x.liveValue || 0), 0);
             if (portfolioValue <= 0) return;
 
-            holdings.forEach((holding) => {
-                const symbol = (holding.symbol || '').trim().toUpperCase();
+            liveHoldingValues.forEach(({ holding, symbol, livePrice, liveValue }) => {
                 if (!symbol) return;
                 const universeTicker = mapBySymbol.get(symbol);
                 const status = universeTicker?.status ?? 'Core';
                 if (!actionableStatuses.includes(status)) return;
-
-                const livePrice = simulatedPrices[symbol]?.price || (holding.quantity > 0 ? (holding.currentValue / holding.quantity) : 0) || holding.avgCost || 0;
                 if (!Number.isFinite(livePrice) || livePrice <= 0) return;
 
                 const costBasis = (holding.avgCost || 0) * (holding.quantity || 0);
-                const gainLossPct = costBasis > 0 ? (((holding.currentValue || 0) - costBasis) / costBasis) * 100 : 0;
+                const gainLossPct = costBasis > 0 ? ((liveValue - costBasis) / costBasis) * 100 : 0;
                 if (!Number.isFinite(gainLossPct) || gainLossPct < 4) return;
 
-                const portfolioWeight = (holding.currentValue || 0) / portfolioValue;
+                const portfolioWeight = liveValue / portfolioValue;
                 const maxWeight = universeTicker?.max_position_weight && universeTicker.max_position_weight > 0
                     ? universeTicker.max_position_weight
                     : (status === 'Core' ? 0.25 : 0.2);
                 const headroom = Math.max(0, maxWeight - portfolioWeight);
                 if (headroom <= 0.01) return;
 
-                const momentumBonus = gainLossPct >= 12 ? 1 : gainLossPct >= 7 ? 0.7 : 0.45;
-                const sleeveCap = status === 'Core' ? 0.06 : 0.04;
-                const suggestedPlanShare = Math.min(sleeveCap, Math.max(0.015, headroom * (0.35 + momentumBonus * 0.4)));
-                const suggestedPlanAmount = Math.round((plan.monthlyBudget || 0) * suggestedPlanShare);
-                if (!Number.isFinite(suggestedPlanAmount) || suggestedPlanAmount <= 0) return;
+                const capacityPlanAmount = Math.max(0, Math.round(monthlyBudget * Math.min(headroom, status === 'Core' ? 0.06 : 0.04)));
+                if (capacityPlanAmount <= 0) return;
 
-                const tradeCurrency = tickerCurrencyMap[symbol] || ((portfolio.currency as TradeCurrency) || 'USD');
-                const amountInTradeCurrency = Math.max(0, Number(convertPlanToTrade(suggestedPlanAmount, tradeCurrency).toFixed(2)));
-                if (amountInTradeCurrency <= 0) return;
+                const momentumScore = gainLossPct >= 12 ? 1 : gainLossPct >= 7 ? 0.75 : 0.45;
+                const headroomScore = Math.min(1, headroom / 0.08);
+                const score = (status === 'Core' ? 1 : 0.9) * (0.6 * momentumScore + 0.4 * headroomScore);
 
                 const pullbackPct = status === 'Core' ? 0.02 : 0.03;
                 const deepPullbackPct = status === 'Core' ? 0.05 : 0.07;
                 const pullbackPrice = Number((livePrice * (1 - pullbackPct)).toFixed(2));
                 const deepPullbackPrice = Number((livePrice * (1 - deepPullbackPct)).toFixed(2));
-                const suggestedQuantity = pullbackPrice > 0 ? Number((amountInTradeCurrency / pullbackPrice).toFixed(4)) : 0;
                 const confidence: 'High' | 'Medium' = gainLossPct >= 10 && headroom >= 0.04 ? 'High' : 'Medium';
 
-                opportunities.push({
+                candidates.push({
                     symbol,
                     name: holding.name || symbol,
                     status,
@@ -2114,19 +2119,40 @@ Save anyway?`)) return;
                     gainLossPct: Number(gainLossPct.toFixed(2)),
                     portfolioWeight: Number((portfolioWeight * 100).toFixed(2)),
                     maxWeight: Number((maxWeight * 100).toFixed(1)),
-                    suggestedPlanAmount,
-                    tradeCurrency,
-                    amountInTradeCurrency,
+                    capacityPlanAmount,
+                    tradeCurrency: tickerCurrencyMap[symbol] || ((portfolio.currency as TradeCurrency) || 'USD'),
                     pullbackPrice,
                     deepPullbackPrice,
-                    suggestedQuantity,
                     confidence,
+                    score,
                     reason: `${status} winner with positive trend and position headroom (${(headroom * 100).toFixed(1)}% remaining to max weight).`,
                 });
             });
         });
 
-        return opportunities.sort((a, b) => b.gainLossPct - a.gainLossPct).slice(0, 6);
+        if (candidates.length === 0) return [];
+
+        const ranked = candidates.sort((a, b) => b.score - a.score).slice(0, 8);
+        const scoreTotal = ranked.reduce((sum, c) => sum + c.score, 0) || 1;
+
+        const allocated = ranked
+            .map((c) => {
+                const proportional = Math.round((addOnPoolBudget * c.score) / scoreTotal);
+                const suggestedPlanAmount = Math.min(c.capacityPlanAmount, Math.max(0, proportional));
+                const amountInTradeCurrency = Math.max(0, Number(convertPlanToTrade(suggestedPlanAmount, c.tradeCurrency).toFixed(2)));
+                const suggestedQuantity = c.pullbackPrice > 0 ? Number((amountInTradeCurrency / c.pullbackPrice).toFixed(4)) : 0;
+                return {
+                    ...c,
+                    suggestedPlanAmount,
+                    amountInTradeCurrency,
+                    suggestedQuantity,
+                };
+            })
+            .filter((c) => c.suggestedPlanAmount > 0 && c.amountInTradeCurrency > 0)
+            .sort((a, b) => b.gainLossPct - a.gainLossPct)
+            .slice(0, 6);
+
+        return allocated;
     }, [data.investments, data.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
