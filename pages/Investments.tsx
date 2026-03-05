@@ -2087,7 +2087,6 @@ Save anyway?`)) return;
                         <>
                             <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="text-primary font-medium hover:underline">Portfolios</button>
                             <span className="text-slate-300">·</span>
-                            <span className="text-slate-300">·</span>
                             <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button>
                             <span className="text-slate-300">·</span>
                             <button type="button" onClick={() => onNavigateToTab('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button>
@@ -2106,11 +2105,25 @@ Save anyway?`)) return;
                     <span className="text-slate-500">{showFlowNote ? '▼' : '▶'}</span>
                 </button>
                 {showFlowNote && (
-                    <div className="px-4 pb-4 pt-0 text-sm text-slate-600 space-y-2 border-t border-slate-200">
-                        <p><strong>1. Set budget & allocation</strong> above (monthly amount, Core % vs High-Upside %).</p>
-                        <p><strong>2. Build your universe</strong> — add tickers via Watchlist or the table below. Set status to <em>Core</em> or <em>High-Upside</em> and optional monthly weights (should sum to ~100% for predictable splits).</p>
-                        <p><strong>3. Sync (optional)</strong> — use “Sync Core/Upside from Universe” to copy current Core/High-Upside tickers and weights into the plan so execution and Wealth Ultra use the same list.</p>
-                        <p><strong>4. Execute or use Wealth Ultra</strong> — “Execute Monthly Plan” runs AI-based allocation and logs results; <strong>Wealth Ultra</strong> shows live allocation, orders, and deployable cash. Record trades from either place.</p>
+                    <div className="px-4 pb-4 pt-3 border-t border-slate-200 bg-white/70">
+                        <ol className="space-y-2.5 text-sm text-slate-700">
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">1</span>
+                                <p><strong>Set budget & allocation</strong> (monthly amount, Core % vs High-Upside %).</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">2</span>
+                                <p><strong>Build your universe</strong> via Watchlist or the table below. Set status to <em>Core</em> / <em>High-Upside</em> and optional weights (target ~100% combined).</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">3</span>
+                                <p><strong>Sync (optional)</strong> using “Sync Core/Upside from Universe” so plan + execution + Wealth Ultra all use the same ticker set.</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">4</span>
+                                <p><strong>Execute or open Wealth Ultra</strong> to generate allocations/orders and then record actual trades directly from results.</p>
+                            </li>
+                        </ol>
                     </div>
                 )}
             </div>
