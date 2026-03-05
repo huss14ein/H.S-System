@@ -1824,8 +1824,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const applySmartPlan = () => {
-        const hasHistory = suggestedMonthlyBudget > 0;
-        const monthly = hasHistory ? suggestedMonthlyBudget : plan.monthlyBudget || 0;
+        const investedBase = (data.investments || []).reduce((sum, portfolio) => {
+            const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
+            return sum + portfolioTotal;
+        }, 0);
+
+        const historyBudget = suggestedMonthlyBudget > 0 ? suggestedMonthlyBudget : 0;
+        const derivedFromPortfolio = investedBase > 0 ? Math.round(Math.max(1000, Math.min(30000, investedBase * 0.025))) : 0;
+        const fallbackBudget = 2500;
+        const monthly = historyBudget || plan.monthlyBudget || derivedFromPortfolio || fallbackBudget;
 
         const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
         const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
@@ -1839,9 +1846,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         if (totalWt > 0) {
             coreAlloc = coreWt / totalWt;
             upsideAlloc = upWt / totalWt;
+        } else if (unifiedUniverse.length > 0) {
+            coreAlloc = 0.8;
+            upsideAlloc = 0.2;
         }
 
-        const nextMinOrder = monthly > 0 ? Math.round((monthly * 0.1) / 100) * 100 : plan.brokerConstraints.minimumOrderSize;
+        const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
 
         setPlan(prev => ({
             ...prev,
@@ -1853,6 +1863,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 minimumOrderSize: nextMinOrder,
             },
         }));
+
+        const budgetSource = historyBudget > 0
+            ? 'recent buy history'
+            : (plan.monthlyBudget > 0 ? 'your existing plan value' : (derivedFromPortfolio > 0 ? 'current holdings size' : 'smart default'));
+        setSaveMessage(`Smart-fill applied using ${budgetSource}. Review and save before execution.`);
+        setTimeout(() => setSaveMessage(null), 5000);
     };
 
     const handleSave = () => {
