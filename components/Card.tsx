@@ -96,9 +96,9 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
           {tooltip && (
             <div className="relative group">
               <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-              <div className="absolute bottom-full mb-2 w-48 bg-gray-800 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none left-1/2 -translate-x-1/2 z-10">
+              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-gray-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none right-0 z-20 leading-relaxed shadow-lg">
                 {tooltip}
-                <svg className="absolute text-gray-800 h-2 w-full left-0 top-full" x="0px" y="0px" viewBox="0 0 255 255"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
+                <svg className="absolute text-gray-800 h-2 w-3 right-2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
               </div>
             </div>
           )}
