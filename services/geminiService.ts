@@ -995,8 +995,8 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
     const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
-    try {
-        const prompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
+
+    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
 
 ### Recent News Summary
 - 2-3 bullets on the latest significant news. One sentence each.
@@ -1004,9 +1004,11 @@ export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: s
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
 Markdown only.`;
+
+    try {
         const response = await invokeAI({
             model: FAST_MODEL,
-            contents: prompt,
+            contents: primaryPrompt,
             config: { tools: [{ googleSearch: {} }] }
         });
         const content = response.text || "Could not retrieve analysis.";
@@ -1015,17 +1017,40 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        const formatted = formatAiError(error);
-        const isTemporaryAiOutage = /usage limit|quota|temporarily unavailable|resource_exhausted|rate.?limit/i.test(formatted);
-        if (isTemporaryAiOutage) {
+        const details = formatAiError(error);
+
+        // Retry once without search tool, using Finnhub brief as context, to keep analyst report available.
+        try {
+            const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol]);
+            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
+
+Structure:
+### Recent News Summary
+- 2-3 concise bullets.
+
+### Analyst Sentiment
+- One short paragraph (bullish/bearish/neutral) with reasoning.
+
+${finnhubBrief ? `Use this Finnhub reference when relevant:
+${finnhubBrief}` : 'If live headlines are unavailable, rely on position context and provide a neutral status update.'}`;
+
+            const retry = await invokeAI({ model: FAST_MODEL, contents: fallbackAiPrompt });
+            const retryResult = {
+                content: retry.text || await buildFallbackAnalystReportWithFinnhub(holding),
+                groundingChunks: [],
+            };
+            setToCache(cacheKey, retryResult);
+            return retryResult;
+        } catch (_retryError) {
             const result = {
-                content: await buildFallbackAnalystReportWithFinnhub(holding),
+                content: `${await buildFallbackAnalystReportWithFinnhub(holding)}
+
+> Analyst engine note: ${details}`,
                 groundingChunks: [],
             };
             setToCache(cacheKey, result);
             return result;
         }
-        throw error;
     }
 };
 

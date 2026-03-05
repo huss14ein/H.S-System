@@ -701,6 +701,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         rowHeight={72}
         itemOverflowY="visible"
         handlesOnHoverOnly
+        isResizable={false}
       />
     </PageLayout>
   );
