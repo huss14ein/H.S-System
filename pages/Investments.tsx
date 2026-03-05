@@ -2031,6 +2031,104 @@ Save anyway?`)) return;
         };
     }, [planCurrency, simulatedPrices, holdingPriceFallbackMap]);
 
+
+    const addOnOpportunities = useMemo(() => {
+        const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
+        const mapBySymbol = new Map((data.portfolioUniverse || []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
+        const opportunities: Array<{
+            symbol: string;
+            name: string;
+            status: TickerStatus;
+            portfolioName: string;
+            currentPrice: number;
+            gainLossPct: number;
+            portfolioWeight: number;
+            maxWeight: number;
+            suggestedPlanAmount: number;
+            tradeCurrency: TradeCurrency;
+            amountInTradeCurrency: number;
+            pullbackPrice: number;
+            deepPullbackPrice: number;
+            suggestedQuantity: number;
+            confidence: 'High' | 'Medium';
+            reason: string;
+        }> = [];
+
+        const fx = exchangeRate > 0 ? exchangeRate : 3.75;
+        const convertPlanToTrade = (amount: number, tradeCurrency: TradeCurrency): number => {
+            const pair = `${planCurrency}-${tradeCurrency}`;
+            if (pair === 'SAR-USD') return amount / fx;
+            if (pair === 'USD-SAR') return amount * fx;
+            return amount;
+        };
+
+        (data.investments || []).forEach((portfolio) => {
+            const holdings = portfolio.holdings || [];
+            const portfolioValue = holdings.reduce((sum, h) => sum + (h.currentValue || 0), 0);
+            if (portfolioValue <= 0) return;
+
+            holdings.forEach((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                if (!symbol) return;
+                const universeTicker = mapBySymbol.get(symbol);
+                const status = universeTicker?.status ?? 'Core';
+                if (!actionableStatuses.includes(status)) return;
+
+                const livePrice = simulatedPrices[symbol]?.price || (holding.quantity > 0 ? (holding.currentValue / holding.quantity) : 0) || holding.avgCost || 0;
+                if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+
+                const costBasis = (holding.avgCost || 0) * (holding.quantity || 0);
+                const gainLossPct = costBasis > 0 ? (((holding.currentValue || 0) - costBasis) / costBasis) * 100 : 0;
+                if (!Number.isFinite(gainLossPct) || gainLossPct < 4) return;
+
+                const portfolioWeight = (holding.currentValue || 0) / portfolioValue;
+                const maxWeight = universeTicker?.max_position_weight && universeTicker.max_position_weight > 0
+                    ? universeTicker.max_position_weight
+                    : (status === 'Core' ? 0.25 : 0.2);
+                const headroom = Math.max(0, maxWeight - portfolioWeight);
+                if (headroom <= 0.01) return;
+
+                const momentumBonus = gainLossPct >= 12 ? 1 : gainLossPct >= 7 ? 0.7 : 0.45;
+                const sleeveCap = status === 'Core' ? 0.06 : 0.04;
+                const suggestedPlanShare = Math.min(sleeveCap, Math.max(0.015, headroom * (0.35 + momentumBonus * 0.4)));
+                const suggestedPlanAmount = Math.round((plan.monthlyBudget || 0) * suggestedPlanShare);
+                if (!Number.isFinite(suggestedPlanAmount) || suggestedPlanAmount <= 0) return;
+
+                const tradeCurrency = tickerCurrencyMap[symbol] || ((portfolio.currency as TradeCurrency) || 'USD');
+                const amountInTradeCurrency = Math.max(0, Number(convertPlanToTrade(suggestedPlanAmount, tradeCurrency).toFixed(2)));
+                if (amountInTradeCurrency <= 0) return;
+
+                const pullbackPct = status === 'Core' ? 0.02 : 0.03;
+                const deepPullbackPct = status === 'Core' ? 0.05 : 0.07;
+                const pullbackPrice = Number((livePrice * (1 - pullbackPct)).toFixed(2));
+                const deepPullbackPrice = Number((livePrice * (1 - deepPullbackPct)).toFixed(2));
+                const suggestedQuantity = pullbackPrice > 0 ? Number((amountInTradeCurrency / pullbackPrice).toFixed(4)) : 0;
+                const confidence: 'High' | 'Medium' = gainLossPct >= 10 && headroom >= 0.04 ? 'High' : 'Medium';
+
+                opportunities.push({
+                    symbol,
+                    name: holding.name || symbol,
+                    status,
+                    portfolioName: portfolio.name,
+                    currentPrice: Number(livePrice.toFixed(2)),
+                    gainLossPct: Number(gainLossPct.toFixed(2)),
+                    portfolioWeight: Number((portfolioWeight * 100).toFixed(2)),
+                    maxWeight: Number((maxWeight * 100).toFixed(1)),
+                    suggestedPlanAmount,
+                    tradeCurrency,
+                    amountInTradeCurrency,
+                    pullbackPrice,
+                    deepPullbackPrice,
+                    suggestedQuantity,
+                    confidence,
+                    reason: `${status} winner with positive trend and position headroom (${(headroom * 100).toFixed(1)}% remaining to max weight).`,
+                });
+            });
+        });
+
+        return opportunities.sort((a, b) => b.gainLossPct - a.gainLossPct).slice(0, 6);
+    }, [data.investments, data.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
+
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
         setExecutionResult(null);
@@ -2437,6 +2535,81 @@ Save anyway?`)) return;
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+
+
+                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800 mb-1">Smart Add-On Opportunities (Existing Winners)</h2>
+                                <p className="text-sm text-slate-600">Automated suggestions for buying more of profitable shares you already own, with pullback entry zones and capped sizing.</p>
+                            </div>
+                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">AUTO</span>
+                        </div>
+                    </div>
+                    <div className="p-6">
+                        {addOnOpportunities.length === 0 ? (
+                            <p className="text-sm text-slate-500">No add-on opportunities right now. Suggestions appear when a holding is profitable, actionable (Core/High-Upside), and below max position weight.</p>
+                        ) : (
+                            <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                <table className="w-full table-fixed text-sm">
+                                    <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
+                                            <th className="w-[18%] px-3 py-2 font-semibold">Share</th>
+                                            <th className="w-[16%] px-3 py-2 font-semibold">Signal</th>
+                                            <th className="w-[24%] px-3 py-2 font-semibold">Buy zone</th>
+                                            <th className="w-[24%] px-3 py-2 font-semibold text-right">Suggested size</th>
+                                            {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {addOnOpportunities.map((o) => (
+                                            <tr key={`${o.symbol}-${o.portfolioName}`} className="border-b border-slate-100 last:border-0 align-top hover:bg-slate-50/40">
+                                                <td className="px-3 py-2">
+                                                    <div className="font-semibold text-slate-800">{o.symbol}</div>
+                                                    <div className="text-[11px] text-slate-500 truncate">{o.portfolioName} · {o.status}</div>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="text-xs text-slate-700 font-medium">P/L {o.gainLossPct >= 0 ? '+' : ''}{o.gainLossPct.toFixed(1)}%</div>
+                                                    <div className="text-[11px] text-slate-500">Wt {o.portfolioWeight.toFixed(1)}% / max {o.maxWeight.toFixed(1)}%</div>
+                                                    <div className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${o.confidence === 'High' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{o.confidence}</div>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="text-xs text-slate-700">Pullback: <strong>{formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</strong></div>
+                                                    <div className="text-xs text-slate-500">Deep pullback: {formatCurrencyString(o.deepPullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-1 leading-snug">{o.reason}</div>
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                    <div className="font-mono font-semibold text-primary tabular-nums">{formatCurrencyString(o.suggestedPlanAmount, { inCurrency: planCurrency, digits: 0 })}</div>
+                                                    <div className="text-[11px] text-slate-500">≈ {formatCurrencyString(o.amountInTradeCurrency, { inCurrency: o.tradeCurrency, digits: 0 })}</div>
+                                                    <div className="text-[11px] text-slate-500">{o.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                </td>
+                                                {onOpenRecordTrade && (
+                                                    <td className="px-3 py-2 text-right">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onOpenRecordTrade({
+                                                                ticker: o.symbol,
+                                                                amount: o.suggestedPlanAmount,
+                                                                reason: `Smart add-on: ${o.reason}`,
+                                                                price: o.pullbackPrice,
+                                                                quantity: o.suggestedQuantity,
+                                                                tradeCurrency: o.tradeCurrency,
+                                                            })}
+                                                            className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap"
+                                                        >
+                                                            Record add-on
+                                                        </button>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 </div>
 
