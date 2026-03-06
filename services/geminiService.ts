@@ -1058,18 +1058,38 @@ async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<
 
 
 export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefresh?: boolean }): Promise<{ content: string, groundingChunks: any[] }> => {
-    const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const positionSnapshotKey = [
+        Number(holding.quantity || 0).toFixed(4),
+        Number(holding.avgCost || 0).toFixed(2),
+        Number(holding.currentValue || 0).toFixed(2),
+    ].join(':');
+    const cacheKey = `getAIStockAnalysis:${holding.symbol}:${dayKey}:${positionSnapshotKey}`;
     const cached = getFromCache(cacheKey);
     if (!options?.forceRefresh && cached) return cached;
 
-    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
+    const approxPrice = Number(holding.quantity || 0) > 0
+        ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
+        : Number(holding.avgCost || 0);
+    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst.
+Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol}) using Google Search.
+Treat stale/outdated references as low confidence and prefer latest items.
+
+Portfolio snapshot context (for relevance only):
+- Shares: ${Number(holding.quantity || 0).toLocaleString()}
+- Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
+- Approx latest price from portfolio: ${Number.isFinite(approxPrice) ? approxPrice.toFixed(2) : 'N/A'}
+
+Return Markdown only (no HTML):
 
 ### Recent News Summary
-- 2-3 bullets on the latest significant news. One sentence each.
+- 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
-Markdown only.`;
+
+### What Changed Recently
+- 1-2 bullets highlighting what is new versus prior narrative.`;
 
     try {
         const response = await invokeAI({
