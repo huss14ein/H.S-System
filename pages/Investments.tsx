@@ -1405,6 +1405,7 @@ const PlatformView: React.FC<{
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
@@ -1419,10 +1420,26 @@ const PlatformView: React.FC<{
 
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
-    const aggregateValue = platformsData.reduce((sum, p) => {
-        const holdings = p.portfolios.flatMap(port => port.holdings || []);
-        return sum + holdings.reduce((s, h) => s + (props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
-    }, 0);
+    const aggregateValue = useMemo(() => {
+        const safeFx = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+        const toSar = (amount: number, currency?: string) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            const c = (currency === 'USD' || currency === 'SAR') ? currency : 'USD';
+            return c === 'USD' ? amount * safeFx : amount;
+        };
+
+        return platformsData.reduce((sum, p) => {
+            const platformTotalSar = p.portfolios.reduce((portfolioSum, portfolio) => {
+                const portfolioCurrency = portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD';
+                const holdingsTotal = (portfolio.holdings || []).reduce((holdingSum, h) => {
+                    const liveValue = props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue;
+                    return holdingSum + toSar(Number(liveValue) || 0, portfolioCurrency);
+                }, 0);
+                return portfolioSum + holdingsTotal;
+            }, 0);
+            return sum + platformTotalSar;
+        }, 0);
+    }, [platformsData, props.simulatedPrices, exchangeRate]);
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = totalPortfolios > 0;
 
