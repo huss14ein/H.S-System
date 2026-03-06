@@ -239,7 +239,7 @@ const Budgets: React.FC = () => {
             // If table is missing, fail silently to keep the page usable.
             const { data: shares } = await supabase
                 .from('budget_shares')
-                .select('owner_user_id, shared_with_user_id, category, owner_email')
+                .select('owner_user_id, shared_with_user_id, category')
                 .eq('shared_with_user_id', auth.user.id)
                 .then((r) => r, () => ({ data: [] as any[] } as any));
 
@@ -260,7 +260,7 @@ const Budgets: React.FC = () => {
                         ...b,
                         period: b.period ?? 'monthly',
                         tier: b.tier ?? b.budget_tier ?? 'Optional',
-                        ownerEmail: shareRows.find((r) => r.owner_user_id === b.user_id)?.owner_email,
+                        ownerEmail: b.user_id,
                     }));
                 setSharedBudgets(filtered);
             }
@@ -288,10 +288,10 @@ const Budgets: React.FC = () => {
 
     React.useEffect(() => {
         const loadShareableUsers = async () => {
-            if (!supabase || !auth?.user?.id) {
-                setShareableUsers([]);
-                setShareUsersLoadError(null);
-                return;
+        if (!supabase || !auth?.user?.id || !isAdmin) {
+            setShareableUsers([]);
+            setShareUsersLoadError(null);
+            return;
             }
 
             const { data: users, error } = await supabase.rpc('list_shareable_users');
@@ -311,7 +311,7 @@ const Budgets: React.FC = () => {
         };
 
         loadShareableUsers();
-    }, [auth?.user?.id]);
+    }, [auth?.user?.id, isAdmin]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -388,10 +388,20 @@ const Budgets: React.FC = () => {
             spending.set(cat, (spending.get(cat) || 0) + amount);
         });
 
-        const scopedBudgets = (data?.budgets ?? [])
+        const ownScopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
+
+        const sharedScopedBudgets = (sharedBudgets ?? [])
+            .filter(b => b.year === currentYear)
+            .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
+            .map((b) => ({
+                ...b,
+                id: `shared-${b.user_id || 'owner'}-${b.id}`,
+            }));
+
+        const scopedBudgets = isAdmin ? ownScopedBudgets : [...ownScopedBudgets, ...sharedScopedBudgets];
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -431,7 +441,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, sharedBudgets]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -478,6 +488,10 @@ const Budgets: React.FC = () => {
 
     const handleShareBudget = async () => {
         if (!supabase || !auth?.user) return;
+        if (!isAdmin) {
+            alert('Only Admin can share budgets.');
+            return;
+        }
         const email = shareTargetEmail.trim().toLowerCase();
         if (!email) {
             alert('Enter recipient email first.');
@@ -498,7 +512,6 @@ const Budgets: React.FC = () => {
         }
         const payload = {
             owner_user_id: auth.user.id,
-            owner_email: auth.user.email,
             shared_with_user_id: targetUser.id,
             category: shareCategory === 'ALL' ? null : shareCategory,
         };
@@ -1072,33 +1085,39 @@ const Budgets: React.FC = () => {
             )}
 
             <SectionCard title="Budget sharing">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
-                        <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
-                            <option value="">Select a signed-up user…</option>
-                            {shareableUsers.map((u) => (
-                                <option key={u.id} value={u.email}>{u.email}</option>
-                            ))}
-                        </select>
-                        <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
-                        <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
-                        {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
-                        <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
-                            <option value="ALL">All budget categories</option>
-                            {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-3 items-center">
-                    <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
-                    <p className="text-xs text-slate-500">Only budgets are shared. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
-                </div>
+                {isAdmin ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
+                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
+                                    <option value="">Select a signed-up user…</option>
+                                    {shareableUsers.map((u) => (
+                                        <option key={u.id} value={u.email}>{u.email}</option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
+                                <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
+                                {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
+                                <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
+                                    <option value="ALL">All budget categories</option>
+                                    {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-3 items-center">
+                            <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
+                            <p className="text-xs text-slate-500">Only budgets are shared. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
+                        </div>
+                    </>
+                ) : (
+                    <p className="text-sm text-slate-600">Only Admin can share budgets. Any budgets shared with you are listed below.</p>
+                )}
 
                 {sharedBudgets.length > 0 && (
                     <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
