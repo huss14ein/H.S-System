@@ -16,30 +16,44 @@ const InvestmentOverview: React.FC = () => {
     const { isAiAvailable } = useAI();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
-        const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings || []);
-        
-        // Data for Performance Treemap
-        const allHoldingsWithGains = allHoldings.map(h => {
-             const totalCost = h.avgCost * h.quantity;
-             const gainLoss = h.currentValue - totalCost;
-             const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-             return { ...h, gainLoss, gainLossPercent };
-        });
+        const allHoldings: Holding[] = data.investments.flatMap((p) => p.holdings || []);
 
-        // Data for Asset Class Allocation Bar Chart
+        const allHoldingsWithGains = allHoldings
+            .map((h) => {
+                const qty = Number(h.quantity || 0);
+                const avgCost = Number(h.avgCost || 0);
+                const marketValue = Number(h.currentValue || 0);
+                const costValue = avgCost * qty;
+                const effectiveValue = marketValue > 0 ? marketValue : (costValue > 0 ? costValue : 0);
+                const gainLoss = effectiveValue - costValue;
+                const gainLossPercent = costValue > 0 ? (gainLoss / costValue) * 100 : 0;
+                return { ...h, currentValue: effectiveValue, gainLoss, gainLossPercent };
+            })
+            .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
+
         const assetAllocationMap = new Map<string, number>();
-        allHoldings.forEach(h => {
+        allHoldingsWithGains.forEach((h) => {
             const assetClass = h.assetClass || 'Other';
             assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
         });
-        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-        
-        // Data for Portfolio Allocation Pie Chart
-        const portfolioAllocation = data.investments.map(p => {
-            const portfolioValue = (p.holdings || []).reduce((sum, h) => sum + h.currentValue, 0);
-            return { name: p.name, value: portfolioValue };
-        }).sort((a,b) => b.value - a.value);
+        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]) => ({ name, value }))
+            .filter((x) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a, b) => b.value - a.value);
 
+        const portfolioAllocation = data.investments
+            .map((p) => {
+                const portfolioValue = (p.holdings || []).reduce((sum, h) => {
+                    const qty = Number(h.quantity || 0);
+                    const avgCost = Number(h.avgCost || 0);
+                    const marketValue = Number(h.currentValue || 0);
+                    const fallbackValue = avgCost * qty;
+                    const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
+                    return sum + effectiveValue;
+                }, 0);
+                return { name: p.name, value: portfolioValue };
+            })
+            .filter((x) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a, b) => b.value - a.value);
 
         return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation };
     }, [data]);
@@ -218,7 +232,7 @@ const InvestmentOverview: React.FC = () => {
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
-                <div className="section-card flex flex-col min-h-[420px]">
+                <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Portfolio Allocation</h3>
                     <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden flex items-center justify-center">
@@ -231,7 +245,7 @@ const InvestmentOverview: React.FC = () => {
                         )}
                     </div>
                 </div>
-                <div className="section-card flex flex-col min-h-[420px]">
+                <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Allocation by Asset Class</h3>
                     <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
@@ -239,7 +253,7 @@ const InvestmentOverview: React.FC = () => {
                     </div>
                 </div>
             </div>
-            <div className="section-card flex flex-col min-h-[420px]">
+            <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                 <h3 className="section-title mb-1">Consolidated Holdings Performance</h3>
                 <p className="text-sm text-slate-500 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
                 <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
