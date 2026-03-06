@@ -455,8 +455,15 @@ const Budgets: React.FC = () => {
         }
         const { data: targetUser, error: userError } = await resolveRecipientUserByEmail(email);
         if (userError || !targetUser?.id) {
-            const detail = userError?.message || '';
-            alert(`Recipient user not found. ${detail.includes('find_user_by_email') ? 'Run docs/budget_sharing.sql to install helper function.' : detail}`.trim());
+            const detail = (userError?.message || '').trim();
+            const helperHint = detail.includes('find_user_by_email')
+                ? ' Run docs/budget_sharing.sql to install helper function.'
+                : '';
+            const alreadyPrefixed = /^Recipient user not found\.?/i.test(detail);
+            const message = alreadyPrefixed
+                ? `${detail}${helperHint}`.trim()
+                : `Recipient user not found.${detail ? ` ${detail}` : ''}${helperHint}`.trim();
+            alert(message);
             return;
         }
         const payload = {
