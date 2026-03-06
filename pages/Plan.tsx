@@ -363,14 +363,14 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             title="Annual Financial Plan"
             description="Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan. Fully integrated with your data."
             action={
-                <div className="flex flex-wrap items-center justify-end gap-4">
-                    <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronLeftIcon className="h-5 w-5"/></button>
-                        <label className="flex items-center gap-1"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-base w-24 text-center font-semibold" /></label>
-                        <button type="button" onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-slate-200"><ChevronRightIcon className="h-5 w-5"/></button>
+                <div className="w-full flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
+                    <div className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-2 py-1 self-start lg:self-auto">
+                        <button type="button" onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronLeftIcon className="h-5 w-5"/></button>
+                        <label className="flex items-center gap-1.5"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-base w-24 text-center font-semibold" /></label>
+                        <button type="button" onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
                     {setActivePage && (
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                             <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-sm"><BanknotesIcon className="h-4 w-4" /> Budgets</button>
                             <button type="button" onClick={() => setActivePage('Goals')} className="btn-ghost py-1.5 text-sm text-blue-600 hover:bg-blue-50"><ScaleIcon className="h-4 w-4" /> Goals</button>
                             <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-sm text-violet-600 hover:bg-violet-50"><ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan</button>
