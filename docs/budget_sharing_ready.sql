@@ -144,10 +144,60 @@ as $$
   from public.users u
   join auth.users au on au.id = u.id
   where u.id <> auth.uid()
+    and exists (
+      select 1
+      from public.users me
+      where me.id = auth.uid()
+        and me.role = 'Admin'
+    )
   order by lower(au.email)
 $$;
 
 revoke all on function public.list_shareable_users() from public;
 grant execute on function public.list_shareable_users() to authenticated;
+
+
+create or replace function public.get_shared_budgets_for_me()
+returns table (
+  id uuid,
+  user_id uuid,
+  category text,
+  period text,
+  tier text,
+  "limit" numeric,
+  owner_user_id uuid,
+  owner_email text,
+  shared_category text,
+  shared_at timestamptz
+)
+language sql
+security definer
+set search_path = public, auth
+as $$
+  select
+    b.id,
+    b.user_id,
+    b.category,
+    b.period,
+    coalesce(b.tier, b.budget_tier, 'Optional') as tier,
+    b."limit",
+    bs.owner_user_id,
+    coalesce(bs.owner_email, au.email, bs.owner_user_id::text) as owner_email,
+    bs.category as shared_category,
+    bs.created_at as shared_at
+  from public.budget_shares bs
+  join public.budgets b on b.user_id = bs.owner_user_id
+  left join auth.users au on au.id = bs.owner_user_id
+  where bs.shared_with_user_id = auth.uid()
+    and (
+      bs.category is null
+      or lower(bs.category) = 'all'
+      or lower(coalesce(b.category, '')) = lower(bs.category)
+    )
+  order by bs.created_at desc, lower(coalesce(b.category, ''))
+$$;
+
+revoke all on function public.get_shared_budgets_for_me() from public;
+grant execute on function public.get_shared_budgets_for_me() to authenticated;
 
 commit;

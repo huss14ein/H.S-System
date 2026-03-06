@@ -235,33 +235,25 @@ const Budgets: React.FC = () => {
                 setBudgetRequests(requests || []);
             }
 
-            // Optional shared budgets feature (requires budget_shares table + RLS).
-            // If table is missing, fail silently to keep the page usable.
-            const { data: shares } = await supabase
-                .from('budget_shares')
-                .select('owner_user_id, shared_with_user_id, category')
-                .eq('shared_with_user_id', auth.user.id)
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            // Shared budgets are fetched through an RPC so recipients only see explicitly shared budget rows.
+            const { data: sharedRows, error: sharedRowsError } = await supabase
+                .rpc('get_shared_budgets_for_me')
+                .then((r) => r, () => ({ data: [] as any[], error: null } as any));
 
-            const shareRows = (shares || []) as any[];
-            if (shareRows.length === 0) {
+            if (sharedRowsError) {
+                const message = (sharedRowsError.message || '').trim();
+                const normalized = /get_shared_budgets_for_me|function\s+public\.get_shared_budgets_for_me/i.test(message)
+                    ? 'Shared budgets are unavailable until the latest migration is applied. Run docs/budget_sharing_ready.sql.'
+                    : message || 'Could not load shared budgets right now.';
+                console.warn(normalized);
                 setSharedBudgets([]);
             } else {
-                const ownerIds = Array.from(new Set(shareRows.map((r) => r.owner_user_id).filter(Boolean)));
-                const { data: ownerBudgets } = await supabase
-                    .from('budgets')
-                    .select('*')
-                    .in('user_id', ownerIds)
-                    .then((r) => r, () => ({ data: [] as any[] } as any));
-                const shareKey = new Set(shareRows.map((r) => `${r.owner_user_id}:${(r.category || 'ALL').toLowerCase()}`));
-                const filtered = ((ownerBudgets || []) as any[])
-                    .filter((b) => shareKey.has(`${b.user_id}:all`) || shareKey.has(`${b.user_id}:${String(b.category || '').toLowerCase()}`))
-                    .map((b) => ({
-                        ...b,
-                        period: b.period ?? 'monthly',
-                        tier: b.tier ?? b.budget_tier ?? 'Optional',
-                        ownerEmail: b.user_id,
-                    }));
+                const filtered = ((sharedRows || []) as any[]).map((b) => ({
+                    ...b,
+                    period: b.period ?? 'monthly',
+                    tier: b.tier ?? b.budget_tier ?? 'Optional',
+                    ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
+                }));
                 setSharedBudgets(filtered);
             }
 
@@ -298,7 +290,7 @@ const Budgets: React.FC = () => {
             if (error) {
                 const message = (error.message || '').trim();
                 const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
-                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users.'
+                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users (Admin-only).'
                     : message || 'Unable to load users list.';
                 setShareUsersLoadError(normalized);
                 setShareableUsers([]);
@@ -1112,7 +1104,7 @@ const Budgets: React.FC = () => {
                         </div>
                         <div className="mt-3 flex flex-wrap gap-3 items-center">
                             <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
-                            <p className="text-xs text-slate-500">Only budgets are shared. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
+                            <p className="text-xs text-slate-500">Only selected budget categories are shared with the specific users you choose. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
                         </div>
                     </>
                 ) : (
