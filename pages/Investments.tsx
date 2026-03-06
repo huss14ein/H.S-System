@@ -1060,7 +1060,7 @@ const PlatformCard: React.FC<{
 
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
-        const rate = exchangeRate;
+        const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
         let valueSAR = 0, valueUSD = 0;
         portfolios.forEach(p => {
             const cur = (p.currency || 'USD') as TradeCurrency;
@@ -1180,15 +1180,15 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
-                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
-                        <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
+                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5" aria-label="Platform metrics">
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Available Cash</dt>
+                        <dd className="metric-value w-full mt-1.5 text-base sm:text-lg font-bold text-slate-900 tabular-nums leading-tight">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
-                                <span className="font-bold text-slate-500">—</span>
+                                <span className="text-slate-500">—</span>
                             ) : (
                                 <>
-                                    <span className="font-bold text-slate-800 block">
+                                    <span className="block">
                                         {platformCurrency
                                             ? formatCurrencyString(totalAvailable, {
                                                   inCurrency: platformCurrency,
@@ -1203,7 +1203,7 @@ const PlatformCard: React.FC<{
                                                       availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
                                               })}
                                     </span>
-                                    <span className="block text-[11px] text-slate-500">
+                                    <span className="mt-1 block text-[11px] font-medium text-slate-500">
                                         {formatCurrencyString(availableCashByCurrency.SAR, {
                                             inCurrency: 'SAR',
                                             digits: 0,
@@ -1218,25 +1218,25 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
-                        <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Unrealized P/L</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
-                        <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Daily P/L</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
-                        <dd className={`metric-value w-full font-bold text-base sm:text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">ROI</dt>
+                        <dd className={`metric-value w-full mt-1.5 font-bold text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Invested</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-center justify-start text-center min-h-[108px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Withdrawn</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Withdrawn</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </dl>
             </header>
@@ -2820,7 +2820,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     if (!data || !data.investments) {
         return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
     }
-    const rate = exchangeRate;
+    const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
     let valueSAR = 0, valueUSD = 0;
     data.investments.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
