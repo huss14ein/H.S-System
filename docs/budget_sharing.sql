@@ -44,11 +44,13 @@ create table if not exists public.budget_shared_transactions (
   amount numeric not null,
   transaction_date date not null,
   description text,
+  status text not null default 'Approved',
   created_at timestamptz not null default now(),
   unique(owner_user_id, contributor_user_id, source_transaction_id)
 );
 
 alter table public.budget_shared_transactions enable row level security;
+alter table public.budget_shared_transactions add column if not exists status text not null default 'Approved';
 
 drop policy if exists budget_shared_transactions_owner_read on public.budget_shared_transactions;
 create policy budget_shared_transactions_owner_read

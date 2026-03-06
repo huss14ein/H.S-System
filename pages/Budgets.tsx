@@ -372,6 +372,7 @@ const Budgets: React.FC = () => {
 
         // Reflect collaborator spending into owner budget totals for shared categories.
         ownerSharedTransactions.forEach((tx) => {
+            if ((tx.status ?? 'Approved') !== 'Approved') return;
             const d = new Date(tx.transaction_date || tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String(tx.budget_category || '').trim();
@@ -1171,7 +1172,7 @@ const Budgets: React.FC = () => {
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
                 <SectionCard title="Shared-budget transaction visibility">
                     <p className="text-xs text-slate-500 mb-3">
-                        Owner view: you can see contributors' transactions for budgets you shared. Contributor view: you only see transactions you posted yourself.
+                        Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
                     </p>
                     <div className="overflow-x-auto rounded-lg border border-slate-200">
                         <table className="min-w-full text-sm">
@@ -1181,6 +1182,7 @@ const Budgets: React.FC = () => {
                                     <th className="px-3 py-2 text-left">Category</th>
                                     <th className="px-3 py-2 text-left">Contributor</th>
                                     <th className="px-3 py-2 text-left">Description</th>
+                                    <th className="px-3 py-2 text-left">Status</th>
                                     <th className="px-3 py-2 text-right">Amount</th>
                                 </tr>
                             </thead>
@@ -1191,6 +1193,11 @@ const Budgets: React.FC = () => {
                                         <td className="px-3 py-2">{tx.budget_category}</td>
                                         <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
                                         <td className="px-3 py-2">{tx.description || '—'}</td>
+                                        <td className="px-3 py-2">
+                                            <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                {tx.status ?? 'Approved'}
+                                            </span>
+                                        </td>
                                         <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
                                     </tr>
                                 ))}
