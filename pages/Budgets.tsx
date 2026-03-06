@@ -251,6 +251,8 @@ const Budgets: React.FC = () => {
                 const filtered = ((sharedRows || []) as any[]).map((b) => ({
                     ...b,
                     period: b.period ?? 'monthly',
+                    month: Number(b.month) || currentMonth,
+                    year: Number(b.year) || currentYear,
                     tier: b.tier ?? b.budget_tier ?? 'Optional',
                     ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
                 }));
@@ -387,8 +389,12 @@ const Budgets: React.FC = () => {
             .filter(b => isAdmin || permittedCategories.includes(b.category));
 
         const sharedScopedBudgets = (sharedBudgets ?? [])
-            .filter(b => b.year === currentYear)
-            .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear)
+            .filter((b) => {
+                const month = Number((b as any).month) || currentMonth;
+                const year = Number((b as any).year) || currentYear;
+                return budgetView === 'Yearly' || month === currentMonth || (b.period === 'yearly' && year === currentYear);
+            })
             .map((b) => ({
                 ...b,
                 id: `shared-${b.user_id || 'owner'}-${b.id}`,

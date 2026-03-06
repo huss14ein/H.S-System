@@ -108,6 +108,8 @@ returns table (
   id uuid,
   user_id uuid,
   category text,
+  month integer,
+  year integer,
   period text,
   tier text,
   "limit" numeric,
@@ -124,6 +126,8 @@ as $$
     b.id,
     b.user_id,
     b.category,
+    b.month,
+    b.year,
     b.period,
     coalesce(
       nullif(to_jsonb(b)->>'tier', ''),
