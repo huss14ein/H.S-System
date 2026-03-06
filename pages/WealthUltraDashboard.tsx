@@ -247,6 +247,66 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   const healthColor = portfolioHealth.score >= 85 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : portfolioHealth.score >= 65 ? 'text-amber-600 bg-amber-50 border-amber-200' : portfolioHealth.score >= 40 ? 'text-amber-700 bg-amber-100 border-amber-300' : 'text-rose-600 bg-rose-50 border-rose-200';
 
+  const engineIntelligence = useMemo(() => {
+    const maxDrift = allocations.reduce((max, item) => Math.max(max, Math.abs(item.driftPct)), 0);
+    const driftPenalty = Math.min(30, maxDrift * 3);
+    const alertPenalty = Math.min(25, alerts.length * 5);
+    const cashPenalty = cashPlannerStatus === 'WITHIN_LIMIT' ? 0 : 20;
+    const specPenalty = specBreach ? 15 : 0;
+    const iqScore = Math.max(0, Math.min(100, Math.round(100 - driftPenalty - alertPenalty - cashPenalty - specPenalty)));
+
+    const recommendations: Array<{ title: string; reason: string; priority: 'high' | 'medium' | 'low' }> = [];
+    if (cashPlannerStatus !== 'WITHIN_LIMIT') {
+      recommendations.push({
+        title: 'Trim buy list to fit cash limits',
+        reason: `Planned buys ${formatCurrencyString(totalPlannedBuyCost)} exceed deployable cash ${formatCurrencyString(deployableCash)}.`,
+        priority: 'high',
+      });
+    }
+    if (maxDrift > 5) {
+      recommendations.push({
+        title: 'Rebalance sleeve drift',
+        reason: `Maximum sleeve drift is ${maxDrift.toFixed(1)}%, above the 5% operating threshold.`,
+        priority: maxDrift > 10 ? 'high' : 'medium',
+      });
+    }
+    if (specBreach) {
+      recommendations.push({
+        title: 'Reduce speculative exposure',
+        reason: 'Spec sleeve is above limit, so new spec buys are blocked until risk normalizes.',
+        priority: 'high',
+      });
+    }
+    if (monthlyDeployment.amountToDeploy > 0) {
+      recommendations.push({
+        title: 'Automate monthly deployment',
+        reason: `Current monthly deployment target is ${formatCurrencyString(monthlyDeployment.amountToDeploy)}; convert top BUY orders into recurring instructions.`,
+        priority: 'low',
+      });
+    }
+    if (recommendations.length === 0) {
+      recommendations.push({
+        title: 'Maintain current allocations',
+        reason: 'No critical drift, cash, or spec-limit violations detected in this cycle.',
+        priority: 'low',
+      });
+    }
+
+    const guardrails = [
+      { label: 'Cash discipline', ok: cashPlannerStatus === 'WITHIN_LIMIT' },
+      { label: 'Spec guardrail', ok: !specBreach && !specBuysDisabled },
+      { label: 'Drift under control', ok: maxDrift <= 5 },
+      { label: 'Orderbook prepared', ok: orders.length > 0 || positions.length === 0 },
+    ];
+
+    return {
+      iqScore,
+      maxDrift,
+      recommendations: recommendations.slice(0, 3),
+      guardrails,
+    };
+  }, [allocations, alerts.length, cashPlannerStatus, deployableCash, formatCurrencyString, monthlyDeployment, orders.length, positions.length, specBreach, specBuysDisabled, totalPlannedBuyCost]);
+
   const gridItems = useMemo(
     () => [
       {
@@ -330,6 +390,46 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         defaultH: 2,
         minW: 4,
         minH: 1,
+      },
+      {
+        id: 'engine-iq',
+        content: (
+          <SectionCard title="Engine IQ & decision summary" className="border-primary/20 bg-white">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Engine IQ</p>
+                <p className="mt-1 text-3xl font-black text-slate-900 tabular-nums">{engineIntelligence.iqScore}<span className="text-base font-semibold text-slate-500">/100</span></p>
+                <p className="text-xs text-slate-600 mt-2">Calculated from drift, alerts, cash compliance, and spec-rule discipline.</p>
+              </div>
+              <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-2">Top actions this cycle</p>
+                <ul className="space-y-2">
+                  {engineIntelligence.recommendations.map((action, idx) => (
+                    <li key={`${action.title}-${idx}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-800">{idx + 1}. {action.title}</p>
+                        <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full ${action.priority === 'high' ? 'bg-rose-100 text-rose-700' : action.priority === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{action.priority}</span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">{action.reason}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+              {engineIntelligence.guardrails.map(item => (
+                <div key={item.label} className={`rounded-lg border px-3 py-2 text-sm ${item.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                  <p className="font-semibold">{item.label}</p>
+                  <p className="text-xs mt-0.5">{item.ok ? 'Healthy' : 'Needs action'}</p>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 3,
+        minW: 6,
+        minH: 2,
       },
       {
         id: 'sleeve-allocation',
@@ -646,6 +746,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       capitalEfficiencyRanked,
       config,
       riskDistribution,
+      engineIntelligence,
     ]
   );
 
