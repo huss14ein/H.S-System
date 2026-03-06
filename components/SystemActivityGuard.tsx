@@ -1,36 +1,10 @@
-import React, { useEffect, useRef } from 'react';
-import { useMarketData } from '../context/MarketDataContext';
+import React from 'react';
 
-export const SystemActivityGuard: React.FC = () => {
-  const { refreshPrices, isRefreshing } = useMarketData();
-  const lastWakeRefreshRef = useRef(0);
-
-  useEffect(() => {
-    const maybeRefresh = () => {
-      const now = Date.now();
-      if (isRefreshing) return;
-      if (now - lastWakeRefreshRef.current < 15000) return;
-      lastWakeRefreshRef.current = now;
-      refreshPrices().catch(() => undefined);
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') maybeRefresh();
-    };
-
-    window.addEventListener('focus', maybeRefresh);
-    document.addEventListener('visibilitychange', onVisibility);
-    const periodic = window.setInterval(() => {
-      if (document.visibilityState === 'visible') maybeRefresh();
-    }, 120000);
-    return () => {
-      window.removeEventListener('focus', maybeRefresh);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.clearInterval(periodic);
-    };
-  }, [refreshPrices, isRefreshing]);
-
-  return null;
-};
+/**
+ * Manual-only live prices mode:
+ * keep component mounted as an extension point, but do not auto-refresh on
+ * focus/visibility/interval. Refresh is user-triggered from UI controls only.
+ */
+export const SystemActivityGuard: React.FC = () => null;
 
 export default SystemActivityGuard;
