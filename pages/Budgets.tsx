@@ -22,24 +22,18 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 const resolveRecipientUserByEmail = async (email: string) => {
     if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
 
-    const directLookup = await supabase
-        .from('users')
-        .select('id, email')
-        .eq('email', email)
-        .maybeSingle();
-
-    if (directLookup.data?.id) {
-        return { data: directLookup.data as { id: string; email: string | null }, error: null };
-    }
-
     const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
     const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
     if (rpcRow?.id) {
         return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
     }
 
-    const baseMessage = directLookup.error?.message || rpcLookup.error?.message || 'Recipient user not found.';
-    return { data: null, error: { message: baseMessage } };
+    const baseMessage = rpcLookup.error?.message || 'Recipient user not found.';
+    const normalizedMessage = /column\s+users\.email\s+does not exist/i.test(baseMessage)
+        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing.sql to install the latest find_user_by_email function.'
+        : baseMessage;
+
+    return { data: null, error: { message: normalizedMessage } };
 };
 interface BudgetModalProps {
     isOpen: boolean;

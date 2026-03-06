@@ -122,11 +122,12 @@ create or replace function public.find_user_by_email(target_email text)
 returns table (id uuid, email text)
 language sql
 security definer
-set search_path = public
+set search_path = public, auth
 as $$
-  select u.id, u.email
+  select u.id, au.email
   from public.users u
-  where lower(u.email) = lower(target_email)
+  join auth.users au on au.id = u.id
+  where lower(au.email) = lower(target_email)
   limit 1
 $$;
 
