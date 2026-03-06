@@ -543,9 +543,12 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const [isLoading, setIsLoading] = useState(false);
     const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
+    const [analystGeneratedAt, setAnalystGeneratedAt] = useState<number | null>(null);
+    const [analystSource, setAnalystSource] = useState<'live' | 'fallback' | null>(null);
     const [fundamentals, setFundamentals] = useState<HoldingFundamentals | null>(null);
     const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(false);
     const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
+    const [fundamentalsFetchedAt, setFundamentalsFetchedAt] = useState<number | null>(null);
 
     const handleGetAIAnalysis = useCallback(async (forceRefresh = false) => {
         if (!holding) return;
@@ -554,11 +557,17 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         setGroundingChunks([]);
         try {
             const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, { forceRefresh });
-            setAiAnalysis(content || buildFallbackAnalystReport(holding));
+            const resolvedContent = content || buildFallbackAnalystReport(holding);
+            const isFallbackContent = /coverage status|analyst engine note|ai analyst engine was unavailable/i.test(resolvedContent);
+            setAiAnalysis(resolvedContent);
             setGroundingChunks(chunks ?? []);
+            setAnalystGeneratedAt(Date.now());
+            setAnalystSource(isFallbackContent ? 'fallback' : 'live');
         } catch (e) {
             setAiAnalysisError(formatAiError(e));
             setAiAnalysis(buildFallbackAnalystReport(holding));
+            setAnalystGeneratedAt(Date.now());
+            setAnalystSource('fallback');
         } finally {
             setIsLoading(false);
         }
@@ -567,6 +576,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     useEffect(() => {
         if (holding && isOpen && !aiAnalysis && !isLoading) {
             setAiAnalysis(buildFallbackAnalystReport(holding));
+            setAnalystGeneratedAt(Date.now());
+            setAnalystSource('fallback');
         }
     }, [holding, isOpen, aiAnalysis, isLoading]);
 
@@ -576,6 +587,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     useEffect(() => {
         if (!isOpen) {
             lastAnalystRequestRef.current = null;
+            setAnalystGeneratedAt(null);
+            setAnalystSource(null);
+            setFundamentalsFetchedAt(null);
         }
     }, [isOpen]);
 
@@ -583,7 +597,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         if (!holding || !isOpen || isLoading) return;
         if (lastAnalystRequestRef.current === holding.id) return;
         lastAnalystRequestRef.current = holding.id;
-        handleGetAIAnalysis(false);
+        handleGetAIAnalysis(true);
     }, [holding, isOpen, isLoading, handleGetAIAnalysis]);
 
     useEffect(() => {
@@ -595,6 +609,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
             .then((data) => {
                 if (!cancelled) {
                     setFundamentals(data);
+                    setFundamentalsFetchedAt(Date.now());
                 }
             })
             .catch((e) => {
@@ -632,6 +647,37 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const toUSD = (valueSar: number) => valueSar / exchangeRate;
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+
+
+    const convertBetweenCurrencies = (value: number, from: TradeCurrency, to: TradeCurrency) => {
+        if (!Number.isFinite(value)) return 0;
+        if (from === to) return value;
+        if (from === 'USD' && to === 'SAR') return value * exchangeRate;
+        if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+        return value;
+    };
+
+    const analystGeneratedAgo = (() => {
+        if (!analystGeneratedAt) return '';
+        const diffMinutes = Math.max(0, Math.round((Date.now() - analystGeneratedAt) / 60000));
+        if (diffMinutes < 1) return 'Updated just now';
+        if (diffMinutes < 60) return `Updated ${diffMinutes}m ago`;
+        const hours = Math.round(diffMinutes / 60);
+        return `Updated ${hours}h ago`;
+    })();
+
+    const dividendYieldPct = typeof fundamentals?.dividend?.dividendYieldPct === 'number' ? fundamentals.dividend.dividendYieldPct : null;
+    const dividendPerShareAnnual = typeof fundamentals?.dividend?.dividendPerShareAnnual === 'number' ? fundamentals.dividend.dividendPerShareAnnual : null;
+    const projectedDividendFromPerShare = dividendPerShareAnnual && holding.quantity > 0
+        ? convertBetweenCurrencies(dividendPerShareAnnual * holding.quantity, fundamentalsCurrency, portfolioCurrency)
+        : null;
+    const projectedDividendFromYield = dividendYieldPct && dividendYieldPct > 0 && holding.currentValue > 0
+        ? holding.currentValue * (dividendYieldPct / 100)
+        : null;
+    const projectedAnnualDividend = (projectedDividendFromPerShare && projectedDividendFromPerShare > 0)
+        ? projectedDividendFromPerShare
+        : projectedDividendFromYield;
+    const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
@@ -715,11 +761,14 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Upcoming financials & income */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-700 break-words">Next earnings & dividends (estimated)</p>
+                        <p className="text-sm font-semibold text-slate-700 break-words">Next earnings & dividends (market-data estimate)</p>
                         {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
                     </div>
                     {fundamentalsError && (
                         <p className="text-xs text-rose-600 mb-2">Could not load event details right now.</p>
+                    )}
+                    {!fundamentalsError && fundamentalsFetchedAt && (
+                        <p className="text-xs text-slate-500 mb-2">Source: Finnhub market calendar & fundamentals · refreshed {new Date(fundamentalsFetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                     )}
                     <div className="grid gap-3 sm:grid-cols-2 text-sm">
                         <div className="space-y-1">
@@ -746,7 +795,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                     )}
                                 </>
                             ) : (
-                                <p className="text-xs text-slate-500">No upcoming earnings date available from market data.</p>
+                                <p className="text-xs text-slate-500">No confirmed upcoming earnings date from current market calendar feed.</p>
                             )}
                         </div>
                         <div className="space-y-1">
@@ -765,17 +814,18 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                                 {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual, { digits: 2 })}
                                             </p>
                                         )}
-                                    {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
-                                        fundamentals.dividend.dividendYieldPct > 0 &&
-                                        holding.currentValue > 0 && (
+                                    {hasReliableDividendEstimate && projectedAnnualDividend && (
                                             <p className="text-xs text-slate-600">
-                                                Implied annual cashflow on your position ({portfolioCurrency}):{' '}
-                                                {formatCurrencyString(holding.currentValue * (fundamentals.dividend.dividendYieldPct / 100), {
+                                                Estimated annual dividends on your position ({portfolioCurrency}):{' '}
+                                                {formatCurrencyString(projectedAnnualDividend, {
                                                     inCurrency: portfolioCurrency,
                                                     digits: 0,
                                                 })}
                                             </p>
                                         )}
+                                    {!hasReliableDividendEstimate && (
+                                        <p className="text-xs text-amber-700">Dividend payout estimate is low-confidence right now, so we are not projecting a cash amount.</p>
+                                    )}
                                     {!fundamentals.dividend.dividendYieldPct && !fundamentals.dividend.dividendPerShareAnnual && (
                                         <p className="text-xs text-slate-500">No dividend data available.</p>
                                     )}
@@ -789,12 +839,14 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
                 {/* Price trend chart */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
-                    <p className="text-sm font-semibold text-slate-700 mb-3 break-words">Price trend</p>
+                    <p className="text-sm font-semibold text-slate-700 mb-1 break-words">Price trend (last ~1 month)</p>
+                    <p className="text-xs text-slate-500 mb-3">Daily closes when available; otherwise an illustrative trend is shown.</p>
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
                         changePercent={priceTrendPercent}
                         formatPrice={(p) => fmt(p)}
+                        showIllustrativeLabel
                     />
                 </div>
 
@@ -804,6 +856,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         <div className="min-w-0">
                             <h4 className="font-semibold text-slate-800 break-words">Analyst Report</h4>
                             <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
+                            <p className="text-xs mt-1 text-slate-500">
+                                {analystSource === 'live' ? 'Live AI report' : analystSource === 'fallback' ? 'Fallback report' : 'Preparing report'}{analystGeneratedAgo ? ` · ${analystGeneratedAgo}` : ''}
+                            </p>
                         </div>
                         <button
                             type="button"
@@ -812,12 +867,12 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                             className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
                         >
                             <SparklesIcon className="h-4 w-4" />
-                            {isLoading ? 'Generating...' : 'Generate Report'}
+                            {isLoading ? 'Generating...' : 'Refresh AI Report'}
                         </button>
                     </div>
                     {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysisError && !isLoading && (
-                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI analyst service is temporarily unavailable ({aiAnalysisError}). We loaded a resilient fallback report below. Use Generate Report to retry live AI analysis.</p>
+                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI analyst service is temporarily unavailable ({aiAnalysisError}). We loaded a resilient fallback report below. Use Refresh AI Report to retry live AI analysis.</p>
                     )}
                     {aiAnalysis && !isLoading && (
                         <div className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words">
