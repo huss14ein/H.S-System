@@ -1,8 +1,10 @@
 -- Budget sharing (share only budgets with specific users)
 -- COPY/PASTE CHECKLIST:
 -- 1) Open this file directly from the repository, not a PR diff view.
--- 2) Copy from this first line through the final GRANT statement.
--- 3) If your pasted text contains "diff --git", delete everything and re-copy from this file only.
+-- 2) Copy from this first line through the final COMMIT statement.
+-- 3) If your pasted text contains "diff --git" OR lines like "-set search_path" / "+set search_path",
+--    you copied a git diff. Delete everything and re-copy from this file only.
+-- 4) Run as one script in Supabase SQL Editor.
 
 begin;
 
