@@ -1826,6 +1826,20 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const actionableCount = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
 
+    const executionUniverse = useMemo<UniverseTicker[]>(() => (
+        unifiedUniverse.map((t) => ({
+            id: t.id,
+            user_id: t.user_id,
+            ticker: t.ticker,
+            name: t.name,
+            status: t.status,
+            monthly_weight: t.monthly_weight,
+            max_position_weight: t.max_position_weight,
+            min_upside_threshold_override: t.min_upside_threshold_override,
+            min_coverage_override: t.min_coverage_override,
+        }))
+    ), [unifiedUniverse]);
+
     const planHealth = useMemo(() => {
         let score = 100;
         const reasons: string[] = [];
@@ -1975,6 +1989,11 @@ Save anyway?`)) return;
 
     const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
     const isActionableUniverseStatus = (status: TickerStatus) => status === 'Core' || status === 'High-Upside';
+    const parsePercentInputToWeight = (raw: string): number | undefined => {
+        const parsed = Number.parseFloat(raw);
+        if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+        return parsed / 100;
+    };
 
     const autoConfigureUniverseWeights = useCallback(async () => {
         const universe = [...(data.portfolioUniverse || [])];
@@ -2207,7 +2226,7 @@ Save anyway?`)) return;
         setExecutionResult(null);
         setExecutionError(null);
         try {
-            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, {
+            const result = await executeInvestmentPlanStrategy(plan, executionUniverse, {
                 forceRuleBased,
                 planCurrency: plan.budgetCurrency,
                 tickerCurrencyMap,
@@ -2229,7 +2248,7 @@ Save anyway?`)) return;
 
             if (!forceRuleBased) {
                 try {
-                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, {
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, executionUniverse, {
                         forceRuleBased: true,
                         planCurrency: plan.budgetCurrency,
                         tickerCurrencyMap,
@@ -2566,8 +2585,8 @@ Save anyway?`)) return;
                                                         <>
                                                             <input 
                                                                 type="number" 
-                                                                value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
-                                                                onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
+                                                                value={ticker.monthly_weight != null ? ticker.monthly_weight * 100 : ''} 
+                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: nextWeight }); }}
                                                                 onBlur={autoConfigureUniverseWeights}
                                                                 className="w-16 p-1 border rounded text-right text-xs"
                                                                 placeholder="auto"
@@ -2583,17 +2602,21 @@ Save anyway?`)) return;
                                             </td>
                                             <td className="px-4 py-2 text-center">
                                                 {isUniverseTicker(ticker) ? (
-                                                    <>
-                                                        <input 
-                                                            type="number" 
-                                                            value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
-                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
-                                                            onBlur={autoConfigureUniverseWeights}
-                                                            className="w-16 p-1 border rounded text-right text-xs"
-                                                            placeholder="auto"
-                                                        />
-                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                    </>
+                                                    isActionableUniverseStatus(ticker.status) ? (
+                                                        <>
+                                                            <input 
+                                                                type="number" 
+                                                                value={ticker.max_position_weight != null ? ticker.max_position_weight * 100 : ''} 
+                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: nextWeight }); }}
+                                                                onBlur={autoConfigureUniverseWeights}
+                                                                className="w-16 p-1 border rounded text-right text-xs"
+                                                                placeholder="auto"
+                                                            />
+                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses use defaults">Auto</span>
+                                                    )
                                                 ) : (
                                                     <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
                                                 )}
@@ -2612,7 +2635,7 @@ Save anyway?`)) return;
                 </div>
 
 
-                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
                         <div className="flex items-start justify-between gap-3">
                             <div>
@@ -2687,7 +2710,7 @@ Save anyway?`)) return;
                 </div>
 
                 {/* Execution & View Results — allocation from Monthly Plan + Portfolio Universe */}
-                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                         <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
                         <p className="text-sm text-slate-600">Run once and get a clear execution summary with direct trade actions.</p>
