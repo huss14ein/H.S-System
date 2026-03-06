@@ -30,7 +30,7 @@ const resolveRecipientUserByEmail = async (email: string) => {
 
     const baseMessage = rpcLookup.error?.message || 'Recipient user not found.';
     const normalizedMessage = /column\s+users\.email\s+does not exist/i.test(baseMessage)
-        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing.sql to install the latest find_user_by_email function.'
+        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing_ready.sql to install the latest find_user_by_email function.'
         : baseMessage;
 
     return { data: null, error: { message: normalizedMessage } };
@@ -298,7 +298,7 @@ const Budgets: React.FC = () => {
             if (error) {
                 const message = (error.message || '').trim();
                 const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
-                    ? 'Shareable users list is unavailable. Run docs/budget_sharing.sql to install list_shareable_users.'
+                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users.'
                     : message || 'Unable to load users list.';
                 setShareUsersLoadError(normalized);
                 setShareableUsers([]);
@@ -487,7 +487,7 @@ const Budgets: React.FC = () => {
         if (userError || !targetUser?.id) {
             const detail = (userError?.message || '').trim();
             const helperHint = detail.includes('find_user_by_email')
-                ? ' Run docs/budget_sharing.sql to install helper function.'
+                ? ' Run docs/budget_sharing_ready.sql to install helper function.'
                 : '';
             const alreadyPrefixed = /^Recipient user not found\.?/i.test(detail);
             const message = alreadyPrefixed
