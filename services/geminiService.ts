@@ -1751,19 +1751,89 @@ export async function suggestRecoveryParameters(input: {
     currentPrice: number;
     avgCost: number;
 }): Promise<{ lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }> {
-    const lossMagnitude = Math.max(0, Math.abs(Number(input.plPct) || 0));
-    const baseTrigger = input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22;
-    const tightenedTrigger = baseTrigger - Math.min(4, lossMagnitude / 10);
-    const lossTriggerPct = Number(Math.max(8, Math.min(30, tightenedTrigger)).toFixed(1));
+    const buildRuleBasedSuggestion = () => {
+        const lossMagnitude = Math.max(0, Math.abs(Number(input.plPct) || 0));
+        const baseTrigger = input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22;
+        const tightenedTrigger = baseTrigger - Math.min(4, lossMagnitude / 10);
+        const lossTriggerPct = Number(Math.max(8, Math.min(30, tightenedTrigger)).toFixed(1));
 
-    const sleeveCap = input.sleeveType === 'Core' ? 0.22 : input.sleeveType === 'Upside' ? 0.16 : 0.1;
-    const riskCap = input.riskTier === 'Low' ? 0.2 : input.riskTier === 'Med' ? 0.16 : input.riskTier === 'High' ? 0.12 : 0.08;
-    const lossBoost = 1 + Math.min(0.3, lossMagnitude / 100);
-    const rawCap = Math.max(500, (Number(input.deployableCash) || 0) * Math.min(sleeveCap, riskCap) * lossBoost);
-    const cashCap = Number(Math.max(500, Math.min(rawCap, (Number(input.deployableCash) || 0) * 0.35)).toFixed(2));
+        const sleeveCap = input.sleeveType === 'Core' ? 0.22 : input.sleeveType === 'Upside' ? 0.16 : 0.1;
+        const riskCap = input.riskTier === 'Low' ? 0.2 : input.riskTier === 'Med' ? 0.16 : input.riskTier === 'High' ? 0.12 : 0.08;
+        const lossBoost = 1 + Math.min(0.3, lossMagnitude / 100);
+        const rawCap = Math.max(500, (Number(input.deployableCash) || 0) * Math.min(sleeveCap, riskCap) * lossBoost);
+        const cashCap = Number(Math.max(500, Math.min(rawCap, (Number(input.deployableCash) || 0) * 0.35)).toFixed(2));
 
-    const recoveryEnabled = input.sleeveType !== 'Spec';
-    const notes = `Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.`;
+        const recoveryEnabled = input.sleeveType !== 'Spec';
+        const notes = `Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.`;
 
-    return { lossTriggerPct, cashCap, recoveryEnabled, notes };
+        return { lossTriggerPct, cashCap, recoveryEnabled, notes };
+    };
+
+    const ruleBased = buildRuleBasedSuggestion();
+    const deployable = Math.max(0, Number(input.deployableCash) || 0);
+    if (deployable <= 0) return ruleBased;
+
+    const prompt = `You are a portfolio risk-control optimizer. Propose conservative recovery parameters for one position.
+Return JSON with:
+- lossTriggerPct (number between 8 and 30)
+- cashCap (number between 500 and deployableCash*0.35)
+- recoveryEnabled (boolean)
+- notes (short string)
+
+Context:
+- symbol: ${input.symbol}
+- sleeveType: ${input.sleeveType}
+- riskTier: ${input.riskTier}
+- plPct: ${Number(input.plPct || 0).toFixed(2)}
+- deployableCash: ${deployable.toFixed(2)}
+- currentPrice: ${Number(input.currentPrice || 0).toFixed(4)}
+- avgCost: ${Number(input.avgCost || 0).toFixed(4)}
+
+Priorities:
+1) Avoid oversized averaging and protect cash.
+2) Higher risk tier => smaller cashCap and stricter trigger.
+3) For Spec sleeve, recoveryEnabled should usually be false.
+4) Keep notes specific and practical.`;
+
+    try {
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        lossTriggerPct: { type: Type.NUMBER },
+                        cashCap: { type: Type.NUMBER },
+                        recoveryEnabled: { type: Type.BOOLEAN },
+                        notes: { type: Type.STRING },
+                    },
+                    required: ['lossTriggerPct', 'cashCap', 'recoveryEnabled'],
+                },
+            },
+        });
+
+        const parsed = robustJsonParse(response?.text) || {};
+        const rawTrigger = Number(parsed.lossTriggerPct);
+        const rawCap = Number(parsed.cashCap);
+
+        const maxCap = deployable * 0.35;
+        const safeTrigger = Number(Math.max(8, Math.min(30, Number.isFinite(rawTrigger) ? rawTrigger : ruleBased.lossTriggerPct)).toFixed(1));
+        const safeCap = Number(Math.max(500, Math.min(maxCap, Number.isFinite(rawCap) ? rawCap : ruleBased.cashCap)).toFixed(2));
+        const safeEnabled = typeof parsed.recoveryEnabled === 'boolean' ? parsed.recoveryEnabled : ruleBased.recoveryEnabled;
+        const safeNotes = typeof parsed.notes === 'string' && parsed.notes.trim().length > 0
+            ? parsed.notes.trim()
+            : `AI-optimized recovery tuning for ${input.symbol}.`;
+
+        return {
+            lossTriggerPct: safeTrigger,
+            cashCap: safeCap,
+            recoveryEnabled: safeEnabled,
+            notes: safeNotes,
+        };
+    } catch (error) {
+        console.warn('suggestRecoveryParameters AI failed; using rule-based fallback.', error);
+        return { ...ruleBased, notes: `${ruleBased.notes} AI unavailable, applied resilient fallback.` };
+    }
 }

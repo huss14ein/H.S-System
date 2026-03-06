@@ -17,7 +17,7 @@ import { getHoldingFundamentals, type HoldingFundamentals } from '../services/fi
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { suggestRecoveryParameters } from '../services/geminiService';
+import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -155,6 +155,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
   const [aiRecoveryBySymbol, setAiRecoveryBySymbol] = useState<Record<string, { lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }>>({});
   const [isAiRecoveryLoading, setIsAiRecoveryLoading] = useState(false);
+  const [aiRecoveryError, setAiRecoveryError] = useState<string | null>(null);
 
   const positionsWithRecovery = useMemo(() => {
     return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
@@ -216,6 +217,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
     const sym = (selected.holding.symbol || '').toUpperCase();
     if (!sym) return;
     setIsAiRecoveryLoading(true);
+    setAiRecoveryError(null);
     try {
       const suggestion = await suggestRecoveryParameters({
         symbol: sym,
@@ -227,6 +229,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
         avgCost: selected.holding.avgCost ?? 0,
       });
       setAiRecoveryBySymbol(prev => ({ ...prev, [sym]: suggestion }));
+    } catch (error) {
+      setAiRecoveryError(formatAiError(error));
     } finally {
       setIsAiRecoveryLoading(false);
     }
@@ -421,6 +425,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           </div>
           {selected.aiNotes && (
             <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">{selected.aiNotes}</p>
+          )}
+          {aiRecoveryError && (
+            <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 mt-2">{aiRecoveryError}</p>
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
