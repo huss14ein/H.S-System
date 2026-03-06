@@ -2661,7 +2661,7 @@ Save anyway?`)) return;
                 </div>
 
 
-                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-3 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
                         <div className="flex items-start justify-between gap-3">
                             <div>
@@ -2736,12 +2736,24 @@ Save anyway?`)) return;
                 </div>
 
                 {/* Execution & View Results — allocation from Monthly Plan + Portfolio Universe */}
-                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                        <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
-                        <p className="text-sm text-slate-600">Run once and get a clear execution summary with direct trade actions.</p>
+                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24 self-start">
+                    <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-violet-50 to-slate-50">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
+                                <p className="text-sm text-slate-600">Run AI-assisted execution and instantly review the allocation, trades, and audit log.</p>
+                            </div>
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {isAiAvailable ? 'AI ready' : 'AI unavailable'}
+                            </span>
+                        </div>
                     </div>
                     <div className="p-6">
+                        {!isAiAvailable && (
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                                AI execution is currently unavailable. You can still execute with rule-based mode.
+                            </div>
+                        )}
                         {noActionableWarning && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">{noActionableWarning}</div>
                         )}
@@ -2755,12 +2767,12 @@ Save anyway?`)) return;
                                 )}
                             </div>
                         )}
-                        <div className="flex flex-col sm:flex-row gap-2">
-                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="flex-1 flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Try AI first, then fall back to rule-based if needed'}>
+                        <div className="flex flex-col gap-2">
+                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0 || !isAiAvailable} className="w-full flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={!isAiAvailable ? 'Enable AI in Settings to use AI-assisted execution' : actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Run with AI first, then fall back to rule-based if needed'}>
                                 <SparklesIcon className="h-5 w-5 mr-2" />
-                                {isExecuting ? 'Executing...' : 'Execute now'}
+                                {isExecuting ? 'Executing...' : 'Execute with AI'}
                             </button>
-                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
+                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
                                 Run rule-based only
                             </button>
                         </div>
@@ -2777,6 +2789,9 @@ Save anyway?`)) return;
                                         <div className="flex items-center gap-2">
                                             {executionResult.log_details?.includes('Rule-based execution') && (
                                                 <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-200 text-slate-700" title="Computed without AI (rule-based fallback)">Rule-based</span>
+                                            )}
+                                            {!executionResult.log_details?.includes('Rule-based execution') && (
+                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700" title="Computed with AI-assisted execution">AI-assisted</span>
                                             )}
                                             <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${executionResult.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                                                 {executionResult.status.toUpperCase()}
