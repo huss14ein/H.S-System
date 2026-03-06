@@ -695,12 +695,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       }
     >
       <DraggableResizableGrid
-        layoutKey="wealth-ultra-v2"
+        layoutKey="wealth-ultra-v3-fixed"
         items={gridItems}
         cols={12}
         rowHeight={72}
-        itemOverflowY="visible"
-        handlesOnHoverOnly
+        itemOverflowY="auto"
+        handlesOnHoverOnly={false}
+        isDraggable={false}
         isResizable={false}
       />
     </PageLayout>
