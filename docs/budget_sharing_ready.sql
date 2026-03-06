@@ -69,9 +69,9 @@ language sql
 security definer
 set search_path = public, auth
 as $$
-  select u.id, au.email
-  from public.users u
-  join auth.users au on au.id = u.id
+  select usr.id, au.email
+  from public.users as usr
+  join auth.users as au on au.id = usr.id
   where lower(au.email) = lower(target_email)
   limit 1
 $$;
@@ -85,13 +85,13 @@ language sql
 security definer
 set search_path = public, auth
 as $$
-  select u.id, au.email
-  from public.users u
-  join auth.users au on au.id = u.id
-  where u.id <> auth.uid()
+  select usr.id, au.email
+  from public.users as usr
+  join auth.users as au on au.id = usr.id
+  where usr.id <> auth.uid()
     and exists (
       select 1
-      from public.users me
+      from public.users as me
       where me.id = auth.uid()
         and me.role = 'Admin'
     )
@@ -100,7 +100,6 @@ $$;
 
 revoke all on function public.list_shareable_users() from public;
 grant execute on function public.list_shareable_users() to authenticated;
-
 
 create or replace function public.get_shared_budgets_for_me()
 returns table (
@@ -124,15 +123,19 @@ as $$
     b.user_id,
     b.category,
     b.period,
-    coalesce(b.tier, b.budget_tier, 'Optional') as tier,
+    coalesce(
+      nullif(to_jsonb(b)->>'tier', ''),
+      nullif(to_jsonb(b)->>'budget_tier', ''),
+      'Optional'
+    ) as tier,
     b."limit",
     bs.owner_user_id,
     coalesce(bs.owner_email, au.email, bs.owner_user_id::text) as owner_email,
     bs.category as shared_category,
     bs.created_at as shared_at
-  from public.budget_shares bs
-  join public.budgets b on b.user_id = bs.owner_user_id
-  left join auth.users au on au.id = bs.owner_user_id
+  from public.budget_shares as bs
+  join public.budgets as b on b.user_id = bs.owner_user_id
+  left join auth.users as au on au.id = bs.owner_user_id
   where bs.shared_with_user_id = auth.uid()
     and (
       bs.category is null
