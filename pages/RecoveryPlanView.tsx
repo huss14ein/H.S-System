@@ -2,6 +2,7 @@ import React, { useMemo, useState, useContext, useEffect, useCallback } from 're
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
 import type { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
@@ -55,14 +56,15 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data } = ctx;
-  const deployableCash = ctx.totalDeployableCash ?? 0;
+  const { data, getAvailableCashForAccount } = ctx;
+  const { exchangeRate } = useCurrency();
+  const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
 
   const allHoldingsWithPortfolio = useMemo(() => {
-    const list: { holding: Holding; portfolioName: string; currency: TradeCurrency }[] = [];
+    const list: { holding: Holding; portfolioName: string; currency: TradeCurrency; accountId?: string }[] = [];
     (data.investments ?? []).forEach((p: InvestmentPortfolio) => {
       (p.holdings ?? [])
         .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
@@ -75,6 +77,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
             holding: h,
             portfolioName: p.name ?? 'Portfolio',
             currency: effectiveCurrency,
+            accountId: p.accountId,
           });
         });
     });
@@ -83,9 +86,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const allHoldings = useMemo(() => allHoldingsWithPortfolio.map(({ holding }) => holding), [allHoldingsWithPortfolio]);
   const priceMap = useMemo(() => {
     const map: Record<string, number> = {};
+    Object.entries(simulatedPrices).forEach(([sym, o]) => {
+      const s = sym.toUpperCase();
+      const price = (o as { price: number }).price;
+      if (Number.isFinite(price) && price > 0) map[s] = price;
+    });
     allHoldings.forEach(h => {
       const sym = (h.symbol || '').toUpperCase();
       if (!sym) return;
+      if (sym in map) return;
       const qty = Number(h.quantity) || 0;
       const currentVal = h.currentValue != null ? Number(h.currentValue) : NaN;
       const avgCost = h.avgCost != null ? Number(h.avgCost) : 0;
@@ -95,20 +104,30 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
         map[sym] = avgCost;
       }
     });
-    Object.entries(simulatedPrices).forEach(([sym, o]) => {
-      const s = sym.toUpperCase();
-      const price = (o as { price: number }).price;
-      if (Number.isFinite(price) && price > 0 && !(s in map)) map[s] = price;
-    });
     return map;
   }, [simulatedPrices, allHoldings]);
 
+  const deployableCashSAR = useMemo(() => {
+    const bankCash = (data.accounts ?? [])
+      .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+      .reduce((s, a) => s + Math.max(0, Number(a.balance) || 0), 0);
+
+    const platformCashSAR = (data.accounts ?? [])
+      .filter((a) => a.type === 'Investment')
+      .reduce((s, a) => {
+        const cash = getAvailableCashForAccount(a.id);
+        return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
+      }, 0);
+
+    return bankCash + platformCashSAR;
+  }, [data.accounts, getAvailableCashForAccount, safeFxRate]);
+
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
-    deployableCash,
-    minDeployableThreshold: Math.max(300, Math.min(1200, deployableCash * 0.01)),
-    recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCash > 50000 ? 0.04 : 0))),
-  }), [deployableCash]);
+    deployableCash: deployableCashSAR,
+    minDeployableThreshold: Math.max(300, Math.min(1200, deployableCashSAR * 0.01)),
+    recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCashSAR > 50000 ? 0.04 : 0))),
+  }), [deployableCashSAR]);
 
   const universe = data.portfolioUniverse ?? [];
   const coreUpsideSpec = useMemo(() => {
@@ -144,13 +163,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
       const avgCost = (holding.avgCost != null ? Number(holding.avgCost) : 0) || 0;
       const currentPrice =
-        (qty > 0 && Number.isFinite(currentVal) && currentVal > 0
+        priceMap[sym]
+        ?? (qty > 0 && Number.isFinite(currentVal) && currentVal > 0
           ? currentVal / qty
-          : null) ?? priceMap[sym] ?? (qty > 0 ? avgCost : 0);
+          : null)
+        ?? (qty > 0 ? avgCost : 0);
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCash, roughPlPct);
+      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR;
+      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInHoldingCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
       const mergedConfig: RecoveryPositionConfig = ai
         ? { ...dynamicConfig, lossTriggerPct: ai.lossTriggerPct, cashCap: ai.cashCap, recoveryEnabled: ai.recoveryEnabled }
@@ -165,18 +187,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
         Math.min(
           mergedConfig.cashCap,
           marketValue > 0 ? marketValue * costCapMultiplier : mergedConfig.cashCap,
-          deployableCash * globalConfig.recoveryBudgetPct,
+          deployableCashInHoldingCurrency * globalConfig.recoveryBudgetPct,
         ),
       );
+      const positionGlobalConfig: RecoveryGlobalConfig = {
+        ...globalConfig,
+        deployableCash: deployableCashInHoldingCurrency,
+      };
       const positionConfig: RecoveryPositionConfig = {
         ...mergedConfig,
         maxAddShares: boundedMaxAddShares,
         maxAddCost: Number(boundedMaxAddCost.toFixed(2)),
       };
-      const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, globalConfig);
+      const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
       return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
-  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCash, aiRecoveryBySymbol]);
+  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, safeFxRate, aiRecoveryBySymbol]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
@@ -196,7 +222,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
         sleeveType: selected.positionConfig.sleeveType,
         riskTier: selected.positionConfig.riskTier,
         plPct: selected.plan.plPct,
-        deployableCash,
+        deployableCash: selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
       });
@@ -204,7 +230,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, deployableCash]);
+  }, [selected, deployableCashSAR, safeFxRate]);
 
   useEffect(() => {
     if (!selected || !isAiAvailable) return;
@@ -311,7 +337,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
         <SectionCard className="min-w-0">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deployable cash (SAR + USD)</p>
           <p className="text-xl font-bold text-slate-800 tabular-nums mt-1">
-            {formatCurrencyString(deployableCash)}
+            {formatCurrencyString(deployableCashSAR)}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
             Approximate total across currencies. Per-position values below use each portfolio&apos;s base currency.
