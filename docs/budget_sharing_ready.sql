@@ -75,7 +75,7 @@ as $$
   from public.users as usr
   join auth.users as au on au.id = usr.id
   where lower(au.email) = lower(target_email)
-  limit 1
+  limit 1;
 $$;
 
 revoke all on function public.find_user_by_email(text) from public;
@@ -97,13 +97,14 @@ as $$
       where me.id = auth.uid()
         and me.role = 'Admin'
     )
-  order by lower(au.email)
+  order by lower(au.email);
 $$;
 
 revoke all on function public.list_shareable_users() from public;
 grant execute on function public.list_shareable_users() to authenticated;
 
-create or replace function public.get_shared_budgets_for_me()
+drop function if exists public.get_shared_budgets_for_me();
+create function public.get_shared_budgets_for_me()
 returns table (
   id uuid,
   user_id uuid,
@@ -148,7 +149,7 @@ as $$
       or lower(bs.category) = 'all'
       or lower(coalesce(b.category, '')) = lower(bs.category)
     )
-  order by bs.created_at desc, lower(coalesce(b.category, ''))
+  order by bs.created_at desc, lower(coalesce(b.category, ''));
 $$;
 
 revoke all on function public.get_shared_budgets_for_me() from public;
