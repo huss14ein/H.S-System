@@ -343,21 +343,33 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
     getCompanyProfile(symbol),
   ]);
 
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
   let nextEarnings: HoldingFundamentals['nextEarnings'];
   if (earningsList.length > 0) {
-    const sorted = [...earningsList].sort((a, b) => {
-      const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
-      const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
-      return da - db;
-    });
-    const first = sorted[0];
-    nextEarnings = {
-      date: first.date,
-      period: first.period,
-      quarter: first.quarter,
-      year: first.year,
-      revenueEstimate: first.revenueEstimate ?? null,
-    };
+    const sortedUpcoming = [...earningsList]
+      .filter((e) => {
+        if (!e.date) return false;
+        const eventDate = new Date(e.date);
+        return Number.isFinite(eventDate.getTime()) && eventDate.getTime() >= todayStart.getTime();
+      })
+      .sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
+        const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
+        return da - db;
+      });
+
+    const first = sortedUpcoming[0];
+    if (first) {
+      nextEarnings = {
+        date: first.date,
+        period: first.period,
+        quarter: first.quarter,
+        year: first.year,
+        revenueEstimate: first.revenueEstimate ?? null,
+      };
+    }
   }
 
   let dividend: HoldingFundamentals['dividend'];
@@ -373,8 +385,11 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
       Number(m['dividendPerShareAnnual'] as number) ||
       Number(m['dividendPerShareIndicatedAnnual'] as number);
 
-    const dividendYieldPct = Number.isFinite(rawYield) && rawYield !== 0 ? rawYield : null;
-    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare !== 0 ? rawPerShare : null;
+    const normalizedYield = Number.isFinite(rawYield) && rawYield > 0
+      ? (rawYield <= 1 ? rawYield * 100 : rawYield)
+      : null;
+    const dividendYieldPct = normalizedYield && normalizedYield < 100 ? normalizedYield : null;
+    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare > 0 ? rawPerShare : null;
 
     if (dividendYieldPct != null || dividendPerShareAnnual != null) {
       dividend = { dividendYieldPct, dividendPerShareAnnual };

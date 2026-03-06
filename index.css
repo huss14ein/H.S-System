@@ -218,6 +218,7 @@
         word-break: normal;
         overflow-wrap: anywhere;
         hyphens: auto;
+        line-height: 1.2;
     }
     .platform-card .platform-card-body {
         padding: var(--card-pad);

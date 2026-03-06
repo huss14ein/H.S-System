@@ -16,30 +16,44 @@ const InvestmentOverview: React.FC = () => {
     const { isAiAvailable } = useAI();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
-        const allHoldings: Holding[] = data.investments.flatMap(p => p.holdings || []);
-        
-        // Data for Performance Treemap
-        const allHoldingsWithGains = allHoldings.map(h => {
-             const totalCost = h.avgCost * h.quantity;
-             const gainLoss = h.currentValue - totalCost;
-             const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-             return { ...h, gainLoss, gainLossPercent };
-        });
+        const allHoldings: Holding[] = data.investments.flatMap((p) => p.holdings || []);
 
-        // Data for Asset Class Allocation Bar Chart
+        const allHoldingsWithGains = allHoldings
+            .map((h) => {
+                const qty = Number(h.quantity || 0);
+                const avgCost = Number(h.avgCost || 0);
+                const marketValue = Number(h.currentValue || 0);
+                const costValue = avgCost * qty;
+                const effectiveValue = marketValue > 0 ? marketValue : (costValue > 0 ? costValue : 0);
+                const gainLoss = effectiveValue - costValue;
+                const gainLossPercent = costValue > 0 ? (gainLoss / costValue) * 100 : 0;
+                return { ...h, currentValue: effectiveValue, gainLoss, gainLossPercent };
+            })
+            .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
+
         const assetAllocationMap = new Map<string, number>();
-        allHoldings.forEach(h => {
+        allHoldingsWithGains.forEach((h) => {
             const assetClass = h.assetClass || 'Other';
             assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
         });
-        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-        
-        // Data for Portfolio Allocation Pie Chart
-        const portfolioAllocation = data.investments.map(p => {
-            const portfolioValue = (p.holdings || []).reduce((sum, h) => sum + h.currentValue, 0);
-            return { name: p.name, value: portfolioValue };
-        }).sort((a,b) => b.value - a.value);
+        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]) => ({ name, value }))
+            .filter((x) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a, b) => b.value - a.value);
 
+        const portfolioAllocation = data.investments
+            .map((p) => {
+                const portfolioValue = (p.holdings || []).reduce((sum, h) => {
+                    const qty = Number(h.quantity || 0);
+                    const avgCost = Number(h.avgCost || 0);
+                    const marketValue = Number(h.currentValue || 0);
+                    const fallbackValue = avgCost * qty;
+                    const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
+                    return sum + effectiveValue;
+                }, 0);
+                return { name: p.name, value: portfolioValue };
+            })
+            .filter((x) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a, b) => b.value - a.value);
 
         return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation };
     }, [data]);
@@ -47,6 +61,62 @@ const InvestmentOverview: React.FC = () => {
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
+
+    const diversification = useMemo(() => {
+        const totalValue = allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0);
+        const topHolding = [...allHoldingsWithGains].sort((a, b) => b.currentValue - a.currentValue)[0];
+        const topHoldingPct = totalValue > 0 && topHolding ? (topHolding.currentValue / totalValue) * 100 : 0;
+        const topAssetClass = assetClassAllocation[0];
+        const topAssetClassPct = totalValue > 0 && topAssetClass ? (topAssetClass.value / totalValue) * 100 : 0;
+
+        const weights = allHoldingsWithGains
+            .map(h => (totalValue > 0 ? h.currentValue / totalValue : 0))
+            .filter(w => w > 0);
+        const hhi = weights.reduce((acc, w) => acc + w * w, 0);
+        const effectiveHoldings = hhi > 0 ? 1 / hhi : 0;
+
+        const warnings: string[] = [];
+        if (topHoldingPct > 25) warnings.push(`Top holding concentration is high (${topHoldingPct.toFixed(1)}%).`);
+        if (topAssetClassPct > 60) warnings.push(`Top asset class concentration is high (${topAssetClassPct.toFixed(1)}%).`);
+        if (effectiveHoldings > 0 && effectiveHoldings < 8) warnings.push(`Effective diversification is low (${effectiveHoldings.toFixed(1)} equivalent holdings).`);
+
+        const status: 'healthy' | 'watch' | 'alert' =
+            warnings.length === 0 ? 'healthy' : warnings.length === 1 ? 'watch' : 'alert';
+
+        return {
+            totalValue,
+            topHolding,
+            topHoldingPct,
+            topAssetClass,
+            topAssetClassPct,
+            hhi,
+            effectiveHoldings,
+            warnings,
+            status,
+        };
+    }, [allHoldingsWithGains, assetClassAllocation]);
+
+
+    const topHoldingsExposure = useMemo(() => (
+        allHoldingsWithGains
+            .slice()
+            .sort((a, b) => b.currentValue - a.currentValue)
+            .slice(0, 5)
+            .map((h) => ({
+                id: h.id,
+                label: h.symbol,
+                pct: diversification.totalValue > 0 ? (h.currentValue / diversification.totalValue) * 100 : 0,
+            }))
+    ), [allHoldingsWithGains, diversification.totalValue]);
+
+    const assetClassExposure = useMemo(() => (
+        assetClassAllocation
+            .slice(0, 5)
+            .map((a) => ({
+                label: a.name,
+                pct: diversification.totalValue > 0 ? (a.value / diversification.totalValue) * 100 : 0,
+            }))
+    ), [assetClassAllocation, diversification.totalValue]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
@@ -82,6 +152,102 @@ const InvestmentOverview: React.FC = () => {
                 </div>
             </div>
 
+            <div className={`rounded-xl border p-4 ${
+                diversification.status === 'healthy'
+                    ? 'border-emerald-200 bg-emerald-50/70'
+                    : diversification.status === 'watch'
+                    ? 'border-amber-200 bg-amber-50/70'
+                    : 'border-rose-200 bg-rose-50/70'
+            }`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-slate-800">Diversification monitor</p>
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        diversification.status === 'healthy'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : diversification.status === 'watch'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-rose-100 text-rose-700'
+                    }`}>{diversification.status === 'healthy' ? 'Healthy' : diversification.status === 'watch' ? 'Watch' : 'Alert'}</span>
+                </div>
+                {diversification.warnings.length > 0 ? (
+                    <ul className="mt-2 text-sm space-y-1 text-slate-700">
+                        {diversification.warnings.map((warning, idx) => (
+                            <li key={idx} className="flex items-start gap-2"><ExclamationTriangleIcon className="h-4 w-4 mt-0.5 text-amber-600" />{warning}</li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="mt-2 text-sm text-emerald-700">Allocation concentration is within recommended guardrails.</p>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top holding</p>
+                    <p className="text-lg font-bold text-slate-900 mt-1">{diversification.topHolding?.symbol || '—'}</p>
+                    <p className="text-sm tabular-nums text-slate-600">{diversification.topHoldingPct.toFixed(1)}%</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top asset class</p>
+                    <p className="text-lg font-bold text-slate-900 mt-1">{diversification.topAssetClass?.name || '—'}</p>
+                    <p className="text-sm tabular-nums text-slate-600">{diversification.topAssetClassPct.toFixed(1)}%</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">HHI</p>
+                    <p className="text-lg font-bold text-slate-900 mt-1 tabular-nums">{diversification.hhi.toFixed(3)}</p>
+                    <p className="text-xs text-slate-500">Lower is better diversification</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Effective holdings</p>
+                    <p className="text-lg font-bold text-slate-900 mt-1 tabular-nums">{diversification.effectiveHoldings.toFixed(1)}</p>
+                    <p className="text-xs text-slate-500">Equivalent equal-weight positions</p>
+                </div>
+            </div>
+
+            <div className="section-card border border-slate-200 shadow-sm">
+                <div className="mb-4 text-center sm:text-left">
+                    <h3 className="section-title mb-1">Concentration diagram</h3>
+                    <p className="text-sm text-slate-500">Visual concentration bars for top holdings and asset classes.</p>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 text-center sm:text-left">Top holdings exposure</p>
+                        <div className="mt-3 space-y-3">
+                            {topHoldingsExposure.length > 0 ? topHoldingsExposure.map((h) => (
+                                <div key={h.id} className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2 text-sm text-slate-700">
+                                        <span className="font-medium">{h.label}</span>
+                                        <span className="tabular-nums font-semibold">{h.pct.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="h-2.5 rounded-full bg-slate-200/70 overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all ${h.pct > 20 ? 'bg-rose-500' : h.pct > 12 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, h.pct)}%` }} />
+                                    </div>
+                                </div>
+                            )) : (
+                                <p className="rounded-lg border border-dashed border-slate-300 bg-white/80 py-4 text-center text-sm text-slate-500">No holdings exposure available.</p>
+                            )}
+                        </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 text-center sm:text-left">Asset class exposure</p>
+                        <div className="mt-3 space-y-3">
+                            {assetClassExposure.length > 0 ? assetClassExposure.map((a) => (
+                                <div key={a.label} className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2 text-sm text-slate-700">
+                                        <span className="font-medium">{a.label}</span>
+                                        <span className="tabular-nums font-semibold">{a.pct.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="h-2.5 rounded-full bg-slate-200/70 overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all ${a.pct > 45 ? 'bg-rose-500' : a.pct > 30 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, a.pct)}%` }} />
+                                    </div>
+                                </div>
+                            )) : (
+                                <p className="rounded-lg border border-dashed border-slate-300 bg-white/80 py-4 text-center text-sm text-slate-500">No asset class exposure available.</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div className="section-card">
                 <div className="flex justify-between items-center mb-4">
                     <div><h3 className="section-title !mb-1">SWOT Analysis</h3><p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p></div>
@@ -98,7 +264,7 @@ const InvestmentOverview: React.FC = () => {
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
-                <div className="section-card flex flex-col min-h-[420px]">
+                <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Portfolio Allocation</h3>
                     <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden flex items-center justify-center">
@@ -111,7 +277,7 @@ const InvestmentOverview: React.FC = () => {
                         )}
                     </div>
                 </div>
-                <div className="section-card flex flex-col min-h-[420px]">
+                <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Allocation by Asset Class</h3>
                     <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
@@ -119,7 +285,7 @@ const InvestmentOverview: React.FC = () => {
                     </div>
                 </div>
             </div>
-            <div className="section-card flex flex-col min-h-[420px]">
+            <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                 <h3 className="section-title mb-1">Consolidated Holdings Performance</h3>
                 <p className="text-sm text-slate-500 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
                 <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">

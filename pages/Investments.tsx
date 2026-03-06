@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, buildFallbackAnalystReport, executeInvestmentPlanStrategy, formatAiError, getSuggestedAnalystEligibility } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
+import { InvestmentPortfolio, Holding, HoldingAssetClass, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
@@ -101,30 +101,47 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
     
     const investmentProgress = useMemo(() => {
-        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0 };
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0, planCurrency: 'SAR' as TradeCurrency };
+
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * exchangeRate;
+            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / exchangeRate;
+            return amount;
+        };
+
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
+        const planCurrency: TradeCurrency = (data.investmentPlan.budgetCurrency as TradeCurrency) || 'SAR';
+
         const monthlyInvested = data.investmentTransactions
             .filter(t => {
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .reduce((sum, t) => sum + t.total, 0);
-        
+            .reduce((sum, t) => {
+                const txCurrency: TradeCurrency = t.currency === 'USD' || t.currency === 'SAR' ? t.currency : planCurrency;
+                return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
+            }, 0);
+
         const corePct = data.investmentPlan.coreAllocation ?? 0.7;
         const upsidePct = data.investmentPlan.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
+        const target = data.investmentPlan.monthlyBudget || 0;
         return {
-            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
             amount: monthlyInvested,
-            target: data.investmentPlan.monthlyBudget,
+            target,
             corePct,
             upsidePct,
             specPct,
+            planCurrency,
         };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     if (!data?.investmentPlan) return null;
 
@@ -141,7 +158,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             <button type="button" onClick={onEditPlan} className="text-sm font-medium text-primary hover:underline">Edit plan</button>
                         )}
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target)}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
+                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
                     
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -155,8 +172,8 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             />
                         </div>
                         <div className="flex justify-between text-xs text-gray-500">
-                            <span>Invested: {formatCurrencyString(investmentProgress.amount)}</span>
-                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount))}</span>
+                            <span>Invested: {formatCurrencyString(investmentProgress.amount, { inCurrency: investmentProgress.planCurrency })}</span>
+                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount), { inCurrency: investmentProgress.planCurrency })}</span>
                         </div>
                     </div>
                 </div>
@@ -164,18 +181,18 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 <div className={`grid gap-3 min-w-[240px] ${investmentProgress.specPct > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                     <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1 w-full">Core Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct)}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct, { inCurrency: investmentProgress.planCurrency })}</p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
                     </div>
                     <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1 w-full">Upside Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct)}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct, { inCurrency: investmentProgress.planCurrency })}</p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
                     </div>
                     {investmentProgress.specPct > 0 && (
                         <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                             <p className="metric-label text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1 w-full">Spec Target</p>
-                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct)}</p>
+                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct, { inCurrency: investmentProgress.planCurrency })}</p>
                             <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
                         </div>
                     )}
@@ -199,7 +216,10 @@ const RecordTradeModal: React.FC<{
         quantity: number;
         amount: number;
         price: number;
+        tradeCurrency: TradeCurrency;
         executedPlanId: string;
+        accountId: string;
+        portfolioId: string;
         reason?: string;
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
@@ -262,9 +282,18 @@ const RecordTradeModal: React.FC<{
                 setType(initialData.tradeType || 'buy');
                 setSymbol(initialData.symbol || '');
                 setHoldingName(initialData.name || '');
-                setQuantity(initialData.quantity ? String(initialData.quantity) : '');
-                setAmountToInvest(initialData.amount || null);
+                const prefAmount = initialData.amount || null;
+                const prefQuantity = initialData.quantity ?? null;
+                const prefPrice = initialData.price ?? null;
+                const resolvedPrice = prefPrice ?? (prefAmount && prefQuantity && prefQuantity > 0 ? prefAmount / prefQuantity : null);
+                const resolvedQuantity = prefQuantity ?? (prefAmount && resolvedPrice && resolvedPrice > 0 ? prefAmount / resolvedPrice : null);
+                setQuantity(typeof resolvedQuantity === 'number' && Number.isFinite(resolvedQuantity) ? String(Number(resolvedQuantity.toFixed(8))) : '');
+                setPrice(typeof resolvedPrice === 'number' && Number.isFinite(resolvedPrice) ? String(Number(resolvedPrice.toFixed(8))) : '');
+                setAmountToInvest(prefAmount);
                 setExecutedPlanId(initialData.executedPlanId);
+                if (initialData.tradeCurrency) setTradeCurrency(initialData.tradeCurrency);
+                if (initialData.accountId) setAccountId(initialData.accountId);
+                if (initialData.portfolioId) setPortfolioId(initialData.portfolioId);
                 if (initialData.amount && !initialData.quantity && !initialData.price) {
                     setPrice('');
                     setQuantity('');
@@ -276,19 +305,27 @@ const RecordTradeModal: React.FC<{
     }, [isOpen, initialData, investmentAccounts, appCurrency]);
 
     useEffect(() => {
+        if (initialData?.portfolioId && portfoliosForAccount.some((p) => p.id === initialData.portfolioId)) {
+            setPortfolioId(initialData.portfolioId);
+            return;
+        }
         if (portfoliosForAccount.length > 0) {
             setPortfolioId(portfoliosForAccount[0].id);
         } else {
             setPortfolioId('');
         }
-    }, [portfoliosForAccount]);
+    }, [portfoliosForAccount, initialData?.portfolioId]);
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
+            if (initialData?.tradeCurrency) {
+                setTradeCurrency(initialData.tradeCurrency);
+                return;
+            }
             const portfolio = portfolios.find(p => p.id === portfolioId);
             setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
         }
-    }, [portfolioId, portfolios]);
+    }, [portfolioId, portfolios, initialData]);
     
     useEffect(() => {
         if (amountToInvest && price && type === 'buy') {
@@ -510,13 +547,13 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(false);
     const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
 
-    const handleGetAIAnalysis = useCallback(async () => {
+    const handleGetAIAnalysis = useCallback(async (forceRefresh = false) => {
         if (!holding) return;
         setIsLoading(true);
         setAiAnalysisError(null);
         setGroundingChunks([]);
         try {
-            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding);
+            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, { forceRefresh });
             setAiAnalysis(content || buildFallbackAnalystReport(holding));
             setGroundingChunks(chunks ?? []);
         } catch (e) {
@@ -535,11 +572,18 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
     const lastAnalystRequestRef = React.useRef<string | null>(null);
 
+
+    useEffect(() => {
+        if (!isOpen) {
+            lastAnalystRequestRef.current = null;
+        }
+    }, [isOpen]);
+
     useEffect(() => {
         if (!holding || !isOpen || isLoading) return;
         if (lastAnalystRequestRef.current === holding.id) return;
         lastAnalystRequestRef.current = holding.id;
-        handleGetAIAnalysis();
+        handleGetAIAnalysis(false);
     }, [holding, isOpen, isLoading, handleGetAIAnalysis]);
 
     useEffect(() => {
@@ -581,6 +625,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
 
     const displayName = holding.name || (holding as any).name || holding.symbol;
+    const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
     const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
@@ -591,40 +636,42 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
             <div className="space-y-6 min-w-0">
-                {/* Hero: symbol, name, price, change — in portfolio currency; content contained */}
-                <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6 min-w-0">
-                    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-x-3 min-w-0">
-                        <span className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</span>
-                        <span className="hidden sm:inline text-slate-500 shrink-0">·</span>
-                        <span className="metric-label text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</span>
+                {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
+                <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
+                    <div className="flex flex-col items-center justify-center gap-1 text-center min-w-0">
+                        <p className="metric-label text-[11px] font-semibold tracking-[0.18em] text-slate-500 uppercase">Share details</p>
+                        <p className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</p>
+                        <p className="metric-label text-sm sm:text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</p>
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
-                        <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${holding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
-                        </span>
-                        <span className="text-sm text-slate-500 shrink-0">per share · {portfolioCurrency}</span>
+                    <div className="mt-4 flex flex-col items-center gap-1 text-center">
+                        <p className="metric-value text-3xl sm:text-4xl font-bold text-slate-900 tabular-nums leading-none" title={fmt(currentPrice)}>{fmt(currentPrice)}</p>
+                        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                            <span className={`metric-value inline-flex items-center rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${priceTrendPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
+                            </span>
+                            <span className="text-xs sm:text-sm text-slate-500">1D change (latest session) · per share · {portfolioCurrency}</span>
+                        </div>
                     </div>
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 min-w-0">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 min-w-0">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Market Value</p>
+                        <p className="share-detail-metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums">{holding.quantity.toLocaleString()}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Quantity</p>
+                        <p className="metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Avg. Cost</p>
+                        <p className="share-detail-metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Unrealized G/L</p>
+                        <p className={`share-detail-metric-value w-full mt-2 text-2xl font-bold tabular-nums whitespace-nowrap leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="w-full text-xs text-slate-500 mt-2 leading-tight" title={fmt(totalCost)}>On cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
@@ -633,15 +680,15 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
                                 <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
                             </div>
@@ -651,15 +698,15 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
                                 <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
                             </div>
-                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-start text-left">
+                            <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
                                 <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
                             </div>
@@ -670,7 +717,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Upcoming financials & income */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-700 break-words">Next financial statement & dividends</p>
+                        <p className="text-sm font-semibold text-slate-700 break-words">Next earnings & dividends (estimated)</p>
                         {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
                     </div>
                     {fundamentalsError && (
@@ -678,7 +725,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     )}
                     <div className="grid gap-3 sm:grid-cols-2 text-sm">
                         <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Next financial statement</p>
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Next earnings report (estimated)</p>
                             {fundamentals?.nextEarnings?.date ? (
                                 <>
                                     <p className="text-slate-800">
@@ -695,29 +742,40 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                     </p>
                                     {typeof fundamentals.nextEarnings.revenueEstimate === 'number' && fundamentals.nextEarnings.revenueEstimate > 0 && (
                                         <p className="text-xs text-slate-600">
-                                            Expected revenue ({fundamentalsCurrency}):{' '}
+                                            Revenue estimate ({fundamentalsCurrency}):{' '}
                                             {fmtFundamentals(fundamentals.nextEarnings.revenueEstimate, { digits: 0 })}
                                         </p>
                                     )}
                                 </>
                             ) : (
-                                <p className="text-xs text-slate-500">No upcoming earnings date available.</p>
+                                <p className="text-xs text-slate-500">No upcoming earnings date available from market data.</p>
                             )}
                         </div>
                         <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dividends</p>
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dividend snapshot (estimated)</p>
                             {fundamentals?.dividend ? (
                                 <>
                                     {typeof fundamentals.dividend.dividendYieldPct === 'number' && fundamentals.dividend.dividendYieldPct > 0 && (
                                         <p className="text-slate-800">
-                                            Dividend yield: {fundamentals.dividend.dividendYieldPct.toFixed(2)}%
+                                            Indicative yield (TTM/forward): {fundamentals.dividend.dividendYieldPct.toFixed(2)}%
                                         </p>
                                     )}
                                     {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <p className="text-xs text-slate-600">
-                                                Est. annual dividends on your position ({fundamentalsCurrency}):{' '}
-                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual * holding.quantity, { digits: 0 })}
+                                                Dividend per share (annualized, {fundamentalsCurrency}):{' '}
+                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual, { digits: 2 })}
+                                            </p>
+                                        )}
+                                    {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
+                                        fundamentals.dividend.dividendYieldPct > 0 &&
+                                        holding.currentValue > 0 && (
+                                            <p className="text-xs text-slate-600">
+                                                Implied annual cashflow on your position ({portfolioCurrency}):{' '}
+                                                {formatCurrencyString(holding.currentValue * (fundamentals.dividend.dividendYieldPct / 100), {
+                                                    inCurrency: portfolioCurrency,
+                                                    digits: 0,
+                                                })}
                                             </p>
                                         )}
                                     {!fundamentals.dividend.dividendYieldPct && !fundamentals.dividend.dividendPerShareAnnual && (
@@ -737,7 +795,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
-                        changePercent={holding.priceChangePercent ?? holding.gainLossPercent}
+                        changePercent={priceTrendPercent}
                         formatPrice={(p) => fmt(p)}
                     />
                 </div>
@@ -751,7 +809,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         </div>
                         <button
                             type="button"
-                            onClick={handleGetAIAnalysis}
+                            onClick={() => handleGetAIAnalysis(true)}
                             disabled={isLoading}
                             className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
                         >
@@ -761,7 +819,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysisError && !isLoading && (
-                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI was unavailable: {aiAnalysisError} Showing a position summary below. You can try again when the service is available.</p>
+                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI analyst service is temporarily unavailable ({aiAnalysisError}). We loaded a resilient fallback report below. Use Generate Report to retry live AI analysis.</p>
                     )}
                     {aiAnalysis && !isLoading && (
                         <div className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words">
@@ -794,6 +852,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const { data } = useContext(DataContext)!;
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
+    const [assetClass, setAssetClass] = useState<HoldingAssetClass>('Stock');
     const [goalId, setGoalId] = useState<string | undefined>();
     
     useEffect(() => {
@@ -801,6 +860,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             const currentName = holding.name || (holding as any).name || '';
             setName(currentName);
             setZakahClass(holding.zakahClass);
+            setAssetClass((holding.assetClass as HoldingAssetClass) || 'Stock');
             setGoalId(holding.goalId);
             if (!currentName.trim() && holding.symbol.trim().length >= 2) {
                 fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
@@ -813,7 +873,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (holding) {
-            onSave({ ...holding, name, zakahClass, goalId });
+            onSave({ ...holding, name, zakahClass, assetClass, goalId });
             onClose();
         }
     };
@@ -822,6 +882,17 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
                 <div><label className="block text-sm font-medium text-gray-700">Holding Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Asset Class</label>
+                    <select value={assetClass} onChange={e => setAssetClass(e.target.value as HoldingAssetClass)} className="mt-1 w-full p-2 border border-gray-300 rounded-md">
+                        <option value="Stock">Stock</option>
+                        <option value="Sukuk">Sukuk</option>
+                        <option value="ETF">ETF</option>
+                        <option value="Mutual Fund">Mutual Fund</option>
+                        <option value="REIT">REIT</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <div>
                     <label htmlFor="goal-link" className="block text-sm font-medium text-gray-700">Link to Goal</label>
@@ -949,7 +1020,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
-                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Amount</th>
                             <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
                         </tr>
                     </thead>
@@ -961,7 +1032,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
                                     <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-center font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
                                 </tr>
                             );
@@ -1000,7 +1071,7 @@ const PlatformCard: React.FC<{
 
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
-        const rate = exchangeRate;
+        const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
         let valueSAR = 0, valueUSD = 0;
         portfolios.forEach(p => {
             const cur = (p.currency || 'USD') as TradeCurrency;
@@ -1120,15 +1191,15 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
-                <dl className="platform-metrics grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-2" aria-label="Platform metrics">
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Available Cash</dt>
-                        <dd className="metric-value w-full text-sm mt-0.5 tabular-nums">
+                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5" aria-label="Platform metrics">
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Available Cash</dt>
+                        <dd className="metric-value w-full mt-1.5 text-base sm:text-lg font-bold text-slate-900 tabular-nums leading-tight">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
-                                <span className="font-bold text-slate-500">—</span>
+                                <span className="text-slate-500">—</span>
                             ) : (
                                 <>
-                                    <span className="font-bold text-slate-800 block">
+                                    <span className="block">
                                         {platformCurrency
                                             ? formatCurrencyString(totalAvailable, {
                                                   inCurrency: platformCurrency,
@@ -1143,7 +1214,7 @@ const PlatformCard: React.FC<{
                                                       availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
                                               })}
                                     </span>
-                                    <span className="block text-[11px] text-slate-500">
+                                    <span className="mt-1 block text-[11px] font-medium text-slate-500">
                                         {formatCurrencyString(availableCashByCurrency.SAR, {
                                             inCurrency: 'SAR',
                                             digits: 0,
@@ -1158,25 +1229,25 @@ const PlatformCard: React.FC<{
                             )}
                         </dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Unrealized P/L</dt>
-                        <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Unrealized P/L</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Daily P/L</dt>
-                        <dd className="metric-value w-full font-bold text-base sm:text-lg">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Daily P/L</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">ROI</dt>
-                        <dd className={`metric-value w-full font-bold text-base sm:text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">ROI</dt>
+                        <dd className={`metric-value w-full mt-1.5 font-bold text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Invested</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Invested</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
                     </div>
-                    <div className="rounded-xl bg-white border border-slate-100 px-3 py-2.5 min-w-0 shadow-sm flex flex-col items-start justify-start text-left min-h-[98px]">
-                        <dt className="metric-label w-full text-[11px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wide leading-tight">Withdrawn</dt>
-                        <dd className="metric-value w-full font-bold text-slate-800 text-base sm:text-lg mt-0.5 tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Withdrawn</dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
                     </div>
                 </dl>
             </header>
@@ -1275,9 +1346,9 @@ const PlatformCard: React.FC<{
                                                                     </div>
                                                                 )}
                                                             </td>
-                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
-                                                            <td className="px-3 py-3 text-right text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
                                                             <td className="px-3 py-3 text-center whitespace-nowrap">
                                                                 <span
                                                                     className={`inline-flex items-center justify-center gap-1 tabular-nums ${
@@ -1293,7 +1364,7 @@ const PlatformCard: React.FC<{
                                                                     </span>
                                                                 </span>
                                                             </td>
-                                                            <td className="px-3 py-3 text-right">
+                                                            <td className="px-3 py-3 text-center">
                                                                 <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
@@ -1494,10 +1565,12 @@ const ANALYST_DEFAULTS = {
     target_provider: 'TipRanks',
 };
 
-const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
+const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
+    const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
 
     const planFromData = data.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -1627,22 +1700,35 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
     const suggestedMonthlyBudget = useMemo(() => {
+        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+        };
+
         const buys = (data.investmentTransactions || []).filter(t => t.type === 'buy');
         if (buys.length === 0) return 0;
+
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         const recent = buys.filter(t => new Date(t.date) >= sixMonthsAgo);
         const byMonth = new Map<string, number>();
+
         recent.forEach(t => {
             const d = new Date(t.date);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const amt = t.total ?? (t.quantity * (t.price ?? 0));
-            byMonth.set(key, (byMonth.get(key) ?? 0) + amt);
+            const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            const rawAmount = t.total ?? (t.quantity * (t.price ?? 0));
+            const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
+            byMonth.set(key, (byMonth.get(key) ?? 0) + convertedAmount);
         });
-        const amounts = Array.from(byMonth.values());
+
+        const amounts = Array.from(byMonth.values()).filter(v => Number.isFinite(v) && v > 0);
         if (amounts.length === 0) return 0;
         return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
-    }, [data.investmentTransactions]);
+    }, [data.investmentTransactions, exchangeRate, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -1736,6 +1822,9 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const allocationSum = (plan.coreAllocation + plan.upsideAllocation) * 100;
     const allocationWarning = Math.abs(allocationSum - 100) > 0.5 ? `Core + High-Upside = ${allocationSum.toFixed(1)}%; should equal 100%. Remaining is treated as Spec.` : null;
+    const planCurrency = plan.budgetCurrency ?? 'SAR';
+    const coreShareAmount = (plan.monthlyBudget ?? 0) * (plan.coreAllocation ?? 0);
+    const upsideShareAmount = (plan.monthlyBudget ?? 0) * (plan.upsideAllocation ?? 0);
 
     const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
     const budget = plan.monthlyBudget ?? 0;
@@ -1745,8 +1834,22 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const actionableCount = (data.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
+    const actionableCount = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
+
+    const executionUniverse = useMemo<UniverseTicker[]>(() => (
+        unifiedUniverse.map((t) => ({
+            id: t.id,
+            user_id: t.user_id,
+            ticker: t.ticker,
+            name: t.name,
+            status: t.status,
+            monthly_weight: t.monthly_weight,
+            max_position_weight: t.max_position_weight,
+            min_upside_threshold_override: t.min_upside_threshold_override,
+            min_coverage_override: t.min_coverage_override,
+        }))
+    ), [unifiedUniverse]);
 
     const planHealth = useMemo(() => {
         let score = 100;
@@ -1806,11 +1909,43 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const applySmartPlan = () => {
-        const hasHistory = suggestedMonthlyBudget > 0;
-        const monthly = hasHistory ? suggestedMonthlyBudget : plan.monthlyBudget || 0;
+        const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
+        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+        };
 
-        const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
-        const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
+        const investedBase = (data.investments || []).reduce((sum, portfolio) => {
+            const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
+            const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
+            return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
+        }, 0);
+
+        const historyBudget = suggestedMonthlyBudget > 0 ? suggestedMonthlyBudget : 0;
+        const derivedFromPortfolio = investedBase > 0 ? Math.round(Math.max(1000, Math.min(30000, investedBase * 0.025))) : 0;
+        const fallbackBudget = 2500;
+        const monthly = historyBudget || plan.monthlyBudget || derivedFromPortfolio || fallbackBudget;
+
+        const actionableUniverse = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
+        const coreUniverse = actionableUniverse.filter(t => t.status === 'Core');
+        const upsideUniverse = actionableUniverse.filter(t => t.status === 'High-Upside');
+
+        const normalizeSleeve = (tickers: (UniverseTicker & { source?: string })[]) => {
+            if (tickers.length === 0) return [] as { ticker: string; weight: number }[];
+            const rawTotal = tickers.reduce((sum, t) => sum + ((t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1), 0);
+            return tickers.map(t => {
+                const rawWeight = (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1;
+                return {
+                    ticker: t.ticker,
+                    weight: Number((rawTotal > 0 ? rawWeight / rawTotal : 1 / tickers.length).toFixed(6)),
+                };
+            });
+        };
+
+        const normalizedCore = normalizeSleeve(coreUniverse);
+        const normalizedUpside = normalizeSleeve(upsideUniverse);
 
         let coreAlloc = plan.coreAllocation ?? 0.7;
         let upsideAlloc = plan.upsideAllocation ?? 0.3;
@@ -1818,36 +1953,108 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const totalWt = coreWt + upWt;
+
         if (totalWt > 0) {
             coreAlloc = coreWt / totalWt;
             upsideAlloc = upWt / totalWt;
+        } else if (actionableUniverse.length > 0) {
+            coreAlloc = coreUniverse.length / actionableUniverse.length;
+            upsideAlloc = upsideUniverse.length / actionableUniverse.length;
+            if (coreAlloc === 0 || upsideAlloc === 0) {
+                coreAlloc = coreUniverse.length > 0 ? 0.8 : 0.2;
+                upsideAlloc = 1 - coreAlloc;
+            }
         }
 
-        const nextMinOrder = monthly > 0 ? Math.round((monthly * 0.1) / 100) * 100 : plan.brokerConstraints.minimumOrderSize;
+        const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
 
         setPlan(prev => ({
             ...prev,
             monthlyBudget: monthly,
             coreAllocation: coreAlloc,
             upsideAllocation: upsideAlloc,
+            corePortfolio: normalizedCore,
+            upsideSleeve: normalizedUpside,
             brokerConstraints: {
                 ...prev.brokerConstraints,
                 minimumOrderSize: nextMinOrder,
             },
         }));
+
+        const budgetSource = historyBudget > 0
+            ? `recent buy history (${planCurrency})`
+            : (plan.monthlyBudget > 0 ? 'your existing plan value' : (derivedFromPortfolio > 0 ? 'current holdings size' : 'smart default'));
+        setSaveMessage(`Smart-fill synced budget, allocation, and ${actionableUniverse.length} actionable tickers using ${budgetSource}. Review and save before execution.`);
+        setTimeout(() => setSaveMessage(null), 6000);
     };
 
     const handleSave = () => {
-        if (allocationWarning && !window.confirm(`${allocationWarning}\n\nSave anyway?`)) return;
+        if (allocationWarning && !window.confirm(`${allocationWarning}
+
+Save anyway?`)) return;
         setSaveMessage(null);
         saveInvestmentPlan(plan);
         setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
         setTimeout(() => setSaveMessage(null), 6000);
     };
 
+    const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
+    const isActionableUniverseStatus = (status: TickerStatus) => status === 'Core' || status === 'High-Upside';
+    const parsePercentInputToWeight = (raw: string): number | undefined => {
+        const parsed = Number.parseFloat(raw);
+        if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+        return parsed / 100;
+    };
+
+    const autoConfigureUniverseWeights = useCallback(async () => {
+        const universe = [...(data.portfolioUniverse || [])];
+        if (universe.length === 0) return;
+
+        const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
+        const actionableCount = actionable.length;
+        const rawWeightsById = new Map(actionable.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
+        const rawTotal = Array.from(rawWeightsById.values()).reduce((sum, v) => sum + v, 0);
+        const fallbackWeight = actionableCount > 0 ? 1 / actionableCount : 0;
+
+        for (const ticker of universe) {
+            if (!isActionableUniverseStatus(ticker.status)) {
+                const shouldResetWeight = (ticker.monthly_weight ?? 0) !== 0;
+                const shouldDefaultMax = !ticker.max_position_weight || ticker.max_position_weight <= 0;
+                if (shouldResetWeight || shouldDefaultMax) {
+                    await updateUniverseTickerStatus(ticker.id, ticker.status, {
+                        monthly_weight: 0,
+                        max_position_weight: shouldDefaultMax ? 0.25 : ticker.max_position_weight,
+                    });
+                }
+                continue;
+            }
+
+            const sourceWeight = rawWeightsById.get(ticker.id) ?? 1;
+            const normalizedWeight = rawTotal > 0 ? (sourceWeight / rawTotal) : fallbackWeight;
+            const nextMax = (ticker.max_position_weight && ticker.max_position_weight > 0)
+                ? ticker.max_position_weight
+                : (ticker.status === 'Core' ? 0.25 : 0.2);
+
+            await updateUniverseTickerStatus(ticker.id, ticker.status, {
+                monthly_weight: Number(normalizedWeight.toFixed(6)),
+                max_position_weight: nextMax,
+            });
+        }
+
+        setSaveMessage('Universe weights auto-configured for actionable tickers.');
+        setTimeout(() => setSaveMessage(null), 5000);
+    }, [data.portfolioUniverse, updateUniverseTickerStatus]);
+
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
-        if (ticker.source === 'Universe' || ticker.source?.includes('Universe')) {
-            await updateUniverseTickerStatus(ticker.id, newStatus);
+        if (isUniverseTicker(ticker)) {
+            const defaultMax = isActionableUniverseStatus(newStatus)
+                ? (newStatus === 'Core' ? 0.25 : 0.2)
+                : 0.25;
+            await updateUniverseTickerStatus(ticker.id, newStatus, {
+                monthly_weight: isActionableUniverseStatus(newStatus) ? (ticker.monthly_weight ?? 0) : 0,
+                max_position_weight: ticker.max_position_weight && ticker.max_position_weight > 0 ? ticker.max_position_weight : defaultMax,
+            });
+            await autoConfigureUniverseWeights();
         } else {
             // Promote virtual ticker to universe
             await addUniverseTicker({
@@ -1855,15 +2062,187 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 name: ticker.name,
                 status: newStatus
             });
+            setSaveMessage('Ticker added to universe. Click Auto-configure weights to distribute defaults.');
+            setTimeout(() => setSaveMessage(null), 5000);
         }
     };
+
+    const tickerCurrencyMap = useMemo<Record<string, TradeCurrency>>(() => {
+        const map: Record<string, TradeCurrency> = {};
+        (data.investments ?? []).forEach((portfolio) => {
+            const portfolioCurrency = (portfolio.currency === 'SAR' || portfolio.currency === 'USD') ? portfolio.currency : 'USD';
+            (portfolio.holdings ?? []).forEach((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                if (symbol) map[symbol] = portfolioCurrency;
+            });
+        });
+        return map;
+    }, [data.investments]);
+
+    const holdingPriceFallbackMap = useMemo<Record<string, number>>(() => {
+        const map: Record<string, number> = {};
+        (data.investments ?? []).forEach((portfolio) => {
+            (portfolio.holdings ?? []).forEach((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                if (!symbol) return;
+                const inferred = holding.quantity > 0 ? (holding.currentValue / holding.quantity) : (holding.avgCost || 0);
+                if (inferred > 0 && !Number.isNaN(inferred)) map[symbol] = inferred;
+            });
+        });
+        return map;
+    }, [data.investments]);
+
+    const getTradeExecutionSuggestion = useCallback((trade: InvestmentPlanExecutionResult['trades'][number]) => {
+        const symbol = (trade.ticker || '').trim().toUpperCase();
+        const tradeCurrency = trade.tradeCurrency || planCurrency;
+        const amountInTradeCurrency = tradeCurrency === planCurrency
+            ? trade.amount
+            : (typeof trade.amountInTradeCurrency === 'number' ? trade.amountInTradeCurrency : trade.amount);
+        const suggestedPrice = simulatedPrices[symbol]?.price || holdingPriceFallbackMap[symbol] || 0;
+        const suggestedQuantity = suggestedPrice > 0 ? amountInTradeCurrency / suggestedPrice : undefined;
+        return {
+            tradeCurrency,
+            amountInTradeCurrency,
+            suggestedPrice: suggestedPrice > 0 ? suggestedPrice : undefined,
+            suggestedQuantity,
+        };
+    }, [planCurrency, simulatedPrices, holdingPriceFallbackMap]);
+
+
+    const addOnOpportunities = useMemo(() => {
+        type AddOnCandidate = {
+            symbol: string;
+            name: string;
+            status: TickerStatus;
+            portfolioName: string;
+            currentPrice: number;
+            gainLossPct: number;
+            portfolioWeight: number;
+            maxWeight: number;
+            capacityPlanAmount: number;
+            tradeCurrency: TradeCurrency;
+            pullbackPrice: number;
+            deepPullbackPrice: number;
+            confidence: 'High' | 'Medium';
+            reason: string;
+            score: number;
+        };
+
+        const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
+        const mapBySymbol = new Map((data.portfolioUniverse || []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
+        const candidates: AddOnCandidate[] = [];
+
+        const fx = exchangeRate > 0 ? exchangeRate : 3.75;
+        const convertPlanToTrade = (amount: number, tradeCurrency: TradeCurrency): number => {
+            const pair = `${planCurrency}-${tradeCurrency}`;
+            if (pair === 'SAR-USD') return amount / fx;
+            if (pair === 'USD-SAR') return amount * fx;
+            return amount;
+        };
+
+        const monthlyBudget = Math.max(0, plan.monthlyBudget || 0);
+        const addOnPoolBudget = monthlyBudget > 0 ? Math.round(monthlyBudget * 0.2) : 0;
+        if (addOnPoolBudget <= 0) return [];
+
+        (data.investments || []).forEach((portfolio) => {
+            const holdings = portfolio.holdings || [];
+            const liveHoldingValues = holdings.map((holding) => {
+                const symbol = (holding.symbol || '').trim().toUpperCase();
+                const livePrice = simulatedPrices[symbol]?.price || (holding.quantity > 0 ? (holding.currentValue / holding.quantity) : 0) || holding.avgCost || 0;
+                const liveValue = livePrice > 0 ? livePrice * (holding.quantity || 0) : (holding.currentValue || 0);
+                return { holding, symbol, livePrice, liveValue };
+            });
+
+            const portfolioValue = liveHoldingValues.reduce((sum, x) => sum + (x.liveValue || 0), 0);
+            if (portfolioValue <= 0) return;
+
+            liveHoldingValues.forEach(({ holding, symbol, livePrice, liveValue }) => {
+                if (!symbol) return;
+                const universeTicker = mapBySymbol.get(symbol);
+                const status = universeTicker?.status ?? 'Core';
+                if (!actionableStatuses.includes(status)) return;
+                if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+
+                const costBasis = (holding.avgCost || 0) * (holding.quantity || 0);
+                const gainLossPct = costBasis > 0 ? ((liveValue - costBasis) / costBasis) * 100 : 0;
+                if (!Number.isFinite(gainLossPct) || gainLossPct < 4) return;
+
+                const portfolioWeight = liveValue / portfolioValue;
+                const maxWeight = universeTicker?.max_position_weight && universeTicker.max_position_weight > 0
+                    ? universeTicker.max_position_weight
+                    : (status === 'Core' ? 0.25 : 0.2);
+                const headroom = Math.max(0, maxWeight - portfolioWeight);
+                if (headroom <= 0.01) return;
+
+                const capacityPlanAmount = Math.max(0, Math.round(monthlyBudget * Math.min(headroom, status === 'Core' ? 0.06 : 0.04)));
+                if (capacityPlanAmount <= 0) return;
+
+                const momentumScore = gainLossPct >= 12 ? 1 : gainLossPct >= 7 ? 0.75 : 0.45;
+                const headroomScore = Math.min(1, headroom / 0.08);
+                const score = (status === 'Core' ? 1 : 0.9) * (0.6 * momentumScore + 0.4 * headroomScore);
+
+                const pullbackPct = status === 'Core' ? 0.02 : 0.03;
+                const deepPullbackPct = status === 'Core' ? 0.05 : 0.07;
+                const pullbackPrice = Number((livePrice * (1 - pullbackPct)).toFixed(2));
+                const deepPullbackPrice = Number((livePrice * (1 - deepPullbackPct)).toFixed(2));
+                const confidence: 'High' | 'Medium' = gainLossPct >= 10 && headroom >= 0.04 ? 'High' : 'Medium';
+
+                candidates.push({
+                    symbol,
+                    name: holding.name || symbol,
+                    status,
+                    portfolioName: portfolio.name,
+                    currentPrice: Number(livePrice.toFixed(2)),
+                    gainLossPct: Number(gainLossPct.toFixed(2)),
+                    portfolioWeight: Number((portfolioWeight * 100).toFixed(2)),
+                    maxWeight: Number((maxWeight * 100).toFixed(1)),
+                    capacityPlanAmount,
+                    tradeCurrency: tickerCurrencyMap[symbol] || ((portfolio.currency as TradeCurrency) || 'USD'),
+                    pullbackPrice,
+                    deepPullbackPrice,
+                    confidence,
+                    score,
+                    reason: `${status} winner with positive trend and position headroom (${(headroom * 100).toFixed(1)}% remaining to max weight).`,
+                });
+            });
+        });
+
+        if (candidates.length === 0) return [];
+
+        const ranked = candidates.sort((a, b) => b.score - a.score).slice(0, 8);
+        const scoreTotal = ranked.reduce((sum, c) => sum + c.score, 0) || 1;
+
+        const allocated = ranked
+            .map((c) => {
+                const proportional = Math.round((addOnPoolBudget * c.score) / scoreTotal);
+                const suggestedPlanAmount = Math.min(c.capacityPlanAmount, Math.max(0, proportional));
+                const amountInTradeCurrency = Math.max(0, Number(convertPlanToTrade(suggestedPlanAmount, c.tradeCurrency).toFixed(2)));
+                const suggestedQuantity = c.pullbackPrice > 0 ? Number((amountInTradeCurrency / c.pullbackPrice).toFixed(4)) : 0;
+                return {
+                    ...c,
+                    suggestedPlanAmount,
+                    amountInTradeCurrency,
+                    suggestedQuantity,
+                };
+            })
+            .filter((c) => c.suggestedPlanAmount > 0 && c.amountInTradeCurrency > 0)
+            .sort((a, b) => b.gainLossPct - a.gainLossPct)
+            .slice(0, 6);
+
+        return allocated;
+    }, [data.investments, data.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
         setExecutionResult(null);
         setExecutionError(null);
         try {
-            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased });
+            const result = await executeInvestmentPlanStrategy(plan, executionUniverse, {
+                forceRuleBased,
+                planCurrency: plan.budgetCurrency,
+                tickerCurrencyMap,
+                fxRate: exchangeRate,
+            });
             setExecutionResult(result);
             setExecutionError(null);
 
@@ -1880,7 +2259,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             if (!forceRuleBased) {
                 try {
-                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased: true });
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, executionUniverse, {
+                        forceRuleBased: true,
+                        planCurrency: plan.budgetCurrency,
+                        tickerCurrencyMap,
+                        fxRate: exchangeRate,
+                    });
                     setExecutionResult(fallbackResult);
                     setExecutionError(null);
 
@@ -1934,7 +2318,6 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                         <>
                             <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="text-primary font-medium hover:underline">Portfolios</button>
                             <span className="text-slate-300">·</span>
-                            <span className="text-slate-300">·</span>
                             <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="text-primary font-medium hover:underline">Watchlist</button>
                             <span className="text-slate-300">·</span>
                             <button type="button" onClick={() => onNavigateToTab('AI Rebalancer')} className="text-primary font-medium hover:underline">AI Rebalancer</button>
@@ -1953,18 +2336,32 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     <span className="text-slate-500">{showFlowNote ? '▼' : '▶'}</span>
                 </button>
                 {showFlowNote && (
-                    <div className="px-4 pb-4 pt-0 text-sm text-slate-600 space-y-2 border-t border-slate-200">
-                        <p><strong>1. Set budget & allocation</strong> above (monthly amount, Core % vs High-Upside %).</p>
-                        <p><strong>2. Build your universe</strong> — add tickers via Watchlist or the table below. Set status to <em>Core</em> or <em>High-Upside</em> and optional monthly weights (should sum to ~100% for predictable splits).</p>
-                        <p><strong>3. Sync (optional)</strong> — use “Sync Core/Upside from Universe” to copy current Core/High-Upside tickers and weights into the plan so execution and Wealth Ultra use the same list.</p>
-                        <p><strong>4. Execute or use Wealth Ultra</strong> — “Execute Monthly Plan” runs AI-based allocation and logs results; <strong>Wealth Ultra</strong> shows live allocation, orders, and deployable cash. Record trades from either place.</p>
+                    <div className="px-4 pb-4 pt-3 border-t border-slate-200 bg-white/70">
+                        <ol className="space-y-2.5 text-sm text-slate-700">
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">1</span>
+                                <p><strong>Set budget & allocation</strong> (monthly amount, Core % vs High-Upside %).</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">2</span>
+                                <p><strong>Build your universe</strong> via Watchlist or the table below. Set status to <em>Core</em> / <em>High-Upside</em> and optional weights (target ~100% combined).</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">3</span>
+                                <p><strong>Sync (optional)</strong> using “Sync Core/Upside from Universe” so plan + execution + Wealth Ultra all use the same ticker set.</p>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700 shrink-0">4</span>
+                                <p><strong>Execute or open Wealth Ultra</strong> to generate allocations/orders and then record actual trades directly from results.</p>
+                            </li>
+                        </ol>
                     </div>
                 )}
             </div>
 
             {/* Plan health — smart readiness summary */}
             <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200">
                             <span className="text-lg font-bold text-emerald-700 tabular-nums">{planHealth.score}</span>
@@ -1974,37 +2371,29 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <p className="text-xs text-slate-600 mt-0.5">{planHealth.summary}</p>
                         </div>
                     </div>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 min-w-[200px]">
-                        <div>
+                    <dl className="grid grid-cols-2 gap-2 sm:gap-3 text-xs text-slate-600 w-full lg:w-auto lg:min-w-[360px]">
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Monthly budget</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5 whitespace-nowrap">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Core / Upside mix</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {planHealth.corePct.toFixed(0)}% / {planHealth.upsidePct.toFixed(0)}%
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5 whitespace-nowrap">{planHealth.corePct.toFixed(0)}% / {planHealth.upsidePct.toFixed(0)}%</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Actionable tickers</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {universeHealth.actionableCount}
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5">{universeHealth.actionableCount}</dd>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Weight coverage</dt>
-                            <dd className="font-mono tabular-nums text-slate-900">
-                                {(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%
-                            </dd>
+                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5">{(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%</dd>
                         </div>
                     </dl>
                 </div>
             </SectionCard>
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                <div className="lg:col-span-2 space-y-6">
+            <div className="cards-grid grid grid-cols-1 xl:grid-cols-5">
+                <div className="xl:col-span-3 space-y-6">
                     {/* Allocation Settings — essential fields first */}
                     <div className="bg-white p-6 rounded-lg shadow space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -2045,6 +2434,14 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
                                 <input type="number" value={plan.upsideAllocation * 100} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                            </div>
+                        </div>
+
+                        <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                                <span className="font-semibold text-slate-700">Execution split ({planCurrency})</span>
+                                <span className="tabular-nums text-slate-700">Core {planHealth.corePct.toFixed(0)}% → <strong>{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
+                                <span className="tabular-nums text-slate-700">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong>{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
                             </div>
                         </div>
 
@@ -2154,6 +2551,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
                             )}
                             <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
+                            <button type="button" onClick={autoConfigureUniverseWeights} className="px-3 py-2 text-sm border border-emerald-300 text-emerald-700 rounded-md hover:bg-emerald-50">Auto-configure weights</button>
                             <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
                             <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
@@ -2193,39 +2591,49 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                                 </select>
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
-                                                    <>
-                                                        <input 
-                                                            type="number" 
-                                                            value={ticker.monthly_weight ? ticker.monthly_weight * 100 : ''} 
-                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: parseFloat(e.target.value) / 100 })}
-                                                            className="w-16 p-1 border rounded text-right text-xs"
-                                                            placeholder="0"
-                                                        />
-                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                    </>
+                                                {isUniverseTicker(ticker) ? (
+                                                    isActionableUniverseStatus(ticker.status) ? (
+                                                        <>
+                                                            <input 
+                                                                type="number" 
+                                                                value={ticker.monthly_weight != null ? ticker.monthly_weight * 100 : ''} 
+                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: nextWeight }); }}
+                                                                onBlur={autoConfigureUniverseWeights}
+                                                                className="w-16 p-1 border rounded text-right text-xs"
+                                                                placeholder="auto"
+                                                            />
+                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses do not receive allocation">Auto</span>
+                                                    )
                                                 ) : (
                                                     <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-center">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) ? (
-                                                    <>
-                                                        <input 
-                                                            type="number" 
-                                                            value={ticker.max_position_weight ? ticker.max_position_weight * 100 : ''} 
-                                                            onChange={e => updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: parseFloat(e.target.value) / 100 })}
-                                                            className="w-16 p-1 border rounded text-right text-xs"
-                                                            placeholder="0"
-                                                        />
-                                                        <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                    </>
+                                                {isUniverseTicker(ticker) ? (
+                                                    isActionableUniverseStatus(ticker.status) ? (
+                                                        <>
+                                                            <input 
+                                                                type="number" 
+                                                                value={ticker.max_position_weight != null ? ticker.max_position_weight * 100 : ''} 
+                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: nextWeight }); }}
+                                                                onBlur={autoConfigureUniverseWeights}
+                                                                className="w-16 p-1 border rounded text-right text-xs"
+                                                                placeholder="auto"
+                                                            />
+                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses use defaults">Auto</span>
+                                                    )
                                                 ) : (
                                                     <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
                                                 )}
                                             </td>
                                             <td className="px-4 py-2 text-right">
-                                                {(ticker.source === 'Universe' || ticker.source?.includes('Universe')) && (
+                                                {isUniverseTicker(ticker) && (
                                                     <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
                                                 )}
                                             </td>
@@ -2237,8 +2645,83 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     </div>
                 </div>
 
+
+                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800 mb-1">Smart Add-On Opportunities (Existing Winners)</h2>
+                                <p className="text-sm text-slate-600">Automated suggestions for buying more of profitable shares you already own, with pullback entry zones and capped sizing.</p>
+                            </div>
+                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">AUTO</span>
+                        </div>
+                    </div>
+                    <div className="p-6">
+                        {addOnOpportunities.length === 0 ? (
+                            <p className="text-sm text-slate-500">No add-on opportunities right now. Suggestions appear when a holding is profitable, actionable (Core/High-Upside), and below max position weight.</p>
+                        ) : (
+                            <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                <table className="w-full table-fixed text-sm">
+                                    <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
+                                            <th className="w-[18%] px-3 py-2 font-semibold">Share</th>
+                                            <th className="w-[16%] px-3 py-2 font-semibold">Signal</th>
+                                            <th className="w-[24%] px-3 py-2 font-semibold">Buy zone</th>
+                                            <th className="w-[24%] px-3 py-2 font-semibold text-right">Suggested size</th>
+                                            {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {addOnOpportunities.map((o) => (
+                                            <tr key={`${o.symbol}-${o.portfolioName}`} className="border-b border-slate-100 last:border-0 align-top hover:bg-slate-50/40">
+                                                <td className="px-3 py-2">
+                                                    <div className="font-semibold text-slate-800">{o.symbol}</div>
+                                                    <div className="text-[11px] text-slate-500 truncate">{o.portfolioName} · {o.status}</div>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="text-xs text-slate-700 font-medium">P/L {o.gainLossPct >= 0 ? '+' : ''}{o.gainLossPct.toFixed(1)}%</div>
+                                                    <div className="text-[11px] text-slate-500">Wt {o.portfolioWeight.toFixed(1)}% / max {o.maxWeight.toFixed(1)}%</div>
+                                                    <div className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${o.confidence === 'High' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{o.confidence}</div>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="text-xs text-slate-700">Pullback: <strong>{formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</strong></div>
+                                                    <div className="text-xs text-slate-500">Deep pullback: {formatCurrencyString(o.deepPullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-1 leading-snug">{o.reason}</div>
+                                                </td>
+                                                <td className="px-3 py-2 text-right">
+                                                    <div className="font-mono font-semibold text-primary tabular-nums">{formatCurrencyString(o.suggestedPlanAmount, { inCurrency: planCurrency, digits: 0 })}</div>
+                                                    <div className="text-[11px] text-slate-500">≈ {formatCurrencyString(o.amountInTradeCurrency, { inCurrency: o.tradeCurrency, digits: 0 })}</div>
+                                                    <div className="text-[11px] text-slate-500">{o.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                </td>
+                                                {onOpenRecordTrade && (
+                                                    <td className="px-3 py-2 text-right">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onOpenRecordTrade({
+                                                                ticker: o.symbol,
+                                                                amount: o.suggestedPlanAmount,
+                                                                reason: `Smart add-on: ${o.reason}`,
+                                                                price: o.pullbackPrice,
+                                                                quantity: o.suggestedQuantity,
+                                                                tradeCurrency: o.tradeCurrency,
+                                                            })}
+                                                            className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap"
+                                                        >
+                                                            Record add-on
+                                                        </button>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 {/* Execution & View Results — allocation from Monthly Plan + Portfolio Universe */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                         <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
                         <p className="text-sm text-slate-600">Run once and get a clear execution summary with direct trade actions.</p>
@@ -2271,7 +2754,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
                         {executionResult && (
                             <div className="mt-6 space-y-5">
-                                <p className="text-xs text-slate-500">All amounts in <strong>{plan.budgetCurrency ?? 'SAR'}</strong>. Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
+                                <p className="text-xs text-slate-500">All amounts in <strong>{planCurrency}</strong>. Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
 
                                 <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                                     <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
@@ -2288,23 +2771,37 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     {executionResult.status === 'failure' && (
                                         <p className="text-sm text-amber-800 mb-3">No allocation could be generated. Add Core or High-Upside tickers in Portfolio Universe and set weights, then run again.</p>
                                     )}
-                                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 min-w-0">
-                                        <dt className="text-gray-600 text-sm break-words">Monthly budget</dt>
-                                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-800">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Total deployed</dt>
-                                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-800">{formatCurrencyString(executionResult.totalInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Core</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">High-Upside</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Speculative</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Redirected</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
-                                        <dt className="text-gray-600 text-sm break-words">Unused (not allocated)</dt>
-                                        <dd className="text-right font-mono tabular-nums text-slate-700">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</dd>
+                                    <dl className="grid grid-cols-2 xl:grid-cols-3 gap-2 text-sm">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Monthly budget</dt>
+                                            <dd className="mt-1 font-mono font-semibold tabular-nums text-slate-800 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Total deployed</dt>
+                                            <dd className="mt-1 font-mono font-semibold tabular-nums text-slate-800 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Core</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">High-Upside</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Speculative</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Redirected</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 min-w-0 col-span-2 xl:col-span-3">
+                                            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Unused (not allocated)</dt>
+                                            <dd className="mt-1 font-mono tabular-nums text-slate-700 text-base leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
                                     </dl>
-                                    <p className="text-xs text-slate-500 mt-2">Total deployed + Unused = Monthly budget (within rounding).</p>
+                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding).</p>
                                 </div>
 
                                 <div>
@@ -2312,29 +2809,39 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     {executionResult.trades.length === 0 ? (
                                         <p className="text-sm text-slate-500 py-2">No trades proposed (e.g. amounts below minimum order or no eligible tickers).</p>
                                     ) : (
-                                        <div className="overflow-x-auto rounded-lg border border-slate-200">
-                                            <table className="w-full text-sm">
+                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <table className="w-full table-fixed text-sm">
                                                 <thead>
                                                     <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
-                                                        <th className="px-3 py-2 font-semibold">Ticker</th>
+                                                        <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
                                                         <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
-                                                        <th className="px-3 py-2 font-semibold text-right">Amount ({plan.budgetCurrency ?? 'SAR'})</th>
-                                                        {onOpenRecordTrade && <th className="px-3 py-2 w-28" />}
+                                                        <th className="w-[30%] px-3 py-2 font-semibold text-right whitespace-nowrap">Amount (Plan / Share Currency)</th>
+                                                        {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {executionResult.trades.map((trade, index) => (
-                                                        <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                                                            <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
-                                                            <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary">{formatCurrencyString(trade.amount, { inCurrency: plan.budgetCurrency ?? 'SAR', digits: 0 })}</td>
+                                                    {executionResult.trades.map((trade, index) => {
+                                                        const suggestion = getTradeExecutionSuggestion(trade);
+                                                        return (
+                                                        <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 align-top">
+                                                            <td className="px-3 py-2 font-semibold text-slate-800 whitespace-nowrap">{trade.ticker}</td>
+                                                            <td className="px-3 py-2 text-slate-600 break-words leading-snug">{trade.reason}</td>
+                                                            <td className="px-3 py-2 text-right">
+                                                                <div className="font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</div>
+                                                                {trade.tradeCurrency && trade.tradeCurrency !== planCurrency && typeof trade.amountInTradeCurrency === 'number' && (
+                                                                    <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">≈ {formatCurrencyString(trade.amountInTradeCurrency, { inCurrency: trade.tradeCurrency, digits: 0 })} ({trade.tradeCurrency})</div>
+                                                                )}
+                                                                {suggestion.suggestedPrice && suggestion.suggestedQuantity && (
+                                                                    <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">{suggestion.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(suggestion.suggestedPrice, { inCurrency: suggestion.tradeCurrency, digits: 2 })}</div>
+                                                                )}
+                                                            </td>
                                                             {onOpenRecordTrade && (
-                                                                <td className="px-3 py-2">
-                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason })} className="text-xs px-2 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                <td className="px-3 py-2 text-right">
+                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
                                                                 </td>
                                                             )}
                                                         </tr>
-                                                    ))}
+                                                    );})}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -2392,7 +2899,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     if (!data || !data.investments) {
         return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
     }
-    const rate = exchangeRate;
+    const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
     let valueSAR = 0, valueUSD = 0;
     data.investments.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
@@ -2529,7 +3036,25 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 <InvestmentPlan
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
-                    onOpenRecordTrade={(trade) => { setTradeInitialData({ symbol: trade.ticker, amount: trade.amount, tradeType: 'buy' as const, reason: trade.reason }); setIsTradeModalOpen(true); }}
+                    onOpenRecordTrade={(trade) => {
+                        const normalizedSymbol = trade.ticker.trim().toUpperCase();
+                        const targetPortfolio = data.investments.find((portfolio) =>
+                            (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                        ) || data.investments.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || data.investments[0];
+                        setTradeInitialData({
+                            symbol: trade.ticker,
+                            amount: trade.amount,
+                            tradeType: 'buy' as const,
+                            reason: trade.reason,
+                            price: trade.price,
+                            quantity: trade.quantity,
+                            tradeCurrency: trade.tradeCurrency,
+                            accountId: targetPortfolio?.accountId,
+                            portfolioId: targetPortfolio?.id,
+                            name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
+                        });
+                        setIsTradeModalOpen(true);
+                    }}
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView />;

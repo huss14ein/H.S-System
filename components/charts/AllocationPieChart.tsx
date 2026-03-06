@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
+import ChartContainer from './ChartContainer';
 
 interface AllocationPieChartProps {
   data: { name: string; value: number }[];
@@ -26,12 +27,12 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
 const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     const { formatCurrencyString } = useFormatCurrency();
     if (active && payload && payload.length) {
-        const data = payload[0].payload;
-        const percentage = totalValue > 0 ? (data.value / totalValue) * 100 : 0;
+        const point = payload[0].payload;
+        const percentage = totalValue > 0 ? (point.value / totalValue) * 100 : 0;
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[120px]">
-                <p className="font-bold text-dark">{data.name}</p>
-                <p className="text-gray-600">{formatCurrencyString(data.value)}</p>
+                <p className="font-bold text-dark">{point.name}</p>
+                <p className="text-gray-600">{formatCurrencyString(point.value)}</p>
                 <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
             </div>
         );
@@ -39,41 +40,49 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     return null;
 };
 
-
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
-  const totalValue = useMemo(() => data.reduce((sum, entry) => sum + entry.value, 0), [data]);
-  
+  const sanitizedData = useMemo(
+    () => (data || []).filter((d) => Number.isFinite(d.value) && d.value > 0),
+    [data]
+  );
+  const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
+  const isEmpty = !sanitizedData.length || totalValue <= 0;
+
   return (
-    <div className="w-full h-full min-h-[200px] relative">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            labelLine={false}
-            label={renderCustomizedLabel}
-            outerRadius="85%"
-            innerRadius="60%"
-            dataKey="value"
-            paddingAngle={3}
-            isAnimationActive={true}
-            animationDuration={800}
-          >
-            {data.map((_entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip totalValue={totalValue} />} />
-          <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Value</p>
-        <p className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center break-words max-w-[90%]">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+    <ChartContainer height="100%" isEmpty={isEmpty} emptyMessage="No allocation data to display.">
+      <div className="w-full h-full min-h-[240px] relative">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={sanitizedData}
+              cx="50%"
+              cy="50%"
+              labelLine={false}
+              label={renderCustomizedLabel}
+              outerRadius="84%"
+              innerRadius="64%"
+              dataKey="value"
+              paddingAngle={3}
+              isAnimationActive
+              animationDuration={800}
+            >
+              {sanitizedData.map((_entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+              ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip totalValue={totalValue} />} />
+            <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[38%] max-w-[152px] min-w-[112px] -translate-x-1/2 -translate-y-1/2 aspect-square items-center justify-center rounded-full border border-slate-200 bg-white/95 text-center px-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.12em]">Total</p>
+            <p className="mt-1 text-sm sm:text-base font-bold text-dark tabular-nums whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+          </div>
+        </div>
       </div>
-    </div>
+    </ChartContainer>
   );
 };
 

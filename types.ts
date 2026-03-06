@@ -36,6 +36,7 @@ export interface Account {
 
 export type AssetType =
   | 'Cash'
+  | 'Sukuk'
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
@@ -418,7 +419,12 @@ export interface WealthUltraSystemConfig {
 
 export interface ProposedTrade {
     ticker: string;
+    /** Amount in plan currency (used for totals/logs). */
     amount: number;
+    /** Trade currency of the underlying share/portfolio for this ticker. */
+    tradeCurrency?: TradeCurrency;
+    /** Optional converted amount in the trade currency (if different from plan currency). */
+    amountInTradeCurrency?: number;
     reason: 'Core' | 'Upside' | 'Speculative' | 'Redirected' | 'Rebalance' | 'Unused Upside Funds' | 'Leftover';
 }
 

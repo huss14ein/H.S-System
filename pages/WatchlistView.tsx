@@ -220,6 +220,7 @@ const WatchlistItemRow: React.FC<{
             </td>
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(priceInfo.change, priceCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
+                <span className="block text-[10px] text-slate-500 font-normal">Period: 1D</span>
             </td>
             <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[220px]">
                 {fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">Loading events…</span>}
@@ -241,13 +242,13 @@ const WatchlistItemRow: React.FC<{
                                     )}
                                 </>
                             ) : (
-                                <span className="text-[11px] text-slate-400">No upcoming earnings</span>
+                                <span className="text-[11px] text-slate-400">No upcoming earnings from market data</span>
                             )}
                         </div>
                         {typeof fundamentals.nextEarnings?.revenueEstimate === 'number' &&
                             fundamentals.nextEarnings.revenueEstimate > 0 && (
                                 <div className="text-[11px] text-slate-500">
-                                    Rev est ({fundamentalsCurrency}):{' '}
+                                    Revenue est ({fundamentalsCurrency}):{' '}
                                     {formatFundamentalValue(fundamentals.nextEarnings.revenueEstimate, 0)}
                                 </div>
                             )}
@@ -255,16 +256,16 @@ const WatchlistItemRow: React.FC<{
                             (typeof fundamentals.dividend.dividendYieldPct === 'number' ||
                                 typeof fundamentals.dividend.dividendPerShareAnnual === 'number') && (
                                 <div className="text-[11px] text-slate-500">
-                                    Div
+                                    Dividend est.
                                     {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
                                         fundamentals.dividend.dividendYieldPct > 0 &&
-                                        ` ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
+                                        ` yield ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
                                     {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <>
                                                 {' '}
                                                 · {formatFundamentalValue(fundamentals.dividend.dividendPerShareAnnual, 2)}
-                                                /sh
+                                                per share
                                             </>
                                         )}
                                 </div>
@@ -489,7 +490,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
                 </div>
                 <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {data.watchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
