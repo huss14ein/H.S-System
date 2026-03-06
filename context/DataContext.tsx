@@ -497,14 +497,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
 
             const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
+            const ownerId = auth.user.id;
+            const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
+                ((rows || []) as T[]).filter((r) => !r?.user_id || r.user_id === ownerId);
 
             setData({
                 accounts: normalizedAccounts,
-                assets: assets.data || [],
+                assets: filterOwnedRows(assets.data as any[]),
                 liabilities: ((liabilities.data as any[]) || []).map(normalizeLiability),
-                goals: goals.data || [],
-                transactions: (transactions.data || []).map(normalizeTransaction),
-                investments: ((investments.data as any) || []).map((portfolio: any) => {
+                goals: filterOwnedRows(goals.data as any[]),
+                transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
                     const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
                     return {
@@ -514,26 +517,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings: (portfolio.holdings || []).map(normalizeHolding),
                     };
                 }),
-                investmentTransactions: (investmentTransactions.data || []).map((t: any) => {
+                investmentTransactions: filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
                     const norm = normalizeInvestmentTransaction(t);
                     const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
                     return resolved ? { ...norm, accountId: resolved } : norm;
                 }),
-                budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
-                commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
-                watchlist: watchlist.data || [],
+                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
+                commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
+                watchlist: filterOwnedRows(watchlist.data as any[]),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
-                zakatPayments: zakatPayments.data || [],
-                priceAlerts: (priceAlerts.data || []).map(normalizePriceAlert),
-                plannedTrades: plannedTrades.data || [],
+                zakatPayments: filterOwnedRows(zakatPayments.data as any[]),
+                priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
+                plannedTrades: filterOwnedRows(plannedTrades.data as any[]),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 // Default parameters from app settings/config only; we do not read wealth_ultra_config from DB
                 wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
-                portfolioUniverse: (portfolioUniverse as any).data || [],
-                statusChangeLog: (statusChangeLog as any).data || [],
-                executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog),
-                recurringTransactions: (recurringTransactions as any).error ? [] : ((recurringTransactions as any).data || []).map((r: any) =>
+                portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []),
+                statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
+                executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
+                recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
                     normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
                 )
             });
