@@ -941,6 +941,69 @@ One sentence: health of their goal strategy.
     } catch (error) { return formatAiError(error); }
 };
 
+const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): string => {
+    const targetByRisk: Record<'Conservative' | 'Moderate' | 'Aggressive', { stocks: number; sukuk: number; other: number }> = {
+        Conservative: { stocks: 45, sukuk: 45, other: 10 },
+        Moderate: { stocks: 60, sukuk: 30, other: 10 },
+        Aggressive: { stocks: 75, sukuk: 15, other: 10 },
+    };
+
+    const normalized = holdings
+        .map((h) => {
+            const qty = Number(h.quantity || 0);
+            const avgCost = Number(h.avgCost || 0);
+            const marketValue = Number(h.currentValue || 0);
+            const fallback = qty > 0 && avgCost > 0 ? qty * avgCost : 0;
+            const value = marketValue > 0 ? marketValue : fallback;
+            return {
+                ...h,
+                value,
+                assetClass: h.assetClass || 'Other',
+            };
+        })
+        .filter((h) => Number.isFinite(h.value) && h.value > 0);
+
+    const totalValue = normalized.reduce((sum, h) => sum + h.value, 0);
+    if (totalValue <= 0) {
+        return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
+    }
+
+    const bucket = { stocks: 0, sukuk: 0, other: 0 };
+    normalized.forEach((h) => {
+        if (h.assetClass === 'Stock') bucket.stocks += h.value;
+        else if (h.assetClass === 'Sukuk') bucket.sukuk += h.value;
+        else bucket.other += h.value;
+    });
+
+    const toPct = (v: number) => (v / totalValue) * 100;
+    const current = {
+        stocks: toPct(bucket.stocks),
+        sukuk: toPct(bucket.sukuk),
+        other: toPct(bucket.other),
+    };
+
+    const topHolding = normalized.slice().sort((a, b) => b.value - a.value)[0];
+    const topPct = topHolding ? toPct(topHolding.value) : 0;
+    const target = targetByRisk[riskProfile];
+
+    return `### Current Portfolio Analysis
+- Portfolio value analyzed: **${totalValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}**.
+- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'} with top holding **${topHolding?.symbol || 'N/A'} (${topPct.toFixed(1)}%)**.
+- Current mix is **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
+
+### Target Allocation (${riskProfile})
+- Stocks: **${target.stocks}%**
+- Sukuk/Bonds: **${target.sukuk}%**
+- Other assets: **${target.other}%**
+
+### Rebalancing Suggestions
+- Adjust in small monthly steps to reduce drift: prioritize buckets furthest from target (current vs target gap).
+- Cap single-position adds when top holding exceeds 25% until diversification improves.
+- Execute changes through **Investment Plan / Execute & Results** so amounts remain budgeted and traceable.
+
+_Generated with resilient rule-based logic (AI fallback mode)._`;
+};
+
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
@@ -956,8 +1019,11 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
 - 2-3 concrete, educational steps (no buy/sell advice). One sentence each.
 Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not retrieve plan.";
-    } catch (error) { return formatAiError(error); }
+        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    } catch (error) {
+        console.warn('[getAIRebalancingPlan] AI unavailable, using deterministic fallback.', error);
+        return buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    }
 };
 
 export function buildFallbackAnalystReport(holding: Holding): string {
