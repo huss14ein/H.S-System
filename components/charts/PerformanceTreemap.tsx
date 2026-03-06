@@ -122,6 +122,23 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         );
     }
 
+    if (processedData.length === 1) {
+        const item = processedData[0];
+        return (
+            <div className="h-full min-h-[320px] w-full rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between">
+                <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Single holding view</p>
+                    <p className="mt-2 text-lg font-bold text-slate-800 break-words">{item.name}</p>
+                    <p className="text-sm text-slate-600 mt-1">Market value: {formatCurrencyString(item.size, { digits: 0 })}</p>
+                    <p className={`text-sm font-semibold mt-1 ${item.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        Performance: {item.gainLossPercent.toFixed(2)}%
+                    </p>
+                </div>
+                <div className="mt-4 h-24 rounded-lg" style={{ background: item.color }} />
+            </div>
+        );
+    }
+
     return (
         <div className="h-full min-h-[320px] w-full">
         <ResponsiveContainer width="100%" height="100%">
