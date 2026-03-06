@@ -1,5 +1,5 @@
 -- Budget sharing (share only budgets with specific users)
--- Run in Supabase SQL editor.
+-- Run this single file in Supabase SQL editor (copy from the first line to the end).
 -- NOTE: Paste only SQL statements into Supabase SQL Editor.
 -- Do NOT paste git diff headers such as: diff --git a/... b/...
 
