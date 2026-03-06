@@ -152,9 +152,27 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
       const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCash, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
-      const positionConfig: RecoveryPositionConfig = ai
+      const mergedConfig: RecoveryPositionConfig = ai
         ? { ...dynamicConfig, lossTriggerPct: ai.lossTriggerPct, cashCap: ai.cashCap, recoveryEnabled: ai.recoveryEnabled }
         : dynamicConfig;
+
+      const marketValue = Number.isFinite(currentVal) && currentVal > 0 ? currentVal : qty * currentPrice;
+      const shareCapMultiplier = riskTier === 'Low' ? 1.0 : riskTier === 'Med' ? 0.75 : riskTier === 'High' ? 0.5 : 0.3;
+      const costCapMultiplier = riskTier === 'Low' ? 0.6 : riskTier === 'Med' ? 0.45 : riskTier === 'High' ? 0.3 : 0.2;
+      const boundedMaxAddShares = Math.max(1, Math.floor(qty * shareCapMultiplier));
+      const boundedMaxAddCost = Math.max(
+        0,
+        Math.min(
+          mergedConfig.cashCap,
+          marketValue > 0 ? marketValue * costCapMultiplier : mergedConfig.cashCap,
+          deployableCash * globalConfig.recoveryBudgetPct,
+        ),
+      );
+      const positionConfig: RecoveryPositionConfig = {
+        ...mergedConfig,
+        maxAddShares: boundedMaxAddShares,
+        maxAddCost: Number(boundedMaxAddCost.toFixed(2)),
+      };
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, globalConfig);
       return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
@@ -413,6 +431,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                 {formatCurrencyString(selectedPlan.totalPlannedCost, {
                   inCurrency: selected.currency ?? 'USD',
                 })}
+              </p>
+              <p className="mt-1 text-xs text-emerald-700">
+                Added shares cap: {Math.max(0, selectedPlan.newShares - selectedPlan.shares)} / {selected.positionConfig.maxAddShares ?? 0}
+                {' '}({selectedPlan.shares > 0 ? (((selectedPlan.newShares - selectedPlan.shares) / selectedPlan.shares) * 100).toFixed(0) : '0'}% of current shares)
               </p>
             </div>
           </div>
