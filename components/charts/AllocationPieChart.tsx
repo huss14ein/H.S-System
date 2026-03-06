@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
+import ChartContainer from './ChartContainer';
 
 interface AllocationPieChartProps {
   data: { name: string; value: number }[];
@@ -26,12 +27,12 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
 const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     const { formatCurrencyString } = useFormatCurrency();
     if (active && payload && payload.length) {
-        const data = payload[0].payload;
-        const percentage = totalValue > 0 ? (data.value / totalValue) * 100 : 0;
+        const point = payload[0].payload;
+        const percentage = totalValue > 0 ? (point.value / totalValue) * 100 : 0;
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[120px]">
-                <p className="font-bold text-dark">{data.name}</p>
-                <p className="text-gray-600">{formatCurrencyString(data.value)}</p>
+                <p className="font-bold text-dark">{point.name}</p>
+                <p className="text-gray-600">{formatCurrencyString(point.value)}</p>
                 <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
             </div>
         );
@@ -39,11 +40,15 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     return null;
 };
 
-
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
-  const totalValue = useMemo(() => data.reduce((sum, entry) => sum + entry.value, 0), [data]);
-  
+  const sanitizedData = useMemo(
+    () => (data || []).filter((d) => Number.isFinite(d.value) && d.value > 0),
+    [data]
+  );
+  const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
+  const isEmpty = !sanitizedData.length || totalValue <= 0;
+
   return (
     <div className="w-full h-full min-h-[200px] relative">
       <ResponsiveContainer width="100%" height="100%">
@@ -75,7 +80,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
           <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
         </div>
       </div>
-    </div>
+    </ChartContainer>
   );
 };
 

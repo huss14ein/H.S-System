@@ -22,7 +22,6 @@ import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
-import DraggableResizableGrid from '../components/DraggableResizableGrid';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -531,11 +530,13 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     </button>
                 }
             >
-                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0 overflow-x-hidden">
-                    <p className="text-sm text-slate-700 leading-relaxed">
-                        Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI or fallback APIs (Finnhub/Stooq).
-                        <InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." />
-                    </p>
+                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm text-slate-700 leading-relaxed">
+                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI or fallback APIs (Finnhub/Stooq).
+                        </p>
+                        <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
+                    </div>
                 </div>
                 {!isAiAvailable && data.commodityHoldings.length > 0 && (
                     <div className="alert-warning mb-4 rounded-lg">
