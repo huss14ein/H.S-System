@@ -12,60 +12,27 @@ create table if not exists public.budget_shares (
 
 alter table public.budget_shares enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'budget_shares'
-      and policyname = 'budget_shares_owner_write'
-  ) then
-    create policy budget_shares_owner_write
-      on public.budget_shares
-      for all
-      using (auth.uid() = owner_user_id)
-      with check (auth.uid() = owner_user_id);
-  end if;
-end
-$$;
+drop policy if exists budget_shares_owner_write on public.budget_shares;
+create policy budget_shares_owner_write
+  on public.budget_shares
+  for all
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'budget_shares'
-      and policyname = 'budget_shares_recipient_read'
-  ) then
-    create policy budget_shares_recipient_read
-      on public.budget_shares
-      for select
-      using (auth.uid() = shared_with_user_id or auth.uid() = owner_user_id);
-  end if;
-end
-$$;
+drop policy if exists budget_shares_recipient_read on public.budget_shares;
+create policy budget_shares_recipient_read
+  on public.budget_shares
+  for select
+  using (auth.uid() = shared_with_user_id or auth.uid() = owner_user_id);
 
 alter table public.budgets enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'budgets'
-      and policyname = 'budgets_owner_only'
-  ) then
-    create policy budgets_owner_only
-      on public.budgets
-      for all
-      using (auth.uid() = user_id)
-      with check (auth.uid() = user_id);
-  end if;
-end
-$$;
+drop policy if exists budgets_owner_only on public.budgets;
+create policy budgets_owner_only
+  on public.budgets
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create table if not exists public.budget_shared_transactions (
   id uuid primary key default gen_random_uuid(),
@@ -83,40 +50,18 @@ create table if not exists public.budget_shared_transactions (
 
 alter table public.budget_shared_transactions enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'budget_shared_transactions'
-      and policyname = 'budget_shared_transactions_owner_read'
-  ) then
-    create policy budget_shared_transactions_owner_read
-      on public.budget_shared_transactions
-      for select
-      using (auth.uid() = owner_user_id);
-  end if;
-end
-$$;
+drop policy if exists budget_shared_transactions_owner_read on public.budget_shared_transactions;
+create policy budget_shared_transactions_owner_read
+  on public.budget_shared_transactions
+  for select
+  using (auth.uid() = owner_user_id);
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'budget_shared_transactions'
-      and policyname = 'budget_shared_transactions_contributor_rw'
-  ) then
-    create policy budget_shared_transactions_contributor_rw
-      on public.budget_shared_transactions
-      for all
-      using (auth.uid() = contributor_user_id)
-      with check (auth.uid() = contributor_user_id);
-  end if;
-end
-$$;
+drop policy if exists budget_shared_transactions_contributor_rw on public.budget_shared_transactions;
+create policy budget_shared_transactions_contributor_rw
+  on public.budget_shared_transactions
+  for all
+  using (auth.uid() = contributor_user_id)
+  with check (auth.uid() = contributor_user_id);
 
 create or replace function public.find_user_by_email(target_email text)
 returns table (id uuid, email text)
