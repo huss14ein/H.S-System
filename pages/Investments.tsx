@@ -636,40 +636,42 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
             <div className="space-y-6 min-w-0">
-                {/* Hero: symbol, name, price, change — in portfolio currency; content contained */}
-                <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6 min-w-0">
-                    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-x-3 min-w-0">
-                        <span className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</span>
-                        <span className="hidden sm:inline text-slate-500 shrink-0">·</span>
-                        <span className="metric-label text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</span>
+                {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
+                <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
+                    <div className="flex flex-col items-center justify-center gap-1 text-center min-w-0">
+                        <p className="metric-label text-[11px] font-semibold tracking-[0.18em] text-slate-500 uppercase">Share details</p>
+                        <p className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</p>
+                        <p className="metric-label text-sm sm:text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</p>
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 min-w-0">
-                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
-                        <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${priceTrendPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
-                        </span>
-                        <span className="text-sm text-slate-500 shrink-0">today · per share · {portfolioCurrency}</span>
+                    <div className="mt-4 flex flex-col items-center gap-1 text-center">
+                        <p className="metric-value text-3xl sm:text-4xl font-bold text-slate-900 tabular-nums leading-none" title={fmt(currentPrice)}>{fmt(currentPrice)}</p>
+                        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                            <span className={`metric-value inline-flex items-center rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${priceTrendPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
+                            </span>
+                            <span className="text-xs sm:text-sm text-slate-500">Today · per share · {portfolioCurrency}</span>
+                        </div>
                     </div>
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 min-w-0">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Market Value</p>
+                        <p className="share-detail-metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
-                        <p className="metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight">{holding.quantity.toLocaleString()}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Quantity</p>
+                        <p className="metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight">{holding.quantity.toLocaleString()}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Avg. Cost</p>
+                        <p className="share-detail-metric-value w-full mt-2 text-2xl font-bold text-slate-900 tabular-nums whitespace-nowrap leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-w-0 flex flex-col items-center justify-between text-center min-h-[132px] shadow-sm">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-xl font-bold tabular-nums whitespace-nowrap leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="w-full text-xs text-slate-500 mt-2 leading-tight" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 min-w-0 flex flex-col items-center justify-center text-center min-h-[136px] shadow-sm">
+                        <p className="share-detail-metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em]">Unrealized G/L</p>
+                        <p className={`share-detail-metric-value w-full mt-2 text-2xl font-bold tabular-nums whitespace-nowrap leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="w-full text-xs text-slate-500 mt-2 leading-tight" title={fmt(totalCost)}>On cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
