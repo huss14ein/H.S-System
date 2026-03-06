@@ -803,8 +803,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             item.id === 'capital-efficiency' ||
             item.id === 'risk-distribution'
               ? 'xl:col-span-12'
-              : item.id === 'next-move' || item.id === 'spec-risk' || item.id === 'alerts'
+              : item.id === 'sleeve-allocation'
+              ? 'xl:col-span-7'
+              : item.id === 'orders'
+              ? 'xl:col-span-5 xl:col-start-8'
+              : item.id === 'next-move'
               ? 'xl:col-span-4'
+              : item.id === 'spec-risk'
+              ? 'xl:col-span-3'
+              : item.id === 'alerts'
+              ? 'xl:col-span-5 xl:col-start-8'
               : 'xl:col-span-6';
 
           return (
