@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { useMarketData } from '../context/MarketDataContext';
 
 export const SystemActivityGuard: React.FC = () => {
   const { refreshPrices, isRefreshing } = useMarketData();

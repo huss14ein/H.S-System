@@ -22,6 +22,7 @@ import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
+import { DraggableResizableGrid } from '../components/DraggableResizableGrid';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {

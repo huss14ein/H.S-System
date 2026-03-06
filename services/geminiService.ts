@@ -1740,3 +1740,30 @@ export async function executeInvestmentPlanStrategy(
         return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), details);
     }
 }
+
+
+export async function suggestRecoveryParameters(input: {
+    symbol: string;
+    sleeveType: 'Core' | 'Upside' | 'Spec';
+    riskTier: 'Low' | 'Med' | 'High' | 'Spec';
+    plPct: number;
+    deployableCash: number;
+    currentPrice: number;
+    avgCost: number;
+}): Promise<{ lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }> {
+    const lossMagnitude = Math.max(0, Math.abs(Number(input.plPct) || 0));
+    const baseTrigger = input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22;
+    const tightenedTrigger = baseTrigger - Math.min(4, lossMagnitude / 10);
+    const lossTriggerPct = Number(Math.max(8, Math.min(30, tightenedTrigger)).toFixed(1));
+
+    const sleeveCap = input.sleeveType === 'Core' ? 0.22 : input.sleeveType === 'Upside' ? 0.16 : 0.1;
+    const riskCap = input.riskTier === 'Low' ? 0.2 : input.riskTier === 'Med' ? 0.16 : input.riskTier === 'High' ? 0.12 : 0.08;
+    const lossBoost = 1 + Math.min(0.3, lossMagnitude / 100);
+    const rawCap = Math.max(500, (Number(input.deployableCash) || 0) * Math.min(sleeveCap, riskCap) * lossBoost);
+    const cashCap = Number(Math.max(500, Math.min(rawCap, (Number(input.deployableCash) || 0) * 0.35)).toFixed(2));
+
+    const recoveryEnabled = input.sleeveType !== 'Spec';
+    const notes = `Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.`;
+
+    return { lossTriggerPct, cashCap, recoveryEnabled, notes };
+}
