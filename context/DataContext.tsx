@@ -648,6 +648,43 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await db.from('holdings').insert(holdingsToInsert);
             await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
 
+            // Investment plan and system datasets used across Investments/Wealth Ultra/Recovery pages
+            await db.from('investment_plan').insert({
+                ...investmentPlanToRow(mock.investmentPlan),
+                user_id: userId,
+            }).then(() => {}, () => {});
+
+            if (mock.portfolioUniverse?.length) {
+                await db.from('portfolio_universe').insert(
+                    mock.portfolioUniverse.map(({ id, ...u }) => ({ ...u, user_id: userId }))
+                ).then(() => {}, () => {});
+            }
+
+            if (mock.statusChangeLog?.length) {
+                await db.from('status_change_log').insert(
+                    mock.statusChangeLog.map(({ id, ...l }) => ({ ...l, user_id: userId }))
+                ).then(() => {}, () => {});
+            }
+
+            if (mock.executionLogs?.length) {
+                await db.from('execution_logs').insert(
+                    mock.executionLogs.map(({ id, user_id, created_at, ...log }) => ({
+                        user_id: userId,
+                        created_at: created_at || new Date().toISOString(),
+                        date: log.date,
+                        total_investment: log.totalInvestment,
+                        core_investment: log.coreInvestment,
+                        upside_investment: log.upsideInvestment,
+                        speculative_investment: log.speculativeInvestment,
+                        redirected_investment: log.redirectedInvestment,
+                        unused_upside_funds: log.unusedUpsideFunds,
+                        trades: log.trades,
+                        status: log.status,
+                        log_details: log.log_details,
+                    }))
+                ).then(() => {}, () => {});
+            }
+
             alert("Demo data loaded successfully!");
         } catch(error) {
             console.error("Error loading demo data:", error);
