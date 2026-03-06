@@ -22,7 +22,6 @@ import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
-import { DraggableResizableGrid } from '../components/DraggableResizableGrid';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -493,18 +492,12 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 </div>
             </SectionCard>
 
-            <DraggableResizableGrid
-                layoutKey="assets-summary"
-                itemOverflowY="visible"
-                items={[
-                    { id: 'total', content: <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
-                    { id: 'physical', content: <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
-                    { id: 'metals-crypto', content: <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
-                    { id: 'rental', content: <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
-                ]}
-                cols={12}
-                rowHeight={100}
-            />
+            <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
+            </div>
 
             <SectionCard title="Physical Assets" className="overflow-visible">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
