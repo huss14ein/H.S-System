@@ -1,7 +1,10 @@
 -- Budget sharing (share only budgets with specific users)
--- Run this single file in Supabase SQL editor (copy from the first line to the end).
--- NOTE: Paste only SQL statements into Supabase SQL Editor.
--- Do NOT paste git diff headers such as: diff --git a/... b/...
+-- COPY/PASTE CHECKLIST:
+-- 1) Open this file directly from the repository, not a PR diff view.
+-- 2) Copy from this first line through the final GRANT statement.
+-- 3) If your pasted text contains "diff --git", delete everything and re-copy from this file only.
+
+begin;
 
 create table if not exists public.budget_shares (
   id uuid primary key default gen_random_uuid(),
@@ -153,3 +156,4 @@ $$;
 revoke all on function public.list_shareable_users() from public;
 grant execute on function public.list_shareable_users() to authenticated;
 
+commit;
