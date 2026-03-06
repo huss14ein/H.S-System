@@ -1,5 +1,7 @@
 -- Budget sharing (share only budgets with specific users)
 -- Run in Supabase SQL editor.
+-- NOTE: Paste only SQL statements into Supabase SQL Editor.
+-- Do NOT paste git diff headers such as: diff --git a/... b/...
 
 create table if not exists public.budget_shares (
   id uuid primary key default gen_random_uuid(),
