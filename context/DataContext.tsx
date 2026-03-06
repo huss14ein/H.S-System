@@ -898,6 +898,66 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     // --- Transactions ---
+    const removeSharedBudgetTransactionMirror = async (sourceTransactionId: string) => {
+        if (!supabase || !auth?.user || !sourceTransactionId) return;
+        await supabase
+            .from('budget_shared_transactions')
+            .delete()
+            .match({ source_transaction_id: sourceTransactionId, contributor_user_id: auth.user.id })
+            .then(() => {}, () => {});
+    };
+
+    const syncSharedBudgetTransactionMirror = async (tx: {
+        id: string;
+        date: string;
+        type: 'income' | 'expense';
+        amount: number;
+        status?: 'Pending' | 'Approved';
+        description: string;
+        budgetCategory?: string;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        const currentUser = auth.user;
+        const category = (tx.budgetCategory || '').trim();
+        const isApprovedExpense = tx.type === 'expense' && (tx.status ?? 'Approved') === 'Approved';
+        if (!category || !isApprovedExpense) {
+            await removeSharedBudgetTransactionMirror(tx.id);
+            return;
+        }
+
+        const { data: shares } = await supabase
+            .from('budget_shares')
+            .select('owner_user_id, category')
+            .eq('shared_with_user_id', auth.user.id)
+            .or(`category.is.null,category.eq.${category}`)
+            .then((r) => r, () => ({ data: [] as any[] } as any));
+
+        const rows = (shares || []) as Array<{ owner_user_id?: string; category?: string | null }>;
+        if (rows.length === 0) {
+            await removeSharedBudgetTransactionMirror(tx.id);
+            return;
+        }
+
+        await removeSharedBudgetTransactionMirror(tx.id);
+
+        const payload = rows
+            .map((r) => r.owner_user_id)
+            .filter((ownerId): ownerId is string => Boolean(ownerId) && ownerId !== currentUser.id)
+            .map((ownerId) => ({
+                owner_user_id: ownerId,
+                contributor_user_id: currentUser.id,
+                contributor_email: currentUser.email ?? null,
+                source_transaction_id: tx.id,
+                budget_category: category,
+                amount: Math.abs(Number(tx.amount) || 0),
+                transaction_date: tx.date,
+                description: tx.description,
+            }));
+
+        if (payload.length === 0) return;
+        await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
+    };
+
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
         if(!supabase || !auth?.user) {
             alert("You must be logged in to add a transaction.");
@@ -926,7 +986,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert(`Failed to add transaction: ${error.message}`);
             throw error;
         }
-        if (newTx) setData(prev => ({ ...prev, transactions: [normalizeTransaction(newTx), ...prev.transactions] }));
+        if (newTx) {
+            const normalized = normalizeTransaction(newTx);
+            setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            await syncSharedBudgetTransactionMirror(normalized as any);
+        }
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
@@ -947,14 +1011,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const { error } = await db.from('transactions').update(updateRow).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
-        else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalizeTransaction({ ...t, ...transaction }) : t) }));
+        else {
+            const normalized = normalizeTransaction(transaction as any);
+            setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalized : t) }));
+            await syncSharedBudgetTransactionMirror(normalized as any);
+        }
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
-        else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+        else {
+            setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+            await removeSharedBudgetTransactionMirror(transactionId);
+        }
     };
 
     // --- Recurring transactions ---

@@ -152,6 +152,8 @@ const Budgets: React.FC = () => {
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
     const [shareCategory, setShareCategory] = useState('ALL');
+    const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
+    const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -242,6 +244,22 @@ const Budgets: React.FC = () => {
                     }));
                 setSharedBudgets(filtered);
             }
+
+            const { data: ownerTxRows } = await supabase
+                .from('budget_shared_transactions')
+                .select('*')
+                .eq('owner_user_id', auth.user.id)
+                .order('transaction_date', { ascending: false })
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            setOwnerSharedTransactions((ownerTxRows || []) as any[]);
+
+            const { data: myTxRows } = await supabase
+                .from('budget_shared_transactions')
+                .select('*')
+                .eq('contributor_user_id', auth.user.id)
+                .order('transaction_date', { ascending: false })
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            setMySharedBudgetTransactions((myTxRows || []) as any[]);
         };
 
         loadGovernance();
@@ -312,6 +330,16 @@ const Budgets: React.FC = () => {
                 }
             });
 
+        // Reflect collaborator spending into owner budget totals for shared categories.
+        ownerSharedTransactions.forEach((tx) => {
+            const d = new Date(tx.transaction_date || tx.date);
+            if (!(d >= rangeStart && d <= rangeEnd)) return;
+            const cat = String(tx.budget_category || '').trim();
+            if (!cat) return;
+            const amount = Math.abs(Number(tx.amount) || 0);
+            spending.set(cat, (spending.get(cat) || 0) + amount);
+        });
+
         const scopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
@@ -355,7 +383,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -1037,6 +1065,38 @@ const Budgets: React.FC = () => {
                     </div>
                 )}
             </SectionCard>
+
+            {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
+                <SectionCard title="Shared-budget transaction visibility">
+                    <p className="text-xs text-slate-500 mb-3">
+                        Owner view: you can see contributors' transactions for budgets you shared. Contributor view: you only see transactions you posted yourself.
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Date</th>
+                                    <th className="px-3 py-2 text-left">Category</th>
+                                    <th className="px-3 py-2 text-left">Contributor</th>
+                                    <th className="px-3 py-2 text-left">Description</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
+                                    <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
+                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                        <td className="px-3 py-2">{tx.budget_category}</td>
+                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                        <td className="px-3 py-2">{tx.description || '—'}</td>
+                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </SectionCard>
+            )}
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                 {orderedBudgetData.map((budget) => (

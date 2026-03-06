@@ -69,3 +69,50 @@ begin
   end if;
 end
 $$;
+
+
+-- Mirror table: contributor transactions that should count toward owner-shared budgets.
+create table if not exists public.budget_shared_transactions (
+  id uuid primary key default gen_random_uuid(),
+  owner_user_id uuid not null references public.users(id) on delete cascade,
+  contributor_user_id uuid not null references public.users(id) on delete cascade,
+  contributor_email text,
+  source_transaction_id uuid not null,
+  budget_category text not null,
+  amount numeric not null,
+  transaction_date date not null,
+  description text,
+  created_at timestamptz not null default now(),
+  unique(owner_user_id, contributor_user_id, source_transaction_id)
+);
+
+alter table public.budget_shared_transactions enable row level security;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname='public' and tablename='budget_shared_transactions' and policyname='budget_shared_transactions_owner_read'
+  ) then
+    create policy budget_shared_transactions_owner_read
+      on public.budget_shared_transactions
+      for select
+      using (auth.uid() = owner_user_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname='public' and tablename='budget_shared_transactions' and policyname='budget_shared_transactions_contributor_rw'
+  ) then
+    create policy budget_shared_transactions_contributor_rw
+      on public.budget_shared_transactions
+      for all
+      using (auth.uid() = contributor_user_id)
+      with check (auth.uid() = contributor_user_id);
+  end if;
+end
+$$;
