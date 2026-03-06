@@ -2818,18 +2818,21 @@ Save anyway?`)) return;
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {executionResult.trades.map((trade, index) => (
-                                                        <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                                                            <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
-                                                            <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</td>
-                                                            {onOpenRecordTrade && (
-                                                                <td className="px-3 py-2 text-right">
-                                                                    <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
-                                                                </td>
-                                                            )}
-                                                        </tr>
-                                                    );})}
+                                                    {executionResult.trades.map((trade, index) => {
+                                                        const suggestion = getTradeExecutionSuggestion(trade);
+                                                        return (
+                                                            <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                                                                <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
+                                                                <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
+                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</td>
+                                                                {onOpenRecordTrade && (
+                                                                    <td className="px-3 py-2 text-right">
+                                                                        <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                    </td>
+                                                                )}
+                                                            </tr>
+                                                        );
+                                                    })}
                                                 </tbody>
                                             </table>
                                         </div>

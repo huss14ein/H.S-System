@@ -50,7 +50,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const isEmpty = !sanitizedData.length || totalValue <= 0;
 
   return (
-    <div className="w-full h-full min-h-[200px] relative">
+    <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
