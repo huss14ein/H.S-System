@@ -17,6 +17,30 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 
+
+
+const resolveRecipientUserByEmail = async (email: string) => {
+    if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
+
+    const directLookup = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', email)
+        .maybeSingle();
+
+    if (directLookup.data?.id) {
+        return { data: directLookup.data as { id: string; email: string | null }, error: null };
+    }
+
+    const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
+    const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
+    if (rpcRow?.id) {
+        return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
+    }
+
+    const baseMessage = directLookup.error?.message || rpcLookup.error?.message || 'Recipient user not found.';
+    return { data: null, error: { message: baseMessage } };
+};
 interface BudgetModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -435,13 +459,10 @@ const Budgets: React.FC = () => {
             alert('Enter recipient email first.');
             return;
         }
-        const { data: targetUser, error: userError } = await supabase
-            .from('users')
-            .select('id, email')
-            .ilike('email', email)
-            .maybeSingle();
+        const { data: targetUser, error: userError } = await resolveRecipientUserByEmail(email);
         if (userError || !targetUser?.id) {
-            alert('Recipient user not found.');
+            const detail = userError?.message || '';
+            alert(`Recipient user not found. ${detail.includes('find_user_by_email') ? 'Run docs/budget_sharing.sql to install helper function.' : detail}`.trim());
             return;
         }
         const payload = {
