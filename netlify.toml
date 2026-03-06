@@ -1,6 +1,9 @@
 [build]
-  command = "npm run test && npm run build"
+  command = "npm ci && npm run test && npm run build"
   publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
 
 [functions]
   directory = "netlify/functions"
