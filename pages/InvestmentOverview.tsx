@@ -96,28 +96,6 @@ const InvestmentOverview: React.FC = () => {
         };
     }, [allHoldingsWithGains, assetClassAllocation]);
 
-
-    const topHoldingsExposure = useMemo(() => (
-        allHoldingsWithGains
-            .slice()
-            .sort((a, b) => b.currentValue - a.currentValue)
-            .slice(0, 5)
-            .map((h) => ({
-                id: h.id,
-                label: h.symbol,
-                pct: diversification.totalValue > 0 ? (h.currentValue / diversification.totalValue) * 100 : 0,
-            }))
-    ), [allHoldingsWithGains, diversification.totalValue]);
-
-    const assetClassExposure = useMemo(() => (
-        assetClassAllocation
-            .slice(0, 5)
-            .map((a) => ({
-                label: a.name,
-                pct: diversification.totalValue > 0 ? (a.value / diversification.totalValue) * 100 : 0,
-            }))
-    ), [assetClassAllocation, diversification.totalValue]);
-
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
         setAiError(null);
@@ -203,47 +181,37 @@ const InvestmentOverview: React.FC = () => {
                 </div>
             </div>
 
-            <div className="section-card border border-slate-200 shadow-sm">
-                <div className="mb-4 text-center sm:text-left">
-                    <h3 className="section-title mb-1">Concentration diagram</h3>
-                    <p className="text-sm text-slate-500">Visual concentration bars for top holdings and asset classes.</p>
-                </div>
+            <div className="section-card">
+                <h3 className="section-title mb-1">Concentration diagram</h3>
+                <p className="text-sm text-slate-500 mb-4">Visual concentration bars for top holdings and asset classes.</p>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 text-center sm:text-left">Top holdings exposure</p>
-                        <div className="mt-3 space-y-3">
-                            {topHoldingsExposure.length > 0 ? topHoldingsExposure.map((h) => (
-                                <div key={h.id} className="space-y-1.5">
-                                    <div className="flex items-center justify-between gap-2 text-sm text-slate-700">
-                                        <span className="font-medium">{h.label}</span>
-                                        <span className="tabular-nums font-semibold">{h.pct.toFixed(1)}%</span>
+                    <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top holdings exposure</p>
+                        {allHoldingsWithGains
+                            .slice()
+                            .sort((a, b) => b.currentValue - a.currentValue)
+                            .slice(0, 5)
+                            .map((h) => {
+                                const pct = diversification.totalValue > 0 ? (h.currentValue / diversification.totalValue) * 100 : 0;
+                                return (
+                                    <div key={h.id}>
+                                        <div className="flex items-center justify-between text-xs text-slate-600"><span>{h.symbol}</span><span className="tabular-nums">{pct.toFixed(1)}%</span></div>
+                                        <div className="h-2 rounded-full bg-slate-100"><div className={`h-2 rounded-full ${pct > 20 ? 'bg-rose-500' : pct > 12 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, pct)}%` }} /></div>
                                     </div>
-                                    <div className="h-2.5 rounded-full bg-slate-200/70 overflow-hidden">
-                                        <div className={`h-full rounded-full transition-all ${h.pct > 20 ? 'bg-rose-500' : h.pct > 12 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, h.pct)}%` }} />
-                                    </div>
-                                </div>
-                            )) : (
-                                <p className="rounded-lg border border-dashed border-slate-300 bg-white/80 py-4 text-center text-sm text-slate-500">No holdings exposure available.</p>
-                            )}
-                        </div>
+                                );
+                            })}
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 text-center sm:text-left">Asset class exposure</p>
-                        <div className="mt-3 space-y-3">
-                            {assetClassExposure.length > 0 ? assetClassExposure.map((a) => (
-                                <div key={a.label} className="space-y-1.5">
-                                    <div className="flex items-center justify-between gap-2 text-sm text-slate-700">
-                                        <span className="font-medium">{a.label}</span>
-                                        <span className="tabular-nums font-semibold">{a.pct.toFixed(1)}%</span>
-                                    </div>
-                                    <div className="h-2.5 rounded-full bg-slate-200/70 overflow-hidden">
-                                        <div className={`h-full rounded-full transition-all ${a.pct > 45 ? 'bg-rose-500' : a.pct > 30 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, a.pct)}%` }} />
-                                    </div>
+                    <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asset class exposure</p>
+                        {assetClassAllocation.slice(0, 5).map((a) => {
+                            const pct = diversification.totalValue > 0 ? (a.value / diversification.totalValue) * 100 : 0;
+                            return (
+                                <div key={a.name}>
+                                    <div className="flex items-center justify-between text-xs text-slate-600"><span>{a.name}</span><span className="tabular-nums">{pct.toFixed(1)}%</span></div>
+                                    <div className="h-2 rounded-full bg-slate-100"><div className={`h-2 rounded-full ${pct > 45 ? 'bg-rose-500' : pct > 30 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, pct)}%` }} /></div>
                                 </div>
-                            )) : (
-                                <p className="rounded-lg border border-dashed border-slate-300 bg-white/80 py-4 text-center text-sm text-slate-500">No asset class exposure available.</p>
-                            )}
-                        </div>
+                            );
+                        })}
                     </div>
                 </div>
             </div>

@@ -1733,87 +1733,10 @@ export async function executeInvestmentPlanStrategy(
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
                 console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
-                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), formatAiError(retryError));
+                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), formatAiError(retryError));
             }
         }
         console.warn('AI execution failed, falling back to rule-based (no AI):', error);
-        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), details);
-    }
-}
-
-
-export interface RecoveryAiSuggestionInput {
-    symbol: string;
-    sleeveType: 'Core' | 'Upside' | 'Spec';
-    riskTier: 'Low' | 'Med' | 'High' | 'Spec';
-    plPct: number;
-    deployableCash: number;
-    currentPrice: number;
-    avgCost: number;
-}
-
-export interface RecoveryAiSuggestionResult {
-    lossTriggerPct: number;
-    cashCap: number;
-    recoveryEnabled: boolean;
-    notes?: string;
-}
-
-const buildFallbackRecoverySuggestion = (input: RecoveryAiSuggestionInput): RecoveryAiSuggestionResult => {
-    const lossSeverity = Math.min(1, Math.max(0, Math.abs(input.plPct) / 40));
-    const riskMultiplier = input.riskTier === 'Low' ? 1.15 : input.riskTier === 'Med' ? 1 : input.riskTier === 'High' ? 0.85 : 0.65;
-    const cap = Math.max(1200, Math.min(input.deployableCash * 0.35, input.deployableCash * (0.08 + lossSeverity * 0.12) * riskMultiplier));
-    const trigger = Math.max(8, Math.min(28, (input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22) - lossSeverity * 4));
-    return {
-        lossTriggerPct: Number(trigger.toFixed(1)),
-        cashCap: Number(cap.toFixed(2)),
-        recoveryEnabled: input.sleeveType !== 'Spec',
-        notes: 'Fallback dynamic recovery parameters (rule-based).',
-    };
-};
-
-export async function suggestRecoveryParameters(input: RecoveryAiSuggestionInput): Promise<RecoveryAiSuggestionResult> {
-    const fallback = buildFallbackRecoverySuggestion(input);
-    try {
-        const prompt = `
-You are a senior portfolio risk manager. Return ONLY strict JSON.
-
-Input:
-${JSON.stringify(input)}
-
-Task:
-Propose dynamic recovery-plan parameters for this losing position.
-Rules:
-- Keep risk-aware and conservative.
-- cashCap must not exceed deployableCash * 0.40.
-- lossTriggerPct should be between 8 and 30.
-- Set recoveryEnabled=false for speculative/highly unstable cases.
-- Prefer lower cashCap for higher risk tiers.
-
-Return JSON with keys:
-- lossTriggerPct (number)
-- cashCap (number)
-- recoveryEnabled (boolean)
-- notes (string, short)
-`;
-
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        const raw = robustJsonParse(response.text);
-        if (!raw || typeof raw !== 'object') return fallback;
-
-        const maxCap = Math.max(0, input.deployableCash * 0.4);
-        const lossTriggerPct = Math.max(8, Math.min(30, Number((raw as any).lossTriggerPct) || fallback.lossTriggerPct));
-        const cashCap = Math.max(0, Math.min(maxCap, Number((raw as any).cashCap) || fallback.cashCap));
-        const recoveryEnabled = Boolean((raw as any).recoveryEnabled);
-        const notes = String((raw as any).notes || 'AI suggested dynamic recovery parameters.').trim();
-
-        return {
-            lossTriggerPct: Number(lossTriggerPct.toFixed(1)),
-            cashCap: Number(cashCap.toFixed(2)),
-            recoveryEnabled,
-            notes,
-        };
-    } catch (_error) {
-        return fallback;
+        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), details);
     }
 }

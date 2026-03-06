@@ -402,10 +402,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </button>
                     </>
                 )}
-                </div>
-                <div className="mt-3 rounded-lg border border-slate-200 bg-white/70 px-3 py-2 text-xs text-slate-600 leading-relaxed">
-                    <span className="font-medium text-slate-700">Data sources:</span> Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.
-                </div>
+                <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
+                    Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.
+                </span>
             </div>
 
             {/* Liquid cash from Accounts (cash flow context) */}

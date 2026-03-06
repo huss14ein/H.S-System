@@ -104,7 +104,7 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
-        <div className={`section-card flex flex-col h-full min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow min-h-[300px]`}>
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow min-h-[290px]`}>
             <div className="flex items-start justify-between gap-2 min-h-[32px]">
                 <div className="flex items-center gap-3 min-w-0">
                     {getAssetIcon(asset.type)}
@@ -342,7 +342,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
         }
     };
     return (
-        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl min-h-[300px]`}>
+        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl overflow-hidden min-h-[290px]`}>
             <div className="flex items-start justify-between gap-2 min-h-[40px]">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                     {getIcon(holding.name)}
@@ -476,30 +476,34 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
 
             <SectionCard title="Sukuk in Finova" className="overflow-hidden">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm items-stretch">
-                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3 h-full">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
                         <p className="font-semibold text-sky-800">How it is handled</p>
                         <p className="text-slate-700 mt-1">Sukuk is treated as a first-class asset type and included in total assets, gain/loss, and goal-linking.</p>
                     </div>
-                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3 h-full">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
                         <p className="font-semibold text-sky-800">Investment integration</p>
                         <p className="text-slate-700 mt-1">For portfolio holdings, open holding edit and set <strong>Asset Class = Sukuk</strong> so reports and execution views classify it correctly.</p>
                     </div>
-                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3 h-full">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
                         <p className="font-semibold text-sky-800">How to add Sukuk</p>
                         <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong> (or Add Physical Asset and choose type Sukuk), enter value/purchase price, then optionally link it to a goal.</p>
                     </div>
                 </div>
             </SectionCard>
 
-            <SectionCard title="Assets Snapshot" className="overflow-visible">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                    <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
-                    <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
-                    <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
-                    <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
-                </div>
-            </SectionCard>
+            <DraggableResizableGrid
+                layoutKey="assets-summary"
+                itemOverflowY="visible"
+                items={[
+                    { id: 'total', content: <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'physical', content: <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'metals-crypto', content: <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                    { id: 'rental', content: <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />, defaultW: 3, defaultH: 1, minW: 2, minH: 1 },
+                ]}
+                cols={12}
+                rowHeight={100}
+            />
 
             <SectionCard title="Physical Assets" className="overflow-visible">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
