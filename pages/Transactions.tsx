@@ -27,7 +27,6 @@ const TransactionModal: React.FC<{
     allCategories: string[],
     accounts: Account[]
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
-    const { formatCurrencyString } = useFormatCurrency();
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -141,7 +140,7 @@ const TransactionModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
                     <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
                         <option value="" disabled>Select an Account</option>
-                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
+                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                     </select>
                 </div>
                 <div className="flex space-x-4">
@@ -348,6 +347,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
+    const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
     const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
@@ -392,8 +392,17 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
                 const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
                 setPermittedBudgetCategories(allowed);
+
+                const { data: sharedRows } = await supabase
+                    .rpc('get_shared_budgets_for_me')
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                const sharedCats = Array.from(new Set(((sharedRows || []) as any[])
+                    .map((row) => String(row?.category || '').trim())
+                    .filter(Boolean)));
+                setSharedBudgetCategories(sharedCats);
             } else {
                 setPermittedBudgetCategories([]);
+                setSharedBudgetCategories([]);
             }
         };
 
@@ -445,6 +454,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [userRole, (data?.transactions ?? []).length]);
 
     const filteredTransactions = useMemo(() => {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -455,10 +465,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isPermitted = userRole === 'Admin' || !t.budgetCategory || permittedBudgetCategories.includes(t.budgetCategory);
+            const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
-    }, [data?.transactions, filters, userRole, permittedBudgetCategories]);
+    }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
@@ -481,10 +491,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     
     const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
     const budgetCategories = useMemo(() => {
-        const categories = (data?.budgets ?? []).map(b => b.category);
-        if (userRole === 'Admin') return categories;
-        return categories.filter(c => permittedBudgetCategories.includes(c));
-    }, [data?.budgets, userRole, permittedBudgetCategories]);
+        const ownCategories = (data?.budgets ?? []).map(b => b.category);
+        if (userRole === 'Admin') return ownCategories;
+        const allowedSet = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        return Array.from(new Set([...ownCategories.filter(c => allowedSet.has(c)), ...sharedBudgetCategories]));
+    }, [data?.budgets, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -492,7 +503,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
-        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }
@@ -506,7 +518,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
     
     const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
-        if (userRole === 'Restricted' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }
