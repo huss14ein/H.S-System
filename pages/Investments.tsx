@@ -649,7 +649,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                             <span className={`metric-value inline-flex items-center rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${priceTrendPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                 {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
                             </span>
-                            <span className="text-xs sm:text-sm text-slate-500">Today · per share · {portfolioCurrency}</span>
+                            <span className="text-xs sm:text-sm text-slate-500">1D change (latest session) · per share · {portfolioCurrency}</span>
                         </div>
                     </div>
                 </div>
