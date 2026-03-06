@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -9,7 +9,6 @@ import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft }
 import {
   buildRecoveryPlan,
   orderDraftGenerator,
-  defaultPositionConfig,
   DEFAULT_RECOVERY_GLOBAL_CONFIG,
 } from '../services/recoveryPlan';
 import { tickerToSleeve, tickerToRiskTier } from '../wealth-ultra/position';
@@ -17,6 +16,7 @@ import { getHoldingFundamentals, type HoldingFundamentals } from '../services/fi
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { suggestRecoveryParameters } from '../services/geminiService';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -30,6 +30,29 @@ const inferMarketCurrencyFromSymbol = (symbol?: string): TradeCurrency | null =>
   return 'USD';
 };
 
+
+
+const deriveDynamicPositionConfig = (
+  symbol: string,
+  sleeveType: 'Core' | 'Upside' | 'Spec',
+  riskTier: 'Low' | 'Med' | 'High' | 'Spec',
+  deployableCash: number,
+  plPct: number
+): RecoveryPositionConfig => {
+  const lossSeverity = Math.min(1, Math.max(0, Math.abs(plPct) / 45));
+  const riskCapFactor = riskTier === 'Low' ? 0.14 : riskTier === 'Med' ? 0.11 : riskTier === 'High' ? 0.085 : 0.06;
+  const cashCap = Math.max(1200, Math.min(deployableCash * 0.35, deployableCash * (riskCapFactor + lossSeverity * 0.06)));
+  const triggerBase = riskTier === 'Low' ? 12 : riskTier === 'Med' ? 15 : riskTier === 'High' ? 18 : 22;
+  const dynamicTrigger = Math.max(8, Math.min(30, triggerBase - lossSeverity * 3));
+  return {
+    symbol,
+    sleeveType,
+    riskTier,
+    recoveryEnabled: sleeveType !== 'Spec',
+    lossTriggerPct: Number(dynamicTrigger.toFixed(1)),
+    cashCap: Number(cashCap.toFixed(2)),
+  };
+};
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data } = ctx;
@@ -83,7 +106,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
     deployableCash,
-    minDeployableThreshold: 500,
+    minDeployableThreshold: Math.max(300, Math.min(1200, deployableCash * 0.01)),
+    recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCash > 50000 ? 0.04 : 0))),
   }), [deployableCash]);
 
   const universe = data.portfolioUniverse ?? [];
@@ -105,6 +129,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
     return { coreTickers, upsideTickers, specTickers };
   }, [universe, data.investmentPlan]);
 
+  const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
+  const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
+  const [selectedFundamentals, setSelectedFundamentals] = useState<HoldingFundamentals | null>(null);
+  const [isSelectedFundamentalsLoading, setIsSelectedFundamentalsLoading] = useState(false);
+  const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
+  const [aiRecoveryBySymbol, setAiRecoveryBySymbol] = useState<Record<string, { lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }>>({});
+  const [isAiRecoveryLoading, setIsAiRecoveryLoading] = useState(false);
+
   const positionsWithRecovery = useMemo(() => {
     return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
       const sym = (holding.symbol || '').toUpperCase();
@@ -117,24 +149,69 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           : null) ?? priceMap[sym] ?? (qty > 0 ? avgCost : 0);
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
-      const positionConfig: RecoveryPositionConfig = defaultPositionConfig(sym, sleeveType, riskTier, 5000);
+      const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
+      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCash, roughPlPct);
+      const ai = aiRecoveryBySymbol[sym];
+      const mergedConfig: RecoveryPositionConfig = ai
+        ? { ...dynamicConfig, lossTriggerPct: ai.lossTriggerPct, cashCap: ai.cashCap, recoveryEnabled: ai.recoveryEnabled }
+        : dynamicConfig;
+
+      const marketValue = Number.isFinite(currentVal) && currentVal > 0 ? currentVal : qty * currentPrice;
+      const shareCapMultiplier = riskTier === 'Low' ? 1.0 : riskTier === 'Med' ? 0.75 : riskTier === 'High' ? 0.5 : 0.3;
+      const costCapMultiplier = riskTier === 'Low' ? 0.6 : riskTier === 'Med' ? 0.45 : riskTier === 'High' ? 0.3 : 0.2;
+      const boundedMaxAddShares = Math.max(1, Math.floor(qty * shareCapMultiplier));
+      const boundedMaxAddCost = Math.max(
+        0,
+        Math.min(
+          mergedConfig.cashCap,
+          marketValue > 0 ? marketValue * costCapMultiplier : mergedConfig.cashCap,
+          deployableCash * globalConfig.recoveryBudgetPct,
+        ),
+      );
+      const positionConfig: RecoveryPositionConfig = {
+        ...mergedConfig,
+        maxAddShares: boundedMaxAddShares,
+        maxAddCost: Number(boundedMaxAddCost.toFixed(2)),
+      };
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, globalConfig);
-      return { holding, portfolioName, currency, currentPrice, positionConfig, plan };
+      return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
-  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec]);
+  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCash, aiRecoveryBySymbol]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
 
-  const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
-  const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
-  const [selectedFundamentals, setSelectedFundamentals] = useState<HoldingFundamentals | null>(null);
-  const [isSelectedFundamentalsLoading, setIsSelectedFundamentalsLoading] = useState(false);
-  const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
-
   const selected = selectedHoldingId ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId) : null;
   const selectedPlan = selected?.plan;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
+
+  const refreshAiRecoveryConfig = useCallback(async () => {
+    if (!selected) return;
+    const sym = (selected.holding.symbol || '').toUpperCase();
+    if (!sym) return;
+    setIsAiRecoveryLoading(true);
+    try {
+      const suggestion = await suggestRecoveryParameters({
+        symbol: sym,
+        sleeveType: selected.positionConfig.sleeveType,
+        riskTier: selected.positionConfig.riskTier,
+        plPct: selected.plan.plPct,
+        deployableCash,
+        currentPrice: selected.plan.currentPrice,
+        avgCost: selected.holding.avgCost ?? 0,
+      });
+      setAiRecoveryBySymbol(prev => ({ ...prev, [sym]: suggestion }));
+    } finally {
+      setIsAiRecoveryLoading(false);
+    }
+  }, [selected, deployableCash]);
+
+  useEffect(() => {
+    if (!selected || !isAiAvailable) return;
+    const sym = (selected.holding.symbol || '').toUpperCase();
+    if (!sym || aiRecoveryBySymbol[sym]) return;
+    refreshAiRecoveryConfig();
+  }, [selected, isAiAvailable, aiRecoveryBySymbol, refreshAiRecoveryConfig]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;
@@ -243,7 +320,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
       </div>
 
       {/* Losing positions table */}
-      <SectionCard title="Positions in loss" className="overflow-hidden p-0">
+      <SectionCard title="Positions in loss" className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50">
@@ -303,12 +380,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
       {selected && selectedPlan && (
         <SectionCard title={`${selected.holding.symbol} — Recovery Plan`} className="space-y-5">
-          <p className="text-sm text-slate-600">
-            Portfolio: {selected.portfolioName}{' '}
-            <span className="text-xs text-slate-500">
-              · Display currency: {selected.currency ?? 'USD'}
-            </span>
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-slate-600">
+              Portfolio: {selected.portfolioName}{' '}
+              <span className="text-xs text-slate-500">
+                · Display currency: {selected.currency ?? 'USD'}
+              </span>
+            </p>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={refreshAiRecoveryConfig} disabled={!isAiAvailable || isAiRecoveryLoading} className="px-3 py-1.5 rounded-md border border-primary/30 text-primary text-xs font-medium hover:bg-primary/5 disabled:opacity-50">
+                {isAiRecoveryLoading ? 'Optimizing…' : 'AI optimize recovery'}
+              </button>
+            </div>
+          </div>
+          {selected.aiNotes && (
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">{selected.aiNotes}</p>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
@@ -345,13 +432,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                   inCurrency: selected.currency ?? 'USD',
                 })}
               </p>
+              <p className="mt-1 text-xs text-emerald-700">
+                Added shares cap: {Math.max(0, selectedPlan.newShares - selectedPlan.shares)} / {selected.positionConfig.maxAddShares ?? 0}
+                {' '}({selectedPlan.shares > 0 ? (((selectedPlan.newShares - selectedPlan.shares) / selectedPlan.shares) * 100).toFixed(0) : '0'}% of current shares)
+              </p>
             </div>
           </div>
 
           <div className="p-4 rounded-xl bg-white border border-slate-100">
             <div className="flex items-center justify-between gap-2 mb-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Next financial statement & dividends
+                Next earnings & dividends (estimated)
               </p>
               {isSelectedFundamentalsLoading && (
                 <p className="text-[11px] text-slate-400">Updating…</p>
@@ -365,7 +456,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
             <div className="grid gap-3 sm:grid-cols-2 text-xs text-slate-600">
               <div className="space-y-1">
                 <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
-                  Next financial statement
+                  Next earnings report (estimated)
                 </p>
                 {selectedFundamentals?.nextEarnings?.date ? (
                   <>
@@ -386,7 +477,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                     {typeof selectedFundamentals.nextEarnings.revenueEstimate === 'number' &&
                       selectedFundamentals.nextEarnings.revenueEstimate > 0 && (
                         <p className="text-[11px] text-slate-600">
-                          Expected revenue:{' '}
+                          Revenue estimate:{' '}
                           {formatCurrencyString(selectedFundamentals.nextEarnings.revenueEstimate, {
                             inCurrency:
                               (selectedFundamentals.currency === 'SAR' ? 'SAR' : 'USD') as TradeCurrency,
@@ -396,19 +487,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                       )}
                   </>
                 ) : (
-                  <p className="text-[11px] text-slate-500">No upcoming earnings date available.</p>
+                  <p className="text-[11px] text-slate-500">No upcoming earnings date available from market data.</p>
                 )}
               </div>
               <div className="space-y-1">
                 <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
-                  Dividends
+                  Dividend snapshot (estimated)
                 </p>
                 {selectedFundamentals?.dividend ? (
                   <>
                     {typeof selectedFundamentals.dividend.dividendYieldPct === 'number' &&
                       selectedFundamentals.dividend.dividendYieldPct > 0 && (
                         <p className="text-slate-800">
-                          Dividend yield:{' '}
+                          Indicative yield (TTM/forward):{' '}
                           {selectedFundamentals.dividend.dividendYieldPct.toFixed(2)}%
                         </p>
                       )}

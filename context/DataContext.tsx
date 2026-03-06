@@ -497,14 +497,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
 
             const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
+            const ownerId = auth.user.id;
+            const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
+                ((rows || []) as T[]).filter((r) => !r?.user_id || r.user_id === ownerId);
 
             setData({
                 accounts: normalizedAccounts,
-                assets: assets.data || [],
+                assets: filterOwnedRows(assets.data as any[]),
                 liabilities: ((liabilities.data as any[]) || []).map(normalizeLiability),
-                goals: goals.data || [],
-                transactions: (transactions.data || []).map(normalizeTransaction),
-                investments: ((investments.data as any) || []).map((portfolio: any) => {
+                goals: filterOwnedRows(goals.data as any[]),
+                transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
                     const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
                     return {
@@ -514,26 +517,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings: (portfolio.holdings || []).map(normalizeHolding),
                     };
                 }),
-                investmentTransactions: (investmentTransactions.data || []).map((t: any) => {
+                investmentTransactions: filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
                     const norm = normalizeInvestmentTransaction(t);
                     const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
                     return resolved ? { ...norm, accountId: resolved } : norm;
                 }),
-                budgets: (budgets.data || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
-                commodityHoldings: (commodityHoldings.data || []).map(normalizeCommodityHolding),
-                watchlist: watchlist.data || [],
+                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
+                commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
+                watchlist: filterOwnedRows(watchlist.data as any[]),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
-                zakatPayments: zakatPayments.data || [],
-                priceAlerts: (priceAlerts.data || []).map(normalizePriceAlert),
-                plannedTrades: plannedTrades.data || [],
+                zakatPayments: filterOwnedRows(zakatPayments.data as any[]),
+                priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
+                plannedTrades: filterOwnedRows(plannedTrades.data as any[]),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 // Default parameters from app settings/config only; we do not read wealth_ultra_config from DB
                 wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
-                portfolioUniverse: (portfolioUniverse as any).data || [],
-                statusChangeLog: (statusChangeLog as any).data || [],
-                executionLogs: ((executionLogs as any).data || []).map(normalizeExecutionLog),
-                recurringTransactions: (recurringTransactions as any).error ? [] : ((recurringTransactions as any).data || []).map((r: any) =>
+                portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []),
+                statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
+                executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
+                recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
                     normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
                 )
             });
@@ -647,6 +650,43 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             );
             await db.from('holdings').insert(holdingsToInsert);
             await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
+
+            // Investment plan and system datasets used across Investments/Wealth Ultra/Recovery pages
+            await db.from('investment_plan').insert({
+                ...investmentPlanToRow(mock.investmentPlan),
+                user_id: userId,
+            }).then(() => {}, () => {});
+
+            if (mock.portfolioUniverse?.length) {
+                await db.from('portfolio_universe').insert(
+                    mock.portfolioUniverse.map(({ id, ...u }) => ({ ...u, user_id: userId }))
+                ).then(() => {}, () => {});
+            }
+
+            if (mock.statusChangeLog?.length) {
+                await db.from('status_change_log').insert(
+                    mock.statusChangeLog.map(({ id, ...l }) => ({ ...l, user_id: userId }))
+                ).then(() => {}, () => {});
+            }
+
+            if (mock.executionLogs?.length) {
+                await db.from('execution_logs').insert(
+                    mock.executionLogs.map(({ id, user_id, created_at, ...log }) => ({
+                        user_id: userId,
+                        created_at: created_at || new Date().toISOString(),
+                        date: log.date,
+                        total_investment: log.totalInvestment,
+                        core_investment: log.coreInvestment,
+                        upside_investment: log.upsideInvestment,
+                        speculative_investment: log.speculativeInvestment,
+                        redirected_investment: log.redirectedInvestment,
+                        unused_upside_funds: log.unusedUpsideFunds,
+                        trades: log.trades,
+                        status: log.status,
+                        log_details: log.log_details,
+                    }))
+                ).then(() => {}, () => {});
+            }
 
             alert("Demo data loaded successfully!");
         } catch(error) {
@@ -858,6 +898,66 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     // --- Transactions ---
+    const removeSharedBudgetTransactionMirror = async (sourceTransactionId: string) => {
+        if (!supabase || !auth?.user || !sourceTransactionId) return;
+        await supabase
+            .from('budget_shared_transactions')
+            .delete()
+            .match({ source_transaction_id: sourceTransactionId, contributor_user_id: auth.user.id })
+            .then(() => {}, () => {});
+    };
+
+    const syncSharedBudgetTransactionMirror = async (tx: {
+        id: string;
+        date: string;
+        type: 'income' | 'expense';
+        amount: number;
+        status?: 'Pending' | 'Approved';
+        description: string;
+        budgetCategory?: string;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        const currentUser = auth.user;
+        const category = (tx.budgetCategory || '').trim();
+        const isApprovedExpense = tx.type === 'expense' && (tx.status ?? 'Approved') === 'Approved';
+        if (!category || !isApprovedExpense) {
+            await removeSharedBudgetTransactionMirror(tx.id);
+            return;
+        }
+
+        const { data: shares } = await supabase
+            .from('budget_shares')
+            .select('owner_user_id, category')
+            .eq('shared_with_user_id', auth.user.id)
+            .or(`category.is.null,category.eq.${category}`)
+            .then((r) => r, () => ({ data: [] as any[] } as any));
+
+        const rows = (shares || []) as Array<{ owner_user_id?: string; category?: string | null }>;
+        if (rows.length === 0) {
+            await removeSharedBudgetTransactionMirror(tx.id);
+            return;
+        }
+
+        await removeSharedBudgetTransactionMirror(tx.id);
+
+        const payload = rows
+            .map((r) => r.owner_user_id)
+            .filter((ownerId): ownerId is string => Boolean(ownerId) && ownerId !== currentUser.id)
+            .map((ownerId) => ({
+                owner_user_id: ownerId,
+                contributor_user_id: currentUser.id,
+                contributor_email: currentUser.email ?? null,
+                source_transaction_id: tx.id,
+                budget_category: category,
+                amount: Math.abs(Number(tx.amount) || 0),
+                transaction_date: tx.date,
+                description: tx.description,
+            }));
+
+        if (payload.length === 0) return;
+        await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
+    };
+
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
         if(!supabase || !auth?.user) {
             alert("You must be logged in to add a transaction.");
@@ -886,7 +986,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert(`Failed to add transaction: ${error.message}`);
             throw error;
         }
-        if (newTx) setData(prev => ({ ...prev, transactions: [normalizeTransaction(newTx), ...prev.transactions] }));
+        if (newTx) {
+            const normalized = normalizeTransaction(newTx);
+            setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            await syncSharedBudgetTransactionMirror(normalized as any);
+        }
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
@@ -907,14 +1011,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const { error } = await db.from('transactions').update(updateRow).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
-        else setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalizeTransaction({ ...t, ...transaction }) : t) }));
+        else {
+            const normalized = normalizeTransaction(transaction as any);
+            setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalized : t) }));
+            await syncSharedBudgetTransactionMirror(normalized as any);
+        }
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
-        else setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+        else {
+            setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+            await removeSharedBudgetTransactionMirror(transactionId);
+        }
     };
 
     // --- Recurring transactions ---

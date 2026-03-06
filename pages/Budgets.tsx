@@ -17,6 +17,30 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 
+
+
+const resolveRecipientUserByEmail = async (email: string) => {
+    if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
+
+    const directLookup = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', email)
+        .maybeSingle();
+
+    if (directLookup.data?.id) {
+        return { data: directLookup.data as { id: string; email: string | null }, error: null };
+    }
+
+    const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
+    const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
+    if (rpcRow?.id) {
+        return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
+    }
+
+    const baseMessage = directLookup.error?.message || rpcLookup.error?.message || 'Recipient user not found.';
+    return { data: null, error: { message: baseMessage } };
+};
 interface BudgetModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -149,6 +173,11 @@ const Budgets: React.FC = () => {
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
+    const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
+    const [shareTargetEmail, setShareTargetEmail] = useState('');
+    const [shareCategory, setShareCategory] = useState('ALL');
+    const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
+    const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -209,6 +238,52 @@ const Budgets: React.FC = () => {
                     .order('created_at', { ascending: false });
                 setBudgetRequests(requests || []);
             }
+
+            // Optional shared budgets feature (requires budget_shares table + RLS).
+            // If table is missing, fail silently to keep the page usable.
+            const { data: shares } = await supabase
+                .from('budget_shares')
+                .select('owner_user_id, shared_with_user_id, category, owner_email')
+                .eq('shared_with_user_id', auth.user.id)
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+
+            const shareRows = (shares || []) as any[];
+            if (shareRows.length === 0) {
+                setSharedBudgets([]);
+            } else {
+                const ownerIds = Array.from(new Set(shareRows.map((r) => r.owner_user_id).filter(Boolean)));
+                const { data: ownerBudgets } = await supabase
+                    .from('budgets')
+                    .select('*')
+                    .in('user_id', ownerIds)
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                const shareKey = new Set(shareRows.map((r) => `${r.owner_user_id}:${(r.category || 'ALL').toLowerCase()}`));
+                const filtered = ((ownerBudgets || []) as any[])
+                    .filter((b) => shareKey.has(`${b.user_id}:all`) || shareKey.has(`${b.user_id}:${String(b.category || '').toLowerCase()}`))
+                    .map((b) => ({
+                        ...b,
+                        period: b.period ?? 'monthly',
+                        tier: b.tier ?? b.budget_tier ?? 'Optional',
+                        ownerEmail: shareRows.find((r) => r.owner_user_id === b.user_id)?.owner_email,
+                    }));
+                setSharedBudgets(filtered);
+            }
+
+            const { data: ownerTxRows } = await supabase
+                .from('budget_shared_transactions')
+                .select('*')
+                .eq('owner_user_id', auth.user.id)
+                .order('transaction_date', { ascending: false })
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            setOwnerSharedTransactions((ownerTxRows || []) as any[]);
+
+            const { data: myTxRows } = await supabase
+                .from('budget_shared_transactions')
+                .select('*')
+                .eq('contributor_user_id', auth.user.id)
+                .order('transaction_date', { ascending: false })
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            setMySharedBudgetTransactions((myTxRows || []) as any[]);
         };
 
         loadGovernance();
@@ -279,6 +354,16 @@ const Budgets: React.FC = () => {
                 }
             });
 
+        // Reflect collaborator spending into owner budget totals for shared categories.
+        ownerSharedTransactions.forEach((tx) => {
+            const d = new Date(tx.transaction_date || tx.date);
+            if (!(d >= rangeStart && d <= rangeEnd)) return;
+            const cat = String(tx.budget_category || '').trim();
+            if (!cat) return;
+            const amount = Math.abs(Number(tx.amount) || 0);
+            spending.set(cat, (spending.get(cat) || 0) + amount);
+        });
+
         const scopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
@@ -322,7 +407,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -365,6 +450,34 @@ const Budgets: React.FC = () => {
         } else {
             addBudget(budget);
         }
+    };
+
+    const handleShareBudget = async () => {
+        if (!supabase || !auth?.user) return;
+        const email = shareTargetEmail.trim().toLowerCase();
+        if (!email) {
+            alert('Enter recipient email first.');
+            return;
+        }
+        const { data: targetUser, error: userError } = await resolveRecipientUserByEmail(email);
+        if (userError || !targetUser?.id) {
+            const detail = userError?.message || '';
+            alert(`Recipient user not found. ${detail.includes('find_user_by_email') ? 'Run docs/budget_sharing.sql to install helper function.' : detail}`.trim());
+            return;
+        }
+        const payload = {
+            owner_user_id: auth.user.id,
+            owner_email: auth.user.email,
+            shared_with_user_id: targetUser.id,
+            category: shareCategory === 'ALL' ? null : shareCategory,
+        };
+        const { error } = await supabase.from('budget_shares').upsert(payload).then((r) => r, () => ({ error: { message: 'budget_shares table is missing. Run the SQL migration first.' } } as any));
+        if (error) {
+            alert(`Could not share budget: ${error.message}`);
+            return;
+        }
+        alert(`Budget access shared with ${targetUser.email}${shareCategory === 'ALL' ? ' (all categories)' : ` for ${shareCategory}`}.`);
+        setShareTargetEmail('');
     };
     
     const changeMonth = (offset: number) => {
@@ -925,6 +1038,85 @@ const Budgets: React.FC = () => {
                         This money remains in your accounts; it is part of your actual cash flow and can go toward goals, investments, or savings.
                     </p>
                 </div>
+            )}
+
+            <SectionCard title="Budget sharing">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
+                        <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
+                        <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
+                            <option value="ALL">All budget categories</option>
+                            {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
+                                <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-3 items-center">
+                    <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
+                    <p className="text-xs text-slate-500">Only budgets are shared. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
+                </div>
+
+                {sharedBudgets.length > 0 && (
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Shared by</th>
+                                    <th className="px-3 py-2 text-left">Category</th>
+                                    <th className="px-3 py-2 text-right">Limit</th>
+                                    <th className="px-3 py-2 text-left">Period</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sharedBudgets.map((b) => (
+                                    <tr key={`shared-${b.user_id}-${b.id}`} className="border-t border-slate-100">
+                                        <td className="px-3 py-2">{b.ownerEmail || b.user_id || 'Owner'}</td>
+                                        <td className="px-3 py-2">{b.category}</td>
+                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.limit, { digits: 0 })}</td>
+                                        <td className="px-3 py-2 capitalize">{b.period ?? 'monthly'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </SectionCard>
+
+            {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
+                <SectionCard title="Shared-budget transaction visibility">
+                    <p className="text-xs text-slate-500 mb-3">
+                        Owner view: you can see contributors' transactions for budgets you shared. Contributor view: you only see transactions you posted yourself.
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Date</th>
+                                    <th className="px-3 py-2 text-left">Category</th>
+                                    <th className="px-3 py-2 text-left">Contributor</th>
+                                    <th className="px-3 py-2 text-left">Description</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
+                                    <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
+                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                        <td className="px-3 py-2">{tx.budget_category}</td>
+                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                        <td className="px-3 py-2">{tx.description || '—'}</td>
+                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </SectionCard>
             )}
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">

@@ -125,7 +125,7 @@
         animation: flash-red-bg 1s ease-out;
     }
 
-    /* ========== Design system: consistent UI across pages ========== */
+    /* Design system: consistent UI across pages */
     .page-container {
         @apply space-y-6 sm:space-y-8 w-full max-w-full min-w-0 overflow-x-hidden;
     }

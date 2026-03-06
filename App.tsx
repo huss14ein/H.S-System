@@ -2,7 +2,6 @@ import React, { useState, useContext, useCallback, Suspense, lazy, startTransiti
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
 import { AuthContext } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
@@ -86,7 +85,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('unhandledrejection', onUnhandled);
   }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
-  const [isLoginView, setIsLoginView] = useState(true);
   const auth = useContext(AuthContext);
 
   if (!auth) {
@@ -126,7 +124,7 @@ const App: React.FC = () => {
   };
   
   if (!isAuthenticated) {
-    return isLoginView ? <LoginPage onSwitchToSignup={() => setIsLoginView(false)} /> : <SignupPage onSwitchToLogin={() => setIsLoginView(true)} />;
+    return <LoginPage />;
   }
 
   return (
