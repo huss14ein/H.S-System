@@ -8,6 +8,8 @@ import SectionCard from '../components/SectionCard';
 import { CHART_COLORS, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber } from '../components/charts/chartTheme';
 import ChartContainer from '../components/charts/ChartContainer';
 import type { Transaction } from '../types';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
@@ -106,6 +108,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
 
 const AssetLiabilityChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
         const inv = data?.investments ?? [];
@@ -113,7 +116,7 @@ const AssetLiabilityChart: React.FC = () => {
         const ast = data?.assets ?? [];
         const liab = data?.liabilities ?? [];
 
-        const totalInvestments = inv.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + Math.max(0, h.currentValue || 0), 0), 0);
+        const totalInvestments = getAllInvestmentsValueInSAR(inv, exchangeRate);
         const totalCash = acc.filter(a => a.type !== 'Credit').reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
         const totalPhysicalAssets = ast.reduce((sum, asset) => sum + Math.max(0, asset.value || 0), 0);
         const totalDebt = liab.filter((l) => (l.amount ?? 0) < 0).reduce((sum, l) => sum + Math.abs(l.amount ?? 0), 0)
@@ -127,7 +130,7 @@ const AssetLiabilityChart: React.FC = () => {
             { name: 'Receivables', value: totalReceivable },
             { name: 'Debt', value: totalDebt },
         ];
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const hasSignal = chartData.some((x) => x.value > 0);
     const isEmpty = !hasSignal;
@@ -154,6 +157,7 @@ const AssetLiabilityChart: React.FC = () => {
 
 const Analysis: React.FC = () => {
     const { data, loading } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
 
     const contextData = useMemo(() => {
         const transactions = data?.transactions ?? [];
@@ -173,7 +177,7 @@ const Analysis: React.FC = () => {
 
         const trendData = buildTrendData(transactions, 6);
 
-        const totalInvestments = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + Math.max(0, h.currentValue || 0), 0), 0);
+        const totalInvestments = getAllInvestmentsValueInSAR(investments, exchangeRate);
         const totalCash = accounts.filter(a => a.type !== 'Credit').reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
         const totalPhysicalAssets = assets.reduce((sum, asset) => sum + Math.max(0, asset.value || 0), 0);
         const totalDebt = liabilities.filter((l) => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0)
@@ -188,7 +192,7 @@ const Analysis: React.FC = () => {
         ];
 
         return { spendingData, trendData, compositionData };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     if (loading) {
         return (

@@ -12,9 +12,12 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { toSAR } from '../utils/currencyMath';
 
 const DividendTrackerView: React.FC = () => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
@@ -26,13 +29,13 @@ const DividendTrackerView: React.FC = () => {
 
         const dividendIncomeYTD = dividendTransactions
             .filter(t => new Date(t.date).getFullYear() === now.getFullYear())
-            .reduce((sum, t) => sum + t.total, 0);
+            .reduce((sum, t) => sum + toSAR(t.total, t.currency, exchangeRate), 0);
 
         const monthlyDividends = new Map<string, number>();
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
         dividendTransactions.filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
-            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + t.total);
+            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total, t.currency, exchangeRate));
         });
         
         const monthlyDividendsChartData = Array.from(monthlyDividends.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ 
@@ -42,19 +45,22 @@ const DividendTrackerView: React.FC = () => {
 
         const recentDividendTransactions = dividendTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
 
-        const allHoldings = data.investments.flatMap(p => p.holdings);
-        const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+        const allHoldings = data.investments.flatMap(p => p.holdings.map(h => ({ ...h, portfolioCurrency: p.currency })));
+        const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
 
         const holdingsWithProjectedDividends = allHoldings
             .filter(h => h.dividendYield && h.dividendYield > 0)
-            .map(h => ({ name: h.name || h.symbol, projected: h.currentValue * (h.dividendYield! / 100) }));
+            .map(h => ({
+                name: h.name || h.symbol,
+                projected: toSAR(h.currentValue, h.portfolioCurrency, exchangeRate) * (h.dividendYield! / 100),
+            }));
 
         const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum, h) => sum + h.projected, 0);
         const averageYield = totalInvestmentValue > 0 ? (projectedAnnualIncome / totalInvestmentValue) * 100 : 0;
         const topPayers = holdingsWithProjectedDividends.sort((a,b) => b.projected - a.projected).slice(0, 5);
 
         return { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);

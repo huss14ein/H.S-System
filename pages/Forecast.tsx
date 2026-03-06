@@ -10,6 +10,8 @@ import { FlagIcon } from '../components/icons/FlagIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -18,6 +20,7 @@ const toMonthlyRate = (annualPct: number) => Math.pow(1 + annualPct / 100, 1 / 1
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const { data, loading } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
 
     const savingsAnalytics = useMemo(() => {
         const monthlyNet = new Map<string, number>();
@@ -94,9 +97,9 @@ const Forecast: React.FC = () => {
         const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) + accounts.reduce((sum, acc) => sum + acc.balance, 0);
         const totalLiabilities = liabilities.reduce((sum, liab) => sum + liab.amount, 0);
         const netWorth = totalAssets + totalLiabilities;
-        const investmentValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };
-    }, [data]);
+    }, [data, exchangeRate]);
 
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
