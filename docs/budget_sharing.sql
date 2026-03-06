@@ -1,11 +1,3 @@
--- Budget sharing (share only budgets with specific users)
--- COPY/PASTE CHECKLIST:
--- 1) Open this file directly from the repository, not a PR diff view.
--- 2) Copy from this first line through the final COMMIT statement.
--- 3) If your pasted text contains "diff --git" OR lines like "-set search_path" / "+set search_path",
---    you copied a git diff. Delete everything and re-copy from this file only.
--- 4) Run as one script in Supabase SQL Editor.
-
 begin;
 
 create table if not exists public.budget_shares (
@@ -20,7 +12,6 @@ create table if not exists public.budget_shares (
 
 alter table public.budget_shares enable row level security;
 
--- Owner can create/update/delete shares they own.
 do $$
 begin
   if not exists (
@@ -39,7 +30,6 @@ begin
 end
 $$;
 
--- Recipient can read only rows shared with them.
 do $$
 begin
   if not exists (
@@ -57,8 +47,8 @@ begin
 end
 $$;
 
--- Optional hardening: ensure budgets remain owner-private at DB level.
 alter table public.budgets enable row level security;
+
 do $$
 begin
   if not exists (
@@ -77,8 +67,6 @@ begin
 end
 $$;
 
-
--- Mirror table: contributor transactions that should count toward owner-shared budgets.
 create table if not exists public.budget_shared_transactions (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.users(id) on delete cascade,
@@ -98,8 +86,11 @@ alter table public.budget_shared_transactions enable row level security;
 do $$
 begin
   if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='budget_shared_transactions' and policyname='budget_shared_transactions_owner_read'
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'budget_shared_transactions'
+      and policyname = 'budget_shared_transactions_owner_read'
   ) then
     create policy budget_shared_transactions_owner_read
       on public.budget_shared_transactions
@@ -112,8 +103,11 @@ $$;
 do $$
 begin
   if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='budget_shared_transactions' and policyname='budget_shared_transactions_contributor_rw'
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'budget_shared_transactions'
+      and policyname = 'budget_shared_transactions_contributor_rw'
   ) then
     create policy budget_shared_transactions_contributor_rw
       on public.budget_shared_transactions
@@ -124,7 +118,6 @@ begin
 end
 $$;
 
--- Helper RPC for secure recipient lookup by email (used by Budget sharing UI).
 create or replace function public.find_user_by_email(target_email text)
 returns table (id uuid, email text)
 language sql
@@ -141,7 +134,6 @@ $$;
 revoke all on function public.find_user_by_email(text) from public;
 grant execute on function public.find_user_by_email(text) to authenticated;
 
--- Helper RPC to list shareable users (for Budget sharing dropdown).
 create or replace function public.list_shareable_users()
 returns table (id uuid, email text)
 language sql
