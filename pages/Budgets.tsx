@@ -169,6 +169,8 @@ const Budgets: React.FC = () => {
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
+    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
+    const [shareUsersLoadError, setShareUsersLoadError] = useState<string | null>(null);
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
@@ -282,6 +284,34 @@ const Budgets: React.FC = () => {
 
         loadGovernance();
     }, [auth?.user?.id, dataResetKey]);
+
+
+    React.useEffect(() => {
+        const loadShareableUsers = async () => {
+            if (!supabase || !auth?.user?.id) {
+                setShareableUsers([]);
+                setShareUsersLoadError(null);
+                return;
+            }
+
+            const { data: users, error } = await supabase.rpc('list_shareable_users');
+            if (error) {
+                const message = (error.message || '').trim();
+                const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
+                    ? 'Shareable users list is unavailable. Run docs/budget_sharing.sql to install list_shareable_users.'
+                    : message || 'Unable to load users list.';
+                setShareUsersLoadError(normalized);
+                setShareableUsers([]);
+                return;
+            }
+
+            const rows = (Array.isArray(users) ? users : []).filter((row: any) => row?.id && row?.email);
+            setShareableUsers(rows.map((row: any) => ({ id: String(row.id), email: String(row.email).toLowerCase() })));
+            setShareUsersLoadError(null);
+        };
+
+        loadShareableUsers();
+    }, [auth?.user?.id]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -1045,7 +1075,15 @@ const Budgets: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
-                        <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base" />
+                        <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
+                            <option value="">Select a signed-up user…</option>
+                            {shareableUsers.map((u) => (
+                                <option key={u.id} value={u.email}>{u.email}</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
+                        <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
+                        {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>

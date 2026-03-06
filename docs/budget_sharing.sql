@@ -136,3 +136,20 @@ $$;
 revoke all on function public.find_user_by_email(text) from public;
 grant execute on function public.find_user_by_email(text) to authenticated;
 
+-- Helper RPC to list shareable users (for Budget sharing dropdown).
+create or replace function public.list_shareable_users()
+returns table (id uuid, email text)
+language sql
+security definer
+set search_path = public, auth
+as $$
+  select u.id, au.email
+  from public.users u
+  join auth.users au on au.id = u.id
+  where u.id <> auth.uid()
+  order by lower(au.email)
+$$;
+
+revoke all on function public.list_shareable_users() from public;
+grant execute on function public.list_shareable_users() to authenticated;
+
