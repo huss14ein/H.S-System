@@ -420,7 +420,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <div className="p-4 rounded-xl bg-white border border-slate-100">
             <div className="flex items-center justify-between gap-2 mb-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Next financial statement & dividends
+                Next earnings & dividends (estimated)
               </p>
               {isSelectedFundamentalsLoading && (
                 <p className="text-[11px] text-slate-400">Updating…</p>
@@ -434,7 +434,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
             <div className="grid gap-3 sm:grid-cols-2 text-xs text-slate-600">
               <div className="space-y-1">
                 <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
-                  Next financial statement
+                  Next earnings report (estimated)
                 </p>
                 {selectedFundamentals?.nextEarnings?.date ? (
                   <>
@@ -455,7 +455,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                     {typeof selectedFundamentals.nextEarnings.revenueEstimate === 'number' &&
                       selectedFundamentals.nextEarnings.revenueEstimate > 0 && (
                         <p className="text-[11px] text-slate-600">
-                          Expected revenue:{' '}
+                          Revenue estimate:{' '}
                           {formatCurrencyString(selectedFundamentals.nextEarnings.revenueEstimate, {
                             inCurrency:
                               (selectedFundamentals.currency === 'SAR' ? 'SAR' : 'USD') as TradeCurrency,
@@ -465,19 +465,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
                       )}
                   </>
                 ) : (
-                  <p className="text-[11px] text-slate-500">No upcoming earnings date available.</p>
+                  <p className="text-[11px] text-slate-500">No upcoming earnings date available from market data.</p>
                 )}
               </div>
               <div className="space-y-1">
                 <p className="font-semibold text-slate-500 uppercase tracking-wide text-[11px]">
-                  Dividends
+                  Dividend snapshot (estimated)
                 </p>
                 {selectedFundamentals?.dividend ? (
                   <>
                     {typeof selectedFundamentals.dividend.dividendYieldPct === 'number' &&
                       selectedFundamentals.dividend.dividendYieldPct > 0 && (
                         <p className="text-slate-800">
-                          Dividend yield:{' '}
+                          Indicative yield (TTM/forward):{' '}
                           {selectedFundamentals.dividend.dividendYieldPct.toFixed(2)}%
                         </p>
                       )}

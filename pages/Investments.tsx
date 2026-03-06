@@ -717,7 +717,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Upcoming financials & income */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-700 break-words">Next financial statement & dividends</p>
+                        <p className="text-sm font-semibold text-slate-700 break-words">Next earnings & dividends (estimated)</p>
                         {isFundamentalsLoading && <p className="text-xs text-slate-400">Loading...</p>}
                     </div>
                     {fundamentalsError && (
@@ -725,7 +725,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     )}
                     <div className="grid gap-3 sm:grid-cols-2 text-sm">
                         <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Next financial statement</p>
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Next earnings report (estimated)</p>
                             {fundamentals?.nextEarnings?.date ? (
                                 <>
                                     <p className="text-slate-800">
@@ -742,29 +742,40 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                     </p>
                                     {typeof fundamentals.nextEarnings.revenueEstimate === 'number' && fundamentals.nextEarnings.revenueEstimate > 0 && (
                                         <p className="text-xs text-slate-600">
-                                            Expected revenue ({fundamentalsCurrency}):{' '}
+                                            Revenue estimate ({fundamentalsCurrency}):{' '}
                                             {fmtFundamentals(fundamentals.nextEarnings.revenueEstimate, { digits: 0 })}
                                         </p>
                                     )}
                                 </>
                             ) : (
-                                <p className="text-xs text-slate-500">No upcoming earnings date available.</p>
+                                <p className="text-xs text-slate-500">No upcoming earnings date available from market data.</p>
                             )}
                         </div>
                         <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dividends</p>
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dividend snapshot (estimated)</p>
                             {fundamentals?.dividend ? (
                                 <>
                                     {typeof fundamentals.dividend.dividendYieldPct === 'number' && fundamentals.dividend.dividendYieldPct > 0 && (
                                         <p className="text-slate-800">
-                                            Dividend yield: {fundamentals.dividend.dividendYieldPct.toFixed(2)}%
+                                            Indicative yield (TTM/forward): {fundamentals.dividend.dividendYieldPct.toFixed(2)}%
                                         </p>
                                     )}
                                     {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <p className="text-xs text-slate-600">
-                                                Est. annual dividends on your position ({fundamentalsCurrency}):{' '}
-                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual * holding.quantity, { digits: 0 })}
+                                                Dividend per share (annualized, {fundamentalsCurrency}):{' '}
+                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual, { digits: 2 })}
+                                            </p>
+                                        )}
+                                    {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
+                                        fundamentals.dividend.dividendYieldPct > 0 &&
+                                        holding.currentValue > 0 && (
+                                            <p className="text-xs text-slate-600">
+                                                Implied annual cashflow on your position ({portfolioCurrency}):{' '}
+                                                {formatCurrencyString(holding.currentValue * (fundamentals.dividend.dividendYieldPct / 100), {
+                                                    inCurrency: portfolioCurrency,
+                                                    digits: 0,
+                                                })}
                                             </p>
                                         )}
                                     {!fundamentals.dividend.dividendYieldPct && !fundamentals.dividend.dividendPerShareAnnual && (

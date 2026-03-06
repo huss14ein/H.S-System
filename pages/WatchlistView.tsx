@@ -242,13 +242,13 @@ const WatchlistItemRow: React.FC<{
                                     )}
                                 </>
                             ) : (
-                                <span className="text-[11px] text-slate-400">No upcoming earnings</span>
+                                <span className="text-[11px] text-slate-400">No upcoming earnings from market data</span>
                             )}
                         </div>
                         {typeof fundamentals.nextEarnings?.revenueEstimate === 'number' &&
                             fundamentals.nextEarnings.revenueEstimate > 0 && (
                                 <div className="text-[11px] text-slate-500">
-                                    Rev est ({fundamentalsCurrency}):{' '}
+                                    Revenue est ({fundamentalsCurrency}):{' '}
                                     {formatFundamentalValue(fundamentals.nextEarnings.revenueEstimate, 0)}
                                 </div>
                             )}
@@ -256,16 +256,16 @@ const WatchlistItemRow: React.FC<{
                             (typeof fundamentals.dividend.dividendYieldPct === 'number' ||
                                 typeof fundamentals.dividend.dividendPerShareAnnual === 'number') && (
                                 <div className="text-[11px] text-slate-500">
-                                    Div
+                                    Dividend est.
                                     {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
                                         fundamentals.dividend.dividendYieldPct > 0 &&
-                                        ` ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
+                                        ` yield ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
                                     {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <>
                                                 {' '}
                                                 · {formatFundamentalValue(fundamentals.dividend.dividendPerShareAnnual, 2)}
-                                                /sh
+                                                per share
                                             </>
                                         )}
                                 </div>
