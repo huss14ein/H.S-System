@@ -1,8 +1,8 @@
--- =============================================================================
+-- -----------------------------------------------------------------------------
 -- Optional: Row Level Security (RLS) for investment_plan, portfolio_universe,
 -- status_change_log, execution_logs. Run after full_schema_for_app.sql if you
 -- use Supabase Auth and want per-user isolation.
--- =============================================================================
+-- -----------------------------------------------------------------------------
 
 alter table public.investment_plan enable row level security;
 alter table public.portfolio_universe enable row level security;
