@@ -380,7 +380,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         >
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <span className="font-semibold text-slate-800">Plan data aligned with:</span>
                 {setActivePage && (
                     <>
@@ -401,7 +402,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </button>
                     </>
                 )}
-                <span className="text-xs text-slate-500 ml-auto">Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.</span>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white/70 px-3 py-2 text-xs text-slate-600 leading-relaxed">
+                    <span className="font-medium text-slate-700">Data sources:</span> Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.
+                </div>
             </div>
 
             {/* Liquid cash from Accounts (cash flow context) */}

@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
+import { Type, FunctionDeclaration } from "@google/genai";
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
 import { finnhubFetch } from './finnhubService';
 
 // --- Model Constants ---
@@ -74,6 +74,9 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
     }
     if (/API key not valid/i.test(message)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
+    }
+    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(message)) {
+        return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
     if (/model|404|not found|invalid model|unsupported/i.test(message)) {
         return `There was an issue with the specified AI model. ${message}`;
@@ -296,11 +299,14 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
     try {
         const response = await fetch('/api/gemini-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+            signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -313,7 +319,11 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                 errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
             } catch (e) {
                 // If it's not JSON, it's likely an HTML error page from the hosting provider.
-                errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+                if (/Inactivity Timeout/i.test(errorBody)) {
+                    errorMessage = 'AI request timed out at the proxy (Inactivity Timeout).';
+                } else {
+                    errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+                }
             }
             throw new Error(errorMessage);
         }
@@ -323,15 +333,20 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 
     } catch (error) {
         console.error("Error invoking Netlify function:", error);
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error('AI request timed out while waiting for proxy response.');
+        }
         if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
              const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
              throw new Error(detailedMessage);
         }
         throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
-// Unified AI invocation function. Decides whether to use client-side SDK or proxy.
+// Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     const hasJsonSchema = payload.config?.responseMimeType === 'application/json';
     const mergedPayload = {
@@ -342,25 +357,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
         },
     };
 
-    // In dev mode, use the client-side key if available.
-    // In dev mode, use the client-side key if available. Otherwise, fall back to the proxy.
-    if (import.meta.env.DEV && import.meta.env.VITE_GEMINI_API_KEY) {
-        const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        try {
-            const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-            const response: GenerateContentResponse = await ai.models.generateContent(mergedPayload);
-            return {
-                text: response.text,
-                candidates: response.candidates,
-                functionCalls: response.functionCalls,
-            };
-        } catch (error) {
-            throw new Error(formatAiError(error));
-        }
-    } else {
-        // In production, or for local dev without a specific client-side key, use the proxy.
-        return invokeGeminiProxy(mergedPayload);
-    }
+    return invokeGeminiProxy(mergedPayload);
 }
 
 
@@ -944,6 +941,69 @@ One sentence: health of their goal strategy.
     } catch (error) { return formatAiError(error); }
 };
 
+const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): string => {
+    const targetByRisk: Record<'Conservative' | 'Moderate' | 'Aggressive', { stocks: number; sukuk: number; other: number }> = {
+        Conservative: { stocks: 45, sukuk: 45, other: 10 },
+        Moderate: { stocks: 60, sukuk: 30, other: 10 },
+        Aggressive: { stocks: 75, sukuk: 15, other: 10 },
+    };
+
+    const normalized = holdings
+        .map((h) => {
+            const qty = Number(h.quantity || 0);
+            const avgCost = Number(h.avgCost || 0);
+            const marketValue = Number(h.currentValue || 0);
+            const fallback = qty > 0 && avgCost > 0 ? qty * avgCost : 0;
+            const value = marketValue > 0 ? marketValue : fallback;
+            return {
+                ...h,
+                value,
+                assetClass: h.assetClass || 'Other',
+            };
+        })
+        .filter((h) => Number.isFinite(h.value) && h.value > 0);
+
+    const totalValue = normalized.reduce((sum, h) => sum + h.value, 0);
+    if (totalValue <= 0) {
+        return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
+    }
+
+    const bucket = { stocks: 0, sukuk: 0, other: 0 };
+    normalized.forEach((h) => {
+        if (h.assetClass === 'Stock') bucket.stocks += h.value;
+        else if (h.assetClass === 'Sukuk') bucket.sukuk += h.value;
+        else bucket.other += h.value;
+    });
+
+    const toPct = (v: number) => (v / totalValue) * 100;
+    const current = {
+        stocks: toPct(bucket.stocks),
+        sukuk: toPct(bucket.sukuk),
+        other: toPct(bucket.other),
+    };
+
+    const topHolding = normalized.slice().sort((a, b) => b.value - a.value)[0];
+    const topPct = topHolding ? toPct(topHolding.value) : 0;
+    const target = targetByRisk[riskProfile];
+
+    return `### Current Portfolio Analysis
+- Portfolio value analyzed: **${totalValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}**.
+- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'} with top holding **${topHolding?.symbol || 'N/A'} (${topPct.toFixed(1)}%)**.
+- Current mix is **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
+
+### Target Allocation (${riskProfile})
+- Stocks: **${target.stocks}%**
+- Sukuk/Bonds: **${target.sukuk}%**
+- Other assets: **${target.other}%**
+
+### Rebalancing Suggestions
+- Adjust in small monthly steps to reduce drift: prioritize buckets furthest from target (current vs target gap).
+- Cap single-position adds when top holding exceeds 25% until diversification improves.
+- Execute changes through **Investment Plan / Execute & Results** so amounts remain budgeted and traceable.
+
+_Generated with resilient rule-based logic (AI fallback mode)._`;
+};
+
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
@@ -959,8 +1019,11 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
 - 2-3 concrete, educational steps (no buy/sell advice). One sentence each.
 Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not retrieve plan.";
-    } catch (error) { return formatAiError(error); }
+        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    } catch (error) {
+        console.warn('[getAIRebalancingPlan] AI unavailable, using deterministic fallback.', error);
+        return buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    }
 };
 
 export function buildFallbackAnalystReport(holding: Holding): string {
@@ -970,25 +1033,68 @@ export function buildFallbackAnalystReport(holding: Holding): string {
     const value = holding.currentValue ?? 0;
     const gainLoss = value - cost;
     const gainLossPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
-    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n*AI analyst report was unavailable. Use **Generate Report** again for news and sentiment when available.*`;
+    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n### Coverage status\n- AI analyst engine was unavailable for this request.\n- Showing a resilient fallback summary now.\n- If configured, Finnhub headlines are attached below.`;
 }
 
-export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
-    const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
-    const cached = getFromCache(cacheKey);
-    if (cached) return cached;
+async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<string> {
+    const base = buildFallbackAnalystReport(holding);
     try {
-        const prompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
+        const headlines = await getFinnhubCompanyNews([holding.symbol]);
+        if (headlines.length === 0) {
+            return `${base}\n\n### Finnhub latest headlines\n- No recent headlines were available for this symbol right now.`;
+        }
+
+        const top = headlines
+            .slice(0, 3)
+            .map((item) => `- **${item.source}**: ${item.headline} (${item.url})`)
+            .join('\n');
+
+        return `${base}\n\n### Finnhub latest headlines\n${top}`;
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Finnhub fallback unavailable.';
+        return `${base}\n\n### Finnhub latest headlines\n- Fallback data unavailable: ${reason}`;
+    }
+}
+
+
+export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefresh?: boolean }): Promise<{ content: string, groundingChunks: any[] }> => {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const positionSnapshotKey = [
+        Number(holding.quantity || 0).toFixed(4),
+        Number(holding.avgCost || 0).toFixed(2),
+        Number(holding.currentValue || 0).toFixed(2),
+    ].join(':');
+    const cacheKey = `getAIStockAnalysis:${holding.symbol}:${dayKey}:${positionSnapshotKey}`;
+    const cached = getFromCache(cacheKey);
+    if (!options?.forceRefresh && cached) return cached;
+
+    const approxPrice = Number(holding.quantity || 0) > 0
+        ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
+        : Number(holding.avgCost || 0);
+    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst.
+Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol}) using Google Search.
+Treat stale/outdated references as low confidence and prefer latest items.
+
+Portfolio snapshot context (for relevance only):
+- Shares: ${Number(holding.quantity || 0).toLocaleString()}
+- Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
+- Approx latest price from portfolio: ${Number.isFinite(approxPrice) ? approxPrice.toFixed(2) : 'N/A'}
+
+Return Markdown only (no HTML):
 
 ### Recent News Summary
-- 2-3 bullets on the latest significant news. One sentence each.
+- 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
-Markdown only.`;
+
+### What Changed Recently
+- 1-2 bullets highlighting what is new versus prior narrative.`;
+
+    try {
         const response = await invokeAI({
             model: FAST_MODEL,
-            contents: prompt,
+            contents: primaryPrompt,
             config: { tools: [{ googleSearch: {} }] }
         });
         const content = response.text || "Could not retrieve analysis.";
@@ -997,17 +1103,38 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        const formatted = formatAiError(error);
-        const isTemporaryAiOutage = /usage limit|quota|temporarily unavailable|resource_exhausted|rate.?limit/i.test(formatted);
-        if (isTemporaryAiOutage) {
-            const result = {
-                content: buildFallbackAnalystReport(holding),
+        const details = formatAiError(error);
+
+        // Retry once without search tool, using Finnhub brief as context, to keep analyst report available.
+        try {
+            const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol]);
+            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
+
+Structure:
+### Recent News Summary
+- 2-3 concise bullets.
+
+### Analyst Sentiment
+- One short paragraph (bullish/bearish/neutral) with reasoning.
+
+${finnhubBrief ? `Use this Finnhub reference when relevant:
+${finnhubBrief}` : 'If live headlines are unavailable, rely on position context and provide a neutral status update.'}`;
+
+            const retry = await invokeAI({ model: FAST_MODEL, contents: fallbackAiPrompt });
+            const retryResult = {
+                content: retry.text || await buildFallbackAnalystReportWithFinnhub(holding),
                 groundingChunks: [],
             };
-            setToCache(cacheKey, result);
-            return result;
+            setToCache(cacheKey, retryResult);
+            return retryResult;
+        } catch (_retryError) {
+            return {
+                content: `${await buildFallbackAnalystReportWithFinnhub(holding)}
+
+> Analyst engine note: ${details}`,
+                groundingChunks: [],
+            };
         }
-        throw error;
     }
 };
 
@@ -1246,6 +1373,22 @@ export async function getSuggestedAnalystEligibility(
     universe: UniverseTicker[],
     currentPlan?: Partial<InvestmentPlanSettings>
 ): Promise<SuggestedAnalystEligibility> {
+    const fallbackFromUniverse = (): SuggestedAnalystEligibility => {
+        const coreCount = universe.filter(t => t.status === 'Core').length;
+        const upsideCount = universe.filter(t => t.status === 'High-Upside').length;
+        const total = Math.max(1, coreCount + upsideCount);
+        const upsideRatio = upsideCount / total;
+        const baseUpside = currentPlan?.minimumUpsidePercentage ?? DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage;
+        const tunedUpside = Math.round(Math.min(35, Math.max(18, baseUpside + (upsideRatio >= 0.5 ? 3 : 0))));
+        return {
+            minimumUpsidePercentage: tunedUpside,
+            stale_days: Math.min(90, Math.max(14, Math.round(currentPlan?.stale_days ?? DEFAULT_ANALYST_ELIGIBILITY.stale_days))),
+            min_coverage_threshold: Math.min(5, Math.max(2, Math.round(currentPlan?.min_coverage_threshold ?? DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold))),
+            redirect_policy: (currentPlan?.redirect_policy === 'priority' ? 'priority' : 'pro-rata'),
+            target_provider: String(currentPlan?.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider,
+        };
+    };
+
     try {
         const tickers = universe.slice(0, 30).map(t => t.ticker).join(', ') || 'none';
         const prompt = `You are Finova AI, an expert investment analyst. Suggest sensible default parameters for an investment plan's "Analyst & eligibility" rules.
@@ -1282,12 +1425,48 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
         const provider = String(raw.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider;
         return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider };
     } catch (_) {
-        return DEFAULT_ANALYST_ELIGIBILITY;
+        return fallbackFromUniverse();
     }
 }
 
 /** Rule-based execution (no AI): allocates budget by plan weights. Use when AI is unavailable or as fallback. */
-export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, universe: UniverseTicker[]): InvestmentPlanExecutionResult {
+type ExecutionCurrencyOptions = {
+    planCurrency?: TradeCurrency;
+    tickerCurrencyMap?: Record<string, TradeCurrency>;
+    fxRate?: number;
+};
+
+const inferTradeCurrencyFromTicker = (ticker: string): TradeCurrency => (/(\.SR|\.SA)$/i.test(ticker) ? 'SAR' : 'USD');
+
+const toTradeWithCurrency = (
+    trade: ProposedTrade,
+    opts: ExecutionCurrencyOptions
+): ProposedTrade => {
+    const planCurrency = opts.planCurrency ?? 'SAR';
+    const ticker = (trade.ticker || '').trim().toUpperCase();
+    const tradeCurrency = opts.tickerCurrencyMap?.[ticker] ?? inferTradeCurrencyFromTicker(trade.ticker);
+    const rate = opts.fxRate && opts.fxRate > 0 ? opts.fxRate : 3.75;
+    let converted = trade.amount;
+    if (tradeCurrency !== planCurrency) {
+        converted = tradeCurrency === 'USD' ? trade.amount / rate : trade.amount * rate;
+    }
+    return {
+        ...trade,
+        tradeCurrency,
+        amountInTradeCurrency: Math.max(0, Number(converted.toFixed(2))),
+    };
+};
+
+const enrichTradesWithCurrency = (result: InvestmentPlanExecutionResult, opts: ExecutionCurrencyOptions): InvestmentPlanExecutionResult => ({
+    ...result,
+    trades: (result.trades ?? []).map((trade) => toTradeWithCurrency(trade, opts)),
+});
+
+export function executeInvestmentPlanRuleBased(
+    plan: InvestmentPlanSettings,
+    universe: UniverseTicker[],
+    options?: ExecutionCurrencyOptions
+): InvestmentPlanExecutionResult {
     const date = new Date().toISOString();
     const coreTickers = universe.filter(t => t.status === 'Core');
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
@@ -1385,7 +1564,7 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
 - Tickers: Core ${coreTickers.length}, High-Upside ${upsideTickers.length}, Speculative ${speculativeTickers.length}.
 - No analyst targets or eligibility checks; allocation by weights only. Use AI execution for full logic.`;
 
-    return {
+    return enrichTradesWithCurrency({
         date,
         totalInvestment,
         coreInvestment,
@@ -1396,16 +1575,16 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
         trades,
         status: totalInvestment > 0 ? 'success' : 'failure',
         log_details,
-    };
+    }, { planCurrency: options?.planCurrency ?? plan.budgetCurrency, tickerCurrencyMap: options?.tickerCurrencyMap, fxRate: options?.fxRate ?? 3.75 });
 }
 
 export async function executeInvestmentPlanStrategy(
     plan: InvestmentPlanSettings,
     universe: UniverseTicker[],
-    options?: { forceRuleBased?: boolean }
+    options?: { forceRuleBased?: boolean } & ExecutionCurrencyOptions
 ): Promise<InvestmentPlanExecutionResult> {
     if (options?.forceRuleBased) {
-        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe));
+        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe, options));
     }
 
     const coreTickers = universe.filter(t => t.status === 'Core');
@@ -1526,13 +1705,22 @@ export async function executeInvestmentPlanStrategy(
         });
         if (result.functionCalls && result.functionCalls.length > 0) {
             const args = result.functionCalls[0].args;
-            return {
+            return enrichTradesWithCurrency({
                 date: new Date().toISOString(),
                 ...args,
-            } as InvestmentPlanExecutionResult;
+            } as InvestmentPlanExecutionResult, {
+                planCurrency: options?.planCurrency ?? plan.budgetCurrency,
+                tickerCurrencyMap: options?.tickerCurrencyMap,
+                fxRate: options?.fxRate ?? 3.75,
+            });
         }
         throw new Error('AI did not return the expected function call.');
     };
+
+    const withAiFallbackNote = (result: InvestmentPlanExecutionResult, details: string): InvestmentPlanExecutionResult => ({
+        ...result,
+        log_details: `${result.log_details || ''}\n\n> AI execution unavailable. Automatically switched to rule-based mode.\n> Reason: ${details}`.trim(),
+    });
 
     try {
         return await executeWithModel(FAST_MODEL);
@@ -1545,10 +1733,87 @@ export async function executeInvestmentPlanStrategy(
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
                 console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
-                return executeInvestmentPlanRuleBased(plan, universe);
+                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), formatAiError(retryError));
             }
         }
         console.warn('AI execution failed, falling back to rule-based (no AI):', error);
-        return executeInvestmentPlanRuleBased(plan, universe);
+        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe, options), details);
+    }
+}
+
+
+export interface RecoveryAiSuggestionInput {
+    symbol: string;
+    sleeveType: 'Core' | 'Upside' | 'Spec';
+    riskTier: 'Low' | 'Med' | 'High' | 'Spec';
+    plPct: number;
+    deployableCash: number;
+    currentPrice: number;
+    avgCost: number;
+}
+
+export interface RecoveryAiSuggestionResult {
+    lossTriggerPct: number;
+    cashCap: number;
+    recoveryEnabled: boolean;
+    notes?: string;
+}
+
+const buildFallbackRecoverySuggestion = (input: RecoveryAiSuggestionInput): RecoveryAiSuggestionResult => {
+    const lossSeverity = Math.min(1, Math.max(0, Math.abs(input.plPct) / 40));
+    const riskMultiplier = input.riskTier === 'Low' ? 1.15 : input.riskTier === 'Med' ? 1 : input.riskTier === 'High' ? 0.85 : 0.65;
+    const cap = Math.max(1200, Math.min(input.deployableCash * 0.35, input.deployableCash * (0.08 + lossSeverity * 0.12) * riskMultiplier));
+    const trigger = Math.max(8, Math.min(28, (input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22) - lossSeverity * 4));
+    return {
+        lossTriggerPct: Number(trigger.toFixed(1)),
+        cashCap: Number(cap.toFixed(2)),
+        recoveryEnabled: input.sleeveType !== 'Spec',
+        notes: 'Fallback dynamic recovery parameters (rule-based).',
+    };
+};
+
+export async function suggestRecoveryParameters(input: RecoveryAiSuggestionInput): Promise<RecoveryAiSuggestionResult> {
+    const fallback = buildFallbackRecoverySuggestion(input);
+    try {
+        const prompt = `
+You are a senior portfolio risk manager. Return ONLY strict JSON.
+
+Input:
+${JSON.stringify(input)}
+
+Task:
+Propose dynamic recovery-plan parameters for this losing position.
+Rules:
+- Keep risk-aware and conservative.
+- cashCap must not exceed deployableCash * 0.40.
+- lossTriggerPct should be between 8 and 30.
+- Set recoveryEnabled=false for speculative/highly unstable cases.
+- Prefer lower cashCap for higher risk tiers.
+
+Return JSON with keys:
+- lossTriggerPct (number)
+- cashCap (number)
+- recoveryEnabled (boolean)
+- notes (string, short)
+`;
+
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        const raw = robustJsonParse(response.text);
+        if (!raw || typeof raw !== 'object') return fallback;
+
+        const maxCap = Math.max(0, input.deployableCash * 0.4);
+        const lossTriggerPct = Math.max(8, Math.min(30, Number((raw as any).lossTriggerPct) || fallback.lossTriggerPct));
+        const cashCap = Math.max(0, Math.min(maxCap, Number((raw as any).cashCap) || fallback.cashCap));
+        const recoveryEnabled = Boolean((raw as any).recoveryEnabled);
+        const notes = String((raw as any).notes || 'AI suggested dynamic recovery parameters.').trim();
+
+        return {
+            lossTriggerPct: Number(lossTriggerPct.toFixed(1)),
+            cashCap: Number(cashCap.toFixed(2)),
+            recoveryEnabled,
+            notes,
+        };
+    } catch (_error) {
+        return fallback;
     }
 }

@@ -91,26 +91,39 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     
     const processedData = useMemo(() => (
         data
-            .filter(item => item.currentValue > 0)
-            .map(item => ({
-                name: item.symbol,
-                size: item.currentValue,
-                gainLossPercent: item.gainLossPercent,
-                color: getColor(item.gainLossPercent),
-            }))
+            .map(item => {
+                const marketValue = Number(item.currentValue ?? 0);
+                const fallbackCostValue = Number(item.avgCost ?? 0) * Number(item.quantity ?? 0);
+                const size = Number.isFinite(marketValue) && marketValue > 0
+                    ? marketValue
+                    : Number.isFinite(fallbackCostValue) && fallbackCostValue > 0
+                    ? fallbackCostValue
+                    : 0;
+
+                if (size <= 0) return null;
+
+                return {
+                    name: item.symbol || item.name || 'Unknown',
+                    size,
+                    gainLossPercent: Number.isFinite(item.gainLossPercent) ? item.gainLossPercent : 0,
+                    color: getColor(item.gainLossPercent),
+                };
+            })
+            .filter((item): item is { name: string; size: number; gainLossPercent: number; color: string } => Boolean(item))
     ), [data]);
 
     const enableAnimation = processedData.length <= 60 && !prefersReducedMotion;
 
     if (!processedData.length) {
         return (
-            <div className="flex items-center justify-center h-full w-full bg-gray-50 rounded-lg text-gray-500 text-sm">
-                No investment data available.
+            <div className="flex h-full min-h-[320px] w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600 px-6">
+                No priced holdings yet. Add live prices (or cost basis) to render the performance treemap.
             </div>
         );
     }
 
     return (
+        <div className="h-full min-h-[320px] w-full">
         <ResponsiveContainer width="100%" height="100%">
             <Treemap
                 isAnimationActive={enableAnimation}
@@ -124,6 +137,7 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
                 <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
             </Treemap>
         </ResponsiveContainer>
+        </div>
     );
 };
 
