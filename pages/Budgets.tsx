@@ -449,6 +449,20 @@ const Budgets: React.FC = () => {
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
 
+    const sharedBudgetOwnerByCardId = useMemo(() => {
+        return new Map(
+            sharedBudgets.map((b) => [
+                `shared-${b.user_id || 'owner'}-${b.id}`,
+                b.ownerEmail || b.user_id || 'Owner',
+            ]),
+        );
+    }, [sharedBudgets]);
+
+    const sharedBudgetCards = useMemo(
+        () => orderedBudgetData.filter((b) => b.id.startsWith('shared-')),
+        [orderedBudgetData],
+    );
+
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
@@ -1111,28 +1125,45 @@ const Budgets: React.FC = () => {
                     <p className="text-sm text-slate-600">Only Admin can share budgets. Any budgets shared with you are listed below.</p>
                 )}
 
-                {sharedBudgets.length > 0 && (
-                    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Shared by</th>
-                                    <th className="px-3 py-2 text-left">Category</th>
-                                    <th className="px-3 py-2 text-right">Limit</th>
-                                    <th className="px-3 py-2 text-left">Period</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {sharedBudgets.map((b) => (
-                                    <tr key={`shared-${b.user_id}-${b.id}`} className="border-t border-slate-100">
-                                        <td className="px-3 py-2">{b.ownerEmail || b.user_id || 'Owner'}</td>
-                                        <td className="px-3 py-2">{b.category}</td>
-                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.limit, { digits: 0 })}</td>
-                                        <td className="px-3 py-2 capitalize">{b.period ?? 'monthly'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                {sharedBudgetCards.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                        <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 border border-indigo-100 rounded-xl px-4 py-3">
+                            <div>
+                                <p className="text-sm font-semibold text-slate-800">Shared budgets in your view</p>
+                                <p className="text-xs text-slate-600">These budgets use the same spend-progress style as your own cards.</p>
+                            </div>
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-indigo-200 text-indigo-700">{sharedBudgetCards.length} shared</span>
+                        </div>
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                            {sharedBudgetCards.map((budget) => {
+                                const owner = sharedBudgetOwnerByCardId.get(budget.id) || 'Owner';
+                                const remaining = (budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent);
+                                return (
+                                    <div key={`shared-card-${budget.id}`} className="bg-gradient-to-br from-white via-indigo-50/30 to-violet-50/40 p-5 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300 border border-indigo-100">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">Shared by</p>
+                                                <p className="text-sm font-medium text-slate-800 break-all">{owner}</p>
+                                            </div>
+                                            <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">{budget.budgetTier ?? 'Optional'}</span>
+                                        </div>
+
+                                        <h4 className="mt-3 text-base font-semibold text-slate-900">{budget.category}</h4>
+
+                                        <div className="mt-4">
+                                            <div className="flex justify-between items-baseline mb-1">
+                                                <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
+                                                <span className="text-xs text-gray-600">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                                            </div>
+                                            <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
+                                            <p className={`text-right text-sm mt-1 ${remaining >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                                {remaining >= 0 ? `${formatCurrencyString(remaining, { digits: 0 })} remaining` : `${formatCurrencyString(Math.abs(remaining), { digits: 0 })} over budget`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
             </SectionCard>
