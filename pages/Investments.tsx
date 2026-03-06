@@ -1689,22 +1689,35 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
     const suggestedMonthlyBudget = useMemo(() => {
+        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+        };
+
         const buys = (data.investmentTransactions || []).filter(t => t.type === 'buy');
         if (buys.length === 0) return 0;
+
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         const recent = buys.filter(t => new Date(t.date) >= sixMonthsAgo);
         const byMonth = new Map<string, number>();
+
         recent.forEach(t => {
             const d = new Date(t.date);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const amt = t.total ?? (t.quantity * (t.price ?? 0));
-            byMonth.set(key, (byMonth.get(key) ?? 0) + amt);
+            const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            const rawAmount = t.total ?? (t.quantity * (t.price ?? 0));
+            const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
+            byMonth.set(key, (byMonth.get(key) ?? 0) + convertedAmount);
         });
-        const amounts = Array.from(byMonth.values());
+
+        const amounts = Array.from(byMonth.values()).filter(v => Number.isFinite(v) && v > 0);
         if (amounts.length === 0) return 0;
         return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
-    }, [data.investmentTransactions]);
+    }, [data.investmentTransactions, exchangeRate, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -1810,7 +1823,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const actionableCount = (data.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
+    const actionableCount = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
 
     const planHealth = useMemo(() => {
@@ -1871,9 +1884,18 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const applySmartPlan = () => {
+        const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
+        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (fromCurrency === toCurrency) return amount;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+        };
+
         const investedBase = (data.investments || []).reduce((sum, portfolio) => {
+            const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
             const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
-            return sum + portfolioTotal;
+            return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
         }, 0);
 
         const historyBudget = suggestedMonthlyBudget > 0 ? suggestedMonthlyBudget : 0;
@@ -1881,8 +1903,24 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const fallbackBudget = 2500;
         const monthly = historyBudget || plan.monthlyBudget || derivedFromPortfolio || fallbackBudget;
 
-        const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
-        const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
+        const actionableUniverse = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
+        const coreUniverse = actionableUniverse.filter(t => t.status === 'Core');
+        const upsideUniverse = actionableUniverse.filter(t => t.status === 'High-Upside');
+
+        const normalizeSleeve = (tickers: (UniverseTicker & { source?: string })[]) => {
+            if (tickers.length === 0) return [] as { ticker: string; weight: number }[];
+            const rawTotal = tickers.reduce((sum, t) => sum + ((t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1), 0);
+            return tickers.map(t => {
+                const rawWeight = (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1;
+                return {
+                    ticker: t.ticker,
+                    weight: Number((rawTotal > 0 ? rawWeight / rawTotal : 1 / tickers.length).toFixed(6)),
+                };
+            });
+        };
+
+        const normalizedCore = normalizeSleeve(coreUniverse);
+        const normalizedUpside = normalizeSleeve(upsideUniverse);
 
         let coreAlloc = plan.coreAllocation ?? 0.7;
         let upsideAlloc = plan.upsideAllocation ?? 0.3;
@@ -1890,12 +1928,17 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
         const totalWt = coreWt + upWt;
+
         if (totalWt > 0) {
             coreAlloc = coreWt / totalWt;
             upsideAlloc = upWt / totalWt;
-        } else if (unifiedUniverse.length > 0) {
-            coreAlloc = 0.8;
-            upsideAlloc = 0.2;
+        } else if (actionableUniverse.length > 0) {
+            coreAlloc = coreUniverse.length / actionableUniverse.length;
+            upsideAlloc = upsideUniverse.length / actionableUniverse.length;
+            if (coreAlloc === 0 || upsideAlloc === 0) {
+                coreAlloc = coreUniverse.length > 0 ? 0.8 : 0.2;
+                upsideAlloc = 1 - coreAlloc;
+            }
         }
 
         const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
@@ -1905,6 +1948,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             monthlyBudget: monthly,
             coreAllocation: coreAlloc,
             upsideAllocation: upsideAlloc,
+            corePortfolio: normalizedCore,
+            upsideSleeve: normalizedUpside,
             brokerConstraints: {
                 ...prev.brokerConstraints,
                 minimumOrderSize: nextMinOrder,
@@ -1912,10 +1957,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         }));
 
         const budgetSource = historyBudget > 0
-            ? 'recent buy history'
+            ? `recent buy history (${planCurrency})`
             : (plan.monthlyBudget > 0 ? 'your existing plan value' : (derivedFromPortfolio > 0 ? 'current holdings size' : 'smart default'));
-        setSaveMessage(`Smart-fill applied using ${budgetSource}. Review and save before execution.`);
-        setTimeout(() => setSaveMessage(null), 5000);
+        setSaveMessage(`Smart-fill synced budget, allocation, and ${actionableUniverse.length} actionable tickers using ${budgetSource}. Review and save before execution.`);
+        setTimeout(() => setSaveMessage(null), 6000);
     };
 
     const handleSave = () => {
