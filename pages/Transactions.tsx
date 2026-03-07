@@ -11,7 +11,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AIAdvisor from '../components/AIAdvisor';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
-import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
+import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
@@ -27,7 +27,6 @@ const TransactionModal: React.FC<{
     allCategories: string[],
     accounts: Account[]
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
-    const { formatCurrencyString } = useFormatCurrency();
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -39,6 +38,30 @@ const TransactionModal: React.FC<{
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
     const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+    const [aiSuggestionNote, setAiSuggestionNote] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
+
+    const suggestCategoryLocally = (rawDescription: string): string | null => {
+        const normalized = rawDescription.toLowerCase();
+        const keywordMap: Array<{ keywords: string[]; category: string }> = [
+            { keywords: ['grocery', 'groceries', 'supermarket', 'food', 'restaurant', 'cafe', 'coffee'], category: 'Food' },
+            { keywords: ['uber', 'taxi', 'fuel', 'gas', 'petrol', 'bus', 'metro', 'transport'], category: 'Transportation' },
+            { keywords: ['rent', 'mortgage', 'lease', 'home'], category: 'Housing' },
+            { keywords: ['electric', 'water', 'internet', 'phone', 'utility'], category: 'Utilities' },
+            { keywords: ['doctor', 'clinic', 'hospital', 'pharmacy', 'medicine', 'health'], category: 'Health' },
+            { keywords: ['tuition', 'school', 'course', 'education', 'book'], category: 'Education' },
+            { keywords: ['movie', 'cinema', 'game', 'subscription', 'entertainment'], category: 'Entertainment' },
+            { keywords: ['shopping', 'clothes', 'fashion', 'mall'], category: 'Shopping' },
+            { keywords: ['investment', 'saving', 'savings'], category: 'Savings & Investments' },
+        ];
+
+        for (const row of keywordMap) {
+            if (row.keywords.some((k) => normalized.includes(k))) {
+                return row.category;
+            }
+        }
+
+        return null;
+    };
 
 
     React.useEffect(() => {
@@ -65,6 +88,7 @@ const TransactionModal: React.FC<{
             setTransactionNature('Variable');
             setExpenseType('Core');
         }
+        setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
     const buildTransactionData = (): Omit<Transaction, 'id'> => ({
@@ -101,18 +125,39 @@ const TransactionModal: React.FC<{
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
+        setAiSuggestionNote(null);
         try {
             const suggested = await getAICategorySuggestion(description, allCategories);
             if (suggested && allCategories.includes(suggested)) {
                 setCategory(suggested);
                 const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
                 if(matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
             } else if (suggested) {
                 setCategory(suggested);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
+            } else {
+                const fallback = suggestCategoryLocally(description);
+                if (fallback) {
+                    setCategory(fallback);
+                    const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                    if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${fallback}` });
+                } else {
+                    setAiSuggestionNote({ tone: 'info', text: 'No suggestion available. You can continue with your selected category.' });
+                }
             }
         } catch (e) {
             console.error("Category suggestion failed", e);
-            alert(`AI suggestion failed:\n\n${formatAiError(e)}`);
+            const fallback = suggestCategoryLocally(description);
+            if (fallback) {
+                setCategory(fallback);
+                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${fallback}` });
+            } else {
+                setAiSuggestionNote({ tone: 'warning', text: 'AI timeout/unavailable. Please continue manually.' });
+            }
         } finally {
             setIsSuggestingCategory(false);
         }
@@ -141,7 +186,7 @@ const TransactionModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
                     <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
                         <option value="" disabled>Select an Account</option>
-                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
+                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                     </select>
                 </div>
                 <div className="flex space-x-4">
@@ -160,6 +205,11 @@ const TransactionModal: React.FC<{
                                         {isSuggestingCategory ? <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <SparklesIcon className="h-5 w-5 text-primary hover:text-secondary" />}
                                     </button>
                                 </div>
+                                {aiSuggestionNote && (
+                                    <p className={`mt-1 text-xs ${aiSuggestionNote.tone === 'success' ? 'text-emerald-700' : aiSuggestionNote.tone === 'warning' ? 'text-amber-700' : 'text-slate-600'}`}>
+                                        {aiSuggestionNote.text}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
@@ -348,6 +398,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
+    const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
     const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
@@ -392,8 +443,17 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
                 const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
                 setPermittedBudgetCategories(allowed);
+
+                const { data: sharedRows } = await supabase
+                    .rpc('get_shared_budgets_for_me')
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                const sharedCats = Array.from(new Set(((sharedRows || []) as any[])
+                    .map((row) => String(row?.category || '').trim())
+                    .filter(Boolean)));
+                setSharedBudgetCategories(sharedCats);
             } else {
                 setPermittedBudgetCategories([]);
+                setSharedBudgetCategories([]);
             }
         };
 
@@ -445,6 +505,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [userRole, (data?.transactions ?? []).length]);
 
     const filteredTransactions = useMemo(() => {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -455,10 +516,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isPermitted = userRole === 'Admin' || !t.budgetCategory || permittedBudgetCategories.includes(t.budgetCategory);
+            const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
-    }, [data?.transactions, filters, userRole, permittedBudgetCategories]);
+    }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
@@ -481,10 +542,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     
     const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
     const budgetCategories = useMemo(() => {
-        const categories = (data?.budgets ?? []).map(b => b.category);
-        if (userRole === 'Admin') return categories;
-        return categories.filter(c => permittedBudgetCategories.includes(c));
-    }, [data?.budgets, userRole, permittedBudgetCategories]);
+        const ownCategories = (data?.budgets ?? []).map(b => b.category);
+        if (userRole === 'Admin') return ownCategories;
+        const allowedSet = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        return Array.from(new Set([...ownCategories.filter(c => allowedSet.has(c)), ...sharedBudgetCategories]));
+    }, [data?.budgets, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -492,7 +554,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
-        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }
@@ -506,7 +569,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
     
     const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
-        if (userRole === 'Restricted' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }

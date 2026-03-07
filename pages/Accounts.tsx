@@ -19,6 +19,8 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
+import { useCurrency } from '../context/CurrencyContext';
+import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -131,6 +133,7 @@ const AccountCardComponent: React.FC<{
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
 
@@ -149,14 +152,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const investmentsWithUpdatedBalance = investments.map(acc => {
             const portfolioValue = data.investments
                 .filter(p => p.accountId === acc.id)
-                .reduce((pSum, p) => pSum + (p.holdings || []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+                .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
             return { ...acc, balance: portfolioValue };
         });
 
         const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + acc.balance, 0);
 
         return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
-    }, [data.accounts, data.investments]);
+    }, [data.accounts, data.investments, exchangeRate]);
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);

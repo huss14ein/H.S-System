@@ -24,6 +24,8 @@ import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -262,6 +264,7 @@ const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund',
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -312,7 +315,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             
             // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
             const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalInvestmentsValue = (data.investments || []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments || [], exchangeRate);
             const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
             const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
@@ -403,7 +406,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, data?.commodityHoldings]);
+    }, [data, data?.commodityHoldings, exchangeRate]);
     
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';

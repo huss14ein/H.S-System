@@ -12,7 +12,6 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
-import DraggableResizableGrid from '../components/DraggableResizableGrid';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -758,16 +757,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       engineIntelligence,
     ]
   );
-
-  if (loading) {
-    return (
-      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4">
-        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" />
-        <p className="text-slate-500 font-medium">Loading Wealth Ultra engine…</p>
-      </div>
-    );
-  }
-
   return (
     <PageLayout
       title="Wealth Ultra Portfolio Engine"
@@ -804,16 +793,35 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         </div>
       }
     >
-      <DraggableResizableGrid
-        layoutKey="wealth-ultra-v3-fixed"
-        items={gridItems}
-        cols={12}
-        rowHeight={72}
-        itemOverflowY="auto"
-        handlesOnHoverOnly={false}
-        isDraggable={false}
-        isResizable={false}
-      />
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {gridItems.map((item) => {
+          const spanClass =
+            item.id === 'hero' ||
+            item.id === 'kpis' ||
+            item.id === 'engine-iq' ||
+            item.id === 'positions' ||
+            item.id === 'capital-efficiency' ||
+            item.id === 'risk-distribution'
+              ? 'xl:col-span-12'
+              : item.id === 'sleeve-allocation'
+              ? 'xl:col-span-7'
+              : item.id === 'orders'
+              ? 'xl:col-span-5 xl:col-start-8'
+              : item.id === 'next-move'
+              ? 'xl:col-span-4'
+              : item.id === 'spec-risk'
+              ? 'xl:col-span-3'
+              : item.id === 'alerts'
+              ? 'xl:col-span-5 xl:col-start-8'
+              : 'xl:col-span-6';
+
+          return (
+            <div key={item.id} className={`min-w-0 ${spanClass}`}>
+              {item.content}
+            </div>
+          );
+        })}
+      </div>
     </PageLayout>
   );
 };

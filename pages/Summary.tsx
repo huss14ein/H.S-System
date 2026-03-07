@@ -15,6 +15,8 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -50,6 +52,7 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 
 const Summary: React.FC = () => {
     const { data, loading } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -77,7 +80,7 @@ const Summary: React.FC = () => {
         const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
         const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
         const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
-        const totalInvestmentsValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
                            cashAndSavingsPositive +
                            totalCommodities +
@@ -88,7 +91,7 @@ const Summary: React.FC = () => {
         const netWorthPrevMonth = netWorth - monthlyPnL;
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
-        const allHoldings = investments.flatMap(p => p.holdings || []);
+        const allHoldings = investments.flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })));
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
              const gainLoss = h.currentValue - totalCost;
@@ -96,8 +99,10 @@ const Summary: React.FC = () => {
              return { ...h, gainLoss, gainLossPercent };
         });
 
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
-        const individualStocksValue = investmentTreemapData.filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type))).reduce((sum, h) => sum + h.currentValue, 0);
+        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+        const individualStocksValue = investmentTreemapData
+            .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
+            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
         const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
         let investmentStyle = 'Balanced';
         if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
@@ -107,7 +112,7 @@ const Summary: React.FC = () => {
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
             investmentTreemapData
         };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const emergencyFund = useEmergencyFund(data);
     const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';

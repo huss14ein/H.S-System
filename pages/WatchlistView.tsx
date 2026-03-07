@@ -19,6 +19,8 @@ import InfoHint from '../components/InfoHint';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { toSAR } from '../utils/currencyMath';
 
 const ALERT_CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'USD', label: 'USD' },
@@ -305,6 +307,7 @@ interface WatchlistViewProps {
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -405,9 +408,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
 
     const recentTransactions = (data.investmentTransactions ?? []).slice(0, 10);
     const analysisContext = useMemo(() => {
-        const holdings = (data.investments ?? []).flatMap(p => p.holdings ?? []);
+        const holdings = (data.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency })));
         const bySymbol = new Map<string, number>();
-        holdings.forEach(h => bySymbol.set(h.symbol, (bySymbol.get(h.symbol) ?? 0) + h.currentValue));
+        holdings.forEach(h => bySymbol.set(h.symbol, (bySymbol.get(h.symbol) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate)));
         const summary = Array.from(bySymbol.entries()).map(([s, v]) => `${s}: ${v.toFixed(0)}`).join('; ') || 'None';
         const watchlistSymbols = (data.watchlist ?? []).map(w => w.symbol);
         const plan = data.investmentPlan;
@@ -418,7 +421,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             corePct: plan?.coreAllocation,
             upsidePct: plan?.upsideAllocation,
         };
-    }, [data.investments, data.watchlist, data.investmentPlan]);
+    }, [data.investments, data.watchlist, data.investmentPlan, exchangeRate]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);

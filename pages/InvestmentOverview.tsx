@@ -10,13 +10,18 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { toSAR } from '../utils/currencyMath';
 
 const InvestmentOverview: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
+    const { exchangeRate } = useCurrency();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
-        const allHoldings: Holding[] = data.investments.flatMap((p) => p.holdings || []);
+        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = data.investments.flatMap((p) =>
+            (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency })),
+        );
 
         const allHoldingsWithGains = allHoldings
             .map((h) => {
@@ -25,9 +30,11 @@ const InvestmentOverview: React.FC = () => {
                 const marketValue = Number(h.currentValue || 0);
                 const costValue = avgCost * qty;
                 const effectiveValue = marketValue > 0 ? marketValue : (costValue > 0 ? costValue : 0);
-                const gainLoss = effectiveValue - costValue;
-                const gainLossPercent = costValue > 0 ? (gainLoss / costValue) * 100 : 0;
-                return { ...h, currentValue: effectiveValue, gainLoss, gainLossPercent };
+                const effectiveValueSar = toSAR(effectiveValue, h.portfolioCurrency, exchangeRate);
+                const costValueSar = toSAR(costValue, h.portfolioCurrency, exchangeRate);
+                const gainLossSar = effectiveValueSar - costValueSar;
+                const gainLossPercentSar = costValueSar > 0 ? (gainLossSar / costValueSar) * 100 : 0;
+                return { ...h, currentValue: effectiveValueSar, gainLoss: gainLossSar, gainLossPercent: gainLossPercentSar };
             })
             .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
 
@@ -50,13 +57,13 @@ const InvestmentOverview: React.FC = () => {
                     const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
                     return sum + effectiveValue;
                 }, 0);
-                return { name: p.name, value: portfolioValue };
+                return { name: p.name, value: toSAR(portfolioValue, p.currency, exchangeRate) };
             })
             .filter((x) => Number.isFinite(x.value) && x.value > 0)
             .sort((a, b) => b.value - a.value);
 
         return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);

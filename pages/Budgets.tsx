@@ -22,24 +22,18 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 const resolveRecipientUserByEmail = async (email: string) => {
     if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
 
-    const directLookup = await supabase
-        .from('users')
-        .select('id, email')
-        .eq('email', email)
-        .maybeSingle();
-
-    if (directLookup.data?.id) {
-        return { data: directLookup.data as { id: string; email: string | null }, error: null };
-    }
-
     const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
     const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
     if (rpcRow?.id) {
         return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
     }
 
-    const baseMessage = directLookup.error?.message || rpcLookup.error?.message || 'Recipient user not found.';
-    return { data: null, error: { message: baseMessage } };
+    const baseMessage = rpcLookup.error?.message || 'Recipient user not found.';
+    const normalizedMessage = /column\s+users\.email\s+does not exist/i.test(baseMessage)
+        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing_ready.sql to install the latest find_user_by_email function.'
+        : baseMessage;
+
+    return { data: null, error: { message: normalizedMessage } };
 };
 interface BudgetModalProps {
     isOpen: boolean;
@@ -175,6 +169,8 @@ const Budgets: React.FC = () => {
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
+    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
+    const [shareUsersLoadError, setShareUsersLoadError] = useState<string | null>(null);
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
@@ -239,33 +235,27 @@ const Budgets: React.FC = () => {
                 setBudgetRequests(requests || []);
             }
 
-            // Optional shared budgets feature (requires budget_shares table + RLS).
-            // If table is missing, fail silently to keep the page usable.
-            const { data: shares } = await supabase
-                .from('budget_shares')
-                .select('owner_user_id, shared_with_user_id, category, owner_email')
-                .eq('shared_with_user_id', auth.user.id)
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            // Shared budgets are fetched through an RPC so recipients only see explicitly shared budget rows.
+            const { data: sharedRows, error: sharedRowsError } = await supabase
+                .rpc('get_shared_budgets_for_me')
+                .then((r) => r, () => ({ data: [] as any[], error: null } as any));
 
-            const shareRows = (shares || []) as any[];
-            if (shareRows.length === 0) {
+            if (sharedRowsError) {
+                const message = (sharedRowsError.message || '').trim();
+                const normalized = /get_shared_budgets_for_me|function\s+public\.get_shared_budgets_for_me/i.test(message)
+                    ? 'Shared budgets are unavailable until the latest migration is applied. Run docs/budget_sharing_ready.sql.'
+                    : message || 'Could not load shared budgets right now.';
+                console.warn(normalized);
                 setSharedBudgets([]);
             } else {
-                const ownerIds = Array.from(new Set(shareRows.map((r) => r.owner_user_id).filter(Boolean)));
-                const { data: ownerBudgets } = await supabase
-                    .from('budgets')
-                    .select('*')
-                    .in('user_id', ownerIds)
-                    .then((r) => r, () => ({ data: [] as any[] } as any));
-                const shareKey = new Set(shareRows.map((r) => `${r.owner_user_id}:${(r.category || 'ALL').toLowerCase()}`));
-                const filtered = ((ownerBudgets || []) as any[])
-                    .filter((b) => shareKey.has(`${b.user_id}:all`) || shareKey.has(`${b.user_id}:${String(b.category || '').toLowerCase()}`))
-                    .map((b) => ({
-                        ...b,
-                        period: b.period ?? 'monthly',
-                        tier: b.tier ?? b.budget_tier ?? 'Optional',
-                        ownerEmail: shareRows.find((r) => r.owner_user_id === b.user_id)?.owner_email,
-                    }));
+                const filtered = ((sharedRows || []) as any[]).map((b) => ({
+                    ...b,
+                    period: b.period ?? 'monthly',
+                    month: Number(b.month) || currentMonth,
+                    year: Number(b.year) || currentYear,
+                    tier: b.tier ?? b.budget_tier ?? 'Optional',
+                    ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
+                }));
                 setSharedBudgets(filtered);
             }
 
@@ -288,6 +278,34 @@ const Budgets: React.FC = () => {
 
         loadGovernance();
     }, [auth?.user?.id, dataResetKey]);
+
+
+    React.useEffect(() => {
+        const loadShareableUsers = async () => {
+        if (!supabase || !auth?.user?.id || !isAdmin) {
+            setShareableUsers([]);
+            setShareUsersLoadError(null);
+            return;
+            }
+
+            const { data: users, error } = await supabase.rpc('list_shareable_users');
+            if (error) {
+                const message = (error.message || '').trim();
+                const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
+                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users (Admin-only).'
+                    : message || 'Unable to load users list.';
+                setShareUsersLoadError(normalized);
+                setShareableUsers([]);
+                return;
+            }
+
+            const rows = (Array.isArray(users) ? users : []).filter((row: any) => row?.id && row?.email);
+            setShareableUsers(rows.map((row: any) => ({ id: String(row.id), email: String(row.email).toLowerCase() })));
+            setShareUsersLoadError(null);
+        };
+
+        loadShareableUsers();
+    }, [auth?.user?.id, isAdmin]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -356,6 +374,7 @@ const Budgets: React.FC = () => {
 
         // Reflect collaborator spending into owner budget totals for shared categories.
         ownerSharedTransactions.forEach((tx) => {
+            if ((tx.status ?? 'Approved') !== 'Approved') return;
             const d = new Date(tx.transaction_date || tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String(tx.budget_category || '').trim();
@@ -364,10 +383,24 @@ const Budgets: React.FC = () => {
             spending.set(cat, (spending.get(cat) || 0) + amount);
         });
 
-        const scopedBudgets = (data?.budgets ?? [])
+        const ownScopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
+
+        const sharedScopedBudgets = (sharedBudgets ?? [])
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear)
+            .filter((b) => {
+                const month = Number((b as any).month) || currentMonth;
+                const year = Number((b as any).year) || currentYear;
+                return budgetView === 'Yearly' || month === currentMonth || (b.period === 'yearly' && year === currentYear);
+            })
+            .map((b) => ({
+                ...b,
+                id: `shared-${b.user_id || 'owner'}-${b.id}`,
+            }));
+
+        const scopedBudgets = isAdmin ? ownScopedBudgets : [...ownScopedBudgets, ...sharedScopedBudgets];
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -407,7 +440,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, sharedBudgets]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -422,6 +455,20 @@ const Budgets: React.FC = () => {
         const map = new Map(budgetData.map((b) => [b.id, b]));
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
+
+    const sharedBudgetOwnerByCardId = useMemo(() => {
+        return new Map(
+            sharedBudgets.map((b) => [
+                `shared-${b.user_id || 'owner'}-${b.id}`,
+                b.ownerEmail || b.user_id || 'Owner',
+            ]),
+        );
+    }, [sharedBudgets]);
+
+    const sharedBudgetCards = useMemo(
+        () => orderedBudgetData.filter((b) => b.id.startsWith('shared-')),
+        [orderedBudgetData],
+    );
 
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -454,6 +501,10 @@ const Budgets: React.FC = () => {
 
     const handleShareBudget = async () => {
         if (!supabase || !auth?.user) return;
+        if (!isAdmin) {
+            alert('Only Admin can share budgets.');
+            return;
+        }
         const email = shareTargetEmail.trim().toLowerCase();
         if (!email) {
             alert('Enter recipient email first.');
@@ -461,13 +512,19 @@ const Budgets: React.FC = () => {
         }
         const { data: targetUser, error: userError } = await resolveRecipientUserByEmail(email);
         if (userError || !targetUser?.id) {
-            const detail = userError?.message || '';
-            alert(`Recipient user not found. ${detail.includes('find_user_by_email') ? 'Run docs/budget_sharing.sql to install helper function.' : detail}`.trim());
+            const detail = (userError?.message || '').trim();
+            const helperHint = detail.includes('find_user_by_email')
+                ? ' Run docs/budget_sharing_ready.sql to install helper function.'
+                : '';
+            const alreadyPrefixed = /^Recipient user not found\.?/i.test(detail);
+            const message = alreadyPrefixed
+                ? `${detail}${helperHint}`.trim()
+                : `Recipient user not found.${detail ? ` ${detail}` : ''}${helperHint}`.trim();
+            alert(message);
             return;
         }
         const payload = {
             owner_user_id: auth.user.id,
-            owner_email: auth.user.email,
             shared_with_user_id: targetUser.id,
             category: shareCategory === 'ALL' ? null : shareCategory,
         };
@@ -1041,48 +1098,79 @@ const Budgets: React.FC = () => {
             )}
 
             <SectionCard title="Budget sharing">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
-                        <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
-                        <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
-                            <option value="ALL">All budget categories</option>
-                            {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-3 items-center">
-                    <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
-                    <p className="text-xs text-slate-500">Only budgets are shared. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
-                </div>
+                {isAdmin ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
+                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
+                                    <option value="">Select a signed-up user…</option>
+                                    {shareableUsers.map((u) => (
+                                        <option key={u.id} value={u.email}>{u.email}</option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
+                                <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
+                                {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
+                                <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
+                                    <option value="ALL">All budget categories</option>
+                                    {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-3 items-center">
+                            <button type="button" onClick={handleShareBudget} className="btn-primary">Share budget</button>
+                            <p className="text-xs text-slate-500">Only selected budget categories are shared with the specific users you choose. Accounts, assets, transactions, investments, and all other personal details remain private per-user.</p>
+                        </div>
+                    </>
+                ) : (
+                    <p className="text-sm text-slate-600">Only Admin can share budgets. Any budgets shared with you are listed below.</p>
+                )}
 
-                {sharedBudgets.length > 0 && (
-                    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Shared by</th>
-                                    <th className="px-3 py-2 text-left">Category</th>
-                                    <th className="px-3 py-2 text-right">Limit</th>
-                                    <th className="px-3 py-2 text-left">Period</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {sharedBudgets.map((b) => (
-                                    <tr key={`shared-${b.user_id}-${b.id}`} className="border-t border-slate-100">
-                                        <td className="px-3 py-2">{b.ownerEmail || b.user_id || 'Owner'}</td>
-                                        <td className="px-3 py-2">{b.category}</td>
-                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.limit, { digits: 0 })}</td>
-                                        <td className="px-3 py-2 capitalize">{b.period ?? 'monthly'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                {sharedBudgetCards.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                        <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 border border-indigo-100 rounded-xl px-4 py-3">
+                            <div>
+                                <p className="text-sm font-semibold text-slate-800">Shared budgets in your view</p>
+                                <p className="text-xs text-slate-600">These budgets use the same spend-progress style as your own cards.</p>
+                            </div>
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-indigo-200 text-indigo-700">{sharedBudgetCards.length} shared</span>
+                        </div>
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                            {sharedBudgetCards.map((budget) => {
+                                const owner = sharedBudgetOwnerByCardId.get(budget.id) || 'Owner';
+                                const remaining = (budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent);
+                                return (
+                                    <div key={`shared-card-${budget.id}`} className="bg-gradient-to-br from-white via-indigo-50/30 to-violet-50/40 p-5 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300 border border-indigo-100">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">Shared by</p>
+                                                <p className="text-sm font-medium text-slate-800 break-all">{owner}</p>
+                                            </div>
+                                            <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">{budget.budgetTier ?? 'Optional'}</span>
+                                        </div>
+
+                                        <h4 className="mt-3 text-base font-semibold text-slate-900">{budget.category}</h4>
+
+                                        <div className="mt-4">
+                                            <div className="flex justify-between items-baseline mb-1">
+                                                <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
+                                                <span className="text-xs text-gray-600">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                                            </div>
+                                            <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
+                                            <p className={`text-right text-sm mt-1 ${remaining >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                                {remaining >= 0 ? `${formatCurrencyString(remaining, { digits: 0 })} remaining` : `${formatCurrencyString(Math.abs(remaining), { digits: 0 })} over budget`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
             </SectionCard>
@@ -1090,7 +1178,7 @@ const Budgets: React.FC = () => {
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
                 <SectionCard title="Shared-budget transaction visibility">
                     <p className="text-xs text-slate-500 mb-3">
-                        Owner view: you can see contributors' transactions for budgets you shared. Contributor view: you only see transactions you posted yourself.
+                        Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
                     </p>
                     <div className="overflow-x-auto rounded-lg border border-slate-200">
                         <table className="min-w-full text-sm">
@@ -1100,6 +1188,7 @@ const Budgets: React.FC = () => {
                                     <th className="px-3 py-2 text-left">Category</th>
                                     <th className="px-3 py-2 text-left">Contributor</th>
                                     <th className="px-3 py-2 text-left">Description</th>
+                                    <th className="px-3 py-2 text-left">Status</th>
                                     <th className="px-3 py-2 text-right">Amount</th>
                                 </tr>
                             </thead>
@@ -1110,6 +1199,11 @@ const Budgets: React.FC = () => {
                                         <td className="px-3 py-2">{tx.budget_category}</td>
                                         <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
                                         <td className="px-3 py-2">{tx.description || '—'}</td>
+                                        <td className="px-3 py-2">
+                                            <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                {tx.status ?? 'Approved'}
+                                            </span>
+                                        </td>
                                         <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
                                     </tr>
                                 ))}

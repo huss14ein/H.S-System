@@ -6,6 +6,8 @@ import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 
 type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
 
@@ -15,14 +17,14 @@ interface AIAdvisorProps {
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
-const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any): Promise<string> => {
+const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any, exchangeRate: number): Promise<string> => {
     switch (context) {
         case 'dashboard': {
             const assets = data.assets ?? [];
             const accounts = data.accounts ?? [];
             const liabilities = data.liabilities ?? [];
             const totalCommodities = (data.commodityHoldings ?? []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalInvestmentsValue = (data.investments ?? []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments ?? [], exchangeRate);
             const cashSavings = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashPositive = cashSavings.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
             const cashNegative = cashSavings.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
@@ -70,20 +72,21 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { isAiAvailable } = useAI();
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setInsight('');
         try {
-            const result = await getAnalysisForPage(pageContext, data, contextData);
+            const result = await getAnalysisForPage(pageContext, data, contextData, exchangeRate);
             setInsight(result);
         } catch (error) {
             console.error("AI analysis failed:", error);
             setInsight(formatAiError(error));
         }
         setIsLoading(false);
-    }, [pageContext, data, contextData]);
+    }, [pageContext, data, contextData, exchangeRate]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">

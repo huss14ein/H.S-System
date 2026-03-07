@@ -12,6 +12,8 @@ import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import { useCurrency } from '../context/CurrencyContext';
+import { toSAR } from '../utils/currencyMath';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -51,6 +53,7 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 
 const Zakat: React.FC = () => {
     const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     
     const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
@@ -90,11 +93,14 @@ const Zakat: React.FC = () => {
         const investments = data?.investments ?? [];
         const commodityHoldings = data?.commodityHoldings ?? [];
         const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
-        const invValue = investments.flatMap(p => p.holdings || []).filter(h => h.zakahClass === 'Zakatable').reduce((sum, h) => sum + h.currentValue, 0);
+        const invValue = investments
+            .flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })))
+            .filter(h => h.zakahClass === 'Zakatable')
+            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
         const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + c.currentValue, 0);
         const total = cash + invValue + commodities;
         return { cash, investments: invValue, commodities, total };
-    }, [data?.accounts, data?.investments, data?.commodityHoldings]);
+    }, [data?.accounts, data?.investments, data?.commodityHoldings, exchangeRate]);
 
     const deductibleLiabilities = useMemo(() => {
         const accounts = data?.accounts ?? [];

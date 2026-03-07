@@ -128,11 +128,11 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
         <div className="flex-shrink-0 flex items-center gap-0.5">
           {icon}
           {tooltip && (
-            <div className="relative group">
+            <div className="relative group inline-flex items-center">
               <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-gray-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none right-0 z-20 leading-relaxed shadow-lg">
+              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-gray-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none left-1/2 -translate-x-1/2 z-20 leading-relaxed shadow-lg">
                 {tooltip}
-                <svg className="absolute text-gray-800 h-2 w-3 right-2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
+                <svg className="absolute text-gray-800 h-2 w-3 left-1/2 -translate-x-1/2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
               </div>
             </div>
           )}

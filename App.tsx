@@ -10,7 +10,6 @@ import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
-import { SystemActivityGuard } from './components/SystemActivityGuard';
 import AppErrorBoundary from './components/AppErrorBoundary';
 
 // --- Lazy Load Pages for Code Splitting ---
@@ -133,7 +132,6 @@ const App: React.FC = () => {
         <CurrencyProvider>
           <MarketDataProvider>
             <NotificationsProvider>
-              <SystemActivityGuard />
               <MarketSimulator />
               <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
               <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>

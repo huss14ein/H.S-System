@@ -50,23 +50,23 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const isEmpty = !sanitizedData.length || totalValue <= 0;
 
   return (
-    <div className="w-full h-full min-h-[200px] relative">
+    <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
-            data={data}
+            data={sanitizedData}
             cx="50%"
             cy="50%"
             labelLine={false}
-            label={renderCustomizedLabel}
-            outerRadius="85%"
+            label={sanitizedData.length > 1 ? renderCustomizedLabel : undefined}
+            outerRadius="80%"
             innerRadius="60%"
             dataKey="value"
             paddingAngle={3}
             isAnimationActive={true}
             animationDuration={800}
           >
-            {data.map((_entry, index) => (
+            {sanitizedData.map((_entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
           </Pie>

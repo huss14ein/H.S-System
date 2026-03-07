@@ -912,15 +912,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         date: string;
         type: 'income' | 'expense';
         amount: number;
-        status?: 'Pending' | 'Approved';
+        status?: 'Pending' | 'Approved' | 'Rejected';
         description: string;
         budgetCategory?: string;
     }) => {
         if (!supabase || !auth?.user) return;
         const currentUser = auth.user;
         const category = (tx.budgetCategory || '').trim();
-        const isApprovedExpense = tx.type === 'expense' && (tx.status ?? 'Approved') === 'Approved';
-        if (!category || !isApprovedExpense) {
+        const status = (tx.status ?? 'Approved') as 'Pending' | 'Approved' | 'Rejected';
+        const isExpense = tx.type === 'expense';
+        if (!category || !isExpense || status === 'Rejected') {
             await removeSharedBudgetTransactionMirror(tx.id);
             return;
         }
@@ -952,6 +953,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 amount: Math.abs(Number(tx.amount) || 0),
                 transaction_date: tx.date,
                 description: tx.description,
+                status,
             }));
 
         if (payload.length === 0) return;
