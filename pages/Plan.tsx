@@ -413,7 +413,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
                 return liquidCash !== 0 ? (
-                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                    <div className="mt-3 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
@@ -423,7 +423,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Executive summary */}
             {totals && (
-                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-3 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
@@ -457,7 +457,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Smart insights */}
             {(insights.worst || insights.monthsOverBudget > 0) && (
-                <div className="flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
+                <div className="mt-3 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
                     {insights.monthsOverBudget > 0 ? (
                         <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
                             <ExclamationTriangleIcon className="h-5 w-5 text-amber-500" />
@@ -479,7 +479,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Investment in this plan */}
             {investmentPlan && (investmentPlan.monthlyBudget ?? 0) > 0 && (
-                <div className="p-4 rounded-xl border-2 border-violet-200 bg-violet-50/50">
+                <div className="mt-3 p-4 rounded-xl border-2 border-violet-200 bg-violet-50/50">
                     <h3 className="text-sm font-semibold text-violet-800 mb-2 flex items-center gap-2">
                         <ArrowTrendingUpIcon className="h-5 w-5" /> Investment in this plan
                         <InfoHint text="Your monthly investment (from Investment Plan) is included as an outflow in the plan. Surplus below is after expenses and investment." />

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
@@ -52,6 +52,14 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
+
+    const bindContainerRef = useCallback((node: HTMLDivElement | null) => {
+        containerRef.current = node;
+        setContainerNode(node);
+    }, []);
 
     useEffect(() => {
         if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -61,6 +69,25 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         mediaQuery.addEventListener('change', syncPreference);
         return () => mediaQuery.removeEventListener('change', syncPreference);
     }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (!containerNode) {
+            setContainerWidth(0);
+            return;
+        }
+
+        const node = containerNode;
+        const syncSize = () => setContainerWidth(node.getBoundingClientRect().width);
+        syncSize();
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => syncSize()) : null;
+        observer?.observe(node);
+        window.addEventListener('resize', syncSize);
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener('resize', syncSize);
+        };
+    }, [containerNode]);
 
     const getColor = (percentage: number) => {
         if (isNaN(percentage) || !isFinite(percentage)) {
@@ -139,21 +166,29 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         );
     }
 
+    if (containerWidth < 120) {
+        return (
+            <div ref={bindContainerRef} className="flex h-full min-h-[320px] w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600 px-6">
+                Preparing holdings chart…
+            </div>
+        );
+    }
+
     return (
-        <div className="h-full min-h-[320px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-            <Treemap
-                isAnimationActive={enableAnimation}
-                animationDuration={enableAnimation ? 800 : 0}
-                data={processedData}
-                dataKey="size"
-                aspectRatio={4 / 3}
-                stroke="#fff"
-                content={<CustomizedContent />}
-            >
-                <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
-            </Treemap>
-        </ResponsiveContainer>
+        <div ref={bindContainerRef} className="h-full min-h-[320px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+                <Treemap
+                    isAnimationActive={enableAnimation}
+                    animationDuration={enableAnimation ? 800 : 0}
+                    data={processedData}
+                    dataKey="size"
+                    aspectRatio={4 / 3}
+                    stroke="#fff"
+                    content={<CustomizedContent />}
+                >
+                    <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                </Treemap>
+            </ResponsiveContainer>
         </div>
     );
 };

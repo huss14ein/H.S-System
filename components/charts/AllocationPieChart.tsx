@@ -70,14 +70,15 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
           </Pie>
-          <Tooltip content={<CustomTooltip totalValue={totalValue} />} />
-          <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
+          {sanitizedData.length > 1 && <Tooltip content={<CustomTooltip totalValue={totalValue} />} />}
+          {sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
         </PieChart>
       </ResponsiveContainer>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-        <div className="rounded-2xl bg-white/95 border border-slate-200 shadow-sm px-4 py-3 text-center max-w-[88%]">
+        <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[82%]">
           <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
           <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+          {sanitizedData.length === 1 && <p className="text-xs text-slate-500 mt-0.5">{sanitizedData[0].name}</p>}
         </div>
       </div>
     </ChartContainer>
