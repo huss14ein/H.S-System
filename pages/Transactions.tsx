@@ -11,7 +11,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AIAdvisor from '../components/AIAdvisor';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
-import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
+import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
@@ -38,6 +38,30 @@ const TransactionModal: React.FC<{
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
     const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+    const [aiSuggestionNote, setAiSuggestionNote] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
+
+    const suggestCategoryLocally = (rawDescription: string): string | null => {
+        const normalized = rawDescription.toLowerCase();
+        const keywordMap: Array<{ keywords: string[]; category: string }> = [
+            { keywords: ['grocery', 'groceries', 'supermarket', 'food', 'restaurant', 'cafe', 'coffee'], category: 'Food' },
+            { keywords: ['uber', 'taxi', 'fuel', 'gas', 'petrol', 'bus', 'metro', 'transport'], category: 'Transportation' },
+            { keywords: ['rent', 'mortgage', 'lease', 'home'], category: 'Housing' },
+            { keywords: ['electric', 'water', 'internet', 'phone', 'utility'], category: 'Utilities' },
+            { keywords: ['doctor', 'clinic', 'hospital', 'pharmacy', 'medicine', 'health'], category: 'Health' },
+            { keywords: ['tuition', 'school', 'course', 'education', 'book'], category: 'Education' },
+            { keywords: ['movie', 'cinema', 'game', 'subscription', 'entertainment'], category: 'Entertainment' },
+            { keywords: ['shopping', 'clothes', 'fashion', 'mall'], category: 'Shopping' },
+            { keywords: ['investment', 'saving', 'savings'], category: 'Savings & Investments' },
+        ];
+
+        for (const row of keywordMap) {
+            if (row.keywords.some((k) => normalized.includes(k))) {
+                return row.category;
+            }
+        }
+
+        return null;
+    };
 
 
     React.useEffect(() => {
@@ -64,6 +88,7 @@ const TransactionModal: React.FC<{
             setTransactionNature('Variable');
             setExpenseType('Core');
         }
+        setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
     const buildTransactionData = (): Omit<Transaction, 'id'> => ({
@@ -100,18 +125,39 @@ const TransactionModal: React.FC<{
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
+        setAiSuggestionNote(null);
         try {
             const suggested = await getAICategorySuggestion(description, allCategories);
             if (suggested && allCategories.includes(suggested)) {
                 setCategory(suggested);
                 const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
                 if(matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
             } else if (suggested) {
                 setCategory(suggested);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
+            } else {
+                const fallback = suggestCategoryLocally(description);
+                if (fallback) {
+                    setCategory(fallback);
+                    const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                    if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${fallback}` });
+                } else {
+                    setAiSuggestionNote({ tone: 'info', text: 'No suggestion available. You can continue with your selected category.' });
+                }
             }
         } catch (e) {
             console.error("Category suggestion failed", e);
-            alert(`AI suggestion failed:\n\n${formatAiError(e)}`);
+            const fallback = suggestCategoryLocally(description);
+            if (fallback) {
+                setCategory(fallback);
+                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${fallback}` });
+            } else {
+                setAiSuggestionNote({ tone: 'warning', text: 'AI timeout/unavailable. Please continue manually.' });
+            }
         } finally {
             setIsSuggestingCategory(false);
         }
@@ -159,6 +205,11 @@ const TransactionModal: React.FC<{
                                         {isSuggestingCategory ? <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <SparklesIcon className="h-5 w-5 text-primary hover:text-secondary" />}
                                     </button>
                                 </div>
+                                {aiSuggestionNote && (
+                                    <p className={`mt-1 text-xs ${aiSuggestionNote.tone === 'success' ? 'text-emerald-700' : aiSuggestionNote.tone === 'warning' ? 'text-amber-700' : 'text-slate-600'}`}>
+                                        {aiSuggestionNote.text}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
