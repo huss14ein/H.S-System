@@ -444,20 +444,32 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         content: (
           <SectionCard title="Sleeve allocation & drift">
             <p className="text-xs text-slate-500 mb-4">Current vs target. Drift &gt;5% suggests rebalancing.</p>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {allocations.map(a => {
                 const driftAbs = Math.abs(a.driftPct);
                 const hasDrift = driftAbs > 5;
+                const driftText = `${a.driftPct >= 0 ? '+' : ''}${a.driftPct.toFixed(1)}% drift`;
                 return (
                   <div key={a.sleeve} className={`rounded-xl border p-4 ${SLEEVE_BG[a.sleeve]}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="flex items-center gap-2 font-semibold text-slate-800">
-                        <span className={`w-3 h-3 rounded-full ${SLEEVE_COLORS[a.sleeve]}`} />
-                        {a.sleeve}
-                      </span>
-                      <span className={`text-sm font-medium tabular-nums ${hasDrift ? 'text-amber-700' : 'text-slate-600'}`}>
-                        {a.allocationPct.toFixed(1)}% actual · target {a.targetPct.toFixed(1)}% {hasDrift && `(${a.driftPct >= 0 ? '+' : ''}${a.driftPct.toFixed(1)}% drift)`}
-                      </span>
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2.5">
+                      <div>
+                        <p className="flex items-center gap-2 font-semibold text-slate-800">
+                          <span className={`w-3 h-3 rounded-full ${SLEEVE_COLORS[a.sleeve]}`} />
+                          {a.sleeve}
+                        </p>
+                        <p className="text-xs text-slate-600 mt-1 tabular-nums">Value {formatCurrencyString(a.marketValue)}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <span className="text-xs font-semibold text-slate-700 bg-white/80 border border-slate-200 rounded-md px-2 py-1 tabular-nums">
+                          Actual {a.allocationPct.toFixed(1)}%
+                        </span>
+                        <span className="text-xs font-semibold text-slate-700 bg-white/80 border border-slate-200 rounded-md px-2 py-1 tabular-nums">
+                          Target {a.targetPct.toFixed(1)}%
+                        </span>
+                        <span className={`text-xs font-semibold rounded-md px-2 py-1 tabular-nums ${hasDrift ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                          {driftText}
+                        </span>
+                      </div>
                     </div>
                     <div className="h-2.5 bg-white/80 rounded-full overflow-hidden">
                       <div className="h-full flex rounded-full overflow-hidden">
@@ -468,7 +480,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                         <div className="h-full flex-1 bg-slate-100" />
                       </div>
                     </div>
-                    <p className="text-xs text-slate-600 mt-1.5">{formatCurrencyString(a.marketValue)}</p>
                   </div>
                 );
               })}
@@ -531,10 +542,20 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'next-move',
         content: (
-          <SectionCard title="Next move — Monthly Core">
-            <p className="text-sm text-slate-700">{monthlyDeployment.reason}</p>
-            <p className="mt-2 text-lg font-bold text-slate-900 tabular-nums">Amount: {formatCurrencyString(monthlyDeployment.amountToDeploy)}</p>
-            {monthlyDeployment.suggestedTicker && <p className="text-sm text-primary font-medium mt-1">Suggested ticker: {monthlyDeployment.suggestedTicker}</p>}
+          <SectionCard title="Next move — Monthly Core" className="h-full">
+            <div className="h-full flex flex-col justify-between gap-3">
+              <p className="text-sm leading-relaxed text-slate-700">{monthlyDeployment.reason}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Planned deployment</span>
+                <span className="text-xl font-bold text-slate-900 tabular-nums">{formatCurrencyString(monthlyDeployment.amountToDeploy)}</span>
+              </div>
+              {monthlyDeployment.suggestedTicker && (
+                <div className="inline-flex items-center gap-2 rounded-lg bg-primary/10 text-primary text-sm font-semibold px-3 py-1.5 w-fit">
+                  <span className="text-xs uppercase tracking-wide text-primary/80">Ticker</span>
+                  <span className="font-mono">{monthlyDeployment.suggestedTicker}</span>
+                </div>
+              )}
+            </div>
           </SectionCard>
         ),
         defaultW: 6,
@@ -545,10 +566,27 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'spec-risk',
         content: (
-          <SectionCard title="Spec sleeve">
-            {specBreach && <p className="text-amber-700 font-medium flex items-center gap-2"><ExclamationTriangleIcon className="h-5 w-5 shrink-0" /> Spec over target — new Spec buys disabled</p>}
-            {specBuysDisabled && !specBreach && <p className="text-slate-600 text-sm">Spec buys disabled by policy.</p>}
-            {!specBreach && !specBuysDisabled && <p className="text-emerald-600 text-sm font-medium flex items-center gap-2"><CheckCircleIcon className="h-5 w-5" /> Within target</p>}
+          <SectionCard title="Spec sleeve" className="h-full">
+            <div className="h-full flex items-center">
+              {specBreach && (
+                <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <p className="text-amber-800 font-semibold flex items-center gap-2"><ExclamationTriangleIcon className="h-5 w-5 shrink-0" /> Over target</p>
+                  <p className="text-sm text-amber-700 mt-1">New Spec buys are disabled until allocation returns within policy limits.</p>
+                </div>
+              )}
+              {specBuysDisabled && !specBreach && (
+                <div className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-slate-800 font-semibold">Policy lock active</p>
+                  <p className="text-sm text-slate-600 mt-1">Spec buys are currently disabled by portfolio policy.</p>
+                </div>
+              )}
+              {!specBreach && !specBuysDisabled && (
+                <div className="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                  <p className="text-emerald-700 text-sm font-semibold flex items-center gap-2"><CheckCircleIcon className="h-5 w-5" /> Within target</p>
+                  <p className="text-sm text-emerald-700/90 mt-1">Spec sleeve is aligned with current allocation policy.</p>
+                </div>
+              )}
+            </div>
           </SectionCard>
         ),
         defaultW: 6,
@@ -559,8 +597,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'alerts',
         content: (
-          <SectionCard title="Alerts & recommendations">
-            <p className="text-xs text-slate-500 mb-3">Prioritized: act on critical first, then warnings; use info for context.</p>
+          <SectionCard title="Alerts & recommendations" className="h-full">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <p className="text-xs text-slate-500">Prioritized: act on critical first, then warnings; use info for context.</p>
+              <span className="text-xs font-semibold px-2 py-1 rounded-md border border-slate-200 bg-slate-50 text-slate-600 whitespace-nowrap">
+                {alerts.length} {alerts.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
             {alerts.length > 0 ? (
               <ul className="space-y-3">
                 {alerts.map((a, i) => {

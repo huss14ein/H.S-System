@@ -299,51 +299,61 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
-    try {
-        const response = await fetch('/api/gemini-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-        });
+    const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+    let lastError: Error | null = null;
 
-        if (!response.ok) {
-            // If we get an error response, we can't assume the body is JSON.
-            const errorBody = await response.text();
-            let errorMessage;
-            try {
-                // Attempt to parse it as our expected JSON error format
-                const jsonError = JSON.parse(errorBody);
-                errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
-            } catch (e) {
-                // If it's not JSON, it's likely an HTML error page from the hosting provider.
-                if (/Inactivity Timeout/i.test(errorBody)) {
-                    errorMessage = 'AI request timed out at the proxy (Inactivity Timeout).';
-                } else {
-                    errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+    for (const endpoint of endpoints) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                let errorMessage: string;
+                try {
+                    const jsonError = JSON.parse(errorBody);
+                    errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
+                } catch (e) {
+                    if (/Inactivity Timeout/i.test(errorBody)) {
+                        errorMessage = 'AI request timed out at the proxy (Inactivity Timeout).';
+                    } else {
+                        errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response.`;
+                    }
                 }
-            }
-            throw new Error(errorMessage);
-        }
-        
-        // If response.ok, we assume it's valid JSON.
-        return await response.json();
 
-    } catch (error) {
-        console.error("Error invoking Netlify function:", error);
-        if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new Error('AI request timed out while waiting for proxy response.');
+                const endpointMissing = response.status === 404 || /not found/i.test(errorBody);
+                if (endpointMissing) {
+                    lastError = new Error(`${errorMessage} Tried endpoint: ${endpoint}`);
+                    continue;
+                }
+                throw new Error(errorMessage);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error(`Error invoking AI proxy endpoint ${endpoint}:`, error);
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                lastError = new Error('AI request timed out while waiting for proxy response.');
+                continue;
+            }
+            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+                lastError = new Error('Could not connect to the AI proxy function. Please ensure the Netlify function is deployed correctly.');
+                continue;
+            }
+            lastError = error instanceof Error ? error : new Error(String(error));
+            break;
+        } finally {
+            clearTimeout(timeoutId);
         }
-        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
-             const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
-             throw new Error(detailedMessage);
-        }
-        throw error;
-    } finally {
-        clearTimeout(timeoutId);
     }
+
+    throw (lastError || new Error('AI proxy invocation failed for all known endpoints.'));
 }
 
 // Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
@@ -1366,6 +1376,7 @@ export type SuggestedAnalystEligibility = {
     min_coverage_threshold: number;
     redirect_policy: 'pro-rata' | 'priority';
     target_provider: string;
+    source: 'ai' | 'fallback';
 };
 
 /** Suggest analyst & eligibility parameters from AI based on universe and context. Use to auto-fill the plan; no manual entry required. */
@@ -1386,6 +1397,7 @@ export async function getSuggestedAnalystEligibility(
             min_coverage_threshold: Math.min(5, Math.max(2, Math.round(currentPlan?.min_coverage_threshold ?? DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold))),
             redirect_policy: (currentPlan?.redirect_policy === 'priority' ? 'priority' : 'pro-rata'),
             target_provider: String(currentPlan?.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider,
+            source: 'fallback',
         };
     };
 
@@ -1417,13 +1429,13 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
             },
         });
         const raw = robustJsonParse(response.text);
-        if (!raw || typeof raw !== 'object') return DEFAULT_ANALYST_ELIGIBILITY;
+        if (!raw || typeof raw !== 'object') return { ...DEFAULT_ANALYST_ELIGIBILITY, source: 'fallback' };
         const minUpside = Math.min(50, Math.max(10, Number(raw.minimumUpsidePercentage) || DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage));
         const staleDays = Math.min(365, Math.max(7, Math.round(Number(raw.stale_days) || DEFAULT_ANALYST_ELIGIBILITY.stale_days)));
         const minCov = Math.min(10, Math.max(1, Math.round(Number(raw.min_coverage_threshold) || DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold)));
         const redirect = (raw.redirect_policy === 'priority' ? 'priority' : 'pro-rata') as 'pro-rata' | 'priority';
         const provider = String(raw.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider;
-        return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider };
+        return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider, source: 'ai' };
     } catch (_) {
         return fallbackFromUniverse();
     }

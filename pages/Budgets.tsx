@@ -388,19 +388,7 @@ const Budgets: React.FC = () => {
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
 
-        const sharedScopedBudgets = (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear)
-            .filter((b) => {
-                const month = Number((b as any).month) || currentMonth;
-                const year = Number((b as any).year) || currentYear;
-                return budgetView === 'Yearly' || month === currentMonth || (b.period === 'yearly' && year === currentYear);
-            })
-            .map((b) => ({
-                ...b,
-                id: `shared-${b.user_id || 'owner'}-${b.id}`,
-            }));
-
-        const scopedBudgets = isAdmin ? ownScopedBudgets : [...ownScopedBudgets, ...sharedScopedBudgets];
+        const scopedBudgets = ownScopedBudgets;
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -440,7 +428,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, sharedBudgets]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -456,19 +444,86 @@ const Budgets: React.FC = () => {
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
 
+    const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
+        const spendingByCategory = new Map<string, number>();
+        const now = new Date();
+        const rangeStart = new Date(now);
+        const rangeEnd = new Date(now);
+
+        if (budgetView === 'Monthly') {
+            rangeStart.setFullYear(currentYear, currentMonth - 1, 1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setFullYear(currentYear, currentMonth, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (budgetView === 'Weekly') {
+            const day = now.getDay();
+            const diffToMonday = (day + 6) % 7;
+            rangeStart.setDate(now.getDate() - diffToMonday);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setDate(rangeStart.getDate() + 6);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (budgetView === 'Daily') {
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else {
+            rangeStart.setFullYear(currentYear, 0, 1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setFullYear(currentYear, 11, 31);
+            rangeEnd.setHours(23, 59, 59, 999);
+        }
+
+        mySharedBudgetTransactions
+            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
+            .forEach((tx) => {
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!(d >= rangeStart && d <= rangeEnd)) return;
+                const category = String(tx.budget_category || '').trim();
+                if (!category) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                spendingByCategory.set(category, (spendingByCategory.get(category) || 0) + amount);
+            });
+
+        return (sharedBudgets ?? [])
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear)
+            .filter((b) => {
+                const month = Number((b as any).month) || currentMonth;
+                const year = Number((b as any).year) || currentYear;
+                return budgetView === 'Yearly' || month === currentMonth || (b.period === 'yearly' && year === currentYear);
+            })
+            .map((b) => {
+                const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+                const spent = spendingByCategory.get(b.category) || 0;
+                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+                let colorClass = 'bg-primary';
+                if (percentage > 100) colorClass = 'bg-danger';
+                else if (percentage > 90) colorClass = 'bg-warning';
+                return {
+                    ...b,
+                    id: `shared-${b.user_id || 'owner'}-${b.id}`,
+                    spent,
+                    percentage,
+                    colorClass,
+                    displayLimit: b.limit,
+                    monthlyLimit: monthlyEquivalent,
+                    previousPeriodSpent: 0,
+                    trendDelta: 0,
+                    trendDirection: 'flat' as const,
+                    budgetTier: (b.tier ?? 'Optional') as BudgetTier,
+                    utilizationLabel,
+                };
+            })
+            .sort((a, b) => b.spent - a.spent);
+    }, [sharedBudgets, mySharedBudgetTransactions, budgetView, currentYear, currentMonth]);
+
     const sharedBudgetOwnerByCardId = useMemo(() => {
         return new Map(
-            sharedBudgets.map((b) => [
-                `shared-${b.user_id || 'owner'}-${b.id}`,
-                b.ownerEmail || b.user_id || 'Owner',
+            sharedBudgetCards.map((b) => [
+                b.id,
+                (b as Budget & { ownerEmail?: string }).ownerEmail || b.user_id || 'Owner',
             ]),
         );
-    }, [sharedBudgets]);
-
-    const sharedBudgetCards = useMemo(
-        () => orderedBudgetData.filter((b) => b.id.startsWith('shared-')),
-        [orderedBudgetData],
-    );
+    }, [sharedBudgetCards]);
 
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 

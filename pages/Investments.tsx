@@ -1831,17 +1831,30 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         return clampedPercent / 100;
     };
 
+    const normalizeAllocationPair = (coreRaw: number, upsideRaw: number) => {
+        const coreSafe = Number.isFinite(coreRaw) ? Math.max(0, Math.min(1, coreRaw)) : 0;
+        const upsideSafe = Number.isFinite(upsideRaw) ? Math.max(0, Math.min(1, upsideRaw)) : 0;
+        const total = coreSafe + upsideSafe;
+        if (total <= 0) return { core: 0.7, upside: 0.3 };
+        const normalizedCore = Number((coreSafe / total).toFixed(4));
+        const normalizedUpside = Number((1 - normalizedCore).toFixed(4));
+        return { core: normalizedCore, upside: normalizedUpside };
+    };
+
+
     const handleCoreAllocationPercentChange = (rawPercent: string) => {
         setPlan(prev => {
             const core = toClampedFraction(rawPercent, prev.coreAllocation ?? 0.7);
-            return { ...prev, coreAllocation: core, upsideAllocation: Math.max(0, 1 - core) };
+            const normalized = normalizeAllocationPair(core, Math.max(0, 1 - core));
+            return { ...prev, coreAllocation: normalized.core, upsideAllocation: normalized.upside };
         });
     };
 
     const handleUpsideAllocationPercentChange = (rawPercent: string) => {
         setPlan(prev => {
             const upside = toClampedFraction(rawPercent, prev.upsideAllocation ?? 0.3);
-            return { ...prev, upsideAllocation: upside, coreAllocation: Math.max(0, 1 - upside) };
+            const normalized = normalizeAllocationPair(Math.max(0, 1 - upside), upside);
+            return { ...prev, upsideAllocation: normalized.upside, coreAllocation: normalized.core };
         });
     };
 
@@ -1858,6 +1871,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 target_provider: suggested.target_provider,
             }));
             analystAutoFilledRef.current = true;
+            setSaveMessage(
+                suggested.source === 'ai'
+                    ? 'AI analyst settings applied successfully.'
+                    : 'AI was unavailable; resilient fallback analyst settings were applied.'
+            );
+            setTimeout(() => setSaveMessage(null), 5000);
         } catch (e) {
             alert(`Could not auto-fill analyst settings. ${formatAiError(e)}`);
         } finally {
@@ -2036,13 +2055,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             }
         }
 
+        const normalizedAlloc = normalizeAllocationPair(coreAlloc, upsideAlloc);
+
         const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
 
         setPlan(prev => ({
             ...prev,
             monthlyBudget: monthly,
-            coreAllocation: coreAlloc,
-            upsideAllocation: upsideAlloc,
+            coreAllocation: normalizedAlloc.core,
+            upsideAllocation: normalizedAlloc.upside,
             corePortfolio: normalizedCore,
             upsideSleeve: normalizedUpside,
             brokerConstraints: {
@@ -2499,11 +2520,11 @@ Save anyway?`)) return;
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Core Allocation (%) <InfoHint text="Share of monthly budget for stable Core assets (e.g. index funds); the rest goes to High-Upside." /></label>
-                                <input type="number" value={plan.coreAllocation * 100} onChange={e => handleCoreAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                                <input type="number" step="0.01" value={Number(((plan.coreAllocation ?? 0) * 100).toFixed(2))} onChange={e => handleCoreAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
-                                <input type="number" value={plan.upsideAllocation * 100} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
+                                <input type="number" step="0.01" value={Number(((plan.upsideAllocation ?? 0) * 100).toFixed(2))} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                         </div>
 
@@ -2769,7 +2790,7 @@ Save anyway?`)) return;
                                                             type="button"
                                                             onClick={() => onOpenRecordTrade({
                                                                 ticker: o.symbol,
-                                                                amount: o.suggestedPlanAmount,
+                                                                amount: o.amountInTradeCurrency,
                                                                 reason: `Smart add-on: ${o.reason}`,
                                                                 price: o.pullbackPrice,
                                                                 quantity: o.suggestedQuantity,
@@ -2836,7 +2857,7 @@ Save anyway?`)) return;
 
                         {executionResult && (
                             <div className="mt-6 space-y-5">
-                                <p className="text-xs text-slate-500">All amounts in <strong>{planCurrency}</strong>. Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
+                                <p className="text-xs text-slate-500">Plan totals are in <strong>{planCurrency}</strong>. Trade rows also show each ticker’s native currency (e.g., USD for US shares). Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
 
                                 <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                                     <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
@@ -2900,7 +2921,7 @@ Save anyway?`)) return;
                                                     <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
                                                         <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
                                                         <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
-                                                        <th className="px-3 py-2 font-semibold text-right whitespace-nowrap">Amount ({planCurrency})</th>
+                                                        <th className="px-3 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
                                                         {onOpenRecordTrade && <th className="px-3 py-2 w-28" />}
                                                     </tr>
                                                 </thead>
@@ -2911,10 +2932,15 @@ Save anyway?`)) return;
                                                             <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
                                                                 <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
                                                                 <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })}</td>
+                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">
+                                                                    <div>{formatCurrencyString(suggestion.amountInTradeCurrency, { inCurrency: suggestion.tradeCurrency, digits: 0 })}</div>
+                                                                    {suggestion.tradeCurrency !== planCurrency && (
+                                                                        <div className="text-[11px] font-normal text-slate-500">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })} in plan currency</div>
+                                                                    )}
+                                                                </td>
                                                                 {onOpenRecordTrade && (
                                                                     <td className="px-3 py-2 text-right">
-                                                                        <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: trade.amount, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                        <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: suggestion.amountInTradeCurrency, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
                                                                     </td>
                                                                 )}
                                                             </tr>

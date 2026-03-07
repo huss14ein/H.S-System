@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
@@ -52,6 +52,8 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
 
     useEffect(() => {
         if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -60,6 +62,21 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         syncPreference();
         mediaQuery.addEventListener('change', syncPreference);
         return () => mediaQuery.removeEventListener('change', syncPreference);
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const node = containerRef.current;
+        if (!node) return;
+        const syncSize = () => setContainerWidth(node.getBoundingClientRect().width);
+        syncSize();
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => syncSize()) : null;
+        observer?.observe(node);
+        window.addEventListener('resize', syncSize);
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener('resize', syncSize);
+        };
     }, []);
 
     const getColor = (percentage: number) => {
@@ -139,21 +156,29 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         );
     }
 
+    if (containerWidth < 120) {
+        return (
+            <div ref={containerRef} className="flex h-full min-h-[320px] w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600 px-6">
+                Preparing holdings chart…
+            </div>
+        );
+    }
+
     return (
-        <div className="h-full min-h-[320px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-            <Treemap
-                isAnimationActive={enableAnimation}
-                animationDuration={enableAnimation ? 800 : 0}
-                data={processedData}
-                dataKey="size"
-                aspectRatio={4 / 3}
-                stroke="#fff"
-                content={<CustomizedContent />}
-            >
-                <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
-            </Treemap>
-        </ResponsiveContainer>
+        <div ref={containerRef} className="h-full min-h-[320px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+                <Treemap
+                    isAnimationActive={enableAnimation}
+                    animationDuration={enableAnimation ? 800 : 0}
+                    data={processedData}
+                    dataKey="size"
+                    aspectRatio={4 / 3}
+                    stroke="#fff"
+                    content={<CustomizedContent />}
+                >
+                    <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                </Treemap>
+            </ResponsiveContainer>
         </div>
     );
 };

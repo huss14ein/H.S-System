@@ -272,6 +272,7 @@ const InvestmentOverview: React.FC = () => {
                         </div>
                     )}
                 </div>
+                <p className="mt-3 text-xs text-slate-500">If chart tiles are still loading after switching tabs, wait a moment—the layout now auto-recalculates on resize/show.</p>
             </div>
         </div>
     );

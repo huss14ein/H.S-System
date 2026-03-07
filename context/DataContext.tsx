@@ -449,6 +449,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return [withCurrency, baseRow];
     };
 
+    const transactionPayloadVariants = (transaction: Omit<Transaction, 'id' | 'user_id'> | Transaction) => {
+        const recId = (transaction as { recurringId?: string }).recurringId;
+        const budgetCat = (transaction as { budgetCategory?: string }).budgetCategory;
+        const payloadWithSnakeCase: Record<string, unknown> = { ...transaction };
+
+        if (recId !== undefined) {
+            payloadWithSnakeCase.recurring_id = recId;
+            delete payloadWithSnakeCase.recurringId;
+        }
+        if (budgetCat !== undefined) {
+            payloadWithSnakeCase.budget_category = budgetCat;
+            delete payloadWithSnakeCase.budgetCategory;
+        }
+        if (transaction.accountId !== undefined) {
+            payloadWithSnakeCase.account_id = transaction.accountId;
+            delete payloadWithSnakeCase.accountId;
+        }
+
+        const payloadWithCamelCase: Record<string, unknown> = { ...transaction };
+        if (recId !== undefined) {
+            payloadWithCamelCase.recurring_id = recId;
+            delete payloadWithCamelCase.recurringId;
+        }
+        if (budgetCat !== undefined) {
+            payloadWithCamelCase.budgetCategory = budgetCat;
+        }
+        if (transaction.accountId !== undefined) {
+            payloadWithCamelCase.accountId = transaction.accountId;
+        }
+
+        return [payloadWithSnakeCase, payloadWithCamelCase];
+    };
+
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
             setLoading(false);
@@ -966,23 +999,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const row: Record<string, unknown> = { ...transaction };
-        const recId = (transaction as { recurringId?: string }).recurringId;
-        if (recId != null) {
-            row.recurring_id = recId;
-            delete row.recurringId;
+        let newTx: any = null;
+        let error: any = null;
+        for (const payload of transactionPayloadVariants(transaction)) {
+            const result = await db.from('transactions').insert(withUser(payload)).select().single();
+            newTx = result.data;
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
         }
-        const budgetCat = (transaction as { budgetCategory?: string }).budgetCategory;
-        if (budgetCat !== undefined) {
-            row.budget_category = budgetCat;
-            delete row.budgetCategory;
-        }
-        const accId = transaction.accountId;
-        if (accId !== undefined) {
-            row.account_id = accId;
-            delete row.accountId;
-        }
-        const { data: newTx, error } = await db.from('transactions').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding transaction:", error);
             alert(`Failed to add transaction: ${error.message}`);
@@ -997,21 +1022,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const updateRow: Record<string, unknown> = { ...transaction };
-        const recId = (transaction as { recurringId?: string }).recurringId;
-        if (recId !== undefined) {
-            updateRow.recurring_id = recId;
-            delete updateRow.recurringId;
+        let error: any = null;
+        for (const payload of transactionPayloadVariants(transaction)) {
+            const result = await db.from('transactions').update(payload).match({ id: transaction.id, user_id: auth.user.id });
+            error = result.error;
+            if (!error) break;
+            if (!isMissingColumnError(error)) break;
         }
-        if (transaction.budgetCategory !== undefined) {
-            updateRow.budget_category = transaction.budgetCategory;
-            delete updateRow.budgetCategory;
-        }
-        if (transaction.accountId !== undefined) {
-            updateRow.account_id = transaction.accountId;
-            delete updateRow.accountId;
-        }
-        const { error } = await db.from('transactions').update(updateRow).match({ id: transaction.id, user_id: auth.user.id });
         if(error) console.error("Error updating transaction:", error);
         else {
             const normalized = normalizeTransaction(transaction as any);
