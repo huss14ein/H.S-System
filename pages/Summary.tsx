@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { getAIFinancialPersona, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
@@ -17,6 +18,9 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
+import { useAI } from '../context/AiContext';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -52,11 +56,26 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 
 const Summary: React.FC = () => {
     const { data, loading } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const { isAiAvailable } = useAI();
+
+    useEffect(() => {
+        const loadRole = async () => {
+            if (!auth?.user || !supabase) {
+                setIsAdmin(false);
+                return;
+            }
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
+        };
+        loadRole();
+    }, [auth?.user?.id]);
 
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
         const now = new Date();
@@ -144,6 +163,11 @@ const Summary: React.FC = () => {
         setIsLoading(false);
     }, [financialMetricsWithEf]);
 
+    useEffect(() => {
+        if (!isAiAvailable || analysis || isLoading || error) return;
+        handleGenerateAnalysis();
+    }, [isAiAvailable, analysis, isLoading, error, handleGenerateAnalysis]);
+
     if (loading) {
         return (
             <div className="flex justify-center items-center h-96">
@@ -153,17 +177,24 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <PageLayout title="Financial Summary" description="Net worth, key metrics, and AI-generated financial persona with report card and suggestions.">
+        <PageLayout title="Financial Summary" description="Key metrics and AI-generated financial persona with report card and suggestions.">
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
-                    <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
-                    <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
-                    <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
-                        {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
-                    </p>
-                </div>
+                {isAdmin ? (
+                    <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
+                        <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
+                        <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
+                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
+                            {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
+                        </p>
+                    </div>
+                ) : (
+                    <div className="lg:col-span-1 section-card border-l-4 border-amber-400">
+                        <h2 className="text-lg font-medium text-gray-700">Net Worth</h2>
+                        <p className="text-sm text-slate-600 mt-2">Net worth visibility is restricted to Admin only.</p>
+                    </div>
+                )}
 
-                <div className="lg:col-span-2 cards-grid grid grid-cols-2">
+                <div className="lg:col-span-2 cards-grid grid grid-cols-1 sm:grid-cols-2">
                     <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
                     <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
                     <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
@@ -178,9 +209,15 @@ const Summary: React.FC = () => {
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
-                <div className="section-card flex flex-col h-[450px]">
-                    <NetWorthCompositionChart title="Historical Net Worth" />
-                </div>
+                {isAdmin ? (
+                    <div className="section-card flex flex-col h-[450px]">
+                        <NetWorthCompositionChart title="Historical Net Worth" />
+                    </div>
+                ) : (
+                    <div className="section-card flex flex-col h-[450px] justify-center">
+                        <p className="text-sm text-slate-600 text-center px-6">Historical net worth chart is available for Admin only.</p>
+                    </div>
+                )}
                 <div className="section-card flex flex-col h-[450px]">
                     <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
                     <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
@@ -196,10 +233,10 @@ const Summary: React.FC = () => {
 
             <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
+                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                         <SparklesIcon className="h-5 w-5 mr-2" />
-                        {isLoading ? 'Analyzing...' : (analysis ? 'Regenerate Analysis' : 'Generate My Analysis')}
+                        {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
                     </button>
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
@@ -210,7 +247,7 @@ const Summary: React.FC = () => {
                          <button type="button" onClick={handleGenerateAnalysis} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your expert financial persona and report card.</div>}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Preparing your direct financial advisor summary...</div>}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">

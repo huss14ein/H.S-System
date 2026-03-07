@@ -11,6 +11,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
@@ -205,7 +206,7 @@ const Budgets: React.FC = () => {
         const loadGovernance = async () => {
             if (!supabase || !auth?.user) return;
             const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            const admin = userRecord?.role === 'Admin';
+            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
             setIsAdmin(admin);
 
             const { data: categories } = await supabase
@@ -446,6 +447,7 @@ const Budgets: React.FC = () => {
 
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
         const spendingByCategory = new Map<string, number>();
+        const spendingByOwnerCategory = new Map<string, number>();
         const now = new Date();
         const rangeStart = new Date(now);
         const rangeEnd = new Date(now);
@@ -480,19 +482,72 @@ const Budgets: React.FC = () => {
                 const category = String(tx.budget_category || '').trim();
                 if (!category) return;
                 const amount = Math.abs(Number(tx.amount) || 0);
+                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
                 spendingByCategory.set(category, (spendingByCategory.get(category) || 0) + amount);
+                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
             });
 
-        return (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear)
+        const rowsForYear = (sharedBudgets ?? [])
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+
+        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+
+        if (budgetView === 'Yearly') {
+            const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
+            rowsForYear.forEach((b) => {
+                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const key = `${ownerKey}::${b.category}`;
+                const existing = yearlyByOwnerCategory.get(key);
+                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
+                yearlyByOwnerCategory.set(key, {
+                    ...(existing || b),
+                    category: b.category,
+                    ownerEmail: (b as any).ownerEmail || existing?.ownerEmail,
+                    ownerKey,
+                    yearlyLimit,
+                });
+            });
+
+            return Array.from(yearlyByOwnerCategory.values())
+                .map((entry) => {
+                    const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
+                    const spent = spendingByOwnerCategory.get(ownerCategoryKey) || spendingByCategory.get(entry.category) || 0;
+                    const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
+                    const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+                    let colorClass = 'bg-primary';
+                    if (percentage > 100) colorClass = 'bg-danger';
+                    else if (percentage > 90) colorClass = 'bg-warning';
+                    return {
+                        ...entry,
+                        id: `shared-${entry.ownerKey}-${entry.category}-${currentYear}`,
+                        month: currentMonth,
+                        year: currentYear,
+                        limit: entry.yearlyLimit,
+                        displayLimit: entry.yearlyLimit,
+                        monthlyLimit: entry.yearlyLimit / 12,
+                        spent,
+                        percentage,
+                        colorClass,
+                        previousPeriodSpent: 0,
+                        trendDelta: 0,
+                        trendDirection: 'flat' as const,
+                        budgetTier: (entry.tier ?? 'Optional') as BudgetTier,
+                        utilizationLabel,
+                    };
+                })
+                .sort((a, b) => b.spent - a.spent);
+        }
+
+        return rowsForYear
             .filter((b) => {
                 const month = Number((b as any).month) || currentMonth;
                 const year = Number((b as any).year) || currentYear;
-                return budgetView === 'Yearly' || month === currentMonth || (b.period === 'yearly' && year === currentYear);
+                return month === currentMonth || (b.period === 'yearly' && year === currentYear);
             })
             .map((b) => {
                 const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-                const spent = spendingByCategory.get(b.category) || 0;
+                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const spent = spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByCategory.get(b.category) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
@@ -500,7 +555,7 @@ const Budgets: React.FC = () => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return {
                     ...b,
-                    id: `shared-${b.user_id || 'owner'}-${b.id}`,
+                    id: `shared-${ownerKey}-${b.id}`,
                     spent,
                     percentage,
                     colorClass,
@@ -867,8 +922,8 @@ const Budgets: React.FC = () => {
             title={`Budgets (${budgetView})`}
             description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
             action={
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                    <div className="flex items-center gap-2">
+                <div className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 sm:gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm text-slate-500">View:</span>
                         <select value={budgetView} onChange={(e) => setBudgetView(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="select-base w-auto min-w-[120px]">
                             <option value="Monthly">Monthly</option>
@@ -877,9 +932,9 @@ const Budgets: React.FC = () => {
                             <option value="Yearly">Yearly</option>
                         </select>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         <button type="button" onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Previous month"><ChevronLeftIcon className="h-5 w-5"/></button>
-                        <span className="font-semibold text-lg w-36 text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                        <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
@@ -921,7 +976,6 @@ const Budgets: React.FC = () => {
             </SectionCard>
 
             <SectionCard title="Budget Intelligence">
-                <h2 className="text-lg font-semibold mb-3">Budget Intelligence</h2>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>

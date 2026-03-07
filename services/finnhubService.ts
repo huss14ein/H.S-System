@@ -96,6 +96,8 @@ function toFinnhubSymbol(symbol: string): string {
   if (!upper) return upper;
   if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
   if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+  const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+  if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
   return upper;
 }
 

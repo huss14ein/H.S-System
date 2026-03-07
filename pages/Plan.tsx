@@ -1,6 +1,8 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -17,6 +19,13 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import {
+    buildHouseholdBudgetPlan,
+    DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    HOUSEHOLD_BUCKET_LABELS,
+    HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
+    HouseholdMonthlyOverride,
+} from '../services/householdBudgetEngine';
 
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -95,8 +104,14 @@ const SCENARIO_PRESETS = [
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [year, setYear] = useState(new Date().getFullYear());
+    const [householdAdults, setHouseholdAdults] = useState(2);
+    const [householdKids, setHouseholdKids] = useState(0);
+    const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
+    const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
+    const [selectedScenario, setSelectedScenario] = useState('custom');
     
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
@@ -114,6 +129,125 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const investmentPlan = data?.investmentPlan;
     const investmentTransactions = data?.investmentTransactions ?? [];
     const recurringTransactions = data?.recurringTransactions ?? [];
+
+    const householdProfileStorageKey = useMemo(() => `household-profile-plan:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
+    const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(householdProfileStorageKey);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
+                if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
+                if (parsed?.config) {
+                    setEngineConfig({
+                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+                        ...parsed.config,
+                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(parsed.config.transport || {}) },
+                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(parsed.config.allowances || {}) },
+                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(parsed.config.obligations || {}) },
+                        requiredExpenses: {
+                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
+                            ...(parsed.config.maintenance ? {
+                                annualReserveEnabled: Boolean(parsed.config.maintenance.houseAnnualEnabled),
+                                annualReserveAmount: Number(parsed.config.maintenance.houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean(parsed.config.maintenance.carAnnualEnabled),
+                                semiAnnualReserveAmount: Number(parsed.config.maintenance.carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean(parsed.config.maintenance.otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number(parsed.config.maintenance.otherMonthlyAmount || 0),
+                            } : {}),
+                            ...(parsed.config.requiredExpenses || {}),
+                        },
+                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(parsed.config.bucketRules || {}) },
+                    });
+                }
+            }
+        } catch {}
+    }, [householdProfileStorageKey]);
+
+    useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        let isMounted = true;
+        (async () => {
+            try {
+                const { data, error } = await db
+                    .from('household_budget_profiles')
+                    .select('profile')
+.eq('user_id', userId)
+                    .maybeSingle();
+                if (error || !data || !isMounted) return;
+                const profile = (data as { profile?: any })?.profile;
+                if (!profile || typeof profile !== 'object') return;
+                if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
+                if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
+                if (profile?.config) {
+                    setEngineConfig({
+                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+                        ...profile.config,
+                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(profile.config.transport || {}) },
+                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(profile.config.allowances || {}) },
+                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(profile.config.obligations || {}) },
+                        requiredExpenses: {
+                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
+                            ...(profile.config.maintenance ? {
+                                annualReserveEnabled: Boolean(profile.config.maintenance.houseAnnualEnabled),
+                                annualReserveAmount: Number(profile.config.maintenance.houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean(profile.config.maintenance.carAnnualEnabled),
+                                semiAnnualReserveAmount: Number(profile.config.maintenance.carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean(profile.config.maintenance.otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number(profile.config.maintenance.otherMonthlyAmount || 0),
+                            } : {}),
+                            ...(profile.config.requiredExpenses || {}),
+                        },
+                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(profile.config.bucketRules || {}) },
+                    });
+                }
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
+    }, [householdProfileCloudEnabled, auth?.user?.id]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(householdProfileStorageKey, JSON.stringify({
+                adults: householdAdults,
+                kids: householdKids,
+                overrides: householdOverrides,
+                config: engineConfig,
+            }));
+        } catch {}
+    }, [householdAdults, householdKids, householdOverrides, engineConfig, householdProfileStorageKey]);
+
+    useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        const payload = {
+            adults: householdAdults,
+            kids: householdKids,
+            overrides: householdOverrides,
+            config: engineConfig,
+        };
+        const t = window.setTimeout(async () => {
+            try {
+                await db
+                    .from('household_budget_profiles')
+                    .upsert({ user_id: userId, profile: payload }, { onConflict: 'user_id' });
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        }, 700);
+        return () => window.clearTimeout(t);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineConfig]);
 
     // Build plan from transactions, budgets, recurring, and investment data — fully integrated
     React.useEffect(() => {
@@ -324,7 +458,54 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             };
         });
     }, [goals, totals, processedPlanData]);
-    
+
+    const householdBudgetEngine = useMemo(() => {
+        const monthlyIncomePlanned = MONTHS.map((_, i) => {
+            const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
+            return Number(incomeRow?.monthly_planned?.[i] || 0);
+        });
+        const monthlyIncomeActual = MONTHS.map((_, i) => {
+            const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
+            return Number(incomeRow?.monthly_actual?.[i] || 0);
+        });
+        const monthlyExpenseActual = MONTHS.map((_, i) => processedPlanData
+            .filter((r: PlanRow) => r.type === 'expense')
+            .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
+
+        const liquidCash = accounts
+            .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, Number(a.balance) || 0), 0);
+
+        const goalsForRouting = (goals as { name: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number }[])
+            .map((g) => ({
+                name: g.name,
+                remaining: Math.max(0, Number(g.targetAmount ?? g.target_amount ?? 0) - Number(g.currentAmount ?? g.current_amount ?? 0)),
+            }))
+            .filter((g) => g.remaining > 0);
+
+        return buildHouseholdBudgetPlan({
+            monthlySalaryPlan: monthlyIncomePlanned,
+            monthlyActualIncome: monthlyIncomeActual,
+            monthlyActualExpense: monthlyExpenseActual,
+            householdDefaults: { adults: householdAdults, kids: householdKids },
+            monthlyOverrides: householdOverrides,
+            liquidBalance: liquidCash,
+            emergencyBalance: liquidCash,
+            reserveBalance: liquidCash * 0.4,
+            goals: goalsForRouting,
+            config: engineConfig,
+        });
+    }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineConfig]);
+
+    const householdProjectionData = useMemo(() => {
+        return householdBudgetEngine.months.map((m) => ({
+            name: MONTHS[m.month - 1],
+            Income: m.incomePlanned,
+            Outflow: m.totalPlannedOutflow,
+            Net: m.incomePlanned - m.totalPlannedOutflow,
+        }));
+    }, [householdBudgetEngine]);
+
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
@@ -379,6 +560,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             }
         >
+            <div className="space-y-4 sm:space-y-5">
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -672,7 +854,167 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                  </div>
             </div>
 
-             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress } }} />
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                        <h3 className="text-lg font-semibold text-dark">Auto Household Budget Engine</h3>
+                        <p className="text-sm text-slate-500">Config-first monthly planning with read-only calculated output, yearly projection, and goal auto-routing.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <label className="text-sm text-slate-600">Adults
+                            <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="ml-2 w-16 p-1.5 border rounded" />
+                        </label>
+                        <label className="text-sm text-slate-600">Kids
+                            <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="ml-2 w-16 p-1.5 border rounded" />
+                        </label>
+                    </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Sample scenarios (demo data)</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                        {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
+                            <button
+                                key={scenario.id}
+                                type="button"
+                                className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
+                                onClick={() => {
+                                    setSelectedScenario(scenario.id);
+                                    setHouseholdAdults(scenario.defaults.adults);
+                                    setHouseholdKids(scenario.defaults.kids);
+                                    setHouseholdOverrides(scenario.overrides);
+                                    if (scenario.config) {
+                                        const configPatch = scenario.config;
+                                        setEngineConfig((prev) => ({
+                                            ...prev,
+                                            ...configPatch,
+                                            transport: { ...prev.transport, ...(configPatch.transport || {}) },
+                                            allowances: { ...prev.allowances, ...(configPatch.allowances || {}) },
+                                            obligations: { ...prev.obligations, ...(configPatch.obligations || {}) },
+                                            requiredExpenses: { ...prev.requiredExpenses, ...(configPatch.requiredExpenses || {}) },
+                                            bucketRules: { ...prev.bucketRules, ...(configPatch.bucketRules || {}) },
+                                        }));
+                                    }
+                                }}
+                            >
+                                {scenario.label}
+                            </button>
+                        ))}
+                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => { setSelectedScenario('custom'); setHouseholdOverrides([]); }}>Custom</button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-800">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet)}</p></div>
+                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-800">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet)}</p></div>
+                    <div className="rounded-lg border bg-emerald-50 p-3"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid)}</p></div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Editable configuration</p>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <label className="text-sm text-slate-600">Single-driver transport
+                            <input type="number" value={engineConfig.transport.singleDriverBaseCost} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, singleDriverBaseCost: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Ride support
+                            <input type="number" value={engineConfig.transport.rideSupportCost} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, rideSupportCost: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Annual obligations
+                            <input type="number" value={engineConfig.obligations.annual} onChange={(e) => setEngineConfig((prev) => ({ ...prev, obligations: { ...prev.obligations, annual: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Semiannual obligations
+                            <input type="number" value={engineConfig.obligations.semiAnnual} onChange={(e) => setEngineConfig((prev) => ({ ...prev, obligations: { ...prev.obligations, semiAnnual: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Required expenses reserve (annual)
+                            <input type="number" value={engineConfig.requiredExpenses.annualReserveAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, annualReserveAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Required expenses reserve (semiannual)
+                            <input type="number" value={engineConfig.requiredExpenses.semiAnnualReserveAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, semiAnnualReserveAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                        <label className="text-sm text-slate-600">Other required expenses (monthly)
+                            <input type="number" value={engineConfig.requiredExpenses.monthlyRequiredAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, monthlyRequiredAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
+                        </label>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-700">
+                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.transport.rideSupportEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, rideSupportEnabled: e.target.checked } }))} />Ride support enabled</label>
+                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.bucketRules.personalSupport.enabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, bucketRules: { ...prev.bucketRules, personalSupport: { ...prev.bucketRules.personalSupport, enabled: e.target.checked } } }))} />Personal support enabled</label>
+                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.annualReserveEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, annualReserveEnabled: e.target.checked } }))} />Annual required-expense reserve enabled</label>
+                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.semiAnnualReserveEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, semiAnnualReserveEnabled: e.target.checked } }))} />Semiannual required-expense reserve enabled</label>
+                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.monthlyRequiredEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, monthlyRequiredEnabled: e.target.checked } }))} />Other required expenses enabled</label>
+                    </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 overflow-auto">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-slate-100 text-slate-700"><tr><th className="p-2 text-left">Month</th><th className="p-2 text-left">Adults (editable)</th><th className="p-2 text-left">Kids (editable)</th><th className="p-2 text-left">Planned net (read-only)</th><th className="p-2 text-left">Warnings</th></tr></thead>
+                        <tbody className="divide-y divide-slate-200">
+                            {householdBudgetEngine.months.map((monthPlan) => {
+                                const existing = householdOverrides.find((o) => o.month === monthPlan.month);
+                                return (
+                                    <tr key={monthPlan.month}>
+                                        <td className="p-2">{MONTHS[monthPlan.month - 1]}</td>
+                                        <td className="p-2"><input type="number" min={1} value={existing?.adults ?? monthPlan.adults} className="w-20 p-1 border rounded" onChange={(e) => {
+                                            const adults = Math.max(1, Number(e.target.value) || 1);
+                                            setHouseholdOverrides((prev) => {
+                                                const next = [...prev];
+                                                const idx = next.findIndex((o) => o.month === monthPlan.month);
+                                                if (idx >= 0) next[idx] = { ...next[idx], adults };
+                                                else next.push({ month: monthPlan.month, adults, kids: monthPlan.kids });
+                                                return next;
+                                            });
+                                        }} /></td>
+                                        <td className="p-2"><input type="number" min={0} value={existing?.kids ?? monthPlan.kids} className="w-20 p-1 border rounded" onChange={(e) => {
+                                            const kids = Math.max(0, Number(e.target.value) || 0);
+                                            setHouseholdOverrides((prev) => {
+                                                const next = [...prev];
+                                                const idx = next.findIndex((o) => o.month === monthPlan.month);
+                                                if (idx >= 0) next[idx] = { ...next[idx], kids };
+                                                else next.push({ month: monthPlan.month, adults: monthPlan.adults, kids });
+                                                return next;
+                                            });
+                                        }} /></td>
+                                        <td className="p-2 font-semibold text-slate-800">{formatCurrencyString(monthPlan.plannedNet)}</td>
+                                        <td className="p-2 text-xs text-amber-700">{monthPlan.warnings.join(' · ') || '—'}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {Object.entries(householdBudgetEngine.annualBuckets).map(([key, amount]) => (
+                        <div key={key} className="rounded-lg border border-slate-200 p-3 bg-white">
+                            <p className="text-xs text-slate-500">{HOUSEHOLD_BUCKET_LABELS[key as keyof typeof HOUSEHOLD_BUCKET_LABELS]}</p>
+                            <p className="font-semibold text-slate-800">{formatCurrencyString(amount)}</p>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={householdProjectionData} margin={CHART_MARGIN}>
+                            <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" />
+                            <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} />
+                            <YAxis stroke={CHART_AXIS_COLOR} tickFormatter={formatAxisNumber} />
+                            <Tooltip formatter={(v: number) => formatCurrencyString(v, { digits: 0 })} />
+                            <Legend />
+                            <Bar dataKey="Income" fill={CHART_COLORS.categorical[0]} />
+                            <Bar dataKey="Outflow" fill={CHART_COLORS.categorical[1]} />
+                            <Line type="monotone" dataKey="Net" stroke={CHART_COLORS.categorical[2]} strokeWidth={2} />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                </div>
+
+                <div className="rounded-lg bg-indigo-50 border border-indigo-100 p-3">
+                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Automated recommendations</p>
+                    <ul className="mt-2 text-sm text-indigo-900 list-disc pl-5 space-y-1">
+                        {householdBudgetEngine.recommendations.map((item, idx) => <li key={idx}>{item}</li>)}
+                    </ul>
+                </div>
+            </div>
+
+             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
 
              <SinkingFunds />
             
@@ -760,6 +1102,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                 </div>
             )}
+            </div>
             </div>
         </PageLayout>
     );

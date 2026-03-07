@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext } from 'react';
+import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -14,6 +14,10 @@ type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' |
 interface AIAdvisorProps {
     pageContext: AIContext;
     contextData?: any;
+    title?: string;
+    subtitle?: string;
+    buttonLabel?: string;
+    autoGenerate?: boolean;
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
@@ -68,7 +72,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
 };
 
 
-const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
+const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights', autoGenerate = true }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
@@ -88,25 +92,34 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
         setIsLoading(false);
     }, [pageContext, data, contextData, exchangeRate]);
 
+    const didAutoRunRef = useRef(false);
+
+    useEffect(() => {
+        if (!autoGenerate || !isAiAvailable || isLoading || insight || didAutoRunRef.current) return;
+        didAutoRunRef.current = true;
+        handleGenerate();
+    }, [autoGenerate, isAiAvailable, isLoading, insight, handleGenerate]);
+
+
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                 <div className="flex flex-col">
                     <div className="flex items-center space-x-2">
                         <LightBulbIcon className="h-6 w-6 text-yellow-500" />
-                        <h2 className="text-xl font-semibold text-dark">Financial Advisor</h2>
+                        <h2 className="text-xl font-semibold text-dark">{title}</h2>
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">Expert financial & investment insights</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
                 </div>
                 <button
                     type="button"
                     onClick={handleGenerate}
-                    disabled={!isAiAvailable || isLoading}
-                    title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
+                    disabled={isLoading}
+                    title="Get AI Insights"
                     className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
-                    {isLoading ? 'Analyzing...' : 'Get AI Insights'}
+                    {isLoading ? 'Analyzing...' : buttonLabel}
                 </button>
             </div>
             {isLoading && <div className="text-center p-4 text-gray-500">Generating personalized insights...</div>}
@@ -117,17 +130,11 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
                 </div>
             )}
             
-            {!isAiAvailable ? (
-                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
-                    <p className="font-semibold">AI Features Disabled</p>
-                    <p className="text-sm">Please set your Gemini API key in the environment variables to enable this feature.</p>
+            {!insight && !isLoading && (
+                <div className="text-center p-4 text-gray-500">
+                    {autoGenerate ? `Preparing concise advisor guidance for ${pageContext}…` : `Click "${buttonLabel}" for an analysis of your ${pageContext} data.`}
+                    {!isAiAvailable && <p className="mt-1 text-xs text-amber-700">AI provider unavailable right now — deterministic advisor fallback remains active.</p>}
                 </div>
-            ) : (
-                !insight && !isLoading && (
-                    <div className="text-center p-4 text-gray-500">
-                        Click "Get AI Insights" for an analysis of your {pageContext} data.
-                    </div>
-                )
             )}
         </div>
     );

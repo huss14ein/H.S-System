@@ -104,6 +104,114 @@ function setToCache(key: string, result: any) {
 }
 // --- End AI Request Cache ---
 
+
+const fmtSar = (value: number): string => `${Number.isFinite(value) ? value : 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+function buildDirectExecutiveFallback(monthlyPnL: number, overspentBudgets: string, goalProgress: string): string {
+    const direction = monthlyPnL >= 0 ? 'positive' : 'negative';
+    return `### Overall Financial Health
+- Monthly P&L is **${fmtSar(monthlyPnL)} SAR** (${direction} month).
+
+### Key Highlights
+- Budget pressure list: **${overspentBudgets || 'None'}**.
+- Goal tracking snapshot: **${goalProgress || 'No goals set'}**.
+
+### Areas for Attention
+- Protect cash flow if P&L stays negative for 2+ months.
+
+### Strategic Recommendation
+- Set one immediate action this week: cap highest spend bucket and auto-transfer savings on payday.`;
+}
+
+function buildDirectPlanFallback(totals: any, scenarios: any): string {
+    const projectedNet = Number(totals?.projectedNet || 0);
+    const incomeShockPct = Number(scenarios?.incomeShock?.percent || 0);
+    const incomeShockDuration = Number(scenarios?.incomeShock?.duration || 0);
+    const expenseStressPct = Number(scenarios?.expenseStress?.percent || 0);
+    const monthlyImpact = (projectedNet / 12) * ((-incomeShockPct + -expenseStressPct) / 100);
+    const annualImpact = monthlyImpact * Math.max(1, incomeShockDuration);
+    const revised = projectedNet + annualImpact;
+    return `### Scenario Impact
+- Projected annual savings: **${fmtSar(projectedNet)} SAR → ${fmtSar(revised)} SAR** (estimated impact **${fmtSar(annualImpact)} SAR**).
+
+### Strategic Recommendation
+- Keep a dedicated contingency buffer equal to at least one month of essential costs before increasing discretionary allocation.
+
+### Summary
+- Stress-testing now keeps execution disciplined later.`;
+}
+
+function buildDirectAnalysisFallback(
+    spendingData: { name: string; value: number }[],
+    trendData: { name: string; income: number; expenses: number }[],
+    compositionData: { name: string; value: number }[]
+): string {
+    const topSpend = [...spendingData].sort((a, b) => b.value - a.value)[0];
+    const avgIncome = trendData.length ? trendData.reduce((s, r) => s + (r.income || 0), 0) / trendData.length : 0;
+    const avgExpense = trendData.length ? trendData.reduce((s, r) => s + (r.expenses || 0), 0) / trendData.length : 0;
+    const assets = compositionData.filter((x) => x.name !== 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    const debt = compositionData.filter((x) => x.name === 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    return `### Spending Habits
+- Top spend bucket is **${topSpend?.name || 'N/A'}** at **${fmtSar(topSpend?.value || 0)} SAR**.
+
+### Cash Flow Dynamics
+- Average monthly income vs expense is **${fmtSar(avgIncome)} vs ${fmtSar(avgExpense)} SAR**.
+
+### Balance Sheet Health
+- Assets vs debt snapshot: **${fmtSar(assets)} vs ${fmtSar(debt)} SAR**.`;
+}
+
+function buildDefaultPersonaFallback(
+    savingsRate: number,
+    debtToAssetRatio: number,
+    emergencyFundMonths: number,
+    investmentStyle: string
+): PersonaAnalysis {
+    const savingsPct = Math.max(0, savingsRate * 100);
+    const debtPct = Math.max(0, debtToAssetRatio * 100);
+    const ef = Math.max(0, emergencyFundMonths);
+    const rate = (value: number, good: number, ok: number): 'Excellent' | 'Good' | 'Needs Improvement' =>
+        value >= good ? 'Excellent' : value >= ok ? 'Good' : 'Needs Improvement';
+
+    return {
+        persona: {
+            title: savingsPct >= 25 ? 'The Disciplined Wealth Builder' : savingsPct >= 10 ? 'The Steady Optimizer' : 'The Recovery-Focused Planner',
+            description: `Direct snapshot: savings ${savingsPct.toFixed(1)}%, debt ratio ${debtPct.toFixed(1)}%, emergency fund ${ef.toFixed(1)} months, style ${investmentStyle}.`,
+        },
+        reportCard: [
+            {
+                metric: 'Savings Discipline',
+                value: `${savingsPct.toFixed(1)}%`,
+                rating: rate(savingsPct, 20, 10),
+                analysis: 'Higher recurring savings increases strategic flexibility and compounding capacity.',
+                suggestion: 'Automate a fixed transfer to long-term investing immediately after income posts.',
+            },
+            {
+                metric: 'Debt Pressure',
+                value: `${debtPct.toFixed(1)}%`,
+                rating: debtPct <= 30 ? 'Excellent' : debtPct <= 50 ? 'Good' : 'Needs Improvement',
+                analysis: 'Debt load determines how aggressively you can allocate to growth assets.',
+                suggestion: 'Prioritize highest-cost debt first while preserving a minimum emergency buffer.',
+            },
+            {
+                metric: 'Emergency Preparedness',
+                value: `${ef.toFixed(1)} months`,
+                rating: rate(ef, 6, 3),
+                analysis: 'Emergency runway protects long-term plans from short-term shocks.',
+                suggestion: 'Target 6 months of core expenses in liquid, low-volatility accounts.',
+            },
+            {
+                metric: 'Investment Alignment',
+                value: investmentStyle,
+                rating: 'Good',
+                analysis: 'Style is useful when allocation rules and risk controls are consistently executed.',
+                suggestion: 'Review sleeve drift monthly and execute rebalancing in small controlled steps.',
+            },
+        ],
+    };
+}
+
+
 // --- Robust JSON Parsing ---
 function robustJsonParse(jsonString: string | undefined): any {
     if (!jsonString) {
@@ -148,6 +256,8 @@ const toFinnhubSymbol = (symbol: string): string => {
     if (!upper) return upper;
     if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
     if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+    const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+    if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
     return upper;
 };
 
@@ -155,6 +265,8 @@ const fromFinnhubSymbol = (symbol: string): string => {
     const upper = symbol.toUpperCase();
     if (upper === 'BINANCE:BTCUSDT') return 'BTC';
     if (upper === 'BINANCE:ETHUSDT') return 'ETH';
+    const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
+    if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
     return upper;
 };
 
@@ -528,14 +640,17 @@ export const getAIFinancialPersona = async (
             }
         });
         const result = robustJsonParse(response.text);
-        if (result) {
+        if (result && result.persona && Array.isArray(result.reportCard)) {
             setToCache(cacheKey, result);
+            return result;
         }
-        return result;
+        const fallback = buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
+        setToCache(cacheKey, fallback);
+        return fallback;
 
     } catch (error) {
-        console.error("Error fetching AI financial persona:", error);
-        throw error;
+        console.warn("[getAIFinancialPersona] AI unavailable, using deterministic fallback.", error);
+        return buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
     }
 };
 
@@ -563,7 +678,7 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch(e) {
-        return formatAiError(e);
+        return buildDirectPlanFallback(totals, scenarios);
     }
 }
 
@@ -594,7 +709,7 @@ export const getAIAnalysisPageInsights = async (
         return result;
 
     } catch (error) {
-        return formatAiError(error);
+        return buildDirectAnalysisFallback(spendingData, trendData, compositionData);
     }
 };
 
@@ -692,7 +807,7 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
         setToCache(cacheKey, result);
         return result;
     } catch (e) {
-        return formatAiError(e);
+        return buildDirectExecutiveFallback(monthlyPnL, overspentBudgets, goalProgress);
     }
 }
 
@@ -1092,6 +1207,9 @@ Portfolio snapshot context (for relevance only):
 
 Return Markdown only (no HTML):
 
+### TL;DR
+- One direct sentence with the current thesis in plain language.
+
 ### Recent News Summary
 - 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
@@ -1121,6 +1239,9 @@ Return Markdown only (no HTML):
             const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
 
 Structure:
+### TL;DR
+- One direct sentence with current thesis.
+
 ### Recent News Summary
 - 2-3 concise bullets.
 
@@ -1341,7 +1462,13 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     try {
-        if (provider === 'finnhub') return await tryFinnhub();
+        if (provider === 'finnhub') {
+            try {
+                return await tryFinnhub();
+            } catch {
+                return await tryStooq();
+            }
+        }
         if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
 

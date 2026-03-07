@@ -699,23 +699,23 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 </div>
 
                 {/* Key metrics grid — in portfolio currency */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 min-w-0">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 min-w-0">
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
-                        <p className="metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap">{holding.quantity.toLocaleString()}</p>
+                        <p className="metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums break-words leading-tight">{holding.quantity.toLocaleString()}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-lg font-bold text-slate-900 tabular-nums whitespace-nowrap" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-lg font-bold tabular-nums whitespace-nowrap ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 whitespace-nowrap" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                        <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
+                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
                     </div>
                 </div>
 
@@ -2827,7 +2827,7 @@ Save anyway?`)) return;
                     <div className="p-6">
                         {!isAiAvailable && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-                                AI execution is currently unavailable. You can still execute with rule-based mode.
+                                AI provider is temporarily unavailable. Execute with AI will automatically switch to deterministic rule-based logic and still return results.
                             </div>
                         )}
                         {noActionableWarning && (
@@ -2844,7 +2844,7 @@ Save anyway?`)) return;
                             </div>
                         )}
                         <div className="flex flex-col gap-2">
-                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0 || !isAiAvailable} className="w-full flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={!isAiAvailable ? 'Enable AI in Settings to use AI-assisted execution' : actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Run with AI first, then fall back to rule-based if needed'}>
+                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Run with AI first, then fall back to rule-based if needed'}>
                                 <SparklesIcon className="h-5 w-5 mr-2" />
                                 {isExecuting ? 'Executing...' : 'Execute with AI'}
                             </button>
@@ -2858,6 +2858,12 @@ Save anyway?`)) return;
                         {executionResult && (
                             <div className="mt-6 space-y-5">
                                 <p className="text-xs text-slate-500">Plan totals are in <strong>{planCurrency}</strong>. Trade rows also show each ticker’s native currency (e.g., USD for US shares). Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
+                                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+                                    <p className="font-semibold">Advisor quick brief</p>
+                                    <p className="mt-1">{executionResult.status === 'success'
+                                        ? `Execution completed with ${executionResult.trades.length} trade${executionResult.trades.length === 1 ? '' : 's'} and ${formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })} unallocated; prioritize deploying residual cash in next cycle only if eligibility remains valid.`
+                                        : 'Execution did not produce a valid allocation. Update Core/High-Upside eligibility and rerun to recover plan coverage.'}</p>
+                                </div>
 
                                 <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                                     <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
