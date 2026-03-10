@@ -11,6 +11,7 @@ This project includes SQL scripts for sharing features. Run them in Supabase SQL
 
 ## Notes
 - `docs/budget_sharing.sql` is an older helper script. Prefer `docs/budget_sharing_ready.sql` for complete setup.
+- Budget sharing migration now also installs `get_shared_budget_consumed_for_me()` so shared users can see consumed totals of shared budgets (owner + collaborator approved spending) without exposing unrelated private data.
 - After applying migrations, refresh PostgREST schema cache (or wait briefly) so RPCs are available to the app.
 
 - Household budgeting engine v2 adds no DB schema changes; it is config-first and persisted client-side per user profile key.

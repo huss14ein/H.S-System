@@ -155,4 +155,65 @@ $$;
 revoke all on function public.get_shared_budgets_for_me() from public;
 grant execute on function public.get_shared_budgets_for_me() to authenticated;
 
+
+drop function if exists public.get_shared_budget_consumed_for_me();
+create function public.get_shared_budget_consumed_for_me()
+returns table (
+  owner_user_id uuid,
+  category text,
+  consumed_amount numeric
+)
+language sql
+security definer
+set search_path = public, auth
+as $$
+  with shared_scope as (
+    select distinct
+      bs.owner_user_id,
+      case
+        when bs.category is null or lower(bs.category) = 'all' then null
+        else lower(bs.category)
+      end as shared_category
+    from public.budget_shares bs
+    where bs.shared_with_user_id = auth.uid()
+  ),
+  owner_spend as (
+    select
+      t.user_id as owner_user_id,
+      lower(coalesce(t.budget_category, t.category, '')) as category,
+      sum(abs(t.amount))::numeric as amount
+    from public.transactions t
+    join shared_scope ss on ss.owner_user_id = t.user_id
+    where t.type = 'expense'
+      and coalesce(t.status, 'Approved') = 'Approved'
+      and coalesce(t.budget_category, t.category, '') <> ''
+      and (ss.shared_category is null or lower(coalesce(t.budget_category, t.category, '')) = ss.shared_category)
+    group by t.user_id, lower(coalesce(t.budget_category, t.category, ''))
+  ),
+  contributor_spend as (
+    select
+      bst.owner_user_id,
+      lower(coalesce(bst.budget_category, '')) as category,
+      sum(abs(bst.amount))::numeric as amount
+    from public.budget_shared_transactions bst
+    join shared_scope ss on ss.owner_user_id = bst.owner_user_id
+    where coalesce(bst.status, 'Approved') = 'Approved'
+      and coalesce(bst.budget_category, '') <> ''
+      and (ss.shared_category is null or lower(coalesce(bst.budget_category, '')) = ss.shared_category)
+    group by bst.owner_user_id, lower(coalesce(bst.budget_category, ''))
+  ),
+  merged as (
+    select owner_user_id, category, amount from owner_spend
+    union all
+    select owner_user_id, category, amount from contributor_spend
+  )
+  select owner_user_id, initcap(category) as category, sum(amount)::numeric as consumed_amount
+  from merged
+  group by owner_user_id, category
+  order by owner_user_id, category;
+$$;
+
+revoke all on function public.get_shared_budget_consumed_for_me() from public;
+grant execute on function public.get_shared_budget_consumed_for_me() to authenticated;
+
 commit;

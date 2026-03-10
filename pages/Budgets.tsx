@@ -17,6 +17,12 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
+import {
+    buildHouseholdBudgetPlan,
+    DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
+    type HouseholdMonthlyOverride,
+} from '../services/householdBudgetEngine';
 
 
 
@@ -175,6 +181,12 @@ const Budgets: React.FC = () => {
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
+    const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
+    const [householdAdults, setHouseholdAdults] = useState(2);
+    const [householdKids, setHouseholdKids] = useState(0);
+    const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
+    const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
+    const [selectedScenario, setSelectedScenario] = useState('custom');
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -193,6 +205,72 @@ const Budgets: React.FC = () => {
 
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
+
+    const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
+
+    React.useEffect(() => {
+        try {
+            const raw = localStorage.getItem(householdProfileStorageKey);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            setHouseholdAdults(Math.max(1, Number(parsed?.adults) || 2));
+            setHouseholdKids(Math.max(0, Number(parsed?.kids) || 0));
+            setHouseholdOverrides(Array.isArray(parsed?.overrides) ? parsed.overrides : []);
+            setEngineConfig((prev) => ({ ...prev, ...(parsed?.config || {}) }));
+        } catch {
+            // no-op
+        }
+    }, [householdProfileStorageKey]);
+
+    React.useEffect(() => {
+        try {
+            localStorage.setItem(householdProfileStorageKey, JSON.stringify({
+                adults: householdAdults,
+                kids: householdKids,
+                overrides: householdOverrides,
+                config: engineConfig,
+            }));
+        } catch {
+            // no-op
+        }
+    }, [householdAdults, householdKids, householdOverrides, engineConfig, householdProfileStorageKey]);
+
+    const householdBudgetEngine = useMemo(() => {
+        const incomeByMonth = Array(12).fill(0);
+        const expenseByMonth = Array(12).fill(0);
+        (data?.transactions ?? []).forEach((t) => {
+            const d = new Date(t.date);
+            if (d.getFullYear() !== currentYear) return;
+            const m = d.getMonth();
+            const amount = Number(t.amount) || 0;
+            if (t.type === 'income') incomeByMonth[m] += Math.max(0, amount);
+            if (t.type === 'expense') expenseByMonth[m] += Math.abs(amount);
+        });
+
+        const liquidCash = (data?.accounts ?? [])
+            .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
+
+        const goalsForRouting = (data?.goals ?? [])
+            .map((g: any) => ({
+                name: g.name,
+                remaining: Math.max(0, Number(g.targetAmount ?? g.target_amount ?? 0) - Number(g.currentAmount ?? g.current_amount ?? 0)),
+            }))
+            .filter((g: any) => g.remaining > 0);
+
+        return buildHouseholdBudgetPlan({
+            monthlySalaryPlan: incomeByMonth,
+            monthlyActualIncome: incomeByMonth,
+            monthlyActualExpense: expenseByMonth,
+            householdDefaults: { adults: householdAdults, kids: householdKids },
+            monthlyOverrides: householdOverrides,
+            liquidBalance: liquidCash,
+            emergencyBalance: liquidCash,
+            reserveBalance: liquidCash * 0.35,
+            goals: goalsForRouting,
+            config: engineConfig,
+        });
+    }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineConfig]);
 
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
     const resolveRequestCategory = (request: any) => request.category_name || categoryNameById.get(request.category_id) || request.category_id || 'N/A';
@@ -260,6 +338,18 @@ const Budgets: React.FC = () => {
                 setSharedBudgets(filtered);
             }
 
+
+            const { data: consumedRows } = await supabase
+                .rpc('get_shared_budget_consumed_for_me')
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const consumedMap = new Map<string, number>();
+            ((consumedRows || []) as any[]).forEach((row: any) => {
+                const ownerKey = String(row.owner_user_id || 'owner');
+                const category = String(row.category || '').trim();
+                if (!category) return;
+                consumedMap.set(`${ownerKey}::${category}`, Number(row.consumed_amount) || 0);
+            });
+            setSharedConsumedByOwnerCategory(consumedMap);
             const { data: ownerTxRows } = await supabase
                 .from('budget_shared_transactions')
                 .select('*')
@@ -446,7 +536,6 @@ const Budgets: React.FC = () => {
     }, [budgetData, cardOrder]);
 
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
-        const spendingByCategory = new Map<string, number>();
         const spendingByOwnerCategory = new Map<string, number>();
         const now = new Date();
         const rangeStart = new Date(now);
@@ -483,7 +572,18 @@ const Budgets: React.FC = () => {
                 if (!category) return;
                 const amount = Math.abs(Number(tx.amount) || 0);
                 const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
-                spendingByCategory.set(category, (spendingByCategory.get(category) || 0) + amount);
+                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+            });
+
+        ownerSharedTransactions
+            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
+            .forEach((tx) => {
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!(d >= rangeStart && d <= rangeEnd)) return;
+                const category = String(tx.budget_category || '').trim();
+                if (!category) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
                 spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
             });
 
@@ -511,7 +611,7 @@ const Budgets: React.FC = () => {
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
-                    const spent = spendingByOwnerCategory.get(ownerCategoryKey) || spendingByCategory.get(entry.category) || 0;
+                    const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
                     const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                     let colorClass = 'bg-primary';
@@ -547,7 +647,7 @@ const Budgets: React.FC = () => {
             .map((b) => {
                 const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
                 const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const spent = spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByCategory.get(b.category) || 0;
+                const spent = sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
@@ -569,7 +669,7 @@ const Budgets: React.FC = () => {
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [sharedBudgets, mySharedBudgetTransactions, budgetView, currentYear, currentMonth]);
+    }, [sharedBudgets, mySharedBudgetTransactions, ownerSharedTransactions, sharedConsumedByOwnerCategory, budgetView, currentYear, currentMonth, auth?.user?.id]);
 
     const sharedBudgetOwnerByCardId = useMemo(() => {
         return new Map(
@@ -1191,6 +1291,48 @@ const Budgets: React.FC = () => {
                     Yearly view aggregates all monthly budgets and spending for {currentYear}.
                 </div>
             )}
+
+            <SectionCard title="Auto Household Budget Engine">
+                <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <label className="text-sm text-slate-600">Adults
+                        <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="ml-2 w-16 p-1.5 border rounded" />
+                    </label>
+                    <label className="text-sm text-slate-600">Kids
+                        <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="ml-2 w-16 p-1.5 border rounded" />
+                    </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
+                        <button
+                            key={scenario.id}
+                            type="button"
+                            className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
+                            onClick={() => {
+                                setSelectedScenario(scenario.id);
+                                setHouseholdAdults(scenario.defaults.adults);
+                                setHouseholdKids(scenario.defaults.kids);
+                                setHouseholdOverrides(scenario.overrides);
+                                setEngineConfig((prev) => ({ ...prev, ...(scenario.config || {}) }));
+                            }}
+                        >
+                            {scenario.label}
+                        </button>
+                    ))}
+                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
+                </div>
+                {householdBudgetEngine.recommendations.length > 0 && (
+                    <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
+                        {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
+                    </ul>
+                )}
+            </SectionCard>
 
             {budgetData.length > 0 && (
                 <div className="section-card border-l-4 border-emerald-500/60">

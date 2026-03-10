@@ -22,8 +22,6 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import {
     buildHouseholdBudgetPlan,
     DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-    HOUSEHOLD_BUCKET_LABELS,
-    HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
 
@@ -111,7 +109,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
-    const [selectedScenario, setSelectedScenario] = useState('custom');
     
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
@@ -497,15 +494,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         });
     }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineConfig]);
 
-    const householdProjectionData = useMemo(() => {
-        return householdBudgetEngine.months.map((m) => ({
-            name: MONTHS[m.month - 1],
-            Income: m.incomePlanned,
-            Outflow: m.totalPlannedOutflow,
-            Net: m.incomePlanned - m.totalPlannedOutflow,
-        }));
-    }, [householdBudgetEngine]);
-
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
@@ -852,166 +840,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <button onClick={() => setIsEventModalOpen(true)} className="flex items-center text-sm text-primary hover:underline mt-1"><PlusIcon className="h-4 w-4 mr-1"/>Add Event</button>
                      </div>
                  </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                    <div>
-                        <h3 className="text-lg font-semibold text-dark">Auto Household Budget Engine</h3>
-                        <p className="text-sm text-slate-500">Config-first monthly planning with read-only calculated output, yearly projection, and goal auto-routing.</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                        <label className="text-sm text-slate-600">Adults
-                            <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="ml-2 w-16 p-1.5 border rounded" />
-                        </label>
-                        <label className="text-sm text-slate-600">Kids
-                            <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="ml-2 w-16 p-1.5 border rounded" />
-                        </label>
-                    </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Sample scenarios (demo data)</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                        {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
-                            <button
-                                key={scenario.id}
-                                type="button"
-                                className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
-                                onClick={() => {
-                                    setSelectedScenario(scenario.id);
-                                    setHouseholdAdults(scenario.defaults.adults);
-                                    setHouseholdKids(scenario.defaults.kids);
-                                    setHouseholdOverrides(scenario.overrides);
-                                    if (scenario.config) {
-                                        const configPatch = scenario.config;
-                                        setEngineConfig((prev) => ({
-                                            ...prev,
-                                            ...configPatch,
-                                            transport: { ...prev.transport, ...(configPatch.transport || {}) },
-                                            allowances: { ...prev.allowances, ...(configPatch.allowances || {}) },
-                                            obligations: { ...prev.obligations, ...(configPatch.obligations || {}) },
-                                            requiredExpenses: { ...prev.requiredExpenses, ...(configPatch.requiredExpenses || {}) },
-                                            bucketRules: { ...prev.bucketRules, ...(configPatch.bucketRules || {}) },
-                                        }));
-                                    }
-                                }}
-                            >
-                                {scenario.label}
-                            </button>
-                        ))}
-                        <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => { setSelectedScenario('custom'); setHouseholdOverrides([]); }}>Custom</button>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-800">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet)}</p></div>
-                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-800">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet)}</p></div>
-                    <div className="rounded-lg border bg-emerald-50 p-3"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid)}</p></div>
-                </div>
-
-                <div className="rounded-lg border border-slate-200 p-3">
-                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Editable configuration</p>
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                        <label className="text-sm text-slate-600">Single-driver transport
-                            <input type="number" value={engineConfig.transport.singleDriverBaseCost} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, singleDriverBaseCost: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Ride support
-                            <input type="number" value={engineConfig.transport.rideSupportCost} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, rideSupportCost: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Annual obligations
-                            <input type="number" value={engineConfig.obligations.annual} onChange={(e) => setEngineConfig((prev) => ({ ...prev, obligations: { ...prev.obligations, annual: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Semiannual obligations
-                            <input type="number" value={engineConfig.obligations.semiAnnual} onChange={(e) => setEngineConfig((prev) => ({ ...prev, obligations: { ...prev.obligations, semiAnnual: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Required expenses reserve (annual)
-                            <input type="number" value={engineConfig.requiredExpenses.annualReserveAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, annualReserveAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Required expenses reserve (semiannual)
-                            <input type="number" value={engineConfig.requiredExpenses.semiAnnualReserveAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, semiAnnualReserveAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                        <label className="text-sm text-slate-600">Other required expenses (monthly)
-                            <input type="number" value={engineConfig.requiredExpenses.monthlyRequiredAmount} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, monthlyRequiredAmount: Math.max(0, Number(e.target.value) || 0) } }))} className="mt-1 input-base" />
-                        </label>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-700">
-                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.transport.rideSupportEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, transport: { ...prev.transport, rideSupportEnabled: e.target.checked } }))} />Ride support enabled</label>
-                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.bucketRules.personalSupport.enabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, bucketRules: { ...prev.bucketRules, personalSupport: { ...prev.bucketRules.personalSupport, enabled: e.target.checked } } }))} />Personal support enabled</label>
-                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.annualReserveEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, annualReserveEnabled: e.target.checked } }))} />Annual required-expense reserve enabled</label>
-                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.semiAnnualReserveEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, semiAnnualReserveEnabled: e.target.checked } }))} />Semiannual required-expense reserve enabled</label>
-                        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={engineConfig.requiredExpenses.monthlyRequiredEnabled} onChange={(e) => setEngineConfig((prev) => ({ ...prev, requiredExpenses: { ...prev.requiredExpenses, monthlyRequiredEnabled: e.target.checked } }))} />Other required expenses enabled</label>
-                    </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-200 overflow-auto">
-                    <table className="min-w-full text-sm">
-                        <thead className="bg-slate-100 text-slate-700"><tr><th className="p-2 text-left">Month</th><th className="p-2 text-left">Adults (editable)</th><th className="p-2 text-left">Kids (editable)</th><th className="p-2 text-left">Planned net (read-only)</th><th className="p-2 text-left">Warnings</th></tr></thead>
-                        <tbody className="divide-y divide-slate-200">
-                            {householdBudgetEngine.months.map((monthPlan) => {
-                                const existing = householdOverrides.find((o) => o.month === monthPlan.month);
-                                return (
-                                    <tr key={monthPlan.month}>
-                                        <td className="p-2">{MONTHS[monthPlan.month - 1]}</td>
-                                        <td className="p-2"><input type="number" min={1} value={existing?.adults ?? monthPlan.adults} className="w-20 p-1 border rounded" onChange={(e) => {
-                                            const adults = Math.max(1, Number(e.target.value) || 1);
-                                            setHouseholdOverrides((prev) => {
-                                                const next = [...prev];
-                                                const idx = next.findIndex((o) => o.month === monthPlan.month);
-                                                if (idx >= 0) next[idx] = { ...next[idx], adults };
-                                                else next.push({ month: monthPlan.month, adults, kids: monthPlan.kids });
-                                                return next;
-                                            });
-                                        }} /></td>
-                                        <td className="p-2"><input type="number" min={0} value={existing?.kids ?? monthPlan.kids} className="w-20 p-1 border rounded" onChange={(e) => {
-                                            const kids = Math.max(0, Number(e.target.value) || 0);
-                                            setHouseholdOverrides((prev) => {
-                                                const next = [...prev];
-                                                const idx = next.findIndex((o) => o.month === monthPlan.month);
-                                                if (idx >= 0) next[idx] = { ...next[idx], kids };
-                                                else next.push({ month: monthPlan.month, adults: monthPlan.adults, kids });
-                                                return next;
-                                            });
-                                        }} /></td>
-                                        <td className="p-2 font-semibold text-slate-800">{formatCurrencyString(monthPlan.plannedNet)}</td>
-                                        <td className="p-2 text-xs text-amber-700">{monthPlan.warnings.join(' · ') || '—'}</td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {Object.entries(householdBudgetEngine.annualBuckets).map(([key, amount]) => (
-                        <div key={key} className="rounded-lg border border-slate-200 p-3 bg-white">
-                            <p className="text-xs text-slate-500">{HOUSEHOLD_BUCKET_LABELS[key as keyof typeof HOUSEHOLD_BUCKET_LABELS]}</p>
-                            <p className="font-semibold text-slate-800">{formatCurrencyString(amount)}</p>
-                        </div>
-                    ))}
-                </div>
-
-                <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={householdProjectionData} margin={CHART_MARGIN}>
-                            <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" />
-                            <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} />
-                            <YAxis stroke={CHART_AXIS_COLOR} tickFormatter={formatAxisNumber} />
-                            <Tooltip formatter={(v: number) => formatCurrencyString(v, { digits: 0 })} />
-                            <Legend />
-                            <Bar dataKey="Income" fill={CHART_COLORS.categorical[0]} />
-                            <Bar dataKey="Outflow" fill={CHART_COLORS.categorical[1]} />
-                            <Line type="monotone" dataKey="Net" stroke={CHART_COLORS.categorical[2]} strokeWidth={2} />
-                        </ComposedChart>
-                    </ResponsiveContainer>
-                </div>
-
-                <div className="rounded-lg bg-indigo-50 border border-indigo-100 p-3">
-                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Automated recommendations</p>
-                    <ul className="mt-2 text-sm text-indigo-900 list-disc pl-5 space-y-1">
-                        {householdBudgetEngine.recommendations.map((item, idx) => <li key={idx}>{item}</li>)}
-                    </ul>
-                </div>
             </div>
 
              <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
