@@ -61,8 +61,8 @@ const AIFeed: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  disabled={!isAiAvailable || isLoading}
-                  title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Refresh Feed"}
+                  disabled={isLoading}
+                  title="Refresh Feed"
                   className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />

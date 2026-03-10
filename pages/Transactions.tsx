@@ -16,6 +16,7 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
+import { inferIsAdmin } from '../utils/role';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -400,6 +401,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
     const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
     const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
+    const [isPendingLoading, setIsPendingLoading] = useState(false);
+    const [pendingLoadError, setPendingLoadError] = useState<string | null>(null);
+    const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+    const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
+    const [isBulkReviewing, setIsBulkReviewing] = useState(false);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
@@ -432,7 +438,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .eq('id', auth.user.id)
                 .maybeSingle();
 
-            const role = (userRecord?.role === 'Admin' ? 'Admin' : 'Restricted') as UserRole;
+            const role = (inferIsAdmin(auth.user, userRecord?.role ?? null) ? 'Admin' : 'Restricted') as UserRole;
             setUserRole(role);
 
             if (role === 'Restricted') {
@@ -464,8 +470,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const loadPendingTransactions = async () => {
             if (!supabase || userRole !== 'Admin') {
                 setAdminPendingTransactions([]);
+                setPendingLoadError(null);
                 return;
             }
+            setIsPendingLoading(true);
+            setPendingLoadError(null);
             const db = supabase;
             const fetchPendingRows = async (selectClause: string) => {
                 return db
@@ -478,19 +487,32 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
-            const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
-            pendingRows = camelCaseResult.data || [];
-            pendingError = camelCaseResult.error;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                pendingRows = camelCaseResult.data || [];
+                pendingError = camelCaseResult.error;
 
-            if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
-                const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
-                pendingRows = snakeCaseResult.data || [];
-                pendingError = snakeCaseResult.error;
+                if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                    const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                    pendingRows = snakeCaseResult.data || [];
+                    pendingError = snakeCaseResult.error;
+                }
+
+                if (!pendingError) break;
+                if (attempt < 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                }
             }
 
             if (pendingError) {
                 console.error('Error loading admin pending transactions:', pendingError);
                 setAdminPendingTransactions([]);
+                const base = pendingError.message || 'Could not load pending transactions.';
+                const hint = /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
+                    ? ' Verify latest DB SQL migrations are applied.'
+                    : '';
+                setPendingLoadError(`${base}${hint}`);
+                setIsPendingLoading(false);
                 return;
             }
 
@@ -499,10 +521,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategory: row.budgetCategory ?? row.budget_category ?? null,
             }));
             setAdminPendingTransactions(normalized);
+            setSelectedPendingIds((prev) => prev.filter((id) => normalized.some((row: any) => row.id === id)));
+            setIsPendingLoading(false);
         };
 
         loadPendingTransactions();
-    }, [userRole, (data?.transactions ?? []).length]);
+    }, [userRole, (data?.transactions ?? []).length, pendingRefreshKey]);
 
     const filteredTransactions = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
@@ -657,6 +681,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
 
         setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+    };
+
+    const togglePendingSelection = (transactionId: string) => {
+        setSelectedPendingIds((prev) => prev.includes(transactionId) ? prev.filter((id) => id !== transactionId) : [...prev, transactionId]);
+    };
+
+    const handleBulkReview = async (status: 'Approved' | 'Rejected') => {
+        if (selectedPendingIds.length === 0) return;
+        setIsBulkReviewing(true);
+        for (const id of selectedPendingIds) {
+            await reviewPendingTransaction(id, status);
+        }
+        setIsBulkReviewing(false);
     };
 
     return (
@@ -711,24 +749,45 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 )}
             </SectionCard>
 
-            {userRole === 'Admin' && adminPendingTransactions.length > 0 && (
+            {userRole === 'Admin' && (
                 <div className="bg-white p-5 rounded-xl shadow-md border border-amber-200">
-                    <h2 className="text-xl font-semibold text-dark mb-3">Admin Review Queue</h2>
-                    <div className="space-y-3">
-                        {adminPendingTransactions.map((pending) => (
-                            <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                                <div>
-                                    <p className="font-semibold">{pending.description}</p>
-                                    <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
-                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
-                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-semibold text-dark">Admin Review Queue</h2>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">{adminPendingTransactions.length} pending</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Approved')} className="btn-outline text-xs disabled:opacity-50">Approve selected</button>
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Rejected')} className="btn-outline text-xs disabled:opacity-50">Reject selected</button>
+                            <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">Refresh pending</button>
+                        </div>
                     </div>
+                    {pendingLoadError && <p className="text-xs text-rose-700 mb-2">{pendingLoadError}</p>}
+                    {isPendingLoading ? (
+                        <p className="text-sm text-slate-500">Loading pending transactions…</p>
+                    ) : adminPendingTransactions.length === 0 ? (
+                        <p className="text-sm text-slate-600">No pending transactions right now. When restricted users submit expenses, they appear here for approval.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {adminPendingTransactions.map((pending) => (
+                                <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                    <div>
+                                        <label className="inline-flex items-center gap-2 mr-2">
+                                            <input type="checkbox" checked={selectedPendingIds.includes(pending.id)} onChange={() => togglePendingSelection(pending.id)} />
+                                            <span className="text-xs text-slate-500">Select</span>
+                                        </label>
+                                        <p className="font-semibold">{pending.description}</p>
+                                        <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
+                                        <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
+                                        <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
