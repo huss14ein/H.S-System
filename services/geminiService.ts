@@ -28,22 +28,42 @@ function isQuotaOrRateLimitError(message: string, parsed?: { error?: { code?: nu
     return code === 429 || status === 'RESOURCE_EXHAUSTED';
 }
 
+
+function extractErrorMessageParts(error: any): string[] {
+    const parts: string[] = [];
+    const push = (v: any) => {
+        if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    };
+    if (typeof error === 'string') push(error);
+    if (error instanceof Error) push(error.message);
+    if (error && typeof error === 'object') {
+        push((error as any).message);
+        push((error as any).error);
+        if ((error as any).error && typeof (error as any).error === 'object') {
+            push((error as any).error.message);
+            push((error as any).error.status);
+        }
+        if ((error as any).response && typeof (error as any).response === 'object') {
+            push((error as any).response.message);
+            push((error as any).response.error);
+            if ((error as any).response.error && typeof (error as any).response.error === 'object') {
+                push((error as any).response.error.message);
+                push((error as any).response.error.status);
+            }
+        }
+    }
+    return [...new Set(parts)];
+}
+
 export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
-    let message: string;
-    if (typeof error === 'string') {
-        message = error;
-    } else if (error instanceof Error) {
-        message = error.message;
-    } else if (error && typeof error === 'object' && typeof (error as { message?: string }).message === 'string') {
-        message = (error as { message: string }).message;
-    } else {
-        message = String(error ?? '');
-    }
+    const messageParts = extractErrorMessageParts(error);
+    let message = messageParts[0] || String(error ?? '');
+    const mergedMessage = messageParts.join(' | ') || message;
     // Proxy may return stringified JSON in error; parse to detect quota/429
     let parsed: { error?: { code?: number; status?: string; message?: string } | string } | null = null;
     try {
-        const trimmed = message.trim();
+        const trimmed = mergedMessage.trim();
         if (trimmed.startsWith('{')) {
             parsed = JSON.parse(trimmed) as { error?: { code?: number; status?: string; message?: string } | string };
             // Proxy may return { error: "{\"error\":{...}}" }; parse inner string once
@@ -57,10 +77,10 @@ export function formatAiError(error: any): string {
     }
     const parsedForQuota: { error?: { code?: number; status?: string } } | undefined =
         parsed && typeof parsed.error === 'object' ? { error: parsed.error } : undefined;
-    if (isQuotaOrRateLimitError(message, parsedForQuota)) {
+    if (isQuotaOrRateLimitError(mergedMessage, parsedForQuota)) {
         return AI_QUOTA_MESSAGE;
     }
-    if (/GEMINI_API_KEY not set/i.test(message)) {
+    if (/GEMINI_API_KEY not set/i.test(mergedMessage)) {
         return `
 ### AI Service Configuration Error
 The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in your deployment environment.
@@ -72,16 +92,16 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
 - Redeploy your site.
 `;
     }
-    if (/API key not valid/i.test(message)) {
+    if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
-    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(message)) {
+    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
         return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
-    if (/model|404|not found|invalid model|unsupported/i.test(message)) {
-        return `There was an issue with the specified AI model. ${message}`;
+    if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
+        return `There was an issue with the specified AI model. ${mergedMessage}`;
     }
-    if (message) return `AI Service Error: ${message}`;
+    if (mergedMessage) return `AI Service Error: ${mergedMessage}`;
     return "An unknown error occurred while communicating with the AI service.";
 }
 
@@ -103,6 +123,114 @@ function setToCache(key: string, result: any) {
     aiAnalysisCache.set(key, { timestamp: Date.now(), result });
 }
 // --- End AI Request Cache ---
+
+
+const fmtSar = (value: number): string => `${Number.isFinite(value) ? value : 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+function buildDirectExecutiveFallback(monthlyPnL: number, overspentBudgets: string, goalProgress: string): string {
+    const direction = monthlyPnL >= 0 ? 'positive' : 'negative';
+    return `### Overall Financial Health
+- Monthly P&L is **${fmtSar(monthlyPnL)} SAR** (${direction} month).
+
+### Key Highlights
+- Budget pressure list: **${overspentBudgets || 'None'}**.
+- Goal tracking snapshot: **${goalProgress || 'No goals set'}**.
+
+### Areas for Attention
+- Protect cash flow if P&L stays negative for 2+ months.
+
+### Strategic Recommendation
+- Set one immediate action this week: cap highest spend bucket and auto-transfer savings on payday.`;
+}
+
+function buildDirectPlanFallback(totals: any, scenarios: any): string {
+    const projectedNet = Number(totals?.projectedNet || 0);
+    const incomeShockPct = Number(scenarios?.incomeShock?.percent || 0);
+    const incomeShockDuration = Number(scenarios?.incomeShock?.duration || 0);
+    const expenseStressPct = Number(scenarios?.expenseStress?.percent || 0);
+    const monthlyImpact = (projectedNet / 12) * ((-incomeShockPct + -expenseStressPct) / 100);
+    const annualImpact = monthlyImpact * Math.max(1, incomeShockDuration);
+    const revised = projectedNet + annualImpact;
+    return `### Scenario Impact
+- Projected annual savings: **${fmtSar(projectedNet)} SAR → ${fmtSar(revised)} SAR** (estimated impact **${fmtSar(annualImpact)} SAR**).
+
+### Strategic Recommendation
+- Keep a dedicated contingency buffer equal to at least one month of essential costs before increasing discretionary allocation.
+
+### Summary
+- Stress-testing now keeps execution disciplined later.`;
+}
+
+function buildDirectAnalysisFallback(
+    spendingData: { name: string; value: number }[],
+    trendData: { name: string; income: number; expenses: number }[],
+    compositionData: { name: string; value: number }[]
+): string {
+    const topSpend = [...spendingData].sort((a, b) => b.value - a.value)[0];
+    const avgIncome = trendData.length ? trendData.reduce((s, r) => s + (r.income || 0), 0) / trendData.length : 0;
+    const avgExpense = trendData.length ? trendData.reduce((s, r) => s + (r.expenses || 0), 0) / trendData.length : 0;
+    const assets = compositionData.filter((x) => x.name !== 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    const debt = compositionData.filter((x) => x.name === 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    return `### Spending Habits
+- Top spend bucket is **${topSpend?.name || 'N/A'}** at **${fmtSar(topSpend?.value || 0)} SAR**.
+
+### Cash Flow Dynamics
+- Average monthly income vs expense is **${fmtSar(avgIncome)} vs ${fmtSar(avgExpense)} SAR**.
+
+### Balance Sheet Health
+- Assets vs debt snapshot: **${fmtSar(assets)} vs ${fmtSar(debt)} SAR**.`;
+}
+
+function buildDefaultPersonaFallback(
+    savingsRate: number,
+    debtToAssetRatio: number,
+    emergencyFundMonths: number,
+    investmentStyle: string
+): PersonaAnalysis {
+    const savingsPct = Math.max(0, savingsRate * 100);
+    const debtPct = Math.max(0, debtToAssetRatio * 100);
+    const ef = Math.max(0, emergencyFundMonths);
+    const rate = (value: number, good: number, ok: number): 'Excellent' | 'Good' | 'Needs Improvement' =>
+        value >= good ? 'Excellent' : value >= ok ? 'Good' : 'Needs Improvement';
+
+    return {
+        persona: {
+            title: savingsPct >= 25 ? 'The Disciplined Wealth Builder' : savingsPct >= 10 ? 'The Steady Optimizer' : 'The Recovery-Focused Planner',
+            description: `Direct snapshot: savings ${savingsPct.toFixed(1)}%, debt ratio ${debtPct.toFixed(1)}%, emergency fund ${ef.toFixed(1)} months, style ${investmentStyle}.`,
+        },
+        reportCard: [
+            {
+                metric: 'Savings Discipline',
+                value: `${savingsPct.toFixed(1)}%`,
+                rating: rate(savingsPct, 20, 10),
+                analysis: 'Higher recurring savings increases strategic flexibility and compounding capacity.',
+                suggestion: 'Automate a fixed transfer to long-term investing immediately after income posts.',
+            },
+            {
+                metric: 'Debt Pressure',
+                value: `${debtPct.toFixed(1)}%`,
+                rating: debtPct <= 30 ? 'Excellent' : debtPct <= 50 ? 'Good' : 'Needs Improvement',
+                analysis: 'Debt load determines how aggressively you can allocate to growth assets.',
+                suggestion: 'Prioritize highest-cost debt first while preserving a minimum emergency buffer.',
+            },
+            {
+                metric: 'Emergency Preparedness',
+                value: `${ef.toFixed(1)} months`,
+                rating: rate(ef, 6, 3),
+                analysis: 'Emergency runway protects long-term plans from short-term shocks.',
+                suggestion: 'Target 6 months of core expenses in liquid, low-volatility accounts.',
+            },
+            {
+                metric: 'Investment Alignment',
+                value: investmentStyle,
+                rating: 'Good',
+                analysis: 'Style is useful when allocation rules and risk controls are consistently executed.',
+                suggestion: 'Review sleeve drift monthly and execute rebalancing in small controlled steps.',
+            },
+        ],
+    };
+}
+
 
 // --- Robust JSON Parsing ---
 function robustJsonParse(jsonString: string | undefined): any {
@@ -148,6 +276,8 @@ const toFinnhubSymbol = (symbol: string): string => {
     if (!upper) return upper;
     if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
     if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+    const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+    if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
     return upper;
 };
 
@@ -155,6 +285,8 @@ const fromFinnhubSymbol = (symbol: string): string => {
     const upper = symbol.toUpperCase();
     if (upper === 'BINANCE:BTCUSDT') return 'BTC';
     if (upper === 'BINANCE:ETHUSDT') return 'ETH';
+    const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
+    if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
     return upper;
 };
 
@@ -528,14 +660,17 @@ export const getAIFinancialPersona = async (
             }
         });
         const result = robustJsonParse(response.text);
-        if (result) {
+        if (result && result.persona && Array.isArray(result.reportCard)) {
             setToCache(cacheKey, result);
+            return result;
         }
-        return result;
+        const fallback = buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
+        setToCache(cacheKey, fallback);
+        return fallback;
 
     } catch (error) {
-        console.error("Error fetching AI financial persona:", error);
-        throw error;
+        console.warn("[getAIFinancialPersona] AI unavailable, using deterministic fallback.", error);
+        return buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
     }
 };
 
@@ -563,9 +698,61 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch(e) {
-        return formatAiError(e);
+        return buildDirectPlanFallback(totals, scenarios);
     }
 }
+
+export const getAIHouseholdEngineAnalysis = async (householdEngine: any, scenarios: any): Promise<string> => {
+    const months = Array.isArray(householdEngine?.months) ? householdEngine.months : [];
+    const pressureMonths = months.filter((m: any) => (m.warnings || []).length > 0).length;
+    const criticalMonths = months.filter((m: any) => (m.validationErrors || []).length > 0).length;
+    const avgGoal = months.length > 0 ? months.reduce((s: number, m: any) => s + Number(m.routedGoalAmount || 0), 0) / months.length : 0;
+    const projected = Number(householdEngine?.plannedVsActual?.plannedNet || 0);
+    const mode = String(householdEngine?.config?.operatingMode || 'Balanced');
+
+    const fallback = `### Household Engine Summary
+- Mode: **${mode}**; projected annual net: **${fmtSar(projected)}**.
+- Pressure months: **${pressureMonths}**; critical months: **${criticalMonths}**.
+
+### Adjustment Order (recommended)
+1. Reduce unusual-month extras and Uber/support overrides first.
+2. Then reduce flexible operations/personal support.
+3. Keep reserve/emergency minimums protected unless critical pressure persists.
+
+### Goal & Long-Term Outlook
+- Average monthly goal push: **${fmtSar(avgGoal)}**.
+- If pressure rises, switch to Protection First temporarily, then restore goal acceleration when stable.`;
+
+    try {
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this household budget engine snapshot and provide direct decision support in Markdown only (no HTML), with concise bullets.
+
+Data:
+- Mode: ${mode}
+- Projected annual net: ${projected}
+- Pressure months: ${pressureMonths}
+- Critical months: ${criticalMonths}
+- Average monthly goal routing amount: ${avgGoal}
+- Scenarios: ${JSON.stringify(scenarios || {})}
+
+Required sections:
+### Why pressure happens
+### Best adjustment order
+### Normal vs heavy-month impact
+### House-goal completion outlook
+### Next-best actions
+
+Rules:
+- Recommend reducing flexible items/Uber/investing only in a practical order.
+- Mention temporary mode switching when appropriate.
+- Keep strategic minimums protected unless critical pressure.
+- Keep response short and operational.`;
+
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        return response.text || fallback;
+    } catch {
+        return fallback;
+    }
+};
 
 export const getAIAnalysisPageInsights = async (
     spendingData: { name: string; value: number }[],
@@ -594,7 +781,7 @@ export const getAIAnalysisPageInsights = async (
         return result;
 
     } catch (error) {
-        return formatAiError(error);
+        return buildDirectAnalysisFallback(spendingData, trendData, compositionData);
     }
 };
 
@@ -692,7 +879,7 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
         setToCache(cacheKey, result);
         return result;
     } catch (e) {
-        return formatAiError(e);
+        return buildDirectExecutiveFallback(monthlyPnL, overspentBudgets, goalProgress);
     }
 }
 
@@ -1092,6 +1279,9 @@ Portfolio snapshot context (for relevance only):
 
 Return Markdown only (no HTML):
 
+### TL;DR
+- One direct sentence with the current thesis in plain language.
+
 ### Recent News Summary
 - 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
@@ -1121,6 +1311,9 @@ Return Markdown only (no HTML):
             const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
 
 Structure:
+### TL;DR
+- One direct sentence with current thesis.
+
 ### Recent News Summary
 - 2-3 concise bullets.
 
@@ -1341,7 +1534,13 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     try {
-        if (provider === 'finnhub') return await tryFinnhub();
+        if (provider === 'finnhub') {
+            try {
+                return await tryFinnhub();
+            } catch {
+                return await tryStooq();
+            }
+        }
         if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
 

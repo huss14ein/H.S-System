@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useContext } from 'react';
+import React, { useState, useCallback, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
+import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAIHouseholdEngineAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
@@ -14,6 +14,9 @@ type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' |
 interface AIAdvisorProps {
     pageContext: AIContext;
     contextData?: any;
+    title?: string;
+    subtitle?: string;
+    buttonLabel?: string;
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
@@ -43,6 +46,9 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
         case 'investments':
             return getInvestmentAIAnalysis(data.investments.flatMap(p => p.holdings));
         case 'plan':
+             if (contextData?.householdEngine) {
+                return getAIHouseholdEngineAnalysis(contextData.householdEngine, contextData?.scenarios);
+             }
              if (contextData?.totals && contextData?.scenarios) {
                 return getAIPlanAnalysis(contextData.totals, contextData.scenarios);
              }
@@ -68,12 +74,19 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
 };
 
 
-const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
+const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights' }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { isAiAvailable } = useAI();
+
+    const insightSource = useMemo(() => {
+        const text = (insight || '').toLowerCase();
+        if (!insight) return null;
+        if (text.includes('deterministic') || text.includes('fallback') || text.includes('provider unavailable')) return 'Deterministic fallback';
+        return 'AI provider';
+    }, [insight]);
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
@@ -88,46 +101,49 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
         setIsLoading(false);
     }, [pageContext, data, contextData, exchangeRate]);
 
+
+
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                 <div className="flex flex-col">
                     <div className="flex items-center space-x-2">
                         <LightBulbIcon className="h-6 w-6 text-yellow-500" />
-                        <h2 className="text-xl font-semibold text-dark">Financial Advisor</h2>
+                        <h2 className="text-xl font-semibold text-dark">{title}</h2>
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">Expert financial & investment insights</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
                 </div>
                 <button
                     type="button"
                     onClick={handleGenerate}
-                    disabled={!isAiAvailable || isLoading}
-                    title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
+                    disabled={isLoading}
+                    title="Get AI Insights"
                     className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
-                    {isLoading ? 'Analyzing...' : 'Get AI Insights'}
+                    {isLoading ? 'Analyzing...' : buttonLabel}
                 </button>
             </div>
             {isLoading && <div className="text-center p-4 text-gray-500">Generating personalized insights...</div>}
             
             {insight && !isLoading && (
                  <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg">
+                    {insightSource && (
+                        <div className="mb-2">
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full border ${insightSource === 'AI provider' ? 'bg-indigo-100 border-indigo-200 text-indigo-700' : 'bg-amber-100 border-amber-200 text-amber-700'}`}>
+                                Source: {insightSource}
+                            </span>
+                        </div>
+                    )}
                     <SafeMarkdownRenderer content={insight} />
                 </div>
             )}
             
-            {!isAiAvailable ? (
-                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
-                    <p className="font-semibold">AI Features Disabled</p>
-                    <p className="text-sm">Please set your Gemini API key in the environment variables to enable this feature.</p>
+            {!insight && !isLoading && (
+                <div className="text-center p-4 text-gray-500">
+                    Click "${buttonLabel}" for an analysis of your ${pageContext} data.
+                    {!isAiAvailable && <p className="mt-1 text-xs text-amber-700">AI provider unavailable right now — deterministic advisor fallback remains active.</p>}
                 </div>
-            ) : (
-                !insight && !isLoading && (
-                    <div className="text-center p-4 text-gray-500">
-                        Click "Get AI Insights" for an analysis of your {pageContext} data.
-                    </div>
-                )
             )}
         </div>
     );

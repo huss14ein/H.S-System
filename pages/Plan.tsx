@@ -1,6 +1,8 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -17,6 +19,13 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import {
+    buildHouseholdBudgetPlan,
+    DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    mapGoalsForRouting,
+    sumLiquidCash,
+    HouseholdMonthlyOverride,
+} from '../services/householdBudgetEngine';
 
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -95,8 +104,13 @@ const SCENARIO_PRESETS = [
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [year, setYear] = useState(new Date().getFullYear());
+    const [householdAdults, setHouseholdAdults] = useState(2);
+    const [householdKids, setHouseholdKids] = useState(0);
+    const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
+    const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
     
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
@@ -114,6 +128,125 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const investmentPlan = data?.investmentPlan;
     const investmentTransactions = data?.investmentTransactions ?? [];
     const recurringTransactions = data?.recurringTransactions ?? [];
+
+    const householdProfileStorageKey = useMemo(() => `household-profile-plan:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
+    const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(householdProfileStorageKey);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
+                if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
+                if (parsed?.config) {
+                    setEngineConfig({
+                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+                        ...parsed.config,
+                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(parsed.config.transport || {}) },
+                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(parsed.config.allowances || {}) },
+                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(parsed.config.obligations || {}) },
+                        requiredExpenses: {
+                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
+                            ...(parsed.config.maintenance ? {
+                                annualReserveEnabled: Boolean(parsed.config.maintenance.houseAnnualEnabled),
+                                annualReserveAmount: Number(parsed.config.maintenance.houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean(parsed.config.maintenance.carAnnualEnabled),
+                                semiAnnualReserveAmount: Number(parsed.config.maintenance.carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean(parsed.config.maintenance.otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number(parsed.config.maintenance.otherMonthlyAmount || 0),
+                            } : {}),
+                            ...(parsed.config.requiredExpenses || {}),
+                        },
+                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(parsed.config.bucketRules || {}) },
+                    });
+                }
+            }
+        } catch {}
+    }, [householdProfileStorageKey]);
+
+    useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        let isMounted = true;
+        (async () => {
+            try {
+                const { data, error } = await db
+                    .from('household_budget_profiles')
+                    .select('profile')
+.eq('user_id', userId)
+                    .maybeSingle();
+                if (error || !data || !isMounted) return;
+                const profile = (data as { profile?: any })?.profile;
+                if (!profile || typeof profile !== 'object') return;
+                if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
+                if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
+                if (profile?.config) {
+                    setEngineConfig({
+                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+                        ...profile.config,
+                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(profile.config.transport || {}) },
+                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(profile.config.allowances || {}) },
+                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(profile.config.obligations || {}) },
+                        requiredExpenses: {
+                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
+                            ...(profile.config.maintenance ? {
+                                annualReserveEnabled: Boolean(profile.config.maintenance.houseAnnualEnabled),
+                                annualReserveAmount: Number(profile.config.maintenance.houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean(profile.config.maintenance.carAnnualEnabled),
+                                semiAnnualReserveAmount: Number(profile.config.maintenance.carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean(profile.config.maintenance.otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number(profile.config.maintenance.otherMonthlyAmount || 0),
+                            } : {}),
+                            ...(profile.config.requiredExpenses || {}),
+                        },
+                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(profile.config.bucketRules || {}) },
+                    });
+                }
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
+    }, [householdProfileCloudEnabled, auth?.user?.id]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(householdProfileStorageKey, JSON.stringify({
+                adults: householdAdults,
+                kids: householdKids,
+                overrides: householdOverrides,
+                config: engineConfig,
+            }));
+        } catch {}
+    }, [householdAdults, householdKids, householdOverrides, engineConfig, householdProfileStorageKey]);
+
+    useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        const payload = {
+            adults: householdAdults,
+            kids: householdKids,
+            overrides: householdOverrides,
+            config: engineConfig,
+        };
+        const t = window.setTimeout(async () => {
+            try {
+                await db
+                    .from('household_budget_profiles')
+                    .upsert({ user_id: userId, profile: payload }, { onConflict: 'user_id' });
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        }, 700);
+        return () => window.clearTimeout(t);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineConfig]);
 
     // Build plan from transactions, budgets, recurring, and investment data — fully integrated
     React.useEffect(() => {
@@ -324,7 +457,37 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             };
         });
     }, [goals, totals, processedPlanData]);
-    
+
+    const householdBudgetEngine = useMemo(() => {
+        const monthlyIncomePlanned = MONTHS.map((_, i) => {
+            const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
+            return Number(incomeRow?.monthly_planned?.[i] || 0);
+        });
+        const monthlyIncomeActual = MONTHS.map((_, i) => {
+            const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
+            return Number(incomeRow?.monthly_actual?.[i] || 0);
+        });
+        const monthlyExpenseActual = MONTHS.map((_, i) => processedPlanData
+            .filter((r: PlanRow) => r.type === 'expense')
+            .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
+
+        const liquidCash = sumLiquidCash(accounts as any[]);
+        const goalsForRouting = mapGoalsForRouting(goals as any[]);
+
+        return buildHouseholdBudgetPlan({
+            monthlySalaryPlan: monthlyIncomePlanned,
+            monthlyActualIncome: monthlyIncomeActual,
+            monthlyActualExpense: monthlyExpenseActual,
+            householdDefaults: { adults: householdAdults, kids: householdKids },
+            monthlyOverrides: householdOverrides,
+            liquidBalance: liquidCash,
+            emergencyBalance: liquidCash,
+            reserveBalance: liquidCash * 0.4,
+            goals: goalsForRouting,
+            config: engineConfig,
+        });
+    }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineConfig]);
+
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
@@ -379,6 +542,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             }
         >
+            <div className="space-y-6 sm:space-y-8">
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -413,7 +577,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
                 return liquidCash !== 0 ? (
-                    <div className="mt-3 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                    <div className="mt-4 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
@@ -423,7 +587,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Executive summary */}
             {totals && (
-                <div className="mt-3 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
@@ -457,7 +621,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Smart insights */}
             {(insights.worst || insights.monthsOverBudget > 0) && (
-                <div className="mt-3 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
+                <div className="mt-4 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
                     {insights.monthsOverBudget > 0 ? (
                         <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
                             <ExclamationTriangleIcon className="h-5 w-5 text-amber-500" />
@@ -672,7 +836,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                  </div>
             </div>
 
-             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress } }} />
+             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
 
              <SinkingFunds />
             
@@ -760,6 +924,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                 </div>
             )}
+            </div>
             </div>
         </PageLayout>
     );
