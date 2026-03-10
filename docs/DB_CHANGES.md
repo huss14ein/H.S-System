@@ -8,6 +8,8 @@ This project includes SQL scripts for sharing features. Run them in Supabase SQL
    - Creates `account_shares` table, RLS policies, and `get_shared_accounts_for_me()` RPC for account sharing.
 3. `docs/household_budget_profiles.sql` *(optional but recommended)*
    - Adds per-user cloud-sync storage for Plan household engine profile (`household_budget_profiles`) with strict owner-only RLS.
+4. `docs/commodity_gold_karat.sql` *(optional but recommended for explicit gold purity storage)*
+   - Adds `commodity_holdings.gold_karat` with validation (`24/22/21/18`) so gold valuation can persist by karat in DB queries.
 
 ## Notes
 - `docs/budget_sharing.sql` is an older helper script. Prefer `docs/budget_sharing_ready.sql` for complete setup.
@@ -18,3 +20,5 @@ This project includes SQL scripts for sharing features. Run them in Supabase SQL
 - Household budgeting engine v2 adds no DB schema changes; it is config-first and persisted client-side per user profile key.
 
 - If `docs/household_budget_profiles.sql` is not applied, Plan household engine still works with localStorage-only persistence.
+
+- Gold valuation now supports purity (24K/22K/21K/18K). The app persists purity in symbol suffix (for backward compatibility) and can additionally persist explicit `gold_karat` when `docs/commodity_gold_karat.sql` is applied.

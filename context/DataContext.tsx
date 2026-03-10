@@ -378,6 +378,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 name: 'Other' as CommodityHolding['name'],
                 purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
                 currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+                goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
                 zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
                 goalId: holding.goalId ?? holding.goal_id,
             };
@@ -389,6 +390,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: validName as CommodityHolding['name'],
             purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
             currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+            goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
             goalId: holding.goalId ?? holding.goal_id,
         };

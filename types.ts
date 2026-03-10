@@ -206,9 +206,11 @@ export interface CommodityHolding {
   name: 'Gold' | 'Silver' | 'Bitcoin' | 'Other';
   quantity: number;
   unit: 'gram' | 'ounce' | 'BTC' | 'unit';
+  /** Gold purity in karat (required for gold valuation). */
+  goldKarat?: 24 | 22 | 21 | 18;
   purchaseValue: number;
   currentValue: number;
-  symbol: string; // e.g., GOLD_GRAM, BTC_USD
+  symbol: string; // e.g., XAU_GRAM_24K, BTC_USD
   zakahClass: 'Zakatable' | 'Non-Zakatable';
   owner?: string;
   goalId?: string;

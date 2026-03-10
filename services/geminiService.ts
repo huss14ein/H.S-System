@@ -1390,7 +1390,7 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
 }
 
 /** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
-export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> {
+export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
     if (!token) return [];
     const out: { symbol: string; price: number }[] = [];
@@ -1399,17 +1399,20 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
         let finnhubSym = '';
         let priceMultiplier = SAR_PER_USD;
         let normalizedSym = sym;
+        const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
+        const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
+        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0.5, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
             finnhubSym = 'BINANCE:BTCUSDT';
             normalizedSym = 'BTC';
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
             finnhubSym = 'BINANCE:ETHUSDT';
             normalizedSym = 'ETH';
-        } else if (sym === 'XAU_GRAM' || sym === 'XAU') {
+        } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
-        } else if (sym === 'XAG_GRAM' || sym === 'XAG') {
+        } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
@@ -1421,7 +1424,7 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
             const row = await res.json();
             const priceUsd = Number(row?.c ?? row?.pc ?? row?.p);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier });
+            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier * karatFactor });
         } catch {
             // skip
         }
@@ -1438,7 +1441,7 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
 }
 
 /** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
+export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
     let prices = await getFinnhubCommodityPrices(commodities);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));

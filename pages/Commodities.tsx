@@ -24,6 +24,7 @@ const CommodityHoldingModal: React.FC<{
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
+    const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
     const [purchaseValue, setPurchaseValue] = useState('');
     const [currentValue, setCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
@@ -34,12 +35,13 @@ const CommodityHoldingModal: React.FC<{
             setName(holdingToEdit.name);
             setQuantity(String(holdingToEdit.quantity));
             setUnit(holdingToEdit.unit);
+            setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
             setPurchaseValue(String(holdingToEdit.purchaseValue));
             setCurrentValue(String(holdingToEdit.currentValue));
             setZakahClass(holdingToEdit.zakahClass);
             setOwner(holdingToEdit.owner || '');
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
         }
     }, [holdingToEdit, isOpen]);
 
@@ -49,8 +51,11 @@ const CommodityHoldingModal: React.FC<{
         else setUnit('unit');
     }, [name]);
 
-    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit']) => {
-        if (name === 'Gold') return unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE';
+    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit'], karat?: CommodityHolding['goldKarat']) => {
+        if (name === 'Gold') {
+            const k = (karat || 24);
+            return `${unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE'}_${k}K`;
+        }
         if (name === 'Silver') return unit === 'gram' ? 'XAG_GRAM' : 'XAG_OUNCE';
         if (name === 'Bitcoin') return 'BTC_USD';
         return 'OTHER';
@@ -68,7 +73,8 @@ const CommodityHoldingModal: React.FC<{
             name, quantity: parseFloat(quantity) || 0, unit,
             purchaseValue: parsedPurchaseValue,
             currentValue: parseFloat(currentValue) || 0,
-            symbol: getSymbol(name, unit), zakahClass,
+            symbol: getSymbol(name, unit, goldKarat), zakahClass,
+            goldKarat: name === 'Gold' ? goldKarat : undefined,
             owner: owner || undefined,
         };
         if (holdingToEdit) onSave({ ...holdingToEdit, ...holdingData });
@@ -86,6 +92,17 @@ const CommodityHoldingModal: React.FC<{
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Quantity & Unit <InfoHint text="Amount you hold; unit (grams/ounces/BTC) for correct valuation and Zakat." /></label>
                     <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="input-base w-full" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="select-base w-full">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                    {name === 'Gold' && (
+                        <div className="mt-3">
+                            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Gold Purity (Karat) <InfoHint text="Gold valuation depends on purity. 24K is pure gold; 22K/21K/18K are priced proportionally." /></label>
+                            <select value={goldKarat} onChange={e => setGoldKarat(Number(e.target.value) as NonNullable<CommodityHolding['goldKarat']>)} className="select-base w-full">
+                                <option value={24}>24K</option>
+                                <option value={22}>22K</option>
+                                <option value={21}>21K</option>
+                                <option value={18}>18K</option>
+                            </select>
+                        </div>
+                    )}
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase & Current Value <InfoHint text="Cost basis and current market value; use Update Prices to refresh current value from APIs." /></label>
@@ -117,7 +134,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                 <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-4">
                         {getIcon(holding.name)}
-                        <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}</p></div>
+                        <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}{holding.name === 'Gold' && holding.goldKarat ? ` • ${holding.goldKarat}K` : ''}</p></div>
                     </div>
                     <div className="flex space-x-1"><button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button></div>
                 </div>
@@ -161,7 +178,7 @@ const Commodities: React.FC = () => {
         if (data.commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
         try {
-            const { prices } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            const { prices } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name, goldKarat: c.goldKarat })));
             const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
                 const updates = data.commodityHoldings

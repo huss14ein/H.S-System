@@ -145,6 +145,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
+    const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
     const [purchaseValue, setPurchaseValue] = useState('');
     const [currentValue, setCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
@@ -158,10 +159,11 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
     useEffect(() => {
         if (holdingToEdit) {
             setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
+            setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
             setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
             setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || ''); setGoalId(holdingToEdit.goalId);
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
         }
         setFormError(null);
         setDiagnosticReport(null);
@@ -174,8 +176,11 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         else setUnit('unit');
     }, [name]);
 
-    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit']) => {
-        if (name === 'Gold') return unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE';
+    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit'], karat?: CommodityHolding['goldKarat']) => {
+        if (name === 'Gold') {
+            const k = (karat || 24);
+            return `${unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE'}_${k}K`;
+        }
         if (name === 'Silver') return unit === 'gram' ? 'XAG_GRAM' : 'XAG_OUNCE';
         if (name === 'Bitcoin') return 'BTC_USD';
         return 'OTHER';
@@ -209,7 +214,8 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             unit,
             purchaseValue: parsedPurchaseValue,
             currentValue: parsedCurrentValue,
-            symbol: getSymbol(name, unit),
+            symbol: getSymbol(name, unit, goldKarat),
+            goldKarat: name === 'Gold' ? goldKarat : undefined,
             zakahClass,
             owner: owner || undefined,
             goalId,
@@ -229,7 +235,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                 `Commodity save failed at ${new Date().toISOString()}`,
                 `Operation: ${holdingToEdit ? 'Update' : 'Insert'}`,
                 `Commodity: ${name}`,
-                `Symbol: ${getSymbol(name, unit)}`,
+                `Symbol: ${getSymbol(name, unit, goldKarat)}`,
                 `Message: ${message}`,
             ];
             if (missing) reportLines.push(`Likely missing DB column: ${missing}`);
@@ -293,6 +299,17 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             <form onSubmit={handleSubmit} className="space-y-4">
                 <select value={name} onChange={e => setName(e.target.value as any)} className="w-full p-2 border rounded-md"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                {name === 'Gold' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Gold Purity (Karat) <InfoHint text="Gold valuation depends on purity. 24K is pure gold; 22K/21K/18K are priced proportionally." /></label>
+                        <select value={goldKarat} onChange={e => setGoldKarat(Number(e.target.value) as NonNullable<CommodityHolding['goldKarat']>)} className="mt-1 w-full p-2 border rounded-md">
+                            <option value={24}>24K</option>
+                            <option value={22}>22K</option>
+                            <option value={21}>21K</option>
+                            <option value={18}>18K</option>
+                        </select>
+                    </div>
+                )}
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Optional ownership label for shared/family tracking." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
@@ -348,7 +365,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     {getIcon(holding.name)}
                     <div className="min-w-0 flex-1">
                         <h3 className="font-semibold text-dark break-words">{holding.name}</h3>
-                        <p className="text-xs text-slate-500 mt-0.5">{holding.quantity} {holding.unit}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{holding.quantity} {holding.unit}{holding.name === 'Gold' && holding.goldKarat ? ` • ${holding.goldKarat}K` : ''}</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -446,7 +463,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         setIsUpdatingPrices(true);
         setGroundingChunks([]);
         try {
-            const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name })));
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name, goldKarat: c.goldKarat })));
             if (chunks) {
                 setGroundingChunks(chunks);
             }
