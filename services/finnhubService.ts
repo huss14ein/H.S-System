@@ -472,6 +472,42 @@ export interface EconomicCalendarEvent {
   estimate?: string;
 }
 
+interface MarketCalendarCachePayload {
+  cachedAt: number;
+  economic: EconomicCalendarEvent[];
+  earnings: EarningsEvent[];
+}
+
+const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v1:';
+const MARKET_CALENDAR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+function getMarketCalendarCacheKey(from: string, to: string, symbols: string[]): string {
+  const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort().join(',');
+  return `${MARKET_CALENDAR_CACHE_PREFIX}${from}:${to}:${normalizedSymbols}`;
+}
+
+function readMarketCalendarCache(cacheKey: string): MarketCalendarCachePayload | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MarketCalendarCachePayload;
+    if (!parsed?.cachedAt || Date.now() - parsed.cachedAt > MARKET_CALENDAR_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeMarketCalendarCache(cacheKey: string, payload: MarketCalendarCachePayload): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota/private mode errors.
+  }
+}
+
 export async function getEconomicCalendar(from: string, to: string): Promise<EconomicCalendarEvent[]> {
   try {
     const data = await get<{ economicCalendar?: any[] }>('/calendar/economic', { from, to });
@@ -486,6 +522,25 @@ export async function getEconomicCalendar(from: string, to: string): Promise<Eco
   } catch {
     return [];
   }
+}
+
+export async function getMarketCalendarCached(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; fromCache: boolean; }> {
+  const symbols = [...new Set(trackedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
+  const cacheKey = getMarketCalendarCacheKey(from, to, symbols);
+  const cached = readMarketCalendarCache(cacheKey);
+  if (cached) {
+    return { economic: cached.economic, earnings: cached.earnings, fromCache: true };
+  }
+
+  const [economic, earningsAll] = await Promise.all([
+    getEconomicCalendar(from, to),
+    getEarningsCalendar(from, to),
+  ]);
+
+  const symbolSet = new Set(symbols);
+  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+  writeMarketCalendarCache(cacheKey, { cachedAt: Date.now(), economic, earnings });
+  return { economic, earnings, fromCache: false };
 }
 
 // --- Aggregated research for a symbol (profile + quote 52w + earnings + insider + news) ---

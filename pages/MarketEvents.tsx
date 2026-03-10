@@ -1,6 +1,7 @@
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
+import { getMarketCalendarCached } from '../services/finnhubService';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -15,6 +16,11 @@ interface MarketEventItem {
   impact: Impact;
   symbol?: string;
   estimated?: boolean;
+}
+
+interface FinnhubCalendarState {
+  fromCache: boolean;
+  events: MarketEventItem[];
 }
 
 const IMPACT_STYLES: Record<Impact, string> = {
@@ -224,6 +230,61 @@ const MarketEvents: React.FC = () => {
   const { data } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
+  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ fromCache: false, events: [] });
+
+  const trackedSymbols = useMemo(() => Array.from(new Set([
+    ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
+    ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
+  ])), [data]);
+
+  useEffect(() => {
+    const now = startOfDay(new Date());
+    const end = new Date(now.getFullYear(), now.getMonth() + MONTHS_AHEAD, now.getDate());
+    const from = now.toISOString().slice(0, 10);
+    const to = end.toISOString().slice(0, 10);
+    let alive = true;
+
+    getMarketCalendarCached(from, to, trackedSymbols).then((result) => {
+      if (!alive) return;
+      const macro = result.economic
+        .filter((e) => e.date)
+        .map((e, idx) => {
+          const title = (e.event || '').trim() || 'Economic Calendar Event';
+          const impact: Impact = /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(title) ? 'High' : 'Medium';
+          return {
+            id: `finnhub-econ-${e.date}-${idx}-${title}`,
+            date: new Date(e.date),
+            title,
+            description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
+            source: result.fromCache ? 'Finnhub economic calendar (cached)' : 'Finnhub economic calendar',
+            category: 'Macro' as const,
+            impact,
+            estimated: false,
+          } satisfies MarketEventItem;
+        });
+
+      const earnings = result.earnings
+        .filter((e) => e.date)
+        .map((e) => ({
+          id: `finnhub-earnings-${e.symbol}-${e.date}`,
+          date: new Date(e.date!),
+          title: `${e.symbol} earnings (Finnhub)`,
+          description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
+          source: result.fromCache ? 'Finnhub earnings calendar (cached)' : 'Finnhub earnings calendar',
+          category: 'Earnings' as const,
+          impact: 'High' as const,
+          symbol: e.symbol,
+          estimated: false,
+        }));
+
+      setFinnhubState({ fromCache: result.fromCache, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
+    }).catch(() => {
+      if (!alive) return;
+      setFinnhubState({ fromCache: false, events: [] });
+    });
+
+    return () => { alive = false; };
+  }, [trackedSymbols]);
 
   const events = useMemo(() => {
     const now = startOfDay(new Date());
@@ -234,11 +295,6 @@ const MarketEvents: React.FC = () => {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       macro.push(...addMacroEventsForMonth(d.getFullYear(), d.getMonth()));
     }
-
-    const trackedSymbols = Array.from(new Set([
-      ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
-      ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
-    ]));
 
     const symbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
       const earningsDate = nextEstimatedEarningsDate(now, symbol);
@@ -329,10 +385,10 @@ const MarketEvents: React.FC = () => {
       ];
     });
 
-    return [...macro, ...symbolEvents, ...portfolioEvents]
+    return [...finnhubState.events, ...macro, ...symbolEvents, ...portfolioEvents]
       .filter((e) => e.date >= now && e.date <= end)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data]);
+  }, [data, trackedSymbols, finnhubState.events]);
 
   const filtered = useMemo(() => events.filter((e) =>
     (categoryFilter === 'All' || e.category === categoryFilter) &&
@@ -371,6 +427,10 @@ const MarketEvents: React.FC = () => {
       <div className="space-y-3">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
+          <div className="mt-1 text-xs text-amber-700">
+            Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load.
+            {finnhubState.events.length > 0 ? ` Source mode: ${finnhubState.fromCache ? 'cached snapshot' : 'fresh fetch'}.` : ''}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
