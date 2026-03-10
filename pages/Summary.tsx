@@ -20,7 +20,6 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
-import { useAI } from '../context/AiContext';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -63,7 +62,6 @@ const Summary: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
-    const { isAiAvailable } = useAI();
 
     useEffect(() => {
         const loadRole = async () => {
@@ -163,11 +161,6 @@ const Summary: React.FC = () => {
         setIsLoading(false);
     }, [financialMetricsWithEf]);
 
-    useEffect(() => {
-        if (!isAiAvailable || analysis || isLoading || error) return;
-        handleGenerateAnalysis();
-    }, [isAiAvailable, analysis, isLoading, error, handleGenerateAnalysis]);
-
     if (loading) {
         return (
             <div className="flex justify-center items-center h-96">
@@ -247,7 +240,7 @@ const Summary: React.FC = () => {
                          <button type="button" onClick={handleGenerateAnalysis} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Preparing your direct financial advisor summary...</div>}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click "Generate Advisor Summary" to run the advisor manually.</div>}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">

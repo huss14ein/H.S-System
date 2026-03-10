@@ -594,13 +594,6 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     }, [isOpen]);
 
     useEffect(() => {
-        if (!holding || !isOpen || isLoading) return;
-        if (lastAnalystRequestRef.current === holding.id) return;
-        lastAnalystRequestRef.current = holding.id;
-        handleGetAIAnalysis(true);
-    }, [holding, isOpen, isLoading, handleGetAIAnalysis]);
-
-    useEffect(() => {
         if (!holding || !isOpen) return;
         let cancelled = false;
         setIsFundamentalsLoading(true);
@@ -857,7 +850,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                             <h4 className="font-semibold text-slate-800 break-words">Analyst Report</h4>
                             <p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p>
                             <p className="text-xs mt-1 text-slate-500">
-                                {analystSource === 'live' ? 'Live AI report' : analystSource === 'fallback' ? 'Fallback report' : 'Preparing report'}{analystGeneratedAgo ? ` · ${analystGeneratedAgo}` : ''}
+                                {analystSource === 'live' ? 'Live AI report' : analystSource === 'fallback' ? 'Fallback report' : 'Ready to generate'}{analystGeneratedAgo ? ` · ${analystGeneratedAgo}` : ''}
                             </p>
                         </div>
                         <button
@@ -1883,21 +1876,6 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             setIsFillingAnalyst(false);
         }
     }, [unifiedUniverse, plan]);
-
-    useEffect(() => {
-        if (!planAdvancedOpen || !isAiAvailable || analystAutoFilledRef.current) return;
-        analystAutoFilledRef.current = true;
-        getSuggestedAnalystEligibility(unifiedUniverse).then(suggested => {
-            setPlan(prev => ({
-                ...prev,
-                minimumUpsidePercentage: suggested.minimumUpsidePercentage,
-                stale_days: suggested.stale_days,
-                min_coverage_threshold: suggested.min_coverage_threshold,
-                redirect_policy: suggested.redirect_policy,
-                target_provider: suggested.target_provider,
-            }));
-        }).catch(() => { analystAutoFilledRef.current = false; });
-    }, [planAdvancedOpen, isAiAvailable, unifiedUniverse]);
 
     const handleAddNewTicker = async () => {
         if (!newTicker.ticker || !newTicker.name) return;

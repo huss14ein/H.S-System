@@ -300,13 +300,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   }, [isAiAvailable, qualifiedPositions, deployableCashSAR, safeFxRate]);
 
   useEffect(() => {
-    if (!selected || !isAiAvailable) return;
-    const sym = (selected.holding.symbol || '').toUpperCase();
-    if (!sym || aiRecoveryBySymbol[sym]) return;
-    refreshAiRecoveryConfig();
-  }, [selected, isAiAvailable, aiRecoveryBySymbol, refreshAiRecoveryConfig]);
-
-  useEffect(() => {
     const symbol = selected?.holding?.symbol;
     if (!symbol) {
       setSelectedFundamentals(null);

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -17,7 +17,6 @@ interface AIAdvisorProps {
     title?: string;
     subtitle?: string;
     buttonLabel?: string;
-    autoGenerate?: boolean;
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
@@ -72,7 +71,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
 };
 
 
-const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights', autoGenerate = true }) => {
+const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights' }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const { data } = useContext(DataContext)!;
@@ -92,13 +91,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setIsLoading(false);
     }, [pageContext, data, contextData, exchangeRate]);
 
-    const didAutoRunRef = useRef(false);
-
-    useEffect(() => {
-        if (!autoGenerate || !isAiAvailable || isLoading || insight || didAutoRunRef.current) return;
-        didAutoRunRef.current = true;
-        handleGenerate();
-    }, [autoGenerate, isAiAvailable, isLoading, insight, handleGenerate]);
 
 
     return (
@@ -132,7 +124,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             
             {!insight && !isLoading && (
                 <div className="text-center p-4 text-gray-500">
-                    {autoGenerate ? `Preparing concise advisor guidance for ${pageContext}…` : `Click "${buttonLabel}" for an analysis of your ${pageContext} data.`}
+                    Click "${buttonLabel}" for an analysis of your ${pageContext} data.
                     {!isAiAvailable && <p className="mt-1 text-xs text-amber-700">AI provider unavailable right now — deterministic advisor fallback remains active.</p>}
                 </div>
             )}
