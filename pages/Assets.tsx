@@ -515,8 +515,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <button
                         type="button"
                         onClick={handleUpdatePrices}
-                        disabled={isUpdatingPrices || !isAiAvailable || data.commodityHoldings.length === 0}
-                        title={!isAiAvailable ? "AI features are disabled" : (data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices")}
+                        disabled={isUpdatingPrices || data.commodityHoldings.length === 0}
+                        title={data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices"}
                         className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <SparklesIcon className="h-4 w-4" />
@@ -527,7 +527,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI or fallback APIs (Finnhub/Stooq).
+                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI with deterministic fallback APIs (Finnhub/Stooq).
                         </p>
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>

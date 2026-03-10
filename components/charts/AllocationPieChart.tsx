@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
@@ -42,20 +42,43 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
 
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
+  const chartHostRef = useRef<HTMLDivElement | null>(null);
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = chartHostRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      setChartSize({ width: el.clientWidth, height: el.clientHeight });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, []);
   const sanitizedData = useMemo(
     () => (data || []).filter((d) => Number.isFinite(d.value) && d.value > 0),
     [data]
   );
   const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
   const isEmpty = !sanitizedData.length || totalValue <= 0;
+  const tooltipPosition = chartSize.width >= 640
+    ? { x: Math.max(8, chartSize.width - 220), y: Math.max(10, Math.round(chartSize.height * 0.24)) }
+    : undefined;
+  const pieCenterX = chartSize.width >= 640 ? '38%' : '50%';
 
   return (
     <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
+      <div ref={chartHostRef} className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
             data={sanitizedData}
-            cx="50%"
+            cx={pieCenterX}
             cy="50%"
             labelLine={false}
             label={sanitizedData.length > 1 ? renderCustomizedLabel : undefined}
@@ -70,10 +93,18 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
           </Pie>
-          {sanitizedData.length > 1 && <Tooltip content={<CustomTooltip totalValue={totalValue} />} />}
+          {sanitizedData.length > 1 && (
+            <Tooltip
+              content={<CustomTooltip totalValue={totalValue} />}
+              position={tooltipPosition}
+              allowEscapeViewBox={{ x: true, y: true }}
+              wrapperStyle={{ pointerEvents: 'none' }}
+            />
+          )}
           {sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
         </PieChart>
       </ResponsiveContainer>
+      </div>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
         <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[82%]">
           <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
