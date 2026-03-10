@@ -13,7 +13,6 @@ import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
-import { useAI } from '../context/AiContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
@@ -34,7 +33,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data, resetData, loadDemoData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
-  const { isAiAvailable } = useAI();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
   const lastUpdatedRef = useRef(lastUpdated);
@@ -98,7 +96,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Investments', 'Plan', 'Assets', 'Liabilities'] },
+    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Assets', 'Liabilities'] },
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
@@ -256,7 +254,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               <button
                 onClick={onOpenLiveAdvisor}
                 className="p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 disabled:text-gray-200 transition-all"
-                disabled={!isAiAvailable}
               >
                  <HeadsetIcon className="h-6 w-6" />
              </button>

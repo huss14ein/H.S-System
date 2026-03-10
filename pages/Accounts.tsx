@@ -1,6 +1,9 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { Account, Page } from '../types';
+import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
 
 interface AccountsProps {
     setActivePage?: (page: Page) => void;
@@ -21,6 +24,8 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
+
+type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string };
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -55,7 +60,7 @@ const AccountModal: React.FC<{
                 await onSave(accountData);
             }
             onClose();
-        } catch (error) {
+        } catch {
             // Error handled in DataContext
         }
     };
@@ -91,7 +96,8 @@ const AccountCardComponent: React.FC<{
     onEditAccount: (acc: Account) => void;
     onDeleteAccount: (acc: Account) => void;
     linkedPortfoliosCount?: number;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount }) => {
+    readOnly?: boolean;
+}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false }) => {
     const { formatCurrencyString } = useFormatCurrency();
 
     const getAccountIcon = (type: Account['type']) => {
@@ -115,17 +121,21 @@ const AccountCardComponent: React.FC<{
                             {linkedPortfoliosCount != null && linkedPortfoliosCount > 0 && (
                                 <span className="ml-1 text-indigo-600">· {linkedPortfoliosCount} portfolio{linkedPortfoliosCount !== 1 ? 's' : ''}</span>
                             )}
+                            {readOnly && <span className="ml-1 text-amber-700">· Shared view</span>}
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                    <button type="button" onClick={() => onEditAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit account"><PencilIcon className="h-4 w-4"/></button>
-                    <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
-                </div>
+                {!readOnly && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                        <button type="button" onClick={() => onEditAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit account"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
+                    </div>
+                )}
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100 min-w-0 overflow-hidden">
                 <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
                 <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
             </div>
         </div>
     );
@@ -133,6 +143,7 @@ const AccountCardComponent: React.FC<{
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
@@ -140,6 +151,47 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
+    const [shareTargetEmail, setShareTargetEmail] = useState('');
+    const [shareAccountId, setShareAccountId] = useState('');
+    const [shareError, setShareError] = useState<string | null>(null);
+    const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+    const [sharedAccounts, setSharedAccounts] = useState<SharedAccountRow[]>([]);
+
+    useEffect(() => {
+        const loadSharingState = async () => {
+            if (!supabase || !auth?.user?.id) return;
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
+            setIsAdmin(admin);
+
+            const { data: sharedRows } = await supabase
+                .rpc('get_shared_accounts_for_me')
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const rows = (sharedRows || []) as any[];
+            setSharedAccounts(rows.map((r) => ({
+                id: String(r.account_id ?? r.id ?? ''),
+                name: String(r.name ?? 'Shared Account'),
+                type: (r.type === 'Savings' || r.type === 'Investment' || r.type === 'Credit' ? r.type : 'Checking') as Account['type'],
+                balance: Number(r.balance ?? 0),
+                owner: r.owner ?? undefined,
+                ownerEmail: r.owner_email ?? r.ownerEmail ?? r.owner_user_id,
+                user_id: r.user_id,
+            })).filter((r) => !!r.id));
+
+            if (admin) {
+                const { data: users, error } = await supabase.rpc('list_shareable_users');
+                if (!error) {
+                    const options = (Array.isArray(users) ? users : [])
+                        .filter((u: any) => u?.id && u?.email && u.id !== auth.user?.id)
+                        .map((u: any) => ({ id: String(u.id), email: String(u.email).toLowerCase() }));
+                    setShareableUsers(options);
+                }
+            }
+        };
+        loadSharingState();
+    }, [auth?.user?.id, data.accounts.length]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
@@ -174,7 +226,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             } else {
                 await addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'>);
             }
-        } catch (error) {
+        } catch {
             // Error already alerted in DataContext
         }
     };
@@ -186,13 +238,36 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         setItemToDelete(null);
     };
 
+    const handleShareAccount = async () => {
+        if (!supabase || !auth?.user?.id || !shareAccountId || !shareTargetEmail) return;
+        const target = shareableUsers.find((u) => u.email === shareTargetEmail.toLowerCase());
+        if (!target) {
+            setShareError('Select a valid user to share with.');
+            setShareSuccess(null);
+            return;
+        }
+        const { error } = await supabase
+            .from('account_shares')
+            .upsert({ owner_user_id: auth.user.id, shared_with_user_id: target.id, account_id: shareAccountId }, { onConflict: 'owner_user_id,shared_with_user_id,account_id' });
+        if (error) {
+            const msg = (error.message || '').trim();
+            setShareError(/account_shares|relation .* does not exist/i.test(msg)
+                ? 'Account sharing is not enabled in DB yet. Add account_shares/get_shared_accounts_for_me migration first.'
+                : msg);
+            setShareSuccess(null);
+            return;
+        }
+        setShareError(null);
+        setShareSuccess('Account shared successfully.');
+        setShareTargetEmail('');
+    };
+
     return (
         <PageLayout
             title="Accounts"
             description="Track checking, savings, credit, and investment accounts."
             action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
         >
-
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                  <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
                  <Card title="Total Credit Balance" value={formatCurrencyString(totalCredit)} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
@@ -205,6 +280,32 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{formatCurrencyString(emergencyFund.shortfall)}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.'}</p>
                 {setActivePage && <button type="button" onClick={() => setActivePage('Summary')} className="mt-2 text-sm text-primary font-medium hover:underline">View full breakdown on Summary →</button>}
             </div>
+
+            {isAdmin && (
+                <section className="section-card mt-4">
+                    <h3 className="section-title text-base">Share account with another user</h3>
+                    <p className="text-sm text-slate-600 mb-3">Share read-only account visibility with a specific user, similar to budget sharing.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                        <div>
+                            <label className="block text-xs text-slate-500 mb-1">Account</label>
+                            <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base">
+                                <option value="">Select account</option>
+                                {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs text-slate-500 mb-1">User email</label>
+                            <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
+                                <option value="">Select user</option>
+                                {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
+                            </select>
+                        </div>
+                        <button type="button" onClick={handleShareAccount} className="btn-primary">Share Account</button>
+                    </div>
+                    {shareError && <p className="text-sm text-rose-600 mt-2">{shareError}</p>}
+                    {shareSuccess && <p className="text-sm text-emerald-600 mt-2">{shareSuccess}</p>}
+                </section>
+            )}
 
             {setActivePage && (
                 <div className="flex flex-wrap gap-2 p-4 section-card">
@@ -245,6 +346,17 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     })}
                 </div>
             </section>
+
+            {sharedAccounts.length > 0 && (
+                <section>
+                    <h2 className="section-title text-xl mb-4">Shared With Me</h2>
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                        {sharedAccounts.map((acc) => (
+                            <AccountCardComponent key={`shared-${acc.id}-${acc.ownerEmail || ''}`} account={acc} onEditAccount={() => {}} onDeleteAccount={() => {}} readOnly />
+                        ))}
+                    </div>
+                </section>
+            )}
 
             <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
