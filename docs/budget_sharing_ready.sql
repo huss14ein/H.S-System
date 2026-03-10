@@ -216,42 +216,4 @@ $$;
 revoke all on function public.get_shared_budget_consumed_for_me() from public;
 grant execute on function public.get_shared_budget_consumed_for_me() to authenticated;
 
-
-drop function if exists public.get_pending_transactions_for_admin();
-create function public.get_pending_transactions_for_admin()
-returns table (
-  id uuid,
-  user_id uuid,
-  description text,
-  amount numeric,
-  budget_category text,
-  date date,
-  status text
-)
-language sql
-security definer
-set search_path = public, auth
-as $$
-  select
-    t.id,
-    t.user_id,
-    t.description,
-    t.amount,
-    coalesce(t.budget_category, t.category) as budget_category,
-    t.date,
-    t.status
-  from public.transactions t
-  where lower(coalesce(t.status, '')) = 'pending'
-    and exists (
-      select 1
-      from public.users me
-      where me.id = auth.uid()
-        and lower(coalesce(me.role, '')) = 'admin'
-    )
-  order by t.date desc;
-$$;
-
-revoke all on function public.get_pending_transactions_for_admin() from public;
-grant execute on function public.get_pending_transactions_for_admin() to authenticated;
-
 commit;

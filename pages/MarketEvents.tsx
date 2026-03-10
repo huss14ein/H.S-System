@@ -236,6 +236,8 @@ const MarketEvents: React.FC = () => {
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
+  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [] });
+  const [reminders, setReminders] = useState<Record<string, true>>({});
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
@@ -302,6 +304,7 @@ const MarketEvents: React.FC = () => {
         }));
 
       setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
+      setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
 
       if (result.mode === 'cache_fresh') {
         getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
@@ -342,6 +345,7 @@ const MarketEvents: React.FC = () => {
     }).catch(() => {
       if (!alive) return;
       setFinnhubState({ mode: 'none', events: [], warnings: ['Live Finnhub calendar is unavailable right now. You can enable modeled estimates from the filter bar if needed.'] });
+      setFinnhubState({ mode: 'none', events: [] });
     });
 
     return () => { alive = false; };
@@ -358,6 +362,13 @@ const MarketEvents: React.FC = () => {
     }
 
     const modeledSymbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
+    const macro: MarketEventItem[] = [];
+    for (let i = 0; i < MONTHS_AHEAD; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      macro.push(...addMacroEventsForMonth(d.getFullYear(), d.getMonth()));
+    }
+
+    const symbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
       const earningsDate = nextEstimatedEarningsDate(now, symbol);
       const divDate = nextEstimatedDividendDate(now, symbol);
       const agmDate = new Date(earningsDate.getFullYear(), earningsDate.getMonth(), Math.max(1, earningsDate.getDate() - 10));
@@ -453,6 +464,10 @@ const MarketEvents: React.FC = () => {
       .filter((e) => e.date >= now && e.date <= end)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
+    return [...finnhubState.events, ...macro, ...symbolEvents, ...portfolioEvents]
+      .filter((e) => e.date >= now && e.date <= end)
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [data, trackedSymbols, finnhubState.events]);
 
   const filtered = useMemo(() => events.filter((e) =>
     (categoryFilter === 'All' || e.category === categoryFilter) &&
@@ -533,6 +548,7 @@ const MarketEvents: React.FC = () => {
       <div className="space-y-3">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           The calendar shows provider-backed events (Finnhub economic + earnings) and your portfolio timeline by default. You can optionally enable modeled estimates for broader planning windows.
+          The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
           <div className="mt-1 text-xs text-amber-700">
             Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
             {finnhubState.mode === 'fresh' && ' Source mode: fresh fetch.'}
@@ -547,6 +563,7 @@ const MarketEvents: React.FC = () => {
               {finnhubState.warnings.map((w, idx) => <li key={`finnhub-warn-${idx}`}>{w}</li>)}
             </ul>
           )}
+          </div>
         </div>
         <div className="flex justify-end">
           <button type="button" className="btn-outline text-xs" onClick={downloadIcs}>Export filtered calendar (.ics)</button>

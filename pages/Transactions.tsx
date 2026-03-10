@@ -506,6 +506,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     if (attempt < 1) {
                         await new Promise((resolve) => setTimeout(resolve, 250));
                     }
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                pendingRows = camelCaseResult.data || [];
+                pendingError = camelCaseResult.error;
+
+                if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                    const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                    pendingRows = snakeCaseResult.data || [];
+                    pendingError = snakeCaseResult.error;
+                }
+
+                if (!pendingError) break;
+                if (attempt < 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
                 }
             }
 
@@ -515,6 +529,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 const base = pendingError.message || 'Could not load pending transactions.';
                 const hint = /approve_pending_transaction|reject_pending_transaction|get_pending_transactions_for_admin|transactions|policy|rls/i.test(base)
                     ? ' Verify latest DB SQL migrations are applied. If RLS limits direct transaction reads, install the get_pending_transactions_for_admin RPC.'
+                const hint = /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
+                    ? ' Verify latest DB SQL migrations are applied.'
                     : '';
                 setPendingLoadError(`${base}${hint}`);
                 setIsPendingLoading(false);

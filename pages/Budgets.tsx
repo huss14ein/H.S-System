@@ -607,6 +607,41 @@ const Budgets: React.FC = () => {
                 });
             });
 
+            });
+
+        ownerSharedTransactions
+            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
+            .forEach((tx) => {
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!(d >= rangeStart && d <= rangeEnd)) return;
+                const category = String(tx.budget_category || '').trim();
+                if (!category) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+            });
+
+        const rowsForYear = (sharedBudgets ?? [])
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+
+        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+
+        if (budgetView === 'Yearly') {
+            const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
+            rowsForYear.forEach((b) => {
+                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const key = `${ownerKey}::${b.category}`;
+                const existing = yearlyByOwnerCategory.get(key);
+                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
+                yearlyByOwnerCategory.set(key, {
+                    ...(existing || b),
+                    category: b.category,
+                    ownerEmail: (b as any).ownerEmail || existing?.ownerEmail,
+                    ownerKey,
+                    yearlyLimit,
+                });
+            });
+
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
@@ -1351,6 +1386,8 @@ const Budgets: React.FC = () => {
                     </button>
                     {engineSectionsOpen.monthlyOverrides && (
                     <div className="mt-2 overflow-x-auto">
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
                     <table className="min-w-full text-xs">
                         <thead>
                             <tr className="text-slate-500 border-b">
@@ -1449,6 +1486,32 @@ const Budgets: React.FC = () => {
                     </button>
                     {engineSectionsOpen.validation && (
                     <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
+                        <button
+                            key={scenario.id}
+                            type="button"
+                            className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
+                            onClick={() => {
+                                setSelectedScenario(scenario.id);
+                                setHouseholdAdults(scenario.defaults.adults);
+                                setHouseholdKids(scenario.defaults.kids);
+                                setHouseholdOverrides(scenario.overrides);
+                                setEngineConfig((prev) => ({ ...prev, ...(scenario.config || {}) }));
+                            }}
+                        >
+                            {scenario.label}
+                        </button>
+                    ))}
+                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
+                </div>
+                {householdBudgetEngine.recommendations.length > 0 && (
+                    <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
+                        {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
+                    </ul>
+                )}
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
                     <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
                     {criticalValidationCount > 0 && (
                         <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
@@ -1471,6 +1534,9 @@ const Budgets: React.FC = () => {
             </div>
 
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
+                </div>
+            </SectionCard>
+
             {budgetData.length > 0 && (
                 <div className="section-card border-l-4 border-emerald-500/60">
                     <h3 className="section-title text-base">Money saved from budget</h3>

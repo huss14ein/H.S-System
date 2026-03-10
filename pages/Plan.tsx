@@ -543,6 +543,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         >
             <div className="space-y-6 sm:space-y-8">
+            <div className="space-y-4 sm:space-y-5">
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
