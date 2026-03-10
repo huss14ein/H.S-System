@@ -22,6 +22,8 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import {
     buildHouseholdBudgetPlan,
     DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    mapGoalsForRouting,
+    sumLiquidCash,
     HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
 
@@ -469,16 +471,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
-        const liquidCash = accounts
-            .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, Number(a.balance) || 0), 0);
-
-        const goalsForRouting = (goals as { name: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number }[])
-            .map((g) => ({
-                name: g.name,
-                remaining: Math.max(0, Number(g.targetAmount ?? g.target_amount ?? 0) - Number(g.currentAmount ?? g.current_amount ?? 0)),
-            }))
-            .filter((g) => g.remaining > 0);
+        const liquidCash = sumLiquidCash(accounts as any[]);
+        const goalsForRouting = mapGoalsForRouting(goals as any[]);
 
         return buildHouseholdBudgetPlan({
             monthlySalaryPlan: monthlyIncomePlanned,

@@ -110,6 +110,21 @@ export interface HouseholdEngineResult {
   };
 }
 
+export function mapGoalsForRouting(goals: Array<{ name?: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number }>): Array<{ name: string; remaining: number }> {
+  return (goals || [])
+    .map((g) => ({
+      name: String(g.name || 'Goal'),
+      remaining: Math.max(0, Number(g.targetAmount ?? g.target_amount ?? 0) - Number(g.currentAmount ?? g.current_amount ?? 0)),
+    }))
+    .filter((g) => g.remaining > 0);
+}
+
+export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number }>): number {
+  return (accounts || [])
+    .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+    .reduce((sum, a) => sum + Math.max(0, Number(a.balance) || 0), 0);
+}
+
 export const HOUSEHOLD_BUCKET_LABELS: Record<HouseholdBucketKey, string> = {
   fixedObligations: 'Fixed Obligations',
   householdEssentials: 'Household Essentials',

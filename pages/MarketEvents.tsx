@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
-import { getMarketCalendarCached, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -38,6 +38,7 @@ const CATEGORY_STYLES: Record<EventCategory, string> = {
 };
 
 const MONTHS_AHEAD = 6;
+const REMINDER_KEY = 'market-events-reminders:v1';
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -232,11 +233,31 @@ const MarketEvents: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [] });
+  const [reminders, setReminders] = useState<Record<string, true>>({});
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
     ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
   ])), [data]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(REMINDER_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') setReminders(parsed);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(REMINDER_KEY, JSON.stringify(reminders));
+    } catch {
+      // ignore
+    }
+  }, [reminders]);
 
   useEffect(() => {
     const now = startOfDay(new Date());
@@ -279,6 +300,42 @@ const MarketEvents: React.FC = () => {
         }));
 
       setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
+
+      if (result.mode === 'cache_fresh') {
+        getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
+          if (!alive) return;
+          const freshMacro = freshResult.economic
+            .filter((e) => e.date)
+            .map((e, idx) => ({
+              id: `finnhub-econ-fresh-${e.date}-${idx}-${e.event}`,
+              date: new Date(e.date),
+              title: (e.event || '').trim() || 'Economic Calendar Event',
+              description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
+              source: 'Finnhub economic calendar',
+              category: 'Macro' as const,
+              impact: /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(e.event || '') ? 'High' as const : 'Medium' as const,
+              estimated: false,
+            }));
+          const freshEarnings = freshResult.earnings
+            .filter((e) => e.date)
+            .map((e) => ({
+              id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
+              date: new Date(e.date!),
+              title: `${e.symbol} earnings (Finnhub)`,
+              description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
+              source: 'Finnhub earnings calendar',
+              category: 'Earnings' as const,
+              impact: 'High' as const,
+              symbol: e.symbol,
+              estimated: false,
+            }));
+          setFinnhubState({
+            mode: 'fresh',
+            cachedAt: freshResult.cachedAt,
+            events: [...freshMacro, ...freshEarnings].filter((e) => Number.isFinite(e.date.getTime())),
+          });
+        }).catch(() => {});
+      }
     }).catch(() => {
       if (!alive) return;
       setFinnhubState({ mode: 'none', events: [] });
@@ -403,6 +460,40 @@ const MarketEvents: React.FC = () => {
     return { macroCount, symbolCount, highImpact };
   }, [filtered]);
 
+  const toggleReminder = (eventId: string) => {
+    setReminders((prev) => {
+      const next = { ...prev };
+      if (next[eventId]) delete next[eventId];
+      else next[eventId] = true;
+      return next;
+    });
+  };
+
+  const downloadIcs = () => {
+    const rows = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Finova//Market Events//EN'];
+    filtered.slice(0, 500).forEach((event) => {
+      const d = event.date;
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      rows.push('BEGIN:VEVENT');
+      rows.push(`UID:${event.id}@finova`);
+      rows.push(`DTSTAMP:${yyyy}${mm}${dd}T000000Z`);
+      rows.push(`DTSTART;VALUE=DATE:${yyyy}${mm}${dd}`);
+      rows.push(`SUMMARY:${event.title.replace(/[,;\n]/g, ' ')}`);
+      rows.push(`DESCRIPTION:${(event.description + ' Source: ' + event.source).replace(/[,;\n]/g, ' ')}`);
+      rows.push('END:VEVENT');
+    });
+    rows.push('END:VCALENDAR');
+    const blob = new Blob([rows.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = 'market-events.ics';
+    a.click();
+    URL.revokeObjectURL(href);
+  };
+
   return (
     <PageLayout
       title="Market Events"
@@ -436,6 +527,9 @@ const MarketEvents: React.FC = () => {
             {finnhubState.mode === 'none' && ' Source mode: no cached snapshot yet.'}
           </div>
         </div>
+        <div className="flex justify-end">
+          <button type="button" className="btn-outline text-xs" onClick={downloadIcs}>Export filtered calendar (.ics)</button>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">High impact events</p><p className="font-semibold text-slate-800">{highImpactLabel(stats.highImpact)}</p></div>
@@ -455,9 +549,15 @@ const MarketEvents: React.FC = () => {
                 <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
                 {event.symbol && <span className="text-slate-700 font-medium">• {event.symbol}</span>}
                 {event.estimated && <span className="text-amber-700">• Estimated</span>}
+                {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
               </div>
               <p className="mt-2 text-sm text-slate-600">{event.description}</p>
               <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
+              <div className="mt-2">
+                <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+                  {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
+                </button>
+              </div>
             </div>
           ))}
         </div>

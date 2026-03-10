@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext } from 'react';
+import React, { useState, useCallback, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -78,6 +78,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const { exchangeRate } = useCurrency();
     const { isAiAvailable } = useAI();
 
+    const insightSource = useMemo(() => {
+        const text = (insight || '').toLowerCase();
+        if (!insight) return null;
+        if (text.includes('deterministic') || text.includes('fallback') || text.includes('provider unavailable')) return 'Deterministic fallback';
+        return 'AI provider';
+    }, [insight]);
+
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setInsight('');
@@ -118,6 +125,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             
             {insight && !isLoading && (
                  <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg">
+                    {insightSource && (
+                        <div className="mb-2">
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full border ${insightSource === 'AI provider' ? 'bg-indigo-100 border-indigo-200 text-indigo-700' : 'bg-amber-100 border-amber-200 text-amber-700'}`}>
+                                Source: {insightSource}
+                            </span>
+                        </div>
+                    )}
                     <SafeMarkdownRenderer content={insight} />
                 </div>
             )}

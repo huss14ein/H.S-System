@@ -404,6 +404,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [isPendingLoading, setIsPendingLoading] = useState(false);
     const [pendingLoadError, setPendingLoadError] = useState<string | null>(null);
     const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+    const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
+    const [isBulkReviewing, setIsBulkReviewing] = useState(false);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
@@ -485,20 +487,31 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
-            const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
-            pendingRows = camelCaseResult.data || [];
-            pendingError = camelCaseResult.error;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                pendingRows = camelCaseResult.data || [];
+                pendingError = camelCaseResult.error;
 
-            if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
-                const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
-                pendingRows = snakeCaseResult.data || [];
-                pendingError = snakeCaseResult.error;
+                if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                    const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                    pendingRows = snakeCaseResult.data || [];
+                    pendingError = snakeCaseResult.error;
+                }
+
+                if (!pendingError) break;
+                if (attempt < 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                }
             }
 
             if (pendingError) {
                 console.error('Error loading admin pending transactions:', pendingError);
                 setAdminPendingTransactions([]);
-                setPendingLoadError(pendingError.message || 'Could not load pending transactions.');
+                const base = pendingError.message || 'Could not load pending transactions.';
+                const hint = /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
+                    ? ' Verify latest DB SQL migrations are applied.'
+                    : '';
+                setPendingLoadError(`${base}${hint}`);
                 setIsPendingLoading(false);
                 return;
             }
@@ -508,6 +521,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategory: row.budgetCategory ?? row.budget_category ?? null,
             }));
             setAdminPendingTransactions(normalized);
+            setSelectedPendingIds((prev) => prev.filter((id) => normalized.some((row: any) => row.id === id)));
             setIsPendingLoading(false);
         };
 
@@ -667,6 +681,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
 
         setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+    };
+
+    const togglePendingSelection = (transactionId: string) => {
+        setSelectedPendingIds((prev) => prev.includes(transactionId) ? prev.filter((id) => id !== transactionId) : [...prev, transactionId]);
+    };
+
+    const handleBulkReview = async (status: 'Approved' | 'Rejected') => {
+        if (selectedPendingIds.length === 0) return;
+        setIsBulkReviewing(true);
+        for (const id of selectedPendingIds) {
+            await reviewPendingTransaction(id, status);
+        }
+        setIsBulkReviewing(false);
     };
 
     return (
@@ -724,10 +752,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             {userRole === 'Admin' && (
                 <div className="bg-white p-5 rounded-xl shadow-md border border-amber-200">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                        <h2 className="text-xl font-semibold text-dark">Admin Review Queue</h2>
-                        <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">
-                            Refresh pending
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-semibold text-dark">Admin Review Queue</h2>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">{adminPendingTransactions.length} pending</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Approved')} className="btn-outline text-xs disabled:opacity-50">Approve selected</button>
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Rejected')} className="btn-outline text-xs disabled:opacity-50">Reject selected</button>
+                            <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">Refresh pending</button>
+                        </div>
                     </div>
                     {pendingLoadError && <p className="text-xs text-rose-700 mb-2">{pendingLoadError}</p>}
                     {isPendingLoading ? (
@@ -739,6 +772,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             {adminPendingTransactions.map((pending) => (
                                 <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                                     <div>
+                                        <label className="inline-flex items-center gap-2 mr-2">
+                                            <input type="checkbox" checked={selectedPendingIds.includes(pending.id)} onChange={() => togglePendingSelection(pending.id)} />
+                                            <span className="text-xs text-slate-500">Select</span>
+                                        </label>
                                         <p className="font-semibold">{pending.description}</p>
                                         <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
                                     </div>

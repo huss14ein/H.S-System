@@ -564,6 +564,19 @@ export async function getMarketCalendarCached(from: string, to: string, trackedS
   }
 }
 
+export async function getMarketCalendarFresh(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; cachedAt: number; }> {
+  const symbols = [...new Set(trackedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
+  const [economic, earningsAll] = await Promise.all([
+    getEconomicCalendar(from, to),
+    getEarningsCalendar(from, to),
+  ]);
+  const symbolSet = new Set(symbols);
+  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+  const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
+  writeMarketCalendarCache(getMarketCalendarCacheKey(from, to, symbols), payload);
+  return { economic, earnings, cachedAt: payload.cachedAt };
+}
+
 // --- Aggregated research for a symbol (profile + quote 52w + earnings + insider + news) ---
 export interface SymbolResearch {
   symbol: string;

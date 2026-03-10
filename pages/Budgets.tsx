@@ -21,6 +21,8 @@ import {
     buildHouseholdBudgetPlan,
     DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
+    mapGoalsForRouting,
+    sumLiquidCash,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
 
@@ -182,6 +184,7 @@ const Budgets: React.FC = () => {
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
+    const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
@@ -247,16 +250,8 @@ const Budgets: React.FC = () => {
             if (t.type === 'expense') expenseByMonth[m] += Math.abs(amount);
         });
 
-        const liquidCash = (data?.accounts ?? [])
-            .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
-
-        const goalsForRouting = (data?.goals ?? [])
-            .map((g: any) => ({
-                name: g.name,
-                remaining: Math.max(0, Number(g.targetAmount ?? g.target_amount ?? 0) - Number(g.currentAmount ?? g.current_amount ?? 0)),
-            }))
-            .filter((g: any) => g.remaining > 0);
+        const liquidCash = sumLiquidCash((data?.accounts ?? []) as any[]);
+        const goalsForRouting = mapGoalsForRouting((data?.goals ?? []) as any[]);
 
         return buildHouseholdBudgetPlan({
             monthlySalaryPlan: incomeByMonth,
@@ -350,6 +345,7 @@ const Budgets: React.FC = () => {
                 consumedMap.set(`${ownerKey}::${category}`, Number(row.consumed_amount) || 0);
             });
             setSharedConsumedByOwnerCategory(consumedMap);
+            setSharedConsumedSyncedAt(Date.now());
             const { data: ownerTxRows } = await supabase
                 .from('budget_shared_transactions')
                 .select('*')
@@ -1349,6 +1345,15 @@ const Budgets: React.FC = () => {
             )}
 
             <SectionCard title="Budget sharing">
+                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sharing audit snapshot</p>
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                        <div><span className="text-slate-500">Shared budget rows:</span> <span className="font-semibold text-slate-800">{sharedBudgets.length}</span></div>
+                        <div><span className="text-slate-500">Consumed scopes:</span> <span className="font-semibold text-slate-800">{sharedConsumedByOwnerCategory.size}</span></div>
+                        <div><span className="text-slate-500">Last consumed sync:</span> <span className="font-semibold text-slate-800">{sharedConsumedSyncedAt ? new Date(sharedConsumedSyncedAt).toLocaleString() : 'Not synced yet'}</span></div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">Consumed totals include owner approved expenses plus approved collaborator shared transactions within shared category scope.</p>
+                </div>
                 {isAdmin ? (
                     <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
