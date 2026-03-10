@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
+import { getAIAnalysis, getInvestmentAIAnalysis, getAIPlanAnalysis, getAIHouseholdEngineAnalysis, getAITransactionAnalysis, getAIGoalStrategyAnalysis, getAIAnalysisPageInsights, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData } from '../types';
@@ -46,6 +46,9 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
         case 'investments':
             return getInvestmentAIAnalysis(data.investments.flatMap(p => p.holdings));
         case 'plan':
+             if (contextData?.householdEngine) {
+                return getAIHouseholdEngineAnalysis(contextData.householdEngine, contextData?.scenarios);
+             }
              if (contextData?.totals && contextData?.scenarios) {
                 return getAIPlanAnalysis(contextData.totals, contextData.scenarios);
              }

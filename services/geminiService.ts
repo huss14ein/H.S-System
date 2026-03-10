@@ -682,6 +682,58 @@ Markdown only.`;
     }
 }
 
+export const getAIHouseholdEngineAnalysis = async (householdEngine: any, scenarios: any): Promise<string> => {
+    const months = Array.isArray(householdEngine?.months) ? householdEngine.months : [];
+    const pressureMonths = months.filter((m: any) => (m.warnings || []).length > 0).length;
+    const criticalMonths = months.filter((m: any) => (m.validationErrors || []).length > 0).length;
+    const avgGoal = months.length > 0 ? months.reduce((s: number, m: any) => s + Number(m.routedGoalAmount || 0), 0) / months.length : 0;
+    const projected = Number(householdEngine?.plannedVsActual?.plannedNet || 0);
+    const mode = String(householdEngine?.config?.operatingMode || 'Balanced');
+
+    const fallback = `### Household Engine Summary
+- Mode: **${mode}**; projected annual net: **${fmtSar(projected)}**.
+- Pressure months: **${pressureMonths}**; critical months: **${criticalMonths}**.
+
+### Adjustment Order (recommended)
+1. Reduce unusual-month extras and Uber/support overrides first.
+2. Then reduce flexible operations/personal support.
+3. Keep reserve/emergency minimums protected unless critical pressure persists.
+
+### Goal & Long-Term Outlook
+- Average monthly goal push: **${fmtSar(avgGoal)}**.
+- If pressure rises, switch to Protection First temporarily, then restore goal acceleration when stable.`;
+
+    try {
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this household budget engine snapshot and provide direct decision support in Markdown only (no HTML), with concise bullets.
+
+Data:
+- Mode: ${mode}
+- Projected annual net: ${projected}
+- Pressure months: ${pressureMonths}
+- Critical months: ${criticalMonths}
+- Average monthly goal routing amount: ${avgGoal}
+- Scenarios: ${JSON.stringify(scenarios || {})}
+
+Required sections:
+### Why pressure happens
+### Best adjustment order
+### Normal vs heavy-month impact
+### House-goal completion outlook
+### Next-best actions
+
+Rules:
+- Recommend reducing flexible items/Uber/investing only in a practical order.
+- Mention temporary mode switching when appropriate.
+- Keep strategic minimums protected unless critical pressure.
+- Keep response short and operational.`;
+
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        return response.text || fallback;
+    } catch {
+        return fallback;
+    }
+};
+
 export const getAIAnalysisPageInsights = async (
     spendingData: { name: string; value: number }[],
     trendData: { name: string; income: number; expenses: number }[],

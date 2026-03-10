@@ -190,6 +190,7 @@ const Budgets: React.FC = () => {
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
     const [selectedScenario, setSelectedScenario] = useState('custom');
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -690,6 +691,29 @@ const Budgets: React.FC = () => {
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
+
+    const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
+        setHouseholdOverrides((prev) => {
+            const existing = prev.find((o) => o.month === month) || { month };
+            const next = { ...existing, ...patch };
+            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => a.month - b.month);
+            return merged;
+        });
+    };
+
+    const copyPriorMonthDefaults = () => {
+        setHouseholdOverrides((prev) => {
+            const map = new Map(prev.map((o) => [o.month, o]));
+            for (let m = 2; m <= 12; m++) {
+                if (map.has(m)) continue;
+                const prior = map.get(m - 1);
+                if (prior) map.set(m, { ...prior, month: m });
+            }
+            return Array.from(map.values()).sort((a, b) => a.month - b.month);
+        });
+    };
+
+    const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
         if (!isAdmin) return;
@@ -1290,11 +1314,56 @@ const Budgets: React.FC = () => {
 
             <SectionCard title="Auto Household Budget Engine">
                 <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editable inputs</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <label className="text-sm text-slate-600">Operating mode
+                            <select value={engineConfig.operatingMode || 'Balanced'} onChange={(e) => setEngineConfig((prev) => ({ ...prev, operatingMode: e.target.value as any }))} className="ml-2 p-1.5 border rounded">
+                                <option>Balanced</option>
+                                <option>Aggressive Goal</option>
+                                <option>Protection First</option>
+                                <option>Growth/Investing Support</option>
+                            </select>
+                        </label>
+                        <button type="button" className="btn-outline text-xs" onClick={copyPriorMonthDefaults}>Copy prior month defaults</button>
+                    </div>
+                </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
+                    <table className="min-w-full text-xs">
+                        <thead>
+                            <tr className="text-slate-500 border-b">
+                                <th className="text-left py-1 pr-2">Month</th>
+                                <th className="text-left py-1 pr-2">Salary (opt)</th>
+                                <th className="text-left py-1 pr-2">Adults</th>
+                                <th className="text-left py-1 pr-2">Kids</th>
+                                <th className="text-left py-1 pr-2">Uber/support override</th>
+                                <th className="text-left py-1 pr-2">Unusual month override</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {MONTHS.map((label, idx) => {
+                                const month = idx + 1;
+                                const ov = householdOverrides.find((o) => o.month === month);
+                                return (
+                                    <tr key={`hh-month-${month}`} className="border-b border-slate-100">
+                                        <td className="py-1 pr-2">{label}</td>
+                                        <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                        <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-16 p-1 border rounded" /></td>
+                                        <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-16 p-1 border rounded" /></td>
+                                        <td className="py-1 pr-2"><input type="number" value={ov?.rideSupportOverride ?? ''} onChange={(e) => updateMonthlyOverride(month, { rideSupportOverride: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                        <td className="py-1 pr-2"><input type="number" value={ov?.unusualMonthExtra ?? ''} onChange={(e) => updateMonthlyOverride(month, { unusualMonthExtra: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                     <label className="text-sm text-slate-600">Adults
@@ -1328,6 +1397,17 @@ const Budgets: React.FC = () => {
                         {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
                     </ul>
                 )}
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
+                    <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
+                    {criticalValidationCount > 0 && (
+                        <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
+                            {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m) => (
+                                <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
             </SectionCard>
 
             {budgetData.length > 0 && (

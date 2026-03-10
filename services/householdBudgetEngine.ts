@@ -18,8 +18,14 @@ export interface HouseholdBucketRule {
 }
 
 export interface HouseholdEngineConfig {
+  operatingMode?: 'Balanced' | 'Aggressive Goal' | 'Protection First' | 'Growth/Investing Support';
   emergencyTargetMonths: number;
   reserveTargetMonths: number;
+  utilities: {
+    baseMonthly: number;
+    perAdultLoad: number;
+    perKidLoad: number;
+  };
   transport: {
     singleDriverBaseCost: number;
     rideSupportEnabled: boolean;
@@ -35,6 +41,8 @@ export interface HouseholdEngineConfig {
     annual: number;
     semiAnnual: number;
     monthlyFixed: number;
+    annualDueMonth?: number;
+    semiAnnualDueMonths?: number[];
   };
   requiredExpenses: {
     annualReserveEnabled: boolean;
@@ -60,6 +68,8 @@ export interface HouseholdMonthlyOverride {
   salary?: number;
   fixedObligations?: number;
   essentials?: number;
+  rideSupportOverride?: number;
+  unusualMonthExtra?: number;
 }
 
 export interface HouseholdEngineInput {
@@ -88,6 +98,7 @@ export interface HouseholdMonthPlan {
   routedGoalName?: string;
   routedGoalAmount: number;
   buckets: Record<HouseholdBucketKey, number>;
+  validationErrors?: string[];
   warnings: string[];
 }
 
@@ -140,8 +151,14 @@ export const HOUSEHOLD_BUCKET_LABELS: Record<HouseholdBucketKey, string> = {
 };
 
 export const DEFAULT_HOUSEHOLD_ENGINE_CONFIG: HouseholdEngineConfig = {
+  operatingMode: 'Balanced',
   emergencyTargetMonths: 6,
   reserveTargetMonths: 2,
+  utilities: {
+    baseMonthly: 420,
+    perAdultLoad: 110,
+    perKidLoad: 65,
+  },
   transport: {
     singleDriverBaseCost: 900,
     rideSupportEnabled: false,
@@ -157,6 +174,8 @@ export const DEFAULT_HOUSEHOLD_ENGINE_CONFIG: HouseholdEngineConfig = {
     annual: 12000,
     semiAnnual: 6000,
     monthlyFixed: 0,
+    annualDueMonth: 12,
+    semiAnnualDueMonths: [6, 12],
   },
   requiredExpenses: {
     annualReserveEnabled: true,
@@ -214,9 +233,10 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 const toCurrency = (v: number) => Math.max(0, round2(Number(v) || 0));
 
 function mergeConfig(input?: Partial<HouseholdEngineConfig>): HouseholdEngineConfig {
-  return {
+  const merged: HouseholdEngineConfig = {
     ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
     ...input,
+    utilities: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.utilities, ...((input as any)?.utilities || {}) },
     transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(input?.transport || {}) },
     allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(input?.allowances || {}) },
     obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(input?.obligations || {}) },
@@ -237,6 +257,21 @@ function mergeConfig(input?: Partial<HouseholdEngineConfig>): HouseholdEngineCon
       ? input.autoRouteGoalPriority
       : DEFAULT_HOUSEHOLD_ENGINE_CONFIG.autoRouteGoalPriority,
   };
+
+  const mode = merged.operatingMode || 'Balanced';
+  if (mode === 'Aggressive Goal') {
+    merged.bucketRules.goalSavings = { ...merged.bucketRules.goalSavings, minPctOfSalary: 0.14 };
+    merged.bucketRules.investing = { ...merged.bucketRules.investing, minPctOfSalary: 0.02 };
+  } else if (mode === 'Protection First') {
+    merged.bucketRules.emergencySavings = { ...merged.bucketRules.emergencySavings, minPctOfSalary: 0.12 };
+    merged.bucketRules.reserveSavings = { ...merged.bucketRules.reserveSavings, minPctOfSalary: 0.08 };
+    merged.bucketRules.goalSavings = { ...merged.bucketRules.goalSavings, minPctOfSalary: 0.03 };
+  } else if (mode === 'Growth/Investing Support') {
+    merged.bucketRules.investing = { ...merged.bucketRules.investing, minPctOfSalary: 0.1 };
+    merged.bucketRules.goalSavings = { ...merged.bucketRules.goalSavings, minPctOfSalary: 0.04 };
+  }
+
+  return merged;
 }
 
 function resolveGoal(priority: string[], goals: Array<{ name: string; remaining: number }>): { name?: string; remaining: number } {
@@ -279,6 +314,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
 
   let remainingEmergencyGap = Math.max(0, toCurrency(input.monthlyActualExpense?.[0] || monthlySalaryPlan[0]) * config.emergencyTargetMonths - toCurrency(input.emergencyBalance));
   let remainingReserveGap = Math.max(0, reserveMonthlyObligation * config.reserveTargetMonths - toCurrency(input.reserveBalance));
+  let reservePoolBalance = toCurrency(input.reserveBalance);
 
   const months: HouseholdMonthPlan[] = Array.from({ length: 12 }, (_, index) => {
     const month = index + 1;
@@ -302,11 +338,17 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
     };
 
     const warnings: string[] = [];
+    const validationErrors: string[] = [];
 
     buckets.fixedObligations = toCurrency((override?.fixedObligations ?? config.obligations.monthlyFixed) + reserveMonthlyObligation + annualRequiredMonthly + semiAnnualRequiredMonthly);
     buckets.householdEssentials = toCurrency(override?.essentials ?? (1500 + adults * 1000 + kids * 650));
-    buckets.householdOperations = config.bucketRules.householdOperations.enabled ? toCurrency(Math.max(salary * (config.bucketRules.householdOperations.minPctOfSalary || 0), 400 + kids * 140) + monthlyRequiredOther) : 0;
-    buckets.transport = config.bucketRules.transport.enabled ? toCurrency(config.transport.singleDriverBaseCost + (config.transport.rideSupportEnabled ? config.transport.rideSupportCost : 0)) : 0;
+    const utilityLoad = config.utilities.baseMonthly + adults * config.utilities.perAdultLoad + kids * config.utilities.perKidLoad;
+    const unusualExtra = toCurrency(override?.unusualMonthExtra || 0);
+    buckets.householdOperations = config.bucketRules.householdOperations.enabled
+      ? toCurrency(Math.max(salary * (config.bucketRules.householdOperations.minPctOfSalary || 0), 400 + kids * 140) + monthlyRequiredOther + utilityLoad + unusualExtra)
+      : 0;
+    const rideSupport = override?.rideSupportOverride != null ? toCurrency(override.rideSupportOverride) : (config.transport.rideSupportEnabled ? config.transport.rideSupportCost : 0);
+    buckets.transport = config.bucketRules.transport.enabled ? toCurrency(config.transport.singleDriverBaseCost + rideSupport) : 0;
 
     if (config.bucketRules.personalSupport.enabled) {
       const spouse = config.allowances.spouseFixedEnabled ? config.allowances.spouseFixedAmount : 0;
@@ -314,7 +356,25 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       buckets.personalSupport = toCurrency(spouse + personal);
     }
 
-    let remaining = salary - Object.values(buckets).reduce((s, v) => s + v, 0);
+    const baseOutflow = Object.values(buckets).reduce((s, v) => s + v, 0);
+    let remaining = salary - baseOutflow;
+
+    if (remaining < 0) {
+      // affordability-critical mode: reduce flexible buckets first
+      const deficit = Math.abs(remaining);
+      let toRecover = deficit;
+      const cut = (key: HouseholdBucketKey) => {
+        const current = buckets[key];
+        if (current <= 0 || toRecover <= 0) return;
+        const reduce = Math.min(current, toRecover);
+        buckets[key] = toCurrency(current - reduce);
+        toRecover = toCurrency(toRecover - reduce);
+      };
+      cut('personalSupport');
+      cut('transport');
+      cut('householdOperations');
+      remaining = salary - Object.values(buckets).reduce((s, v) => s + v, 0);
+    }
 
     const assignBucket = (key: HouseholdBucketKey, target: number) => {
       if (!config.bucketRules[key].enabled || target <= 0 || remaining <= 0) return;
@@ -343,12 +403,30 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       if (goal) goal.remaining = Math.max(0, goal.remaining - routedGoalAmount - buckets.goalSavings);
     }
 
+    // due-month deductions from reserve pool
+    reservePoolBalance = toCurrency(reservePoolBalance + buckets.reserveSavings);
+    const dueMonths = new Set<number>(config.obligations.semiAnnualDueMonths || []);
+    let dueDeduction = 0;
+    if ((config.obligations.annualDueMonth || 12) === month) dueDeduction += toCurrency(config.obligations.annual);
+    if (dueMonths.has(month)) dueDeduction += toCurrency(config.obligations.semiAnnual);
+    if (dueDeduction > 0) {
+      reservePoolBalance = toCurrency(reservePoolBalance - dueDeduction);
+      if (reservePoolBalance < 0) {
+        warnings.push(`Reserve pool underfunded after due-month deduction (${dueDeduction.toLocaleString()}).`);
+      }
+    }
+
     if (salary <= 0) warnings.push('No salary planned: non-essential allocations are auto-frozen.');
     const pressureRatio = salary > 0 ? (Object.values(buckets).reduce((s, v) => s + v, 0) / salary) : 1;
     if (pressureRatio > 1) warnings.push('Affordability pressure: required allocations exceed salary. Reduce optional buckets.');
     if (remainingEmergencyGap > 0 && month > 6) warnings.push('Emergency target is still behind plan after mid-year.');
-
     const totalPlannedOutflow = toCurrency(Object.values(buckets).reduce((s, v) => s + v, 0) + routedGoalAmount);
+    if (salary < Object.values(buckets).reduce((s, v) => s + v, 0)) {
+      validationErrors.push('Over-allocation rejected: protected + base allocations exceed salary.');
+    }
+    if (salary - totalPlannedOutflow < 0) validationErrors.push('Negative remainder detected for this month.');
+    if (remainingReserveGap > 0 && month > 6) validationErrors.push('Reserve gap remains underfunded after mid-year.');
+
     const incomeActual = monthlyActualIncome[index];
     const totalActualOutflow = monthlyActualExpense[index];
 
@@ -365,6 +443,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       routedGoalName,
       routedGoalAmount,
       buckets,
+      validationErrors,
       warnings,
     };
   });
