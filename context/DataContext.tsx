@@ -532,12 +532,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const normalizedAccounts = ((accounts.data as any[]) || []).map(normalizeAccount);
             const ownerId = auth.user.id;
             const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
-                ((rows || []) as T[]).filter((r) => !r?.user_id || r.user_id === ownerId);
+                ((rows || []) as T[]).filter((r) => r?.user_id === ownerId);
 
             setData({
-                accounts: normalizedAccounts,
+                accounts: filterOwnedRows(normalizedAccounts),
                 assets: filterOwnedRows(assets.data as any[]),
-                liabilities: ((liabilities.data as any[]) || []).map(normalizeLiability),
+                liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
                 goals: filterOwnedRows(goals.data as any[]),
                 transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
