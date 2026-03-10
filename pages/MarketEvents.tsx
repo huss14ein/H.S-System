@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
-import { getMarketCalendarCached } from '../services/finnhubService';
+import { getMarketCalendarCached, type MarketCalendarLoadMode } from '../services/finnhubService';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -19,8 +19,9 @@ interface MarketEventItem {
 }
 
 interface FinnhubCalendarState {
-  fromCache: boolean;
+  mode: MarketCalendarLoadMode;
   events: MarketEventItem[];
+  cachedAt?: number;
 }
 
 const IMPACT_STYLES: Record<Impact, string> = {
@@ -230,7 +231,7 @@ const MarketEvents: React.FC = () => {
   const { data } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
-  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ fromCache: false, events: [] });
+  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [] });
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
@@ -256,7 +257,7 @@ const MarketEvents: React.FC = () => {
             date: new Date(e.date),
             title,
             description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
-            source: result.fromCache ? 'Finnhub economic calendar (cached)' : 'Finnhub economic calendar',
+            source: result.mode === 'fresh' ? 'Finnhub economic calendar' : 'Finnhub economic calendar (cached)',
             category: 'Macro' as const,
             impact,
             estimated: false,
@@ -270,17 +271,17 @@ const MarketEvents: React.FC = () => {
           date: new Date(e.date!),
           title: `${e.symbol} earnings (Finnhub)`,
           description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
-          source: result.fromCache ? 'Finnhub earnings calendar (cached)' : 'Finnhub earnings calendar',
+          source: result.mode === 'fresh' ? 'Finnhub earnings calendar' : 'Finnhub earnings calendar (cached)',
           category: 'Earnings' as const,
           impact: 'High' as const,
           symbol: e.symbol,
           estimated: false,
         }));
 
-      setFinnhubState({ fromCache: result.fromCache, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
+      setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
     }).catch(() => {
       if (!alive) return;
-      setFinnhubState({ fromCache: false, events: [] });
+      setFinnhubState({ mode: 'none', events: [] });
     });
 
     return () => { alive = false; };
@@ -428,8 +429,11 @@ const MarketEvents: React.FC = () => {
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
           <div className="mt-1 text-xs text-amber-700">
-            Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load.
-            {finnhubState.events.length > 0 ? ` Source mode: ${finnhubState.fromCache ? 'cached snapshot' : 'fresh fetch'}.` : ''}
+            Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
+            {finnhubState.mode === 'fresh' && ' Source mode: fresh fetch.'}
+            {finnhubState.mode === 'cache_fresh' && ' Source mode: cached snapshot (within 12h).'}
+            {finnhubState.mode === 'cache_stale' && ` Source mode: offline fallback from stale cache${finnhubState.cachedAt ? ` (${new Date(finnhubState.cachedAt).toLocaleString()})` : ''}.`}
+            {finnhubState.mode === 'none' && ' Source mode: no cached snapshot yet.'}
           </div>
         </div>
 

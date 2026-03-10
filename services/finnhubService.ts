@@ -478,6 +478,8 @@ interface MarketCalendarCachePayload {
   earnings: EarningsEvent[];
 }
 
+export type MarketCalendarLoadMode = 'fresh' | 'cache_fresh' | 'cache_stale' | 'none';
+
 const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v1:';
 const MARKET_CALENDAR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -486,14 +488,15 @@ function getMarketCalendarCacheKey(from: string, to: string, symbols: string[]):
   return `${MARKET_CALENDAR_CACHE_PREFIX}${from}:${to}:${normalizedSymbols}`;
 }
 
-function readMarketCalendarCache(cacheKey: string): MarketCalendarCachePayload | null {
+function readMarketCalendarCache(cacheKey: string): { payload: MarketCalendarCachePayload; stale: boolean } | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(cacheKey);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as MarketCalendarCachePayload;
-    if (!parsed?.cachedAt || Date.now() - parsed.cachedAt > MARKET_CALENDAR_CACHE_TTL_MS) return null;
-    return parsed;
+    const payload = JSON.parse(raw) as MarketCalendarCachePayload;
+    if (!payload?.cachedAt || !Array.isArray(payload.economic) || !Array.isArray(payload.earnings)) return null;
+    const stale = Date.now() - payload.cachedAt > MARKET_CALENDAR_CACHE_TTL_MS;
+    return { payload, stale };
   } catch {
     return null;
   }
@@ -524,23 +527,41 @@ export async function getEconomicCalendar(from: string, to: string): Promise<Eco
   }
 }
 
-export async function getMarketCalendarCached(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; fromCache: boolean; }> {
+export async function getMarketCalendarCached(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; mode: MarketCalendarLoadMode; cachedAt?: number; }> {
   const symbols = [...new Set(trackedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
   const cacheKey = getMarketCalendarCacheKey(from, to, symbols);
-  const cached = readMarketCalendarCache(cacheKey);
-  if (cached) {
-    return { economic: cached.economic, earnings: cached.earnings, fromCache: true };
+  const cache = readMarketCalendarCache(cacheKey);
+  if (cache && !cache.stale) {
+    return {
+      economic: cache.payload.economic,
+      earnings: cache.payload.earnings,
+      mode: 'cache_fresh',
+      cachedAt: cache.payload.cachedAt,
+    };
   }
 
-  const [economic, earningsAll] = await Promise.all([
-    getEconomicCalendar(from, to),
-    getEarningsCalendar(from, to),
-  ]);
+  try {
+    const [economic, earningsAll] = await Promise.all([
+      getEconomicCalendar(from, to),
+      getEarningsCalendar(from, to),
+    ]);
 
-  const symbolSet = new Set(symbols);
-  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
-  writeMarketCalendarCache(cacheKey, { cachedAt: Date.now(), economic, earnings });
-  return { economic, earnings, fromCache: false };
+    const symbolSet = new Set(symbols);
+    const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+    const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
+    writeMarketCalendarCache(cacheKey, payload);
+    return { economic, earnings, mode: 'fresh', cachedAt: payload.cachedAt };
+  } catch {
+    if (cache) {
+      return {
+        economic: cache.payload.economic,
+        earnings: cache.payload.earnings,
+        mode: 'cache_stale',
+        cachedAt: cache.payload.cachedAt,
+      };
+    }
+    return { economic: [], earnings: [], mode: 'none' };
+  }
 }
 
 // --- Aggregated research for a symbol (profile + quote 52w + earnings + insider + news) ---
