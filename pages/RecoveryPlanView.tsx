@@ -271,7 +271,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
-    if (!isAiAvailable || qualifiedPositions.length === 0) return;
+    if (qualifiedPositions.length === 0) return;
     setIsBulkAiRecoveryLoading(true);
     setAiRecoveryError(null);
     try {
@@ -297,7 +297,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [isAiAvailable, qualifiedPositions, deployableCashSAR, safeFxRate]);
+  }, [qualifiedPositions, deployableCashSAR, safeFxRate]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;
@@ -474,10 +474,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
               </span>
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={refreshAiRecoveryConfig} disabled={!isAiAvailable || isAiRecoveryLoading} className="px-3 py-1.5 rounded-md border border-primary/30 text-primary text-xs font-medium hover:bg-primary/5 disabled:opacity-50">
+              <button type="button" onClick={refreshAiRecoveryConfig} disabled={isAiRecoveryLoading} className="px-3 py-1.5 rounded-md border border-primary/30 text-primary text-xs font-medium hover:bg-primary/5 disabled:opacity-50">
                 {isAiRecoveryLoading ? 'Optimizing…' : 'AI optimize selected'}
               </button>
-              <button type="button" onClick={applyAiToAllQualifiedPositions} disabled={!isAiAvailable || isBulkAiRecoveryLoading || qualifiedPositions.length === 0} className="px-3 py-1.5 rounded-md border border-emerald-300 text-emerald-700 text-xs font-medium hover:bg-emerald-50 disabled:opacity-50">
+              <button type="button" onClick={applyAiToAllQualifiedPositions} disabled={isBulkAiRecoveryLoading || qualifiedPositions.length === 0} className="px-3 py-1.5 rounded-md border border-emerald-300 text-emerald-700 text-xs font-medium hover:bg-emerald-50 disabled:opacity-50">
                 {isBulkAiRecoveryLoading ? 'Optimizing all…' : `AI optimize all (${qualifiedPositions.length})`}
               </button>
             </div>
