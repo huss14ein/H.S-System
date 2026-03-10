@@ -97,6 +97,7 @@ export interface HouseholdMonthPlan {
   actualNet: number;
   routedGoalName?: string;
   routedGoalAmount: number;
+  reservePoolAfterDeductions: number;
   buckets: Record<HouseholdBucketKey, number>;
   validationErrors?: string[];
   warnings: string[];
@@ -442,6 +443,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       actualNet: round2(incomeActual - totalActualOutflow),
       routedGoalName,
       routedGoalAmount,
+      reservePoolAfterDeductions: reservePoolBalance,
       buckets,
       validationErrors,
       warnings,

@@ -1373,6 +1373,24 @@ const Budgets: React.FC = () => {
                         <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="ml-2 w-16 p-1.5 border rounded" />
                     </label>
                 </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Derived (read-only) values</p>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Reserve pool (latest)</p>
+                            <p className="font-semibold text-slate-900">{formatCurrencyString(householdBudgetEngine.months[householdBudgetEngine.months.length - 1]?.reservePoolAfterDeductions || 0, { digits: 0 })}</p>
+                        </div>
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Pressure months</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.filter((m) => m.warnings.length > 0).length}</p>
+                        </div>
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Validation flags</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.reduce((sum, m) => sum + (m.validationErrors?.length || 0), 0)}</p>
+                        </div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                     {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
                         <button
@@ -1407,6 +1425,13 @@ const Budgets: React.FC = () => {
                             ))}
                         </ul>
                     )}
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                        {householdBudgetEngine.months.filter((m) => m.warnings.some((w) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m) => (
+                            <div key={`res-track-${m.month}`} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                                M{m.month}: reserve after deductions {formatCurrencyString(m.reservePoolAfterDeductions, { digits: 0 })}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </SectionCard>
 
