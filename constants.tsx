@@ -24,6 +24,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Transactions', icon: CreditCardIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
+  { name: 'Market Events', icon: ChartBarIcon },
   { name: 'Budgets', icon: PiggyBankIcon },
   { name: 'Goals', icon: TrophyIcon },
   { name: 'Zakat', icon: ReceiptPercentIcon },

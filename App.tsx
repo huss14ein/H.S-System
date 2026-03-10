@@ -30,8 +30,9 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
+const MarketEvents = lazy(() => import('./pages/MarketEvents'));
 
-const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Investments', 'Assets', 'Liabilities', 'Transactions', 'Budgets', 'Plan', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'System & APIs Health', 'Settings', 'Wealth Ultra'];
+const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Investments', 'Assets', 'Liabilities', 'Transactions', 'Budgets', 'Plan', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'System & APIs Health', 'Settings', 'Wealth Ultra', 'Market Events'];
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -118,6 +119,7 @@ const App: React.FC = () => {
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Market Events': return <MarketEvents />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };

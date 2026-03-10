@@ -1,4 +1,4 @@
-import React, { useMemo, useContext } from 'react';
+import React, { useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -23,6 +23,12 @@ const SLEEVE_BG: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-50 border-blue-100',
   Upside: 'bg-amber-50 border-amber-100',
   Spec: 'bg-rose-50 border-rose-100',
+};
+
+const toSafeText = (value: unknown, fallback = '—'): string => {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
 };
 
 /** Build full Wealth Ultra config from app data. Auto-derives sleeve tickers from Portfolio Universe or holdings when plan lists are empty. */
@@ -244,15 +250,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   const positionsSortedByPl = useMemo(() => [...positions].sort((a, b) => b.plPct - a.plPct), [positions]);
 
-  if (loading) {
-    return (
-      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4">
-        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" />
-        <p className="text-slate-500 font-medium">Loading Wealth Ultra engine…</p>
-      </div>
-    );
-  }
-
   const healthColor = portfolioHealth.score >= 85 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : portfolioHealth.score >= 65 ? 'text-amber-600 bg-amber-50 border-amber-200' : portfolioHealth.score >= 40 ? 'text-amber-700 bg-amber-100 border-amber-300' : 'text-rose-600 bg-rose-50 border-rose-200';
 
   const engineIntelligence = useMemo(() => {
@@ -307,13 +304,58 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       { label: 'Orderbook prepared', ok: orders.length > 0 || positions.length === 0 },
     ];
 
+    const estimatedRebalanceMonths = monthlyDeployment.amountToDeploy > 0
+      ? Math.max(1, Math.ceil((Math.max(0, maxDrift - 2) / 2)))
+      : null;
+
     return {
       iqScore,
       maxDrift,
       recommendations: recommendations.slice(0, 3),
       guardrails,
+      estimatedRebalanceMonths,
     };
   }, [allocations, alerts.length, cashPlannerStatus, deployableCash, formatCurrencyString, monthlyDeployment, orders.length, positions.length, specBreach, specBuysDisabled, totalPlannedBuyCost]);
+
+  const exceptionHistory = useMemo(() => {
+    if (typeof window === 'undefined') return [] as Array<{ at: string; severity: string; title: string; message: string; actionHint?: string }>;
+    try {
+      const raw = window.localStorage.getItem('wealth-ultra-exception-history');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.slice(0, 25) : [];
+    } catch {
+      return [];
+    }
+  }, [alerts]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const newEntries = alerts
+      .filter((a) => a.severity === 'critical' || a.severity === 'warning')
+      .map((a) => ({
+        at: new Date().toISOString(),
+        severity: toSafeText(a.severity, 'info').toLowerCase(),
+        title: toSafeText(a.title, 'Portfolio exception'),
+        message: toSafeText(a.message, 'Review portfolio exception details.'),
+        actionHint: a.actionHint ? toSafeText(a.actionHint, '') : undefined,
+      }));
+    if (newEntries.length === 0) return;
+
+    try {
+      const raw = window.localStorage.getItem('wealth-ultra-exception-history');
+      const existing = raw ? JSON.parse(raw) : [];
+      const source = Array.isArray(existing) ? existing : [];
+      const merged = [...newEntries, ...source]
+        .filter((row: any) => row && row.title && row.message)
+        .filter((row: any, idx: number, arr: any[]) =>
+          arr.findIndex((x: any) => x.title === row.title && x.message === row.message && x.severity === row.severity) === idx
+        )
+        .slice(0, 25);
+      window.localStorage.setItem('wealth-ultra-exception-history', JSON.stringify(merged));
+    } catch {
+      // ignore storage limitations
+    }
+  }, [alerts]);
 
   const gridItems = useMemo(
     () => [
@@ -329,7 +371,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 {portfolioHealth.score >= 85 ? <CheckCircleIcon className="h-6 w-6 text-emerald-600 shrink-0" /> : <ExclamationTriangleIcon className="h-6 w-6 shrink-0" />}
                 <div>
                   <p className="font-bold text-sm">{portfolioHealth.label}</p>
-                  <p className="text-xs opacity-90">{portfolioHealth.summary}</p>
+                  <p className="text-xs opacity-90">{toSafeText(portfolioHealth.summary)}</p>
                 </div>
               </div>
             </div>
@@ -352,7 +394,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <p className="text-[11px] text-slate-500">
               Engine amounts in <span className="font-semibold">USD</span>; SAR estimate uses fx rate {config.fxRate.toFixed(2)}.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               <Card
                 title="Total portfolio value"
                 value={formatCurrencyString(totalPortfolioValue, { digits: 0 })}
@@ -408,6 +450,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Engine IQ</p>
                 <p className="mt-1 text-3xl font-black text-slate-900 tabular-nums">{engineIntelligence.iqScore}<span className="text-base font-semibold text-slate-500">/100</span></p>
                 <p className="text-xs text-slate-600 mt-2">Calculated from drift, alerts, cash compliance, and spec-rule discipline.</p>
+                {engineIntelligence.estimatedRebalanceMonths && (
+                  <p className="text-xs text-slate-500 mt-2">Estimated stabilization window: ~{engineIntelligence.estimatedRebalanceMonths} month{engineIntelligence.estimatedRebalanceMonths !== 1 ? 's' : ''}.</p>
+                )}
               </div>
               <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
                 <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-2">Top actions this cycle</p>
@@ -544,7 +589,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         content: (
           <SectionCard title="Next move — Monthly Core" className="h-full">
             <div className="h-full flex flex-col justify-between gap-3">
-              <p className="text-sm leading-relaxed text-slate-700">{monthlyDeployment.reason}</p>
+              <p className="text-sm leading-relaxed text-slate-700">{toSafeText(monthlyDeployment.reason, 'Review allocation before deploying.')}</p>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Planned deployment</span>
                 <span className="text-xl font-bold text-slate-900 tabular-nums">{formatCurrencyString(monthlyDeployment.amountToDeploy)}</span>
@@ -616,11 +661,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                     <li key={i} className={`rounded-xl border p-3 text-sm ${bg}`}>
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         <ExclamationTriangleIcon className={`h-4 w-4 shrink-0 ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-slate-500'}`} />
-                        {a.title && <span className={`font-semibold ${titleColor}`}>{a.title}</span>}
+                        {a.title && <span className={`font-semibold ${titleColor}`}>{toSafeText(a.title, 'Alert')}</span>}
                         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</span>
                       </div>
-                      <p className="text-slate-700">{a.message}</p>
-                      {a.actionHint && <p className="text-xs font-medium text-slate-600 mt-2 pt-2 border-t border-slate-200/80">→ {a.actionHint}</p>}
+                      <p className="text-slate-700">{toSafeText(a.message, 'Review this condition in Wealth Ultra.')}</p>
+                      {a.actionHint && <p className="text-xs font-medium text-slate-600 mt-2 pt-2 border-t border-slate-200/80">→ {toSafeText(a.actionHint, '')}</p>}
                     </li>
                   );
                 })}
@@ -748,6 +793,35 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         minH: 2,
       },
       {
+        id: 'exception-history',
+        content: (
+          <SectionCard title="Exception history">
+            {exceptionHistory.length > 0 ? (
+              <ul className="space-y-2">
+                {exceptionHistory.slice(0, 8).map((row, idx) => (
+                  <li key={`${row.at}-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800">{toSafeText(row.title, 'Portfolio exception')}</p>
+                      <span className={`text-[11px] uppercase tracking-wide font-semibold ${row.severity === 'critical' ? 'text-rose-700' : 'text-amber-700'}`}>
+                        {row.severity === 'critical' ? 'critical' : 'review'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1">{toSafeText(row.message, 'Review exception details.')}</p>
+                    {row.actionHint && <p className="text-xs text-slate-500 mt-1">→ {toSafeText(row.actionHint, '')}</p>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No exception history yet. This section appears once actionable alerts are generated.</p>
+            )}
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 2,
+        minW: 6,
+        minH: 1,
+      },
+      {
         id: 'risk-distribution',
         content: (
           <SectionCard title="Risk distribution">
@@ -800,6 +874,15 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       engineIntelligence,
     ]
   );
+  if (loading) {
+    return (
+      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4">
+        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" />
+        <p className="text-slate-500 font-medium">Loading Wealth Ultra engine…</p>
+      </div>
+    );
+  }
+
   return (
     <PageLayout
       title="Wealth Ultra Portfolio Engine"
@@ -836,7 +919,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         </div>
       }
     >
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {gridItems.map((item) => {
           const spanClass =
             item.id === 'hero' ||
@@ -844,19 +927,20 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             item.id === 'engine-iq' ||
             item.id === 'positions' ||
             item.id === 'capital-efficiency' ||
-            item.id === 'risk-distribution'
-              ? 'xl:col-span-12'
+            item.id === 'risk-distribution' ||
+            item.id === 'exception-history'
+              ? 'lg:col-span-12'
               : item.id === 'sleeve-allocation'
-              ? 'xl:col-span-7'
+              ? 'lg:col-span-7'
               : item.id === 'orders'
-              ? 'xl:col-span-5 xl:col-start-8'
+              ? 'lg:col-span-5 lg:col-start-8'
               : item.id === 'next-move'
-              ? 'xl:col-span-4'
+              ? 'lg:col-span-4'
               : item.id === 'spec-risk'
-              ? 'xl:col-span-3'
+              ? 'lg:col-span-3'
               : item.id === 'alerts'
-              ? 'xl:col-span-5 xl:col-start-8'
-              : 'xl:col-span-6';
+              ? 'lg:col-span-5 lg:col-start-8'
+              : 'lg:col-span-6';
 
           return (
             <div key={item.id} className={`min-w-0 ${spanClass}`}>
