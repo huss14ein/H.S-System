@@ -26,19 +26,19 @@ function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolea
 
 const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
     const [name, setName] = useState('');
-    const [type, setType] = useState<Liability['type']>('Loan');
+    const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<Liability['status']>('Active');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
             setName(liabilityToEdit.name);
-            setType(liabilityToEdit.type === 'Receivable' ? 'Receivable' : liabilityToEdit.type);
+            setType(liabilityToEdit.type);
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
         } else {
             setName('');
-            setType('Loan');
+            setType('Personal Loan');
             setAmount('');
             setStatus('Active');
         }
@@ -50,7 +50,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
         const newLiability: Liability = {
             id: liabilityToEdit ? liabilityToEdit.id : `liab${Date.now()}`,
             name,
-            type: type === 'Receivable' ? 'Receivable' : type,
+            type,
             amount: type === 'Receivable' ? value : -value,
             status,
             goalId: liabilityToEdit?.goalId,
@@ -62,7 +62,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
     const isReceivable = type === 'Receivable';
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={liabilityToEdit ? 'Edit Entry' : (isReceivable ? 'Add Money Owed to You' : 'Add Liability')}>
+        <Modal isOpen={isOpen} onClose={onClose} title={liabilityToEdit ? 'Edit Entry' : 'Add Liability'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
@@ -71,17 +71,16 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                     </label>
                     <input type="text" placeholder={isReceivable ? "e.g. Ahmad - Personal loan" : "Liability Name"} value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 </div>
-                {!isReceivable && (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Category of debt; used for reporting and goal linking." /></label>
-                        <select value={type} onChange={e => setType(e.target.value as Liability['type'])} required className="select-base">
-                            <option value="Credit Card">Credit Card</option>
-                            <option value="Loan">Loan (e.g., Car, Institutional)</option>
-                            <option value="Personal Loan">Personal Loan (from individual)</option>
-                            <option value="Mortgage">Mortgage</option>
-                        </select>
-                    </div>
-                )}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Choose debt or money owed back to you; all are managed under liabilities." /></label>
+                    <select value={type} onChange={e => setType(e.target.value as Liability['type'])} required className="select-base">
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Loan">Loan (e.g., Car, Institutional)</option>
+                        <option value="Personal Loan">Personal Loan (from individual)</option>
+                        <option value="Mortgage">Mortgage</option>
+                        <option value="Receivable">Money Owed to Me (Receivable)</option>
+                    </select>
+                </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                         {isReceivable ? 'Amount owed to you' : 'Total amount owed'}
@@ -233,8 +232,8 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
 
     return (
         <PageLayout
-            title="Liabilities & Receivables"
-            description="Track what you owe (loans, mortgages, credit cards) and what others owe you. Mark as Paid to keep a reference; totals show only unpaid."
+            title="Liabilities"
+            description="Track liabilities, including debts and money owed back to you. Mark as Paid to keep a reference; totals show only unpaid."
             action={
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
@@ -252,7 +251,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => handleOpenModal(null)} className="btn-primary inline-flex items-center gap-2">
-                            <CreditCardIcon className="h-4 w-4" /> Add Liability
+                            <CreditCardIcon className="h-4 w-4" /> Add Liabilities
                         </button>
                     </div>
                 </div>
@@ -286,10 +285,10 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 )}
             </SectionCard>
 
-            <SectionCard title="Money Owed to Me" className="mt-6">
-                <p className="text-sm text-gray-500 mb-4">Amounts others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Mark as Paid to keep a reference.</p>
+            <SectionCard title="Liabilities" className="mt-6">
+                <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Managed under liabilities so all entries stay in one flow.</p>
                 {receivables.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">No receivables for this filter. Switch filter to Paid/All to review historical items.</p>
+                    <p className="text-center text-gray-500 py-8">No liability entries in this group for this filter. Switch filter to Paid/All to review historical items.</p>
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
