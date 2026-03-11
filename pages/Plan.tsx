@@ -925,7 +925,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                 </div>
             )}
-            </div>
+                </div>
             </div>
         </PageLayout>
     );
