@@ -684,11 +684,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     }
                 }
             }
+
+            // Successfully approved - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
         } else {
-            const reason = window.prompt('Optional rejection reason for audit/history:') || '';
+            const reason = window.prompt('Optional rejection reason for audit/history:');
+            if (reason === null) {
+                // User cancelled the prompt
+                return;
+            }
+            const rejectionReason = reason || '';
             const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
                 p_transaction_id: transactionId,
-                p_reason: reason,
+                p_reason: rejectionReason,
             });
 
             if (rejectError) {
@@ -699,10 +708,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     return;
                 }
 
-                const { error } = await supabase.from('transactions').update({ status, rejection_reason: reason || null }).eq('id', transactionId);
-                if (error) {
+                // Backward-compatible fallback for environments where the new RPC isn't deployed yet
+                const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
+                if (updateError) {
                     // If transaction doesn't exist, remove from UI instead of showing error
-                    if (error.message?.includes('not found') || error.code === 'PGRST116') {
+                    if (updateError.message?.includes('not found') || updateError.code === 'PGRST116') {
                         setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
                         setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
                         return;
@@ -711,10 +721,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     return;
                 }
             }
-        }
 
-        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            // Successfully rejected - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+        }
     };
 
     const togglePendingSelection = (transactionId: string) => {
