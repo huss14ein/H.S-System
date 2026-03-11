@@ -109,7 +109,7 @@ const App: React.FC = () => {
       case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
-      case 'Budgets': return <Budgets />;
+      case 'Budgets': return <Budgets triggerPageAction={triggerPageAction} />;
       case 'Goals': return <Goals setActivePage={setActivePage} />;
       case 'Plan': return <Plan setActivePage={setActivePage} />;
       case 'Forecast': return <Forecast />;

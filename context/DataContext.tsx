@@ -1535,8 +1535,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Watchlist, Alerts, Zakat, Settings ---
     const addWatchlistItem = async (item: WatchlistItem) => {
-        if(!supabase) {
-            console.error('Supabase client not available');
+        if (!supabase || !auth?.user) {
+            console.error('Supabase client not available or user not authenticated');
+            alert('You must be logged in to manage your watchlist.');
             return;
         }
         const db = supabase;
@@ -1547,7 +1548,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         if (inserted) {
-            setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
+            const normalized: WatchlistItem = {
+                user_id: inserted.user_id ?? auth.user.id,
+                symbol: String(inserted.symbol ?? item.symbol ?? '').toUpperCase(),
+                name: String(inserted.name ?? item.name ?? '').trim() || String(inserted.symbol ?? item.symbol ?? '').toUpperCase(),
+            };
+            setData(prev => ({ ...prev, watchlist: [...prev.watchlist, normalized] }));
         }
     };
     const deleteWatchlistItem = async (symbol: string) => {

@@ -2,7 +2,7 @@ import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
-import { Budget } from '../types';
+import { Budget, type Page } from '../types';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -149,7 +149,11 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     );
 }
 
-const Budgets: React.FC = () => {
+interface BudgetsProps {
+    triggerPageAction?: (page: Page, action: string) => void;
+}
+
+const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
@@ -1724,7 +1728,17 @@ const Budgets: React.FC = () => {
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                 {orderedBudgetData.map((budget) => (
-                    <div key={budget.id} className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}>
+                    <button
+                        key={budget.id}
+                        type="button"
+                        className={`text-left bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
+                        onClick={() => {
+                            if (triggerPageAction) {
+                                const periodTag = budgetView.toLowerCase();
+                                triggerPageAction('Transactions', `filter-by-budget:${budget.category}:${periodTag}`);
+                            }
+                        }}
+                    >
                         <div className="flex-grow">
                             <div className="flex items-center justify-between gap-2">
                                 <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
@@ -1754,10 +1768,30 @@ const Budgets: React.FC = () => {
                             <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-gray-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
                                 <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
                             </button>
-                            <button type="button" disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
-                            <button type="button" disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
+                            <button
+                                type="button"
+                                disabled={budgetView === 'Yearly'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenModal({ ...budget, limit: budget.displayLimit });
+                                }}
+                                className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"
+                            >
+                                <PencilIcon className="h-4 w-4"/>
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!isAdmin || budgetView === 'Yearly'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteBudget(budget.category, budget.month, budget.year);
+                                }}
+                                className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"
+                            >
+                                <TrashIcon className="h-4 w-4"/>
+                            </button>
                         </div>
-                    </div>
+                    </button>
                 ))}
             </div>
              {budgetData.length === 0 && (

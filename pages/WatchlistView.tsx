@@ -531,7 +531,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
 
     const handleCreateBucket = () => {
         const name = newBucketName.trim();
-        if (!name) return;
+        if (!name) {
+            alert('Please enter a name for the new watchlist before adding it.');
+            return;
+        }
         const id = `bucket-${Date.now()}`;
         setWatchlistBuckets((prev) => [...prev, { id, name, currency: newBucketCurrency, symbols: [] }]);
         setActiveBucketId(id);
