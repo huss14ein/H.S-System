@@ -653,9 +653,22 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             });
 
             if (approveError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (approveError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (statusError.message?.includes('not found') || statusError.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to approve transaction: ${approveError.message}`);
                     return;
                 }
@@ -679,8 +692,21 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             });
 
             if (rejectError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (rejectError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 const { error } = await supabase.from('transactions').update({ status, rejection_reason: reason || null }).eq('id', transactionId);
                 if (error) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (error.message?.includes('not found') || error.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to reject transaction: ${rejectError.message}`);
                     return;
                 }
