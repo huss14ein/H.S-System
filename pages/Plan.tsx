@@ -21,10 +21,9 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import {
     buildHouseholdBudgetPlan,
-    DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-    mapGoalsForRouting,
-    sumLiquidCash,
-    HouseholdMonthlyOverride,
+    buildHouseholdEngineInputFromPlanData,
+    type HouseholdEngineProfile,
+    type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
 
 
@@ -110,7 +109,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
-    const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
+    const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
+    const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
     
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
@@ -140,28 +140,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
-                if (parsed?.config) {
-                    setEngineConfig({
-                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-                        ...parsed.config,
-                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(parsed.config.transport || {}) },
-                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(parsed.config.allowances || {}) },
-                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(parsed.config.obligations || {}) },
-                        requiredExpenses: {
-                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
-                            ...(parsed.config.maintenance ? {
-                                annualReserveEnabled: Boolean(parsed.config.maintenance.houseAnnualEnabled),
-                                annualReserveAmount: Number(parsed.config.maintenance.houseAnnualAmount || 0),
-                                semiAnnualReserveEnabled: Boolean(parsed.config.maintenance.carAnnualEnabled),
-                                semiAnnualReserveAmount: Number(parsed.config.maintenance.carAnnualAmount || 0),
-                                monthlyRequiredEnabled: Boolean(parsed.config.maintenance.otherMonthlyEnabled),
-                                monthlyRequiredAmount: Number(parsed.config.maintenance.otherMonthlyAmount || 0),
-                            } : {}),
-                            ...(parsed.config.requiredExpenses || {}),
-                        },
-                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(parsed.config.bucketRules || {}) },
-                    });
-                }
+                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) setEngineProfile(parsed.profile as HouseholdEngineProfile);
+                if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) setExpectedMonthlySalary(parsed.expectedMonthlySalary);
             }
         } catch {}
     }, [householdProfileStorageKey]);
@@ -184,28 +164,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
-                if (profile?.config) {
-                    setEngineConfig({
-                        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-                        ...profile.config,
-                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(profile.config.transport || {}) },
-                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(profile.config.allowances || {}) },
-                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(profile.config.obligations || {}) },
-                        requiredExpenses: {
-                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
-                            ...(profile.config.maintenance ? {
-                                annualReserveEnabled: Boolean(profile.config.maintenance.houseAnnualEnabled),
-                                annualReserveAmount: Number(profile.config.maintenance.houseAnnualAmount || 0),
-                                semiAnnualReserveEnabled: Boolean(profile.config.maintenance.carAnnualEnabled),
-                                semiAnnualReserveAmount: Number(profile.config.maintenance.carAnnualAmount || 0),
-                                monthlyRequiredEnabled: Boolean(profile.config.maintenance.otherMonthlyEnabled),
-                                monthlyRequiredAmount: Number(profile.config.maintenance.otherMonthlyAmount || 0),
-                            } : {}),
-                            ...(profile.config.requiredExpenses || {}),
-                        },
-                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(profile.config.bucketRules || {}) },
-                    });
-                }
+                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) setEngineProfile(profile.profile as HouseholdEngineProfile);
+                if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) setExpectedMonthlySalary(profile.expectedMonthlySalary);
             } catch {
                 // Optional cloud sync path, safe to ignore when migration is not applied.
             }
@@ -221,10 +181,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 adults: householdAdults,
                 kids: householdKids,
                 overrides: householdOverrides,
-                config: engineConfig,
+                profile: engineProfile,
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
             }));
         } catch {}
-    }, [householdAdults, householdKids, householdOverrides, engineConfig, householdProfileStorageKey]);
+    }, [householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileStorageKey]);
 
     useEffect(() => {
         const userId = auth?.user?.id;
@@ -234,7 +195,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             adults: householdAdults,
             kids: householdKids,
             overrides: householdOverrides,
-            config: engineConfig,
+            profile: engineProfile,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
         };
         const t = window.setTimeout(async () => {
             try {
@@ -246,7 +208,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         }, 700);
         return () => window.clearTimeout(t);
-    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineConfig]);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     // Build plan from transactions, budgets, recurring, and investment data — fully integrated
     React.useEffect(() => {
@@ -471,22 +433,22 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
-        const liquidCash = sumLiquidCash(accounts as any[]);
-        const goalsForRouting = mapGoalsForRouting(goals as any[]);
-
-        return buildHouseholdBudgetPlan({
-            monthlySalaryPlan: monthlyIncomePlanned,
-            monthlyActualIncome: monthlyIncomeActual,
-            monthlyActualExpense: monthlyExpenseActual,
-            householdDefaults: { adults: householdAdults, kids: householdKids },
-            monthlyOverrides: householdOverrides,
-            liquidBalance: liquidCash,
-            emergencyBalance: liquidCash,
-            reserveBalance: liquidCash * 0.4,
-            goals: goalsForRouting,
-            config: engineConfig,
-        });
-    }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineConfig]);
+        const input = buildHouseholdEngineInputFromPlanData(
+            monthlyIncomePlanned,
+            monthlyIncomeActual,
+            monthlyExpenseActual,
+            accounts as any[],
+            goals as any[],
+            {
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+                adults: householdAdults,
+                kids: householdKids,
+                profile: engineProfile,
+                monthlyOverrides: householdOverrides,
+            }
+        );
+        return buildHouseholdBudgetPlan(input);
+    }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
