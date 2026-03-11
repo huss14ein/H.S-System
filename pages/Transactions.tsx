@@ -648,18 +648,19 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         if (!supabase) return;
 
         if (status === 'Approved') {
-            const { error: approveError } = await supabase.rpc('approve_pending_transaction', {
+            const { data: approved, error: approveError } = await supabase.rpc('approve_pending_transaction', {
                 p_transaction_id: transactionId,
             });
 
-            if (approveError) {
-                // If transaction not found, it may have been deleted or already processed - remove from UI
-                if (approveError.message?.includes('not found')) {
-                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-                    return;
-                }
+            // DB returns false when transaction not found (no exception); or we get P0001 from old DB
+            const notFound = approved === false || approveError?.code === 'P0001' || approveError?.message?.includes('not found');
+            if (notFound) {
+                setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                return;
+            }
 
+            if (approveError) {
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
@@ -695,19 +696,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return;
             }
             const rejectionReason = reason || '';
-            const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
+            const { data: rejected, error: rejectError } = await supabase.rpc('reject_pending_transaction', {
                 p_transaction_id: transactionId,
                 p_reason: rejectionReason,
             });
 
-            if (rejectError) {
-                // If transaction not found, it may have been deleted or already processed - remove from UI
-                if (rejectError.message?.includes('not found')) {
-                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-                    return;
-                }
+            // DB returns false when transaction not found (no exception); or we get P0001 from old DB
+            const notFoundReject = rejected === false || rejectError?.code === 'P0001' || rejectError?.message?.includes('not found');
+            if (notFoundReject) {
+                setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                return;
+            }
 
+            if (rejectError) {
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet
                 const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
                 if (updateError) {

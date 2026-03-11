@@ -108,6 +108,8 @@ export interface HouseholdEngineResult {
   months: HouseholdMonthPlan[];
   annualBuckets: Record<HouseholdBucketKey, number>;
   recommendations: string[];
+  /** Suggested profile when income variance is high (engine recommends Conservative). */
+  suggestedProfile?: HouseholdEngineProfile | null;
   plannedVsActual: {
     plannedIncome: number;
     actualIncome: number;
@@ -119,6 +121,53 @@ export interface HouseholdEngineResult {
   balanceProjection: {
     openingLiquid: number;
     projectedYearEndLiquid: number;
+  };
+}
+
+/** Suggests Conservative profile when monthly income varies a lot (coefficient of variation > 0.25). */
+export function suggestProfileFromIncomeVariance(monthlyActualIncome: number[]): HouseholdEngineProfile | null {
+  const values = (monthlyActualIncome || []).filter((v) => v > 0);
+  if (values.length < 3) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  const std = Math.sqrt(variance);
+  const cv = mean > 0 ? std / mean : 0;
+  return cv > 0.25 ? 'Conservative' : null;
+}
+
+/** Infers obligation estimates from transaction history (fixed-like categories). */
+export function inferObligationsFromTransactions(
+  transactions: Array<{ date: string; type?: string; amount?: number; category?: string; budgetCategory?: string; budget_category?: string }>,
+  year: number
+): Partial<HouseholdEngineConfig> {
+  const byMonth = Array(12).fill(0);
+  (transactions || []).forEach((t) => {
+    if (t.type !== 'expense') return;
+    const d = new Date(t.date);
+    if (d.getFullYear() !== year) return;
+    const amount = Math.abs(Number(t.amount) || 0);
+    byMonth[d.getMonth()] += amount;
+  });
+  const totalExpense = byMonth.reduce((a, b) => a + b, 0);
+  const monthsWithData = byMonth.filter((v) => v > 0).length;
+  const avgMonthly = monthsWithData > 0 ? totalExpense / monthsWithData : 0;
+  if (avgMonthly <= 0) return {};
+  return {
+    obligations: {
+      annual: Math.round(avgMonthly * 12 * 100) / 100,
+      semiAnnual: Math.round(avgMonthly * 6 * 100) / 100,
+      monthlyFixed: 0,
+      annualDueMonth: 12,
+      semiAnnualDueMonths: [6, 12],
+    },
+    requiredExpenses: {
+      annualReserveEnabled: true,
+      annualReserveAmount: Math.max(6000, Math.round(avgMonthly * 3 * 100) / 100),
+      semiAnnualReserveEnabled: true,
+      semiAnnualReserveAmount: Math.max(3600, Math.round(avgMonthly * 2 * 100) / 100),
+      monthlyRequiredEnabled: true,
+      monthlyRequiredAmount: Math.max(200, Math.round(avgMonthly * 0.1 * 100) / 100),
+    },
   };
 }
 
@@ -201,6 +250,184 @@ export const DEFAULT_HOUSEHOLD_ENGINE_CONFIG: HouseholdEngineConfig = {
     investing: { enabled: true, minPctOfSalary: 0.04 },
   },
 };
+
+/** Profile presets for fully automated engine: one choice, no manual config. */
+export type HouseholdEngineProfile = 'Conservative' | 'Moderate' | 'Growth';
+
+export const HOUSEHOLD_ENGINE_PROFILES: Record<HouseholdEngineProfile, { label: string; description: string; config: Partial<HouseholdEngineConfig> }> = {
+  Conservative: {
+    label: 'Conservative',
+    description: 'Higher emergency & reserve; lower investing. Best when income is variable.',
+    config: {
+      operatingMode: 'Protection First',
+      emergencyTargetMonths: 9,
+      reserveTargetMonths: 3,
+      bucketRules: {
+        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules,
+        emergencySavings: { enabled: true, minPctOfSalary: 0.12 },
+        reserveSavings: { enabled: true, minPctOfSalary: 0.08 },
+        investing: { enabled: true, minPctOfSalary: 0.02 },
+        goalSavings: { enabled: true, minPctOfSalary: 0.04 },
+      },
+    },
+  },
+  Moderate: {
+    label: 'Moderate',
+    description: 'Balanced safety and growth. Default for most households.',
+    config: {
+      operatingMode: 'Balanced',
+      emergencyTargetMonths: 6,
+      reserveTargetMonths: 2,
+      bucketRules: DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules,
+    },
+  },
+  Growth: {
+    label: 'Growth',
+    description: 'Higher investing and goal savings; lower reserve. When income is stable.',
+    config: {
+      operatingMode: 'Growth/Investing Support',
+      emergencyTargetMonths: 4,
+      reserveTargetMonths: 1.5,
+      bucketRules: {
+        ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules,
+        emergencySavings: { enabled: true, minPctOfSalary: 0.05 },
+        reserveSavings: { enabled: true, minPctOfSalary: 0.04 },
+        investing: { enabled: true, minPctOfSalary: 0.1 },
+        goalSavings: { enabled: true, minPctOfSalary: 0.08 },
+      },
+    },
+  },
+};
+
+export interface AutoHouseholdInputOptions {
+  /** Calendar year to project (1–12 months). */
+  year: number;
+  /** Optional: expected monthly salary for future months when no transactions exist. */
+  expectedMonthlySalary?: number;
+  /** Household size; defaults to 1 adult if not set. */
+  adults?: number;
+  kids?: number;
+  /** Profile preset; defaults to Moderate. */
+  profile?: HouseholdEngineProfile;
+  /** Optional monthly overrides (e.g. known salary change in one month). */
+  monthlyOverrides?: HouseholdMonthlyOverride[];
+  /** When true, infer obligations/required expenses from transaction history. Default true. */
+  inferObligationsFromHistory?: boolean;
+}
+
+export interface AutoHouseholdPlanDataOptions extends Omit<AutoHouseholdInputOptions, 'year'> {
+  /** Calendar year for context (used for reserve/emergency labels). */
+  year?: number;
+}
+
+/**
+ * Builds engine input from your real data. Fully automated: income/expense from transactions,
+ * liquid/reserve from accounts, goals from goals. Only optional overrides: one expected salary,
+ * household size, and profile. No manual buckets or long tables.
+ */
+export function buildHouseholdEngineInputFromData(
+  transactions: Array<{ date: string; type?: string; amount?: number }>,
+  accounts: Array<{ type?: string; balance?: number }>,
+  goals: Array<{ name?: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number }>,
+  options: AutoHouseholdInputOptions
+): HouseholdEngineInput {
+  const { year, expectedMonthlySalary, adults = 1, kids = 0, profile = 'Moderate', monthlyOverrides = [], inferObligationsFromHistory = true } = options;
+  const incomeByMonth = Array(12).fill(0);
+  const expenseByMonth = Array(12).fill(0);
+  (transactions || []).forEach((t) => {
+    const d = new Date(t.date);
+    if (d.getFullYear() !== year) return;
+    const m = d.getMonth();
+    const amount = Number(t.amount) || 0;
+    if (t.type === 'income') incomeByMonth[m] += Math.max(0, amount);
+    if (t.type === 'expense') expenseByMonth[m] += Math.abs(amount);
+  });
+
+  const liquidCash = sumLiquidCash(accounts || []);
+  const goalsForRouting = mapGoalsForRouting(goals || []);
+
+  const pastIncome = incomeByMonth.filter((v) => v > 0);
+  const avgIncome = pastIncome.length > 0 ? pastIncome.reduce((a, b) => a + b, 0) / pastIncome.length : 0;
+  const salaryFallback = expectedMonthlySalary && expectedMonthlySalary > 0 ? expectedMonthlySalary : avgIncome;
+
+  const monthlySalaryPlan = incomeByMonth.map((v) => {
+    if (v > 0) return v;
+    return salaryFallback;
+  });
+
+  const profileConfig = HOUSEHOLD_ENGINE_PROFILES[profile]?.config ?? HOUSEHOLD_ENGINE_PROFILES.Moderate.config;
+  const autoGoalPriority = goalsForRouting.length > 0
+    ? [...goalsForRouting].sort((a, b) => b.remaining - a.remaining).map((g) => g.name)
+    : undefined;
+  const inferred = inferObligationsFromHistory && (transactions?.length ?? 0) > 0
+    ? inferObligationsFromTransactions(transactions as any[], year)
+    : {};
+
+  return {
+    monthlySalaryPlan,
+    monthlyActualIncome: incomeByMonth,
+    monthlyActualExpense: expenseByMonth,
+    householdDefaults: { adults, kids },
+    monthlyOverrides,
+    liquidBalance: liquidCash,
+    emergencyBalance: liquidCash,
+    reserveBalance: Math.max(0, liquidCash * 0.35),
+    goals: goalsForRouting,
+    config: {
+      ...profileConfig,
+      ...inferred,
+      autoRouteGoalPriority: autoGoalPriority ?? profileConfig?.autoRouteGoalPriority ?? DEFAULT_HOUSEHOLD_ENGINE_CONFIG.autoRouteGoalPriority,
+    },
+  };
+}
+
+/**
+ * Builds engine input from Plan page data (monthly planned/actual arrays). Same profile-based automation;
+ * use when income/expense come from Plan rows instead of raw transactions.
+ */
+export function buildHouseholdEngineInputFromPlanData(
+  monthlyIncomePlanned: number[],
+  monthlyIncomeActual: number[],
+  monthlyExpenseActual: number[],
+  accounts: Array<{ type?: string; balance?: number }>,
+  goals: Array<{ name?: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number }>,
+  options: AutoHouseholdPlanDataOptions
+): HouseholdEngineInput {
+  const { expectedMonthlySalary, adults = 1, kids = 0, profile = 'Moderate', monthlyOverrides = [] } = options;
+  const liquidCash = sumLiquidCash(accounts || []);
+  const goalsForRouting = mapGoalsForRouting(goals || []);
+
+  const planned = monthlyIncomePlanned.length >= 12 ? monthlyIncomePlanned.slice(0, 12) : [...monthlyIncomePlanned, ...Array(12).fill(0)].slice(0, 12);
+  const actualInc = monthlyIncomeActual.length >= 12 ? monthlyIncomeActual.slice(0, 12) : [...monthlyIncomeActual, ...Array(12).fill(0)].slice(0, 12);
+  const actualExp = monthlyExpenseActual.length >= 12 ? monthlyExpenseActual.slice(0, 12) : [...monthlyExpenseActual, ...Array(12).fill(0)].slice(0, 12);
+
+  const pastIncome = actualInc.filter((v) => v > 0);
+  const avgIncome = pastIncome.length > 0 ? pastIncome.reduce((a, b) => a + b, 0) / pastIncome.length : 0;
+  const salaryFallback = expectedMonthlySalary && expectedMonthlySalary > 0 ? expectedMonthlySalary : avgIncome;
+
+  const monthlySalaryPlan = planned.map((v, i) => (v > 0 ? v : (actualInc[i] > 0 ? actualInc[i] : salaryFallback)));
+
+  const profileConfig = HOUSEHOLD_ENGINE_PROFILES[profile]?.config ?? HOUSEHOLD_ENGINE_PROFILES.Moderate.config;
+  const autoGoalPriority = goalsForRouting.length > 0
+    ? [...goalsForRouting].sort((a, b) => b.remaining - a.remaining).map((g) => g.name)
+    : undefined;
+
+  return {
+    monthlySalaryPlan,
+    monthlyActualIncome: actualInc,
+    monthlyActualExpense: actualExp,
+    householdDefaults: { adults, kids },
+    monthlyOverrides,
+    liquidBalance: liquidCash,
+    emergencyBalance: liquidCash,
+    reserveBalance: Math.max(0, liquidCash * 0.35),
+    goals: goalsForRouting,
+    config: {
+      ...profileConfig,
+      autoRouteGoalPriority: autoGoalPriority ?? profileConfig?.autoRouteGoalPriority ?? DEFAULT_HOUSEHOLD_ENGINE_CONFIG.autoRouteGoalPriority,
+    },
+  };
+}
 
 export const HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS: Array<{ id: string; label: string; defaults: HouseholdComposition; overrides: HouseholdMonthlyOverride[]; config?: Partial<HouseholdEngineConfig> }> = [
   {
@@ -466,18 +693,24 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
   const recommendations: string[] = [];
   if (plannedNet < 0) recommendations.push('Planned year ends negative. Freeze optional categories and reduce personal support first.');
   if (remainingEmergencyGap > 0) recommendations.push(`Emergency fund is short by ${round2(remainingEmergencyGap).toLocaleString()}. Keep emergency bucket protected.`);
+  if (remainingEmergencyGap <= 0 && (input.monthlyActualIncome?.some((v) => v > 0) ?? false)) {
+    recommendations.push('Emergency fund target is on track. Keep contributing to maintain the buffer.');
+  }
   const pressureMonths = months.filter((m) => m.warnings.length > 0).length;
   if (pressureMonths > 0) recommendations.push(`${pressureMonths} month(s) under pressure. Apply monthly overrides only for salary and essentials.`);
   if (months.some((m) => (m.routedGoalAmount + m.buckets.goalSavings) > 0 && m.routedGoalName)) {
-    recommendations.push('Remaining salary is auto-routed to the active goal based on configured priority.');
+    recommendations.push('Surplus is auto-routed to your top-priority goal. Adjust goal order in Goals to change priority.');
   }
-    recommendations.push(`Required-expense coverage: annual reserve ${annualRequiredMonthly.toLocaleString()}/mo, semiannual reserve ${semiAnnualRequiredMonthly.toLocaleString()}/mo, other required ${monthlyRequiredOther.toLocaleString()}/mo.`);
+  const monthlyForVariance = input.monthlyActualIncome ?? input.monthlySalaryPlan;
+  const suggested = suggestProfileFromIncomeVariance(monthlyForVariance);
+  if (suggested) recommendations.push('Income varies month-to-month; consider switching to Conservative profile for more safety.');
 
   return {
     config,
     months,
     annualBuckets,
     recommendations,
+    suggestedProfile: suggested ?? undefined,
     plannedVsActual: { plannedIncome, actualIncome, plannedOutflow, actualOutflow, plannedNet, actualNet },
     balanceProjection: {
       openingLiquid: toCurrency(input.liquidBalance),
