@@ -173,6 +173,8 @@ const Budgets: React.FC = () => {
     const [currentDate, setCurrentDate] = useState(new Date());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
+    const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
+    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true });
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -570,6 +572,41 @@ const Budgets: React.FC = () => {
                 const amount = Math.abs(Number(tx.amount) || 0);
                 const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
                 spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+            });
+
+        ownerSharedTransactions
+            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
+            .forEach((tx) => {
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!(d >= rangeStart && d <= rangeEnd)) return;
+                const category = String(tx.budget_category || '').trim();
+                if (!category) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+            });
+
+        const rowsForYear = (sharedBudgets ?? [])
+            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+
+        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+
+        if (budgetView === 'Yearly') {
+            const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
+            rowsForYear.forEach((b) => {
+                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const key = `${ownerKey}::${b.category}`;
+                const existing = yearlyByOwnerCategory.get(key);
+                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
+                yearlyByOwnerCategory.set(key, {
+                    ...(existing || b),
+                    category: b.category,
+                    ownerEmail: (b as any).ownerEmail || existing?.ownerEmail,
+                    ownerKey,
+                    yearlyLimit,
+                });
+            });
+
             });
 
         ownerSharedTransactions
@@ -1043,6 +1080,10 @@ const Budgets: React.FC = () => {
             description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
             action={
                 <div className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 sm:gap-3">
+                    <div className="inline-flex items-center p-1 rounded-lg border border-slate-200 bg-white">
+                        <button type="button" onClick={() => setBudgetSubPage('overview')} className={`px-3 py-1.5 text-xs rounded-md ${budgetSubPage === 'overview' ? 'bg-primary text-white' : 'text-slate-600'}`}>Budget Overview</button>
+                        <button type="button" onClick={() => setBudgetSubPage('household')} className={`px-3 py-1.5 text-xs rounded-md ${budgetSubPage === 'household' ? 'bg-primary text-white' : 'text-slate-600'}`}>Household Engine</button>
+                    </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm text-slate-500">View:</span>
                         <select value={budgetView} onChange={(e) => setBudgetView(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="select-base w-auto min-w-[120px]">
@@ -1066,6 +1107,7 @@ const Budgets: React.FC = () => {
                 </div>
             }
         >
+            <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
             <SectionCard>
                 <div className="flex flex-wrap gap-3 items-center">
                     <input
@@ -1312,6 +1354,9 @@ const Budgets: React.FC = () => {
                 </div>
             )}
 
+            </div>
+
+            <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Auto Household Budget Engine">
                 <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1334,6 +1379,13 @@ const Budgets: React.FC = () => {
                     <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.monthlyOverrides && (
+                    <div className="mt-2 overflow-x-auto">
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
                     <table className="min-w-full text-xs">
@@ -1364,6 +1416,8 @@ const Budgets: React.FC = () => {
                             })}
                         </tbody>
                     </table>
+                    </div>
+                    )}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                     <label className="text-sm text-slate-600">Adults
@@ -1391,6 +1445,47 @@ const Budgets: React.FC = () => {
                     </div>
                     <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
                 </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Scenarios & recommendations</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.scenarios ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.scenarios && (
+                        <>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
+                                    <button
+                                        key={scenario.id}
+                                        type="button"
+                                        className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
+                                        onClick={() => {
+                                            setSelectedScenario(scenario.id);
+                                            setHouseholdAdults(scenario.defaults.adults);
+                                            setHouseholdKids(scenario.defaults.kids);
+                                            setHouseholdOverrides(scenario.overrides);
+                                            setEngineConfig((prev) => ({ ...prev, ...(scenario.config || {}) }));
+                                        }}
+                                    >
+                                        {scenario.label}
+                                    </button>
+                                ))}
+                                <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
+                            </div>
+                            {householdBudgetEngine.recommendations.length > 0 && (
+                                <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
+                                    {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
+                                </ul>
+                            )}
+                        </>
+                    )}
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.validation && (
+                    <>
                 <div className="mt-3 flex flex-wrap gap-2">
                     {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
                         <button
@@ -1432,6 +1527,13 @@ const Budgets: React.FC = () => {
                             </div>
                         ))}
                     </div>
+                    </>
+                    )}
+                </div>
+            </SectionCard>
+            </div>
+
+            <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
                 </div>
             </SectionCard>
 
@@ -1617,6 +1719,8 @@ const Budgets: React.FC = () => {
                     <p className="text-gray-500">No budgets set for this month.</p>
                 </div>
             )}
+            </div>
+
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
         </PageLayout>
     );

@@ -38,13 +38,16 @@ interface MiniPriceChartProps {
     showIllustrativeLabel?: boolean;
     /** Real 1-month daily data (day index, close price). When provided, chart and 1M trend % use this. */
     historicalData?: HistoricalPoint[] | null;
+    /** When true, avoid synthetic curves and show unavailable state unless real data exists. */
+    realDataOnly?: boolean;
 }
 
-const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, changePercent, formatPrice = (p: number) => p.toFixed(2), showIllustrativeLabel = false, historicalData }) => {
+const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, changePercent, formatPrice = (p: number) => p.toFixed(2), showIllustrativeLabel = false, historicalData, realDataOnly = false }) => {
     const data = useMemo(() => {
         if (historicalData && historicalData.length > 0) return [...historicalData].sort((a, b) => a.day - b.day);
+        if (realDataOnly) return [] as HistoricalPoint[];
         return generateIllustrativeTrendData(currentPrice, changePercent);
-    }, [historicalData, currentPrice, changePercent]);
+    }, [historicalData, currentPrice, changePercent, realDataOnly]);
     const isUp = data.length > 0 && data[data.length - 1].price >= data[0].price;
     const color = isUp ? '#22c55e' : '#ef4444';
     const startPrice = data.length > 0 ? data[0].price : 0;
@@ -71,7 +74,7 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                         {trendPct >= 0 ? '+' : ''}{trendPct.toFixed(2)}%
                     </span>
                 ) : (
-                    <span className="text-[10px] text-slate-400 font-medium" title="1-month trend not available">—</span>
+                    <span className="text-[10px] text-slate-400 font-medium" title={realDataOnly ? 'Real 1-month trend is unavailable for this symbol' : '1-month trend not available'}>—</span>
                 )}
             </div>
             <div style={{ width: '100%', height: 56 }}>

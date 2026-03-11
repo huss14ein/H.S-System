@@ -28,22 +28,42 @@ function isQuotaOrRateLimitError(message: string, parsed?: { error?: { code?: nu
     return code === 429 || status === 'RESOURCE_EXHAUSTED';
 }
 
+
+function extractErrorMessageParts(error: any): string[] {
+    const parts: string[] = [];
+    const push = (v: any) => {
+        if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    };
+    if (typeof error === 'string') push(error);
+    if (error instanceof Error) push(error.message);
+    if (error && typeof error === 'object') {
+        push((error as any).message);
+        push((error as any).error);
+        if ((error as any).error && typeof (error as any).error === 'object') {
+            push((error as any).error.message);
+            push((error as any).error.status);
+        }
+        if ((error as any).response && typeof (error as any).response === 'object') {
+            push((error as any).response.message);
+            push((error as any).response.error);
+            if ((error as any).response.error && typeof (error as any).response.error === 'object') {
+                push((error as any).response.error.message);
+                push((error as any).response.error.status);
+            }
+        }
+    }
+    return [...new Set(parts)];
+}
+
 export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
-    let message: string;
-    if (typeof error === 'string') {
-        message = error;
-    } else if (error instanceof Error) {
-        message = error.message;
-    } else if (error && typeof error === 'object' && typeof (error as { message?: string }).message === 'string') {
-        message = (error as { message: string }).message;
-    } else {
-        message = String(error ?? '');
-    }
+    const messageParts = extractErrorMessageParts(error);
+    let message = messageParts[0] || String(error ?? '');
+    const mergedMessage = messageParts.join(' | ') || message;
     // Proxy may return stringified JSON in error; parse to detect quota/429
     let parsed: { error?: { code?: number; status?: string; message?: string } | string } | null = null;
     try {
-        const trimmed = message.trim();
+        const trimmed = mergedMessage.trim();
         if (trimmed.startsWith('{')) {
             parsed = JSON.parse(trimmed) as { error?: { code?: number; status?: string; message?: string } | string };
             // Proxy may return { error: "{\"error\":{...}}" }; parse inner string once
@@ -57,10 +77,10 @@ export function formatAiError(error: any): string {
     }
     const parsedForQuota: { error?: { code?: number; status?: string } } | undefined =
         parsed && typeof parsed.error === 'object' ? { error: parsed.error } : undefined;
-    if (isQuotaOrRateLimitError(message, parsedForQuota)) {
+    if (isQuotaOrRateLimitError(mergedMessage, parsedForQuota)) {
         return AI_QUOTA_MESSAGE;
     }
-    if (/GEMINI_API_KEY not set/i.test(message)) {
+    if (/GEMINI_API_KEY not set/i.test(mergedMessage)) {
         return `
 ### AI Service Configuration Error
 The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in your deployment environment.
@@ -72,16 +92,16 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
 - Redeploy your site.
 `;
     }
-    if (/API key not valid/i.test(message)) {
+    if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
-    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(message)) {
+    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
         return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
-    if (/model|404|not found|invalid model|unsupported/i.test(message)) {
-        return `There was an issue with the specified AI model. ${message}`;
+    if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
+        return `There was an issue with the specified AI model. ${mergedMessage}`;
     }
-    if (message) return `AI Service Error: ${message}`;
+    if (mergedMessage) return `AI Service Error: ${mergedMessage}`;
     return "An unknown error occurred while communicating with the AI service.";
 }
 
@@ -1370,7 +1390,7 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
 }
 
 /** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
-export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> {
+export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
     if (!token) return [];
     const out: { symbol: string; price: number }[] = [];
@@ -1379,17 +1399,20 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
         let finnhubSym = '';
         let priceMultiplier = SAR_PER_USD;
         let normalizedSym = sym;
+        const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
+        const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
+        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0.5, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
             finnhubSym = 'BINANCE:BTCUSDT';
             normalizedSym = 'BTC';
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
             finnhubSym = 'BINANCE:ETHUSDT';
             normalizedSym = 'ETH';
-        } else if (sym === 'XAU_GRAM' || sym === 'XAU') {
+        } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
-        } else if (sym === 'XAG_GRAM' || sym === 'XAG') {
+        } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
@@ -1401,7 +1424,7 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
             const row = await res.json();
             const priceUsd = Number(row?.c ?? row?.pc ?? row?.p);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier });
+            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier * karatFactor });
         } catch {
             // skip
         }
@@ -1418,7 +1441,7 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
 }
 
 /** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
+export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
     let prices = await getFinnhubCommodityPrices(commodities);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));

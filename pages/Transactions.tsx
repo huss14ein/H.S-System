@@ -480,13 +480,32 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return db
                     .from('transactions')
                     .select(selectClause)
-                    .eq('status', 'Pending')
+                    .in('status', ['Pending', 'pending'])
                     .order('date', { ascending: false });
             };
 
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
+            const rpcResult = await db.rpc('get_pending_transactions_for_admin').then((r) => r, () => ({ data: null, error: { message: 'RPC unavailable' } } as any));
+            if (!rpcResult.error && Array.isArray(rpcResult.data)) {
+                pendingRows = rpcResult.data;
+            } else {
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                    pendingRows = camelCaseResult.data || [];
+                    pendingError = camelCaseResult.error;
+
+                    if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                        const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                        pendingRows = snakeCaseResult.data || [];
+                        pendingError = snakeCaseResult.error;
+                    }
+
+                    if (!pendingError) break;
+                    if (attempt < 1) {
+                        await new Promise((resolve) => setTimeout(resolve, 250));
+                    }
             for (let attempt = 0; attempt < 2; attempt++) {
                 const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
                 pendingRows = camelCaseResult.data || [];
@@ -508,6 +527,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 console.error('Error loading admin pending transactions:', pendingError);
                 setAdminPendingTransactions([]);
                 const base = pendingError.message || 'Could not load pending transactions.';
+                const hint = /approve_pending_transaction|reject_pending_transaction|get_pending_transactions_for_admin|transactions|policy|rls/i.test(base)
+                    ? ' Verify latest DB SQL migrations are applied. If RLS limits direct transaction reads, install the get_pending_transactions_for_admin RPC.'
                 const hint = /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
                     ? ' Verify latest DB SQL migrations are applied.'
                     : '';

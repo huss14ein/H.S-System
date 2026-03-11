@@ -95,7 +95,7 @@ as $$
       select 1
       from public.users as me
       where me.id = auth.uid()
-        and me.role = 'Admin'
+        and lower(coalesce(me.role, '')) = 'admin'
     )
   order by lower(au.email);
 $$;

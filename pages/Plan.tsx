@@ -542,6 +542,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             }
         >
+            <div className="space-y-6 sm:space-y-8">
             <div className="space-y-4 sm:space-y-5">
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
@@ -577,7 +578,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
                 return liquidCash !== 0 ? (
-                    <div className="mt-3 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                    <div className="mt-4 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
@@ -587,7 +588,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Executive summary */}
             {totals && (
-                <div className="mt-3 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
@@ -621,7 +622,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Smart insights */}
             {(insights.worst || insights.monthsOverBudget > 0) && (
-                <div className="mt-3 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
+                <div className="mt-4 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
                     {insights.monthsOverBudget > 0 ? (
                         <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
                             <ExclamationTriangleIcon className="h-5 w-5 text-amber-500" />

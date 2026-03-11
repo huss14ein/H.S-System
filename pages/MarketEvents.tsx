@@ -22,6 +22,7 @@ interface FinnhubCalendarState {
   mode: MarketCalendarLoadMode;
   events: MarketEventItem[];
   cachedAt?: number;
+  warnings?: string[];
 }
 
 const IMPACT_STYLES: Record<Impact, string> = {
@@ -232,6 +233,9 @@ const MarketEvents: React.FC = () => {
   const { data } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
+  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
+  const [reminders, setReminders] = useState<Record<string, true>>({});
+  const [includeEstimated, setIncludeEstimated] = useState(false);
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
 
@@ -299,6 +303,7 @@ const MarketEvents: React.FC = () => {
           estimated: false,
         }));
 
+      setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
       setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
 
       if (result.mode === 'cache_fresh') {
@@ -332,12 +337,14 @@ const MarketEvents: React.FC = () => {
           setFinnhubState({
             mode: 'fresh',
             cachedAt: freshResult.cachedAt,
+            warnings: freshResult.warnings || [],
             events: [...freshMacro, ...freshEarnings].filter((e) => Number.isFinite(e.date.getTime())),
           });
         }).catch(() => {});
       }
     }).catch(() => {
       if (!alive) return;
+      setFinnhubState({ mode: 'none', events: [], warnings: ['Live Finnhub calendar is unavailable right now. You can enable modeled estimates from the filter bar if needed.'] });
       setFinnhubState({ mode: 'none', events: [] });
     });
 
@@ -348,6 +355,13 @@ const MarketEvents: React.FC = () => {
     const now = startOfDay(new Date());
     const end = new Date(now.getFullYear(), now.getMonth() + MONTHS_AHEAD, now.getDate());
 
+    const modeledMacro: MarketEventItem[] = [];
+    for (let i = 0; i < MONTHS_AHEAD; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      modeledMacro.push(...addMacroEventsForMonth(d.getFullYear(), d.getMonth()));
+    }
+
+    const modeledSymbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
     const macro: MarketEventItem[] = [];
     for (let i = 0; i < MONTHS_AHEAD; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
@@ -443,6 +457,13 @@ const MarketEvents: React.FC = () => {
       ];
     });
 
+    const reliableEvents = [...finnhubState.events, ...portfolioEvents];
+    const modeledEvents = [...modeledMacro, ...modeledSymbolEvents];
+
+    return [...reliableEvents, ...(includeEstimated ? modeledEvents : [])]
+      .filter((e) => e.date >= now && e.date <= end)
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
     return [...finnhubState.events, ...macro, ...symbolEvents, ...portfolioEvents]
       .filter((e) => e.date >= now && e.date <= end)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -500,6 +521,14 @@ const MarketEvents: React.FC = () => {
       description="Important upcoming dates for markets, your watchlist, and your investment holdings."
       action={
         <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={includeEstimated}
+              onChange={(e) => setIncludeEstimated(e.target.checked)}
+            />
+            Include modeled estimates
+          </label>
           <select className="select-base text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}>
             <option value="All">All categories</option>
             <option value="Macro">Macro</option>
@@ -518,6 +547,7 @@ const MarketEvents: React.FC = () => {
     >
       <div className="space-y-3">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          The calendar shows provider-backed events (Finnhub economic + earnings) and your portfolio timeline by default. You can optionally enable modeled estimates for broader planning windows.
           The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
           <div className="mt-1 text-xs text-amber-700">
             Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
@@ -525,6 +555,14 @@ const MarketEvents: React.FC = () => {
             {finnhubState.mode === 'cache_fresh' && ' Source mode: cached snapshot (within 12h).'}
             {finnhubState.mode === 'cache_stale' && ` Source mode: offline fallback from stale cache${finnhubState.cachedAt ? ` (${new Date(finnhubState.cachedAt).toLocaleString()})` : ''}.`}
             {finnhubState.mode === 'none' && ' Source mode: no cached snapshot yet.'}
+            {!includeEstimated && ' Modeled estimates are currently hidden for higher accuracy.'}
+            {includeEstimated && ' Modeled estimates are enabled (marked as Estimated in event cards).'}
+          </div>
+          {Array.isArray(finnhubState.warnings) && finnhubState.warnings.length > 0 && (
+            <ul className="mt-2 list-disc pl-5 text-xs text-amber-800 space-y-1">
+              {finnhubState.warnings.map((w, idx) => <li key={`finnhub-warn-${idx}`}>{w}</li>)}
+            </ul>
+          )}
           </div>
         </div>
         <div className="flex justify-end">

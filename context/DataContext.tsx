@@ -378,6 +378,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 name: 'Other' as CommodityHolding['name'],
                 purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
                 currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+                goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
                 zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
                 goalId: holding.goalId ?? holding.goal_id,
             };
@@ -389,6 +390,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: validName as CommodityHolding['name'],
             purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
             currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+            goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
             goalId: holding.goalId ?? holding.goal_id,
         };
@@ -450,34 +452,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const transactionPayloadVariants = (transaction: Omit<Transaction, 'id' | 'user_id'> | Transaction) => {
-        const recId = (transaction as { recurringId?: string }).recurringId;
-        const budgetCat = (transaction as { budgetCategory?: string }).budgetCategory;
-        const payloadWithSnakeCase: Record<string, unknown> = { ...transaction };
+        const recId = (transaction as { recurringId?: string; recurring_id?: string }).recurringId ?? (transaction as any).recurring_id;
+        const budgetCat = (transaction as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transaction as any).budget_category;
+        const accountId = (transaction as { accountId?: string; account_id?: string }).accountId ?? (transaction as any).account_id;
 
-        if (recId !== undefined) {
-            payloadWithSnakeCase.recurring_id = recId;
-            delete payloadWithSnakeCase.recurringId;
-        }
-        if (budgetCat !== undefined) {
-            payloadWithSnakeCase.budget_category = budgetCat;
-            delete payloadWithSnakeCase.budgetCategory;
-        }
-        if (transaction.accountId !== undefined) {
-            payloadWithSnakeCase.account_id = transaction.accountId;
-            delete payloadWithSnakeCase.accountId;
-        }
+        const payloadWithSnakeCase: Record<string, unknown> = { ...transaction };
+        delete payloadWithSnakeCase.accountId;
+        delete payloadWithSnakeCase.budgetCategory;
+        delete payloadWithSnakeCase.recurringId;
+        if (recId !== undefined) payloadWithSnakeCase.recurring_id = recId;
+        if (budgetCat !== undefined) payloadWithSnakeCase.budget_category = budgetCat;
+        if (accountId !== undefined) payloadWithSnakeCase.account_id = accountId;
 
         const payloadWithCamelCase: Record<string, unknown> = { ...transaction };
-        if (recId !== undefined) {
-            payloadWithCamelCase.recurring_id = recId;
-            delete payloadWithCamelCase.recurringId;
-        }
-        if (budgetCat !== undefined) {
-            payloadWithCamelCase.budgetCategory = budgetCat;
-        }
-        if (transaction.accountId !== undefined) {
-            payloadWithCamelCase.accountId = transaction.accountId;
-        }
+        delete payloadWithCamelCase.account_id;
+        delete payloadWithCamelCase.budget_category;
+        delete payloadWithCamelCase.recurring_id;
+        if (recId !== undefined) payloadWithCamelCase.recurringId = recId;
+        if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
+        if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
 
         return [payloadWithSnakeCase, payloadWithCamelCase];
     };

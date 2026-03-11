@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 
 export function inferIsAdmin(user: User | null | undefined, dbRole?: string | null): boolean {
+  if (String(dbRole || '').trim().toLowerCase() === 'admin') return true;
   if (dbRole === 'Admin') return true;
   const appRole = user?.app_metadata && typeof user.app_metadata === 'object' ? (user.app_metadata as any).role : undefined;
   const userRole = user?.user_metadata && typeof user.user_metadata === 'object' ? (user.user_metadata as any).role : undefined;
