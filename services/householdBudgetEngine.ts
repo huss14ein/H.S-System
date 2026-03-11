@@ -140,13 +140,11 @@ export function inferObligationsFromTransactions(
   transactions: Array<{ date: string; type?: string; amount?: number; category?: string; budgetCategory?: string; budget_category?: string }>,
   year: number
 ): Partial<HouseholdEngineConfig> {
-  const fixedLike = new Set(['Housing', 'Utilities', 'Insurance', 'Loan', 'Rent', 'Mortgage', 'Transportation']);
   const byMonth = Array(12).fill(0);
   (transactions || []).forEach((t) => {
     if (t.type !== 'expense') return;
     const d = new Date(t.date);
     if (d.getFullYear() !== year) return;
-    const cat = String((t as any).budgetCategory ?? (t as any).budget_category ?? t.category ?? '').trim();
     const amount = Math.abs(Number(t.amount) || 0);
     byMonth[d.getMonth()] += amount;
   });
@@ -352,7 +350,7 @@ export function buildHouseholdEngineInputFromData(
   const avgIncome = pastIncome.length > 0 ? pastIncome.reduce((a, b) => a + b, 0) / pastIncome.length : 0;
   const salaryFallback = expectedMonthlySalary && expectedMonthlySalary > 0 ? expectedMonthlySalary : avgIncome;
 
-  const monthlySalaryPlan = incomeByMonth.map((v, i) => {
+  const monthlySalaryPlan = incomeByMonth.map((v) => {
     if (v > 0) return v;
     return salaryFallback;
   });
