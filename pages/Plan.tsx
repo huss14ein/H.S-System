@@ -111,7 +111,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
-    const [householdProfileCloudLoadedUserId, setHouseholdProfileCloudLoadedUserId] = useState<string | null>(null);
     
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
@@ -154,12 +153,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     useEffect(() => {
         const userId = auth?.user?.id;
         const db = supabase;
-        if (!householdProfileCloudEnabled || !userId || !db) {
-            setHouseholdProfileCloudLoadedUserId(null);
-            return;
-        }
+        if (!householdProfileCloudEnabled || !userId || !db) return;
         let isMounted = true;
-        setHouseholdProfileCloudLoadedUserId(null);
         (async () => {
             try {
                 const { data, error } = await db
@@ -181,8 +176,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 }
             } catch {
                 // Optional cloud sync path, safe to ignore when migration is not applied.
-            } finally {
-                if (isMounted) setHouseholdProfileCloudLoadedUserId(userId);
             }
         })();
         return () => {
@@ -205,7 +198,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     useEffect(() => {
         const userId = auth?.user?.id;
         const db = supabase;
-        if (!householdProfileCloudEnabled || !userId || !db || householdProfileCloudLoadedUserId !== userId) return;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
         const payload = {
             adults: householdAdults,
             kids: householdKids,
@@ -223,7 +216,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         }, 700);
         return () => window.clearTimeout(t);
-    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     // Build plan from transactions, budgets, recurring, and investment data — fully integrated
     React.useEffect(() => {
@@ -448,15 +441,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
-        const incomeByMonth = Array(12).fill(0);
-        (transactions as Array<{ date: string; type?: string; amount?: number }>).forEach((t) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== year || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const withData = incomeByMonth.filter((v) => v > 0);
-        const suggested = withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-
         const input = buildHouseholdEngineInputFromPlanData(
             monthlyIncomePlanned,
             monthlyIncomeActual,
@@ -464,7 +448,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             accounts as any[],
             goals as any[],
             {
-                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : (suggested > 0 ? suggested : undefined),
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
                 adults: householdAdults,
                 kids: householdKids,
                 profile: engineProfile,
@@ -472,15 +456,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         );
         return buildHouseholdBudgetPlan(input);
-    }, [processedPlanData, accounts, goals, transactions, year, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
-
-    useEffect(() => {
-        const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
-        if (engineProfile === 'Moderate') {
-            if (riskProfile.includes('conservative')) setEngineProfile('Conservative');
-            if (riskProfile.includes('aggressive') || riskProfile.includes('growth')) setEngineProfile('Growth');
-        }
-    }, [(data as any)?.settings?.riskProfile]);
+    }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
      const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {

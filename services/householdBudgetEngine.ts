@@ -626,10 +626,9 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
 
     const routedGoalName = activeGoal.name;
     const routedGoalAmount = toCurrency(remaining > 0 ? remaining : 0);
-    const totalGoalAllocation = toCurrency(routedGoalAmount + buckets.goalSavings);
-    if (routedGoalName && totalGoalAllocation > 0) {
+    if (routedGoalName && routedGoalAmount > 0) {
       const goal = goals.find((g) => g.name === routedGoalName);
-      if (goal) goal.remaining = Math.max(0, goal.remaining - totalGoalAllocation);
+      if (goal) goal.remaining = Math.max(0, goal.remaining - routedGoalAmount - buckets.goalSavings);
     }
 
     // due-month deductions from reserve pool

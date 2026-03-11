@@ -46,40 +46,29 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
   const ctx = useNotifications();
   const [filter, setFilter] = useState<'All' | 'Unread'>('All');
   const [categoryFilter, setCategoryFilter] = useState<NotificationCategory | 'All'>('All');
-  const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
     if (!ctx) return [];
     let list = ctx.notifications;
-    if (filter === 'Unread') list = list.filter((n) => !n.isRead);
+    if (filter === 'Unread') list = list.filter(n => !n.isRead);
     if (categoryFilter !== 'All') {
       if (categoryFilter === 'Investment') {
-        list = list.filter((n) => n.category === 'Investment' || n.category === 'PriceAlert' || n.category === 'Plan');
+        list = list.filter(n => n.category === 'Investment' || n.category === 'PriceAlert' || n.category === 'Plan');
       } else {
-        list = list.filter((n) => n.category === categoryFilter);
+        list = list.filter(n => n.category === categoryFilter);
       }
     }
-    const q = query.trim().toLowerCase();
-    if (q) list = list.filter((n) => `${n.message} ${n.actionHint || ''} ${n.symbol || ''}`.toLowerCase().includes(q));
     return list;
-  }, [ctx, filter, categoryFilter, query]);
+  }, [ctx, filter, categoryFilter]);
 
   const groupedByCategory = useMemo(() => {
     const map = new Map<NotificationCategory | 'Other', AppNotification[]>();
-    filtered.forEach((n) => {
+    filtered.forEach(n => {
       const key = n.category === 'PriceAlert' || n.category === 'Plan' ? 'Investment' : n.category;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(n);
     });
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
-
-  const insights = useMemo(() => {
-    const urgent = filtered.filter((n) => n.severity === 'urgent').length;
-    const warning = filtered.filter((n) => n.severity === 'warning').length;
-    const unread = filtered.filter((n) => !n.isRead).length;
-    const top = [...filtered].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 3);
-    return { urgent, warning, unread, top };
   }, [filtered]);
 
   const handleNotificationClick = (n: AppNotification) => {
@@ -98,37 +87,20 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
   return (
     <PageLayout
       title="Notifications"
-      description={ctx.unreadCount > 0 ? `${ctx.unreadCount} unread • Smart automated feed` : 'All caught up'}
+      description={ctx.unreadCount > 0 ? `${ctx.unreadCount} unread` : 'All caught up'}
       action={ctx.unreadCount > 0 ? (
-        <button type="button" onClick={ctx.markAllAsRead} className="btn-outline text-sm">Mark all as read</button>
+        <button
+          type="button"
+          onClick={ctx.markAllAsRead}
+          className="btn-outline text-sm"
+        >
+          Mark all as read
+        </button>
       ) : undefined}
     >
-      <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-4 mb-4">
-        <p className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">Smart notification center</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-          <SmallMetric label="Unread" value={String(insights.unread)} />
-          <SmallMetric label="Urgent" value={String(insights.urgent)} />
-          <SmallMetric label="Warning" value={String(insights.warning)} />
-          <SmallMetric label="Filtered total" value={String(filtered.length)} />
-        </div>
-        {insights.top.length > 0 && (
-          <div className="mt-3">
-            <p className="text-xs text-slate-500 mb-1">Top priorities</p>
-            <div className="space-y-1">
-              {insights.top.map((n) => (
-                <button key={`top-${n.id}`} type="button" onClick={() => handleNotificationClick(n)} className="w-full text-left text-sm rounded border border-slate-200 bg-white px-2 py-1.5 hover:bg-slate-50">
-                  {n.message}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-4 mb-4">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search notifications" className="input-base h-9 w-56 text-sm" />
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wide self-center mr-2">Filter</span>
-        {(['All', 'Unread'] as const).map((tab) => (
+        {(['All', 'Unread'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setFilter(tab)}
@@ -140,7 +112,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
           </button>
         ))}
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wide self-center ml-4 mr-2">Type</span>
-        {(['All', 'Budget', 'Goal', 'Transaction', 'Investment'] as const).map((cat) => (
+        {(['All', 'Budget', 'Goal', 'Transaction', 'Investment'] as const).map(cat => (
           <button
             key={cat}
             onClick={() => setCategoryFilter(cat)}
@@ -164,21 +136,38 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
           <div className="divide-y divide-gray-100">
             {groupedByCategory.map(([category, items]) => (
               <div key={category}>
-                <div className="px-4 py-2 bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wide">{category}</div>
+                <div className="px-4 py-2 bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  {category}
+                </div>
                 <ul className="list-none">
-                  {items.map((n) => (
-                    <li key={n.id} className={`p-4 transition-colors hover:bg-gray-50/50 ${!n.isRead ? 'bg-white' : 'bg-gray-50/30'} ${severityStyles[n.severity ?? 'info']}`}>
+                  {items.map(n => (
+                    <li
+                      key={n.id}
+                      className={`p-4 transition-colors hover:bg-gray-50/50 ${!n.isRead ? 'bg-white' : 'bg-gray-50/30'} ${severityStyles[n.severity ?? 'info']}`}
+                    >
                       <div className="flex items-start gap-4">
-                        <div className="flex-shrink-0 mt-0.5"><CategoryIcon category={n.category} /></div>
+                        <div className="flex-shrink-0 mt-0.5">
+                          <CategoryIcon category={n.category} />
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-sm ${n.isRead ? 'text-gray-600' : 'font-medium text-dark'}`}>{n.message}</p>
-                          {n.actionHint && <p className="text-xs text-slate-500 mt-1">Action: {n.actionHint}</p>}
+                          <p className={`text-sm ${n.isRead ? 'text-gray-600' : 'font-medium text-dark'}`}>
+                            {n.message}
+                          </p>
                           <p className="text-xs text-gray-400 mt-0.5">{formatRelativeTime(n.date)}</p>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => handleNotificationClick(n)} className="text-sm font-semibold text-primary hover:underline">View</button>
+                          <button
+                            onClick={() => handleNotificationClick(n)}
+                            className="text-sm font-semibold text-primary hover:underline"
+                          >
+                            View
+                          </button>
                           {!n.isRead && (
-                            <button onClick={() => ctx.markAsRead(n.id)} title="Mark as read" className="p-1 rounded hover:bg-gray-200">
+                            <button
+                              onClick={() => ctx.markAsRead(n.id)}
+                              title="Mark as read"
+                              className="p-1 rounded hover:bg-gray-200"
+                            >
                               <CheckCircleIcon className="h-5 w-5 text-gray-400 hover:text-green-500" />
                             </button>
                           )}
@@ -195,14 +184,5 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
     </PageLayout>
   );
 };
-
-function SmallMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-white/80 bg-white/90 px-2 py-1.5">
-      <p className="text-[11px] text-slate-500">{label}</p>
-      <p className="text-sm font-semibold text-slate-800">{value}</p>
-    </div>
-  );
-}
 
 export default Notifications;

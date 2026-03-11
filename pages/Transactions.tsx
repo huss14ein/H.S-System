@@ -430,14 +430,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             return;
         }
         if (pageAction.startsWith('filter-by-budget:')) {
-            const [, rawCategory, rawPeriod, rawYear, rawMonth] = pageAction.split(':');
+            const [, rawCategory] = pageAction.split(':');
             const category = rawCategory || '';
-            const period = String(rawPeriod || 'monthly').toLowerCase();
-            const year = Number(rawYear) || new Date().getFullYear();
-            const month = Math.min(12, Math.max(1, Number(rawMonth) || new Date().getMonth() + 1));
-            const monthIso = period === 'yearly'
-                ? `${year.toString().padStart(4, '0')}-01`
-                : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
+            const monthIso = new Date().toISOString().slice(0, 7);
             setFilters((prev) => ({
                 ...prev,
                 month: monthIso,
@@ -664,21 +659,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { day: 'numeric', month: 'long', year: 'numeric', numberingSystem: 'latn' }).format(date);
     };
 
-
-    const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
-        if (!supabase) return;
-        const { data: verifyRow } = await supabase
-            .from('transactions')
-            .select('id, status')
-            .eq('id', transactionId)
-            .maybeSingle();
-        const status = String((verifyRow as any)?.status || '').toLowerCase();
-        if (status && status !== 'pending') return;
-        const patch: Record<string, unknown> = { status: nextStatus };
-        if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
-        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
-    };
-
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
 
@@ -721,11 +701,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
-            await ensurePendingStatusCleared(transactionId, 'Approved');
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-            setPendingRefreshKey((k) => k + 1);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
             if (reason === null) {
@@ -761,11 +739,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
-            await ensurePendingStatusCleared(transactionId, 'Rejected', rejectionReason);
             // Successfully rejected - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-            setPendingRefreshKey((k) => k + 1);
         }
     };
 

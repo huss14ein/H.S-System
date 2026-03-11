@@ -31,68 +31,31 @@ const toSafeText = (value: unknown, fallback = '—'): string => {
   return fallback;
 };
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-
-function normalizeSleeveTargets(core: number, upside: number, spec: number): { core: number; upside: number; spec: number } {
-  let c = Math.max(0, Number(core) || 0);
-  let u = Math.max(0, Number(upside) || 0);
-  let s = Math.max(0, Number(spec) || 0);
-  const rawSum = c + u + s;
-  if (rawSum <= 0) {
-    c = 68; u = 26; s = 6;
-  } else {
-    c = (c / rawSum) * 100;
-    u = (u / rawSum) * 100;
-    s = (s / rawSum) * 100;
-  }
-
-  // Enforce adaptive floors/ceilings to avoid pathological targets (e.g. Core 95 / Upside 0).
-  c = clamp(c, 45, 82);
-  u = clamp(u, 12, 40);
-  s = clamp(s, 4, 18);
-  const sum = c + u + s;
-  return { core: (c / sum) * 100, upside: (u / sum) * 100, spec: (s / sum) * 100 };
-}
-
-/** Build full Wealth Ultra config from app data with auto-derived targets, risk limits, and ticker sleeves. */
+/** Build full Wealth Ultra config from app data. Auto-derives sleeve tickers from Portfolio Universe or holdings when plan lists are empty. */
 function buildEngineConfigFromSystem(
   data: {
     investmentPlan?: any;
     wealthUltraConfig?: any;
     accounts?: any[];
-    portfolioUniverse?: Array<{ ticker: string; status?: string; monthly_weight?: number }>;
-    investments?: Array<{ holdings?: Array<{ symbol: string; quantity?: number; avgCost?: number; currentValue?: number }> }>;
-    investmentTransactions?: Array<{ type?: string; amount?: number; date?: string }>;
-    settings?: { riskProfile?: string };
+    portfolioUniverse?: Array<{ ticker: string; status?: string }>;
+    investments?: Array<{ holdings?: Array<{ symbol: string }> }>;
   },
   totalDeployableCash?: number
-): { config: ReturnType<typeof getDefaultWealthUltraConfig>; autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number } } {
+) {
   const plan = data.investmentPlan;
   const systemConfig = data.wealthUltraConfig;
   const defaults = getDefaultWealthUltraConfig();
   const base = { ...defaults, ...systemConfig } as typeof defaults;
 
-  const allHoldings = (data.investments || []).flatMap((p: { holdings?: Array<{ symbol: string; quantity?: number; avgCost?: number; currentValue?: number }> }) => p.holdings || []);
-  const allHoldingTickers = allHoldings.map((h) => (h.symbol || '').toUpperCase()).filter(Boolean);
-
   const cashAvailable =
     totalDeployableCash ??
     (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
 
-  const plSeries = allHoldings
-    .map((h) => {
-      const qty = Number(h.quantity) || 0;
-      const avg = Number(h.avgCost) || 0;
-      const cost = qty * avg;
-      if (cost <= 0) return null;
-      return ((Number(h.currentValue) || 0) - cost) / cost;
-    })
-    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-  const downsidePressure = plSeries.length > 0 ? plSeries.filter((v) => v < -0.08).length / plSeries.length : 0;
-  const mean = plSeries.length > 0 ? plSeries.reduce((a, b) => a + b, 0) / plSeries.length : 0;
-  const variance = plSeries.length > 0 ? plSeries.reduce((sum, v) => sum + (v - mean) ** 2, 0) / plSeries.length : 0;
-  const volatilityScore = Math.sqrt(Math.max(0, variance));
+  const allHoldingTickers =
+    (data.investments || [])
+      .flatMap((p: { holdings?: Array<{ symbol: string }> }) => p.holdings || [])
+      .map((h: { symbol: string }) => (h.symbol || '').toUpperCase())
+      .filter(Boolean) || [];
 
   const universe = data.portfolioUniverse || [];
 
@@ -146,13 +109,6 @@ function buildEngineConfigFromSystem(
   upsideTickers = Array.from(upsideSet);
   specTickers = Array.from(specSet);
 
-  const riskProfile = String(data.settings?.riskProfile || '').toLowerCase();
-  const riskBase = riskProfile.includes('conservative')
-    ? { core: 76, upside: 20, spec: 4 }
-    : riskProfile.includes('aggressive') || riskProfile.includes('growth')
-      ? { core: 58, upside: 32, spec: 10 }
-      : { core: 68, upside: 26, spec: 6 };
-
   const hasSleeves = plan?.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
   const coreSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
   const upsideSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
@@ -166,87 +122,44 @@ function buildEngineConfigFromSystem(
   let targetSpecPct: number;
 
   if (!plan) {
-    targetCorePct = riskBase.core;
-    targetUpsidePct = riskBase.upside;
-    targetSpecPct = riskBase.spec;
+    targetCorePct = base.targetCorePct;
+    targetUpsidePct = base.targetUpsidePct;
+    targetSpecPct = base.targetSpecPct;
   } else if (hasSleeves && coreExplicit && upsideExplicit && specExplicit) {
     targetCorePct = coreSleeve.targetPct;
     targetUpsidePct = upsideSleeve.targetPct;
     targetSpecPct = specSleeve.targetPct;
   } else if (hasSleeves && (coreExplicit || upsideExplicit || specExplicit)) {
-    targetCorePct = coreExplicit ? coreSleeve.targetPct : riskBase.core;
-    targetUpsidePct = upsideExplicit ? upsideSleeve.targetPct : riskBase.upside;
-    targetSpecPct = specExplicit ? specSleeve.targetPct : riskBase.spec;
+    targetCorePct = coreExplicit ? coreSleeve.targetPct : base.targetCorePct;
+    targetUpsidePct = upsideExplicit ? upsideSleeve.targetPct : base.targetUpsidePct;
+    targetSpecPct = specExplicit ? specSleeve.targetPct : base.targetSpecPct;
+    const sum = targetCorePct + targetUpsidePct + targetSpecPct;
+    if (Math.abs(sum - 100) > 0.01) {
+      const scale = 100 / sum;
+      targetCorePct *= scale;
+      targetUpsidePct *= scale;
+      targetSpecPct *= scale;
+    }
   } else {
-    const specDefault = (plan.specAllocation ?? riskBase.spec / 100) * 100;
+    const specDefault = (plan.specAllocation ?? 0.05) * 100;
     const remainder = 100 - specDefault;
-    const coreRatio = (plan.coreAllocation ?? riskBase.core / 100) / ((plan.coreAllocation ?? riskBase.core / 100) + (plan.upsideAllocation ?? riskBase.upside / 100));
-    const upsideRatio = (plan.upsideAllocation ?? riskBase.upside / 100) / ((plan.coreAllocation ?? riskBase.core / 100) + (plan.upsideAllocation ?? riskBase.upside / 100));
+    const coreRatio = (plan.coreAllocation ?? 0.7) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
+    const upsideRatio = (plan.upsideAllocation ?? 0.3) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
     targetSpecPct = specDefault;
     targetCorePct = remainder * coreRatio;
     targetUpsidePct = remainder * upsideRatio;
   }
 
-  // Protect against extreme user/system targets that produce unusable behavior.
-  let normalized = normalizeSleeveTargets(targetCorePct, targetUpsidePct, targetSpecPct);
-  targetCorePct = normalized.core;
-  targetUpsidePct = normalized.upside;
-  targetSpecPct = normalized.spec;
-
-  const stressBoost = clamp(downsidePressure * 25 + volatilityScore * 35, 0, 12);
-  normalized = normalizeSleeveTargets(
-    targetCorePct + stressBoost * 0.9,
-    targetUpsidePct - stressBoost * 0.6,
-    targetSpecPct - stressBoost * 0.3,
-  );
-  targetCorePct = normalized.core;
-  targetUpsidePct = normalized.upside;
-  targetSpecPct = normalized.spec;
-
-  const diversifiedCount = Math.max(1, new Set([...coreTickers, ...upsideTickers, ...specTickers]).size);
-  const autoMaxPerTicker = clamp((100 / diversifiedCount) * 1.75, 8, riskProfile.includes('aggressive') ? 22 : 18);
-  const autoCashReservePct = clamp(8 + stressBoost, 8, 28);
-
-  const now = new Date();
-  const buyTx = (data.investmentTransactions || []).filter((t) => {
-    if (t.type !== 'buy' || !t.date) return false;
-    const d = new Date(t.date);
-    const diffDays = (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24);
-    return diffDays >= 0 && diffDays <= 120;
-  });
-  const buyAmount120d = buyTx.reduce((sum, t) => sum + Math.max(0, Number(t.amount) || 0), 0);
-  const autoMonthlyDeposit = buyAmount120d > 0 ? Math.round(buyAmount120d / 4) : 0;
-  const monthlyDeposit = Math.max(0, Math.round(plan?.monthlyBudget || 0)) || Math.max(autoMonthlyDeposit, Math.round(base.monthlyDeposit || 0));
-
-  const regime = stressBoost >= 9 ? 'Defensive' : stressBoost >= 4 ? 'Balanced' : 'Opportunity';
-  const confidence = plSeries.length >= 6 ? 'High' : plSeries.length >= 3 ? 'Medium' : 'Bootstrapping';
-
-  const config = {
+  return {
     ...base,
-    monthlyDeposit,
+    monthlyDeposit: plan?.monthlyBudget ?? base.monthlyDeposit,
     cashAvailable,
-    cashReservePct: autoCashReservePct,
-    maxPerTickerPct: autoMaxPerTicker,
     targetCorePct,
     targetUpsidePct,
     targetSpecPct,
-    defaultTarget1Pct: clamp(12 + volatilityScore * 10, 10, 20),
-    defaultTarget2Pct: clamp(20 + volatilityScore * 18, 18, 32),
-    defaultTrailingPct: clamp(8 + volatilityScore * 16, 7, 18),
     coreTickers,
     upsideTickers,
     specTickers,
-  };
-
-  return {
-    config,
-    autoPilotMeta: {
-      regime,
-      confidence,
-      monthlyDepositSource: autoMonthlyDeposit > 0 && !plan?.monthlyBudget ? 'Auto from last 120d buys' : 'Plan/System budget',
-      volatilityScore,
-      downsidePressure,
-    },
   };
 }
 
@@ -271,25 +184,22 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       const sym = (h.symbol || '').toUpperCase();
       if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
     });
-    const { config, autoPilotMeta } = buildEngineConfigFromSystem(
+    const config = buildEngineConfigFromSystem(
       {
         investmentPlan: data.investmentPlan,
         wealthUltraConfig: data.wealthUltraConfig,
         accounts: data.accounts,
         portfolioUniverse: data.portfolioUniverse,
         investments: data.investments,
-        investmentTransactions: data.investmentTransactions,
-        settings: (data as any)?.settings,
       },
       totalDeployableCash
     );
-    const state = runWealthUltraEngine({
+    return runWealthUltraEngine({
       holdings: allHoldings,
       priceMap,
       config,
     });
-    return { ...state, autoPilotMeta };
-  }, [data.investments, data.investmentPlan, data.accounts, data.wealthUltraConfig, data.portfolioUniverse, data.investmentTransactions, (data as any)?.settings?.riskProfile, simulatedPrices, totalDeployableCash]);
+  }, [data.investments, data.investmentPlan, data.accounts, data.wealthUltraConfig, data.portfolioUniverse, simulatedPrices, totalDeployableCash]);
 
   const {
     totalPortfolioValue,
@@ -305,8 +215,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     specBuysDisabled,
     orders,
     portfolioHealth,
-    autoPilotMeta,
-  } = engineState as typeof engineState & { autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number } };
+  } = engineState;
 
   const totalSAR = totalPortfolioValue / config.fxRate;
   const positions = engineState.positions || [];
@@ -455,14 +364,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         content: (
           <SectionCard title="Wealth Ultra Engine" className="border-2 border-primary/30 bg-gradient-to-br from-white via-primary/5 to-slate-50 shadow-lg">
             <div className="space-y-4">
-              <p className="text-slate-700 leading-relaxed max-w-3xl">Fully automated portfolio autopilot: it self-tunes sleeve targets, per-ticker limits, cash reserve, deployment budget, and exit parameters from your live holdings, market drift, and transaction behavior—so you can run with minimal manual input.</p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2"><p className="text-[11px] text-indigo-600">Regime</p><p className="text-sm font-semibold text-indigo-800">{autoPilotMeta.regime}</p></div>
-                <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2"><p className="text-[11px] text-sky-600">Signal confidence</p><p className="text-sm font-semibold text-sky-800">{autoPilotMeta.confidence}</p></div>
-                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"><p className="text-[11px] text-emerald-600">Downside pressure</p><p className="text-sm font-semibold text-emerald-800">{(autoPilotMeta.downsidePressure * 100).toFixed(0)}%</p></div>
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2"><p className="text-[11px] text-amber-600">Volatility score</p><p className="text-sm font-semibold text-amber-800">{(autoPilotMeta.volatilityScore * 100).toFixed(1)}</p></div>
-                <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2"><p className="text-[11px] text-violet-600">Deposit source</p><p className="text-sm font-semibold text-violet-800">{autoPilotMeta.monthlyDepositSource}</p></div>
-              </div>
+              <p className="text-slate-700 leading-relaxed max-w-3xl">Rule-based allocation, sleeve drift analysis, and institutional-grade order planning. Unified with your Investment Plan, execution flow, and live portfolio telemetry.</p>
               {positionCount > 0 && (
                 <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-slate-200">
                   <div className="flex items-center gap-2 text-sm text-slate-600">
