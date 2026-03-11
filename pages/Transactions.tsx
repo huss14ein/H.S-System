@@ -708,20 +708,41 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     alert(`Failed to approve transaction: ${approveError.message}`);
                     return;
                 }
+            }
 
-                const row = adminPendingTransactions.find((t) => t.id === transactionId);
-                if (row?.budgetCategory && row.amount) {
-                    const { error: applyError } = await supabase.rpc('apply_approved_transaction_to_category', {
-                        p_category_name: row.budgetCategory,
-                        p_amount: Math.abs(Number(row.amount))
-                    });
-                    if (applyError) {
-                        alert(`Transaction approved but category balance update failed: ${applyError.message}`);
-                    }
+            // Apply category balance update for both RPC success and fallback cases
+            const row = adminPendingTransactions.find((t) => t.id === transactionId);
+            if (row?.budgetCategory && row.amount) {
+                const { error: applyError } = await supabase.rpc('apply_approved_transaction_to_category', {
+                    p_category_name: row.budgetCategory,
+                    p_amount: Math.abs(Number(row.amount))
+                });
+                if (applyError) {
+                    console.warn(`Transaction approved but category balance update failed: ${applyError.message}`);
                 }
             }
 
             await ensurePendingStatusCleared(transactionId, 'Approved');
+            
+            // Update the transaction in DataContext to refresh the main transaction list
+            const { data: updatedTransaction } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('id', transactionId)
+                .maybeSingle();
+            
+            if (updatedTransaction && updateTransaction) {
+                const normalized = {
+                    ...updatedTransaction,
+                    budgetCategory: updatedTransaction.budget_category ?? updatedTransaction.budgetCategory,
+                    accountId: updatedTransaction.account_id ?? updatedTransaction.accountId,
+                    transactionNature: updatedTransaction.transaction_nature ?? updatedTransaction.transactionNature,
+                    expenseType: updatedTransaction.expense_type ?? updatedTransaction.expenseType,
+                    status: updatedTransaction.status ?? 'Approved',
+                };
+                await updateTransaction(normalized as Transaction);
+            }
+            
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
@@ -762,6 +783,26 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             await ensurePendingStatusCleared(transactionId, 'Rejected', rejectionReason);
+            
+            // Update the transaction in DataContext to refresh the main transaction list
+            const { data: updatedTransaction } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('id', transactionId)
+                .maybeSingle();
+            
+            if (updatedTransaction && updateTransaction) {
+                const normalized = {
+                    ...updatedTransaction,
+                    budgetCategory: updatedTransaction.budget_category ?? updatedTransaction.budgetCategory,
+                    accountId: updatedTransaction.account_id ?? updatedTransaction.accountId,
+                    transactionNature: updatedTransaction.transaction_nature ?? updatedTransaction.transactionNature,
+                    expenseType: updatedTransaction.expense_type ?? updatedTransaction.expenseType,
+                    status: updatedTransaction.status ?? 'Rejected',
+                };
+                await updateTransaction(normalized as Transaction);
+            }
+            
             // Successfully rejected - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
