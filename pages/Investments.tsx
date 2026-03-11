@@ -2864,34 +2864,34 @@ Save anyway?`)) return;
                                     <dl className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 text-sm">
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">Monthly budget</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">Total deployed</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap">{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">Core</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">High-Upside</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">Speculative</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap">{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
                                             <dt className="text-slate-600">Redirected</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap">{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2 sm:col-span-2 xl:col-span-3">
                                             <dt className="text-slate-600">Unused (not allocated)</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
                                         </div>
                                     </dl>
-                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding).</p>
+                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding). Hover values to see converted secondary currency.</p>
                                 </div>
 
                                 <div>

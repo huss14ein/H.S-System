@@ -165,7 +165,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [requestNote, setRequestNote] = useState('');
     const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit'>('NewCategory');
     const [requestCategoryId, setRequestCategoryId] = useState('');
-    const [governanceCategories, setGovernanceCategories] = useState<{ id: string; name: string }[]>([]);
+    const [governanceCategories, setGovernanceCategories] = useState<Array<{ id: string; name: string; monthly_limit?: number }>>([]);
     const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
     const [requestSearch, setRequestSearch] = useState('');
     const [requestSort, setRequestSort] = useState<'Newest' | 'Oldest' | 'AmountHigh' | 'AmountLow'>('Newest');
@@ -218,6 +218,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
     const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
+    const [householdProfileCloudLoadedUserId, setHouseholdProfileCloudLoadedUserId] = useState<string | null>(null);
 
     React.useEffect(() => {
         try {
@@ -242,8 +243,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     React.useEffect(() => {
         const userId = auth?.user?.id;
         const db = supabase;
-        if (!householdProfileCloudEnabled || !userId || !db) return;
+        if (!householdProfileCloudEnabled || !userId || !db) {
+            setHouseholdProfileCloudLoadedUserId(null);
+            return;
+        }
         let isMounted = true;
+        setHouseholdProfileCloudLoadedUserId(null);
         (async () => {
             try {
                 const { data, error } = await db
@@ -265,6 +270,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 }
             } catch {
                 // Optional cloud sync path, safe to ignore when migration is not applied.
+            } finally {
+                if (isMounted) setHouseholdProfileCloudLoadedUserId(userId);
             }
         })();
         return () => {
@@ -289,7 +296,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     React.useEffect(() => {
         const userId = auth?.user?.id;
         const db = supabase;
-        if (!householdProfileCloudEnabled || !userId || !db) return;
+        if (!householdProfileCloudEnabled || !userId || !db || householdProfileCloudLoadedUserId !== userId) return;
         const payload = {
             adults: householdAdults,
             kids: householdKids,
@@ -307,16 +314,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             }
         }, 700);
         return () => window.clearTimeout(t);
-    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
 
     const householdBudgetEngine = useMemo(() => {
+        const incomeByMonth = Array(12).fill(0);
+        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
+            const d = new Date(t.date);
+            if (d.getFullYear() !== currentYear || t.type !== 'income') return;
+            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+        });
+        const incomeWithData = incomeByMonth.filter((v) => v > 0);
+        const suggested = incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length) : 0;
+
         const input = buildHouseholdEngineInputFromData(
             (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
             (data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
             (data?.goals ?? []) as any[],
             {
                 year: currentYear,
-                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : (suggested > 0 ? suggested : undefined),
                 adults: householdAdults,
                 kids: householdKids,
                 profile: engineProfile,
@@ -337,12 +353,30 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
     }, [data?.transactions, currentYear]);
 
+
+    React.useEffect(() => {
+        const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
+        if (engineProfile === 'Moderate') {
+            if (riskProfile.includes('conservative')) setEngineProfile('Conservative');
+            if (riskProfile.includes('aggressive') || riskProfile.includes('growth')) setEngineProfile('Growth');
+        }
+    }, [(data as any)?.settings?.riskProfile]);
+
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
     const resolveRequestCategory = (request: any) => request.category_name || categoryNameById.get(request.category_id) || request.category_id || 'N/A';
     const requestStatusClasses: Record<string, string> = {
         Pending: 'bg-amber-100 text-amber-800',
         Finalized: 'bg-green-100 text-green-800',
         Rejected: 'bg-rose-100 text-rose-800',
+    };
+
+    const parseRequestedAmountMeta = (request: any): { rawAmount?: number; rawPeriod?: 'Monthly' | 'Weekly' | 'Daily' | 'Yearly' } => {
+        const note = String(request?.request_note || request?.note || '');
+        const m = note.match(/\[Requested period:\s*(Monthly|Weekly|Daily|Yearly);\s*Raw:\s*([0-9]+(?:\.[0-9]+)?)\]/i);
+        if (!m) return {};
+        const rawAmount = Number(m[2]);
+        if (!Number.isFinite(rawAmount) || rawAmount <= 0) return {};
+        return { rawAmount, rawPeriod: m[1] as any };
     };
 
     React.useEffect(() => {
@@ -354,7 +388,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
             const { data: categories } = await supabase
                 .from('categories')
-                .select('id, name')
+                .select('id, name, monthly_limit')
                 .order('name', { ascending: true });
             setGovernanceCategories(categories || []);
 
@@ -545,7 +579,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
 
-        const scopedBudgets = ownScopedBudgets;
+        const syntheticRestrictedBudgets: Budget[] = !isAdmin
+            ? permittedCategories
+                .filter((cat) => !ownScopedBudgets.some((b) => b.category === cat))
+                .map((cat) => {
+                    const meta = governanceCategories.find((g) => g.name === cat);
+                    const fallbackLimit = Number(meta?.monthly_limit) || 0;
+                    return {
+                        id: `synthetic-${cat}-${currentYear}-${currentMonth}`,
+                        user_id: auth?.user?.id,
+                        category: cat,
+                        limit: fallbackLimit,
+                        month: currentMonth,
+                        year: currentYear,
+                        period: 'monthly',
+                        tier: 'Optional' as const,
+                    } as Budget;
+                })
+            : [];
+
+        const scopedBudgets = [...ownScopedBudgets, ...syntheticRestrictedBudgets];
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -585,7 +638,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -745,6 +798,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             ]),
         );
     }, [sharedBudgetCards]);
+
+    const availableIncreaseCategories = useMemo(() => {
+        const ownCategories = budgetData.map((b) => ({ value: `OWN::${b.category}`, label: b.category, category: b.category, source: 'own' as const }));
+        const sharedCategories = sharedBudgetCards.map((b) => ({
+            value: `SHARED::${(b as any).owner_user_id || b.user_id || (b as any).ownerEmail || 'owner'}::${b.category}`,
+            label: `${b.category} (shared from ${sharedBudgetOwnerByCardId.get(b.id) || 'Owner'})`,
+            category: b.category,
+            source: 'shared' as const,
+        }));
+        const merged = [...ownCategories, ...sharedCategories];
+        const dedup = new Map<string, typeof merged[number]>();
+        merged.forEach((item) => dedup.set(item.value, item));
+        return Array.from(dedup.values()).sort((a, b) => a.label.localeCompare(b.label));
+    }, [budgetData, sharedBudgetCards, sharedBudgetOwnerByCardId]);
 
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -941,9 +1008,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         const selectedCategoryName =
             requestType === 'IncreaseLimit' && requestCategoryId
-                ? (governanceCategories.find(c => c.id === requestCategoryId)?.name ??
-                   sharedBudgets.find(b => `SHARED::${(b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner'}::${b.category}` === requestCategoryId)?.category ??
-                   '')
+                ? (availableIncreaseCategories.find((opt) => opt.value === requestCategoryId)?.category ??
+                   (requestCategoryId.startsWith('OWN::') ? requestCategoryId.replace('OWN::', '') : ''))
                 : '';
 
         const duplicateMatch = budgetRequests.some((r) => {
@@ -953,7 +1019,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             }
             // IncreaseLimit: match by category_id when present, otherwise by category_name for shared-category requests
             if (requestCategoryId && !requestCategoryId.startsWith('SHARED::')) {
-                return r.category_id === requestCategoryId;
+                const normalizedCategoryId = requestCategoryId.replace('OWN::', '');
+                return r.category_id === normalizedCategoryId;
             }
             if (!selectedCategoryName) return false;
             return !r.category_id &&
@@ -977,7 +1044,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         const payloadBase = {
             user_id: auth.user.id,
             request_type: requestType,
-            category_id: requestType === 'IncreaseLimit' && !isSharedSelection ? (requestCategoryId || null) : null,
+            category_id: requestType === 'IncreaseLimit' && !isSharedSelection ? (requestCategoryId.replace('OWN::', '') || null) : null,
             category_name: requestType === 'NewCategory'
                 ? newCategoryName.trim()
                 : (requestType === 'IncreaseLimit' && isSharedSelection ? selectedCategoryName || null : null),
@@ -1089,8 +1156,21 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     alert(`Failed to update category limit: ${updateError.message}`);
                     return;
                 }
-            } else {
-                // Shared-owner categories without a direct category_id are advisory only; admin adjusts on their own budgets.
+            }
+
+            const targetCategory = resolveRequestCategory(request);
+            const matchingBudgets = (data?.budgets ?? []).filter((b) => b.category === targetCategory && b.year === currentYear && (b.month === currentMonth || b.period === 'yearly'));
+            if (matchingBudgets.length > 0) {
+                matchingBudgets.forEach((b) => updateBudget({ ...b, limit: amount }));
+            } else if (targetCategory && auth?.user?.id) {
+                addBudget({
+                    category: targetCategory,
+                    limit: amount,
+                    month: currentMonth,
+                    year: currentYear,
+                    period: 'monthly',
+                    tier: 'Optional',
+                });
             }
         }
 
@@ -1247,12 +1327,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             {!isAdmin && (() => {
                 const selectedCategoryName = (() => {
                     if (requestType !== 'IncreaseLimit' || !requestCategoryId) return '';
-                    const own = governanceCategories.find(c => c.id === requestCategoryId)?.name;
-                    if (own) return own;
-                    const shared = sharedBudgets.find(
-                        (b) => `SHARED::${(b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner'}::${b.category}` === requestCategoryId
-                    );
-                    return shared?.category ?? '';
+                    const fromOptions = availableIncreaseCategories.find((opt) => opt.value === requestCategoryId);
+                    if (fromOptions) return fromOptions.category;
+                    return requestCategoryId.startsWith('OWN::') ? requestCategoryId.replace('OWN::', '') : '';
                 })();
                 const currentBudgetRow = requestType === 'IncreaseLimit' && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
                 const currentLimit = currentBudgetRow?.monthlyLimit ?? 0;
@@ -1278,18 +1355,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Category to increase</label>
                                     <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
                                         <option value="">Select category</option>
-                                        {/* Own permitted categories */}
-                                        {governanceCategories
-                                            .filter((c) => permittedCategories.includes(c.name))
-                                            .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                        {/* Shared budgets from other owners (by category name) */}
-                                        {Array.from(new Set(sharedBudgets.map((b) => b.category).filter(Boolean))).map((cat) => {
-                                            const anyRow = sharedBudgets.find((b) => b.category === cat);
-                                            if (!anyRow) return null;
-                                            const ownerKey = (anyRow as any).owner_user_id || (anyRow as any).user_id || anyRow.ownerEmail || 'owner';
-                                            const value = `SHARED::${ownerKey}::${cat}`;
-                                            return <option key={value} value={value}>{cat} (shared)</option>;
-                                        })}
+                                        {availableIncreaseCategories.map((opt) => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
                                     </select>
                                     {currentBudgetRow && (
                                         <p className="mt-1 text-xs text-gray-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
@@ -1372,7 +1440,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
                                     <p className="text-xs text-gray-500">
-                                        Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}
+                                        {(() => {
+                                            const meta = parseRequestedAmountMeta(r);
+                                            if (meta.rawAmount && meta.rawPeriod) {
+                                                return <>Requested: {formatCurrencyString(meta.rawAmount, { digits: 0 })} ({meta.rawPeriod}) · Monthly equivalent: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                            }
+                                            return <>Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                        })()}
                                     </p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
@@ -1380,7 +1454,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
                                     <button onClick={() => {
-                                        const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(r.amount || ''));
+                                        const requestedMeta = parseRequestedAmountMeta(r);
+                                        const suggestedAmount = requestedMeta.rawAmount && requestedMeta.rawPeriod
+                                            ? normalizeToMonthly(requestedMeta.rawAmount, requestedMeta.rawPeriod)
+                                            : Number(r.amount || 0);
+                                        const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(suggestedAmount || ''));
                                         if (nextAmount == null) return;
                                         const parsed = Number(nextAmount);
                                         if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1461,7 +1539,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Household Budget Engine">
                 <p className="text-sm text-slate-700 font-medium">
-                    Uses your transactions, accounts, and goals to project monthly cash flow and how much you can put toward goals—no manual buckets or long tables.
+                    Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
@@ -1735,7 +1813,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         onClick={() => {
                             if (triggerPageAction) {
                                 const periodTag = budgetView.toLowerCase();
-                                triggerPageAction('Transactions', `filter-by-budget:${budget.category}:${periodTag}`);
+                                triggerPageAction('Transactions', `filter-by-budget:${budget.category}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`);
                             }
                         }}
                     >
