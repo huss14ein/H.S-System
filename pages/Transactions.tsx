@@ -11,11 +11,12 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import AIAdvisor from '../components/AIAdvisor';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
-import { getAICategorySuggestion, formatAiError } from '../services/geminiService';
+import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
+import { inferIsAdmin } from '../utils/role';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -27,7 +28,6 @@ const TransactionModal: React.FC<{
     allCategories: string[],
     accounts: Account[]
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
-    const { formatCurrencyString } = useFormatCurrency();
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -39,6 +39,30 @@ const TransactionModal: React.FC<{
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
     const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+    const [aiSuggestionNote, setAiSuggestionNote] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
+
+    const suggestCategoryLocally = (rawDescription: string): string | null => {
+        const normalized = rawDescription.toLowerCase();
+        const keywordMap: Array<{ keywords: string[]; category: string }> = [
+            { keywords: ['grocery', 'groceries', 'supermarket', 'food', 'restaurant', 'cafe', 'coffee'], category: 'Food' },
+            { keywords: ['uber', 'taxi', 'fuel', 'gas', 'petrol', 'bus', 'metro', 'transport'], category: 'Transportation' },
+            { keywords: ['rent', 'mortgage', 'lease', 'home'], category: 'Housing' },
+            { keywords: ['electric', 'water', 'internet', 'phone', 'utility'], category: 'Utilities' },
+            { keywords: ['doctor', 'clinic', 'hospital', 'pharmacy', 'medicine', 'health'], category: 'Health' },
+            { keywords: ['tuition', 'school', 'course', 'education', 'book'], category: 'Education' },
+            { keywords: ['movie', 'cinema', 'game', 'subscription', 'entertainment'], category: 'Entertainment' },
+            { keywords: ['shopping', 'clothes', 'fashion', 'mall'], category: 'Shopping' },
+            { keywords: ['investment', 'saving', 'savings'], category: 'Savings & Investments' },
+        ];
+
+        for (const row of keywordMap) {
+            if (row.keywords.some((k) => normalized.includes(k))) {
+                return row.category;
+            }
+        }
+
+        return null;
+    };
 
 
     React.useEffect(() => {
@@ -65,6 +89,7 @@ const TransactionModal: React.FC<{
             setTransactionNature('Variable');
             setExpenseType('Core');
         }
+        setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
     const buildTransactionData = (): Omit<Transaction, 'id'> => ({
@@ -101,18 +126,39 @@ const TransactionModal: React.FC<{
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
+        setAiSuggestionNote(null);
         try {
             const suggested = await getAICategorySuggestion(description, allCategories);
             if (suggested && allCategories.includes(suggested)) {
                 setCategory(suggested);
                 const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
                 if(matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
             } else if (suggested) {
                 setCategory(suggested);
+                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
+            } else {
+                const fallback = suggestCategoryLocally(description);
+                if (fallback) {
+                    setCategory(fallback);
+                    const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                    if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${fallback}` });
+                } else {
+                    setAiSuggestionNote({ tone: 'info', text: 'No suggestion available. You can continue with your selected category.' });
+                }
             }
         } catch (e) {
             console.error("Category suggestion failed", e);
-            alert(`AI suggestion failed:\n\n${formatAiError(e)}`);
+            const fallback = suggestCategoryLocally(description);
+            if (fallback) {
+                setCategory(fallback);
+                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
+                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${fallback}` });
+            } else {
+                setAiSuggestionNote({ tone: 'warning', text: 'AI timeout/unavailable. Please continue manually.' });
+            }
         } finally {
             setIsSuggestingCategory(false);
         }
@@ -141,7 +187,7 @@ const TransactionModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
                     <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
                         <option value="" disabled>Select an Account</option>
-                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrencyString(acc.balance)})</option>)}
+                        {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                     </select>
                 </div>
                 <div className="flex space-x-4">
@@ -160,6 +206,11 @@ const TransactionModal: React.FC<{
                                         {isSuggestingCategory ? <svg className="animate-spin h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <SparklesIcon className="h-5 w-5 text-primary hover:text-secondary" />}
                                     </button>
                                 </div>
+                                {aiSuggestionNote && (
+                                    <p className={`mt-1 text-xs ${aiSuggestionNote.tone === 'success' ? 'text-emerald-700' : aiSuggestionNote.tone === 'warning' ? 'text-amber-700' : 'text-slate-600'}`}>
+                                        {aiSuggestionNote.text}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
@@ -348,7 +399,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const [userRole, setUserRole] = useState<UserRole>('Restricted');
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
+    const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
     const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
+    const [isPendingLoading, setIsPendingLoading] = useState(false);
+    const [pendingLoadError, setPendingLoadError] = useState<string | null>(null);
+    const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+    const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
+    const [isBulkReviewing, setIsBulkReviewing] = useState(false);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
@@ -381,7 +438,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .eq('id', auth.user.id)
                 .maybeSingle();
 
-            const role = (userRecord?.role === 'Admin' ? 'Admin' : 'Restricted') as UserRole;
+            const role = (inferIsAdmin(auth.user, userRecord?.role ?? null) ? 'Admin' : 'Restricted') as UserRole;
             setUserRole(role);
 
             if (role === 'Restricted') {
@@ -392,8 +449,17 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
                 const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
                 setPermittedBudgetCategories(allowed);
+
+                const { data: sharedRows } = await supabase
+                    .rpc('get_shared_budgets_for_me')
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                const sharedCats = Array.from(new Set(((sharedRows || []) as any[])
+                    .map((row) => String(row?.category || '').trim())
+                    .filter(Boolean)));
+                setSharedBudgetCategories(sharedCats);
             } else {
                 setPermittedBudgetCategories([]);
+                setSharedBudgetCategories([]);
             }
         };
 
@@ -404,34 +470,57 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const loadPendingTransactions = async () => {
             if (!supabase || userRole !== 'Admin') {
                 setAdminPendingTransactions([]);
+                setPendingLoadError(null);
                 return;
             }
+            setIsPendingLoading(true);
+            setPendingLoadError(null);
             const db = supabase;
             const fetchPendingRows = async (selectClause: string) => {
                 return db
                     .from('transactions')
                     .select(selectClause)
-                    .eq('status', 'Pending')
+                    .in('status', ['Pending', 'pending'])
                     .order('date', { ascending: false });
             };
 
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
-            const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
-            pendingRows = camelCaseResult.data || [];
-            pendingError = camelCaseResult.error;
+            const rpcResult = await db.rpc('get_pending_transactions_for_admin').then((r) => r, () => ({ data: null, error: { message: 'RPC unavailable' } } as any));
+            if (!rpcResult.error && Array.isArray(rpcResult.data)) {
+                pendingRows = rpcResult.data;
+            } else {
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                    pendingRows = camelCaseResult.data || [];
+                    pendingError = camelCaseResult.error;
 
-            if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
-                const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
-                pendingRows = snakeCaseResult.data || [];
-                pendingError = snakeCaseResult.error;
-            }
+                    if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
+                        const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                        pendingRows = snakeCaseResult.data || [];
+                        pendingError = snakeCaseResult.error;
+                    }
 
-            if (pendingError) {
-                console.error('Error loading admin pending transactions:', pendingError);
-                setAdminPendingTransactions([]);
-                return;
+                    if (!pendingError) break;
+                    if (attempt < 1) {
+                        await new Promise((resolve) => setTimeout(resolve, 250));
+                    }
+                }
+
+                if (pendingError) {
+                    console.error('Error loading admin pending transactions:', pendingError);
+                    setAdminPendingTransactions([]);
+                    const base = pendingError.message || 'Could not load pending transactions.';
+                    const hint = /approve_pending_transaction|reject_pending_transaction|get_pending_transactions_for_admin|transactions|policy|rls/i.test(base)
+                        ? ' Verify latest DB SQL migrations are applied. If RLS limits direct transaction reads, install the get_pending_transactions_for_admin RPC.'
+                        : /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
+                        ? ' Verify latest DB SQL migrations are applied.'
+                        : '';
+                    setPendingLoadError(`${base}${hint}`);
+                    setIsPendingLoading(false);
+                    return;
+                }
             }
 
             const normalized = (pendingRows || []).map((row: any) => ({
@@ -439,12 +528,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategory: row.budgetCategory ?? row.budget_category ?? null,
             }));
             setAdminPendingTransactions(normalized);
+            setSelectedPendingIds((prev) => prev.filter((id) => normalized.some((row: any) => row.id === id)));
+            setIsPendingLoading(false);
         };
 
         loadPendingTransactions();
-    }, [userRole, (data?.transactions ?? []).length]);
+    }, [userRole, data?.transactions, pendingRefreshKey]);
 
     const filteredTransactions = useMemo(() => {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -455,10 +547,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isPermitted = userRole === 'Admin' || !t.budgetCategory || permittedBudgetCategories.includes(t.budgetCategory);
+            const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
-    }, [data?.transactions, filters, userRole, permittedBudgetCategories]);
+    }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
@@ -481,10 +573,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     
     const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
     const budgetCategories = useMemo(() => {
-        const categories = (data?.budgets ?? []).map(b => b.category);
-        if (userRole === 'Admin') return categories;
-        return categories.filter(c => permittedBudgetCategories.includes(c));
-    }, [data?.budgets, userRole, permittedBudgetCategories]);
+        const ownCategories = (data?.budgets ?? []).map(b => b.category);
+        if (userRole === 'Admin') return ownCategories;
+        const allowedSet = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        return Array.from(new Set([...ownCategories.filter(c => allowedSet.has(c)), ...sharedBudgetCategories]));
+    }, [data?.budgets, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -492,7 +585,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
-        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }
@@ -506,7 +600,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
     
     const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
-        if (userRole === 'Restricted' && (!transaction.budgetCategory || !permittedBudgetCategories.includes(transaction.budgetCategory))) {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        if (userRole === 'Restricted' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
             return;
         }
@@ -558,9 +653,22 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             });
 
             if (approveError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (approveError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (statusError.message?.includes('not found') || statusError.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to approve transaction: ${approveError.message}`);
                     return;
                 }
@@ -576,23 +684,61 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     }
                 }
             }
+
+            // Successfully approved - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
         } else {
-            const reason = window.prompt('Optional rejection reason for audit/history:') || '';
+            const reason = window.prompt('Optional rejection reason for audit/history:');
+            if (reason === null) {
+                // User cancelled the prompt
+                return;
+            }
+            const rejectionReason = reason || '';
             const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
                 p_transaction_id: transactionId,
-                p_reason: reason,
+                p_reason: rejectionReason,
             });
 
             if (rejectError) {
-                const { error } = await supabase.from('transactions').update({ status, rejection_reason: reason || null }).eq('id', transactionId);
-                if (error) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (rejectError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
+                // Backward-compatible fallback for environments where the new RPC isn't deployed yet
+                const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
+                if (updateError) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (updateError.message?.includes('not found') || updateError.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to reject transaction: ${rejectError.message}`);
                     return;
                 }
             }
-        }
 
-        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            // Successfully rejected - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+        }
+    };
+
+    const togglePendingSelection = (transactionId: string) => {
+        setSelectedPendingIds((prev) => prev.includes(transactionId) ? prev.filter((id) => id !== transactionId) : [...prev, transactionId]);
+    };
+
+    const handleBulkReview = async (status: 'Approved' | 'Rejected') => {
+        if (selectedPendingIds.length === 0) return;
+        setIsBulkReviewing(true);
+        for (const id of selectedPendingIds) {
+            await reviewPendingTransaction(id, status);
+        }
+        setIsBulkReviewing(false);
     };
 
     return (
@@ -647,24 +793,45 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 )}
             </SectionCard>
 
-            {userRole === 'Admin' && adminPendingTransactions.length > 0 && (
+            {userRole === 'Admin' && (
                 <div className="bg-white p-5 rounded-xl shadow-md border border-amber-200">
-                    <h2 className="text-xl font-semibold text-dark mb-3">Admin Review Queue</h2>
-                    <div className="space-y-3">
-                        {adminPendingTransactions.map((pending) => (
-                            <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                                <div>
-                                    <p className="font-semibold">{pending.description}</p>
-                                    <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
-                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
-                                    <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-semibold text-dark">Admin Review Queue</h2>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">{adminPendingTransactions.length} pending</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Approved')} className="btn-outline text-xs disabled:opacity-50">Approve selected</button>
+                            <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Rejected')} className="btn-outline text-xs disabled:opacity-50">Reject selected</button>
+                            <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">Refresh pending</button>
+                        </div>
                     </div>
+                    {pendingLoadError && <p className="text-xs text-rose-700 mb-2">{pendingLoadError}</p>}
+                    {isPendingLoading ? (
+                        <p className="text-sm text-slate-500">Loading pending transactions…</p>
+                    ) : adminPendingTransactions.length === 0 ? (
+                        <p className="text-sm text-slate-600">No pending transactions right now. When restricted users submit expenses, they appear here for approval.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {adminPendingTransactions.map((pending) => (
+                                <div key={pending.id} className="p-3 rounded-lg border flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                    <div>
+                                        <label className="inline-flex items-center gap-2 mr-2">
+                                            <input type="checkbox" checked={selectedPendingIds.includes(pending.id)} onChange={() => togglePendingSelection(pending.id)} />
+                                            <span className="text-xs text-slate-500">Select</span>
+                                        </label>
+                                        <p className="font-semibold">{pending.description}</p>
+                                        <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
+                                        <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
+                                        <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 

@@ -96,6 +96,8 @@ function toFinnhubSymbol(symbol: string): string {
   if (!upper) return upper;
   if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
   if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+  const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+  if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
   return upper;
 }
 
@@ -229,7 +231,7 @@ export interface CompanyProfile {
 
 export async function getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
   try {
-    const data = await get<CompanyProfile>('/stock/profile2', { symbol: symbol.toUpperCase() });
+    const data = await get<CompanyProfile>('/stock/profile2', { symbol: toFinnhubSymbol(symbol) });
     return data && data.name ? data : null;
   } catch {
     return null;
@@ -245,7 +247,7 @@ export interface BasicFinancials {
 
 export async function getBasicFinancials(symbol: string): Promise<BasicFinancials | null> {
   try {
-    const data = await get<BasicFinancials>('/stock/metric', { symbol: symbol.toUpperCase(), metric: 'all' });
+    const data = await get<BasicFinancials>('/stock/metric', { symbol: toFinnhubSymbol(symbol), metric: 'all' });
     return data && data.symbol ? data : null;
   } catch {
     return null;
@@ -267,7 +269,7 @@ export interface QuoteWith52W {
 
 export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
   try {
-    const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: symbol.toUpperCase() });
+    const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: toFinnhubSymbol(symbol) });
     if (!data) return null;
     const price = Number(data.c ?? data.pc ?? data.p);
     if (!Number.isFinite(price) || price <= 0) return null;
@@ -335,29 +337,42 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
   const oneYearAhead = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
   const to = oneYearAhead.toISOString().split('T')[0];
 
-  const [earningsList, metrics, profile] = await Promise.all([
+  const [earningsList, metrics, profile, quote] = await Promise.all([
     getEarningsCalendar(from, to).then((list) =>
       list.filter((e) => e.symbol.toUpperCase() === symbol.toUpperCase() && e.date)
     ),
     getBasicFinancials(symbol),
     getCompanyProfile(symbol),
+    getQuote(symbol),
   ]);
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
   let nextEarnings: HoldingFundamentals['nextEarnings'];
   if (earningsList.length > 0) {
-    const sorted = [...earningsList].sort((a, b) => {
-      const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
-      const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
-      return da - db;
-    });
-    const first = sorted[0];
-    nextEarnings = {
-      date: first.date,
-      period: first.period,
-      quarter: first.quarter,
-      year: first.year,
-      revenueEstimate: first.revenueEstimate ?? null,
-    };
+    const sortedUpcoming = [...earningsList]
+      .filter((e) => {
+        if (!e.date) return false;
+        const eventDate = new Date(e.date);
+        return Number.isFinite(eventDate.getTime()) && eventDate.getTime() >= todayStart.getTime();
+      })
+      .sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
+        const db = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
+        return da - db;
+      });
+
+    const first = sortedUpcoming[0];
+    if (first) {
+      nextEarnings = {
+        date: first.date,
+        period: first.period,
+        quarter: first.quarter,
+        year: first.year,
+        revenueEstimate: first.revenueEstimate ?? null,
+      };
+    }
   }
 
   let dividend: HoldingFundamentals['dividend'];
@@ -373,8 +388,24 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
       Number(m['dividendPerShareAnnual'] as number) ||
       Number(m['dividendPerShareIndicatedAnnual'] as number);
 
-    const dividendYieldPct = Number.isFinite(rawYield) && rawYield !== 0 ? rawYield : null;
-    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare !== 0 ? rawPerShare : null;
+    const dividendPerShareAnnual = Number.isFinite(rawPerShare) && rawPerShare > 0 ? rawPerShare : null;
+    const inferredYieldPct = (dividendPerShareAnnual && quote?.c && quote.c > 0)
+      ? (dividendPerShareAnnual / quote.c) * 100
+      : null;
+
+    let normalizedYield: number | null = null;
+    if (Number.isFinite(rawYield) && rawYield > 0) {
+      if (rawYield > 1) {
+        normalizedYield = rawYield;
+      } else if (inferredYieldPct && Number.isFinite(inferredYieldPct) && inferredYieldPct > 0) {
+        const asPct = rawYield;
+        const asRatioPct = rawYield * 100;
+        normalizedYield = Math.abs(asPct - inferredYieldPct) <= Math.abs(asRatioPct - inferredYieldPct) ? asPct : asRatioPct;
+      } else {
+        normalizedYield = rawYield < 0.05 ? rawYield * 100 : rawYield;
+      }
+    }
+    const dividendYieldPct = normalizedYield && normalizedYield < 100 ? normalizedYield : null;
 
     if (dividendYieldPct != null || dividendPerShareAnnual != null) {
       dividend = { dividendYieldPct, dividendPerShareAnnual };
@@ -455,21 +486,135 @@ export interface EconomicCalendarEvent {
   estimate?: string;
 }
 
-export async function getEconomicCalendar(from: string, to: string): Promise<EconomicCalendarEvent[]> {
+interface MarketCalendarCachePayload {
+  cachedAt: number;
+  economic: EconomicCalendarEvent[];
+  earnings: EarningsEvent[];
+}
+
+export type MarketCalendarLoadMode = 'fresh' | 'cache_fresh' | 'cache_stale' | 'none';
+
+const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v1:';
+const MARKET_CALENDAR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+function getMarketCalendarCacheKey(from: string, to: string, symbols: string[]): string {
+  const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort().join(',');
+  return `${MARKET_CALENDAR_CACHE_PREFIX}${from}:${to}:${normalizedSymbols}`;
+}
+
+function readMarketCalendarCache(cacheKey: string): { payload: MarketCalendarCachePayload; stale: boolean } | null {
+  if (typeof window === 'undefined') return null;
   try {
-    const data = await get<{ economicCalendar?: any[] }>('/calendar/economic', { from, to });
-    const events = Array.isArray((data as any).economicCalendar) ? (data as any).economicCalendar : [];
-    return events.slice(0, 20).map((e: any) => ({
-      date: String(e?.date ?? ''),
-      country: String(e?.country ?? 'Global'),
-      event: String(e?.event ?? ''),
-      actual: e?.actual != null ? String(e.actual) : undefined,
-      estimate: e?.estimate != null ? String(e.estimate) : undefined,
-    }));
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const payload = JSON.parse(raw) as MarketCalendarCachePayload;
+    if (!payload?.cachedAt || !Array.isArray(payload.economic) || !Array.isArray(payload.earnings)) return null;
+    const stale = Date.now() - payload.cachedAt > MARKET_CALENDAR_CACHE_TTL_MS;
+    return { payload, stale };
   } catch {
-    return [];
+    return null;
   }
 }
+
+function writeMarketCalendarCache(cacheKey: string, payload: MarketCalendarCachePayload): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota/private mode errors.
+  }
+}
+
+export async function getEconomicCalendar(from: string, to: string): Promise<EconomicCalendarEvent[]> {
+  const token = getToken();
+  const q = new URLSearchParams({ from, to, token });
+  const res = await finnhubFetch(`${BASE}/calendar/economic?${q.toString()}`);
+  if (res.status === 403) {
+    throw new Error('FINNHUB_ECONOMIC_FORBIDDEN');
+  }
+  if (res.status === 429) {
+    throw new Error('Finnhub rate limit (60/min). Wait a minute and try again.');
+  }
+  if (!res.ok) {
+    throw new Error(`Finnhub /calendar/economic: ${res.status}`);
+  }
+  const data = await res.json() as any;
+  const events = Array.isArray(data?.economicCalendar) ? data.economicCalendar : [];
+  return events.slice(0, 20).map((e: any) => ({
+    date: String(e?.date ?? ''),
+    country: String(e?.country ?? 'Global'),
+    event: String(e?.event ?? ''),
+    actual: e?.actual != null ? String(e.actual) : undefined,
+    estimate: e?.estimate != null ? String(e.estimate) : undefined,
+  }));
+}
+
+export async function getMarketCalendarCached(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; mode: MarketCalendarLoadMode; cachedAt?: number; warnings?: string[]; }> {
+  const symbols = [...new Set(trackedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
+  const cacheKey = getMarketCalendarCacheKey(from, to, symbols);
+  const cache = readMarketCalendarCache(cacheKey);
+  if (cache && !cache.stale) {
+    return {
+      economic: cache.payload.economic,
+      earnings: cache.payload.earnings,
+      mode: 'cache_fresh',
+      cachedAt: cache.payload.cachedAt,
+      warnings: [],
+    };
+  }
+
+  try {
+    const warnings: string[] = [];
+    let economic: EconomicCalendarEvent[] = [];
+    try {
+      economic = await getEconomicCalendar(from, to);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error || '');
+      if (msg.includes('FINNHUB_ECONOMIC_FORBIDDEN')) {
+        warnings.push('Economic calendar is not available for your Finnhub plan (403). Showing earnings and local modeled events only.');
+      }
+    }
+    const earningsAll = await getEarningsCalendar(from, to);
+
+    const symbolSet = new Set(symbols);
+    const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+    const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
+    writeMarketCalendarCache(cacheKey, payload);
+    return { economic, earnings, mode: 'fresh', cachedAt: payload.cachedAt, warnings };
+  } catch {
+    if (cache) {
+      return {
+        economic: cache.payload.economic,
+        earnings: cache.payload.earnings,
+        mode: 'cache_stale',
+        cachedAt: cache.payload.cachedAt,
+        warnings: [],
+      };
+    }
+    return { economic: [], earnings: [], mode: 'none', warnings: [] };
+  }
+}
+
+export async function getMarketCalendarFresh(from: string, to: string, trackedSymbols: string[]): Promise<{ economic: EconomicCalendarEvent[]; earnings: EarningsEvent[]; cachedAt: number; warnings?: string[]; }> {
+  const symbols = [...new Set(trackedSymbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
+  const warnings: string[] = [];
+  let economic: EconomicCalendarEvent[] = [];
+  try {
+    economic = await getEconomicCalendar(from, to);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error || '');
+    if (msg.includes('FINNHUB_ECONOMIC_FORBIDDEN')) {
+      warnings.push('Economic calendar is not available for your Finnhub plan (403). Showing earnings and local modeled events only.');
+    }
+  }
+  const earningsAll = await getEarningsCalendar(from, to);
+  const symbolSet = new Set(symbols);
+  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+  const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
+  writeMarketCalendarCache(getMarketCalendarCacheKey(from, to, symbols), payload);
+  return { economic, earnings, cachedAt: payload.cachedAt, warnings };
+}
+
 
 // --- Aggregated research for a symbol (profile + quote 52w + earnings + insider + news) ---
 export interface SymbolResearch {
