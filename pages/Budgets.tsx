@@ -213,25 +213,60 @@ const Budgets: React.FC = () => {
     const currentMonth = currentDate.getMonth() + 1;
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
+    const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
 
     React.useEffect(() => {
         try {
             const raw = localStorage.getItem(householdProfileStorageKey);
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            setHouseholdAdults(Math.max(1, Number(parsed?.adults) || 2));
-            setHouseholdKids(Math.max(0, Number(parsed?.kids) || 0));
-            setHouseholdOverrides(Array.isArray(parsed?.overrides) ? parsed.overrides : []);
-            if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
-                setEngineProfile(parsed.profile as HouseholdEngineProfile);
-            }
-            if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
-                setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
+                if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
+                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
+                    setEngineProfile(parsed.profile as HouseholdEngineProfile);
+                }
+                if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
+                    setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+                }
             }
         } catch {
             // no-op
         }
     }, [householdProfileStorageKey]);
+
+    React.useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        let isMounted = true;
+        (async () => {
+            try {
+                const { data, error } = await db
+                    .from('household_budget_profiles')
+                    .select('profile')
+                    .eq('user_id', userId)
+                    .maybeSingle();
+                if (error || !data || !isMounted) return;
+                const profile = (data as { profile?: any })?.profile;
+                if (!profile || typeof profile !== 'object') return;
+                if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
+                if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
+                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
+                    setEngineProfile(profile.profile as HouseholdEngineProfile);
+                }
+                if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
+                    setExpectedMonthlySalary(profile.expectedMonthlySalary);
+                }
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
+    }, [householdProfileCloudEnabled, auth?.user?.id]);
 
     React.useEffect(() => {
         try {
@@ -246,6 +281,29 @@ const Budgets: React.FC = () => {
             // no-op
         }
     }, [householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileStorageKey]);
+
+    React.useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        const payload = {
+            adults: householdAdults,
+            kids: householdKids,
+            overrides: householdOverrides,
+            profile: engineProfile,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+        };
+        const t = window.setTimeout(async () => {
+            try {
+                await db
+                    .from('household_budget_profiles')
+                    .upsert({ user_id: userId, profile: payload }, { onConflict: 'user_id' });
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        }, 700);
+        return () => window.clearTimeout(t);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const householdBudgetEngine = useMemo(() => {
         const input = buildHouseholdEngineInputFromData(

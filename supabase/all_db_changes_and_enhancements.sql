@@ -7,6 +7,7 @@ begin;
 -- REQUIRED: Multi-User Wealth Governance (RBAC + approvals)
 -- -----------------------------------------------------------------------------
 
+drop table if exists public.users cascade;
 create table if not exists public.users (
   id uuid primary key,
   name text,
@@ -14,6 +15,7 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
+drop table if exists public.categories cascade;
 create table if not exists public.categories (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -22,6 +24,7 @@ create table if not exists public.categories (
   created_at timestamptz not null default now()
 );
 
+drop table if exists public.permissions cascade;
 create table if not exists public.permissions (
   user_id uuid not null,
   category_id uuid not null references public.categories(id) on delete cascade,
@@ -29,6 +32,7 @@ create table if not exists public.permissions (
   primary key (user_id, category_id)
 );
 
+drop table if exists public.budget_requests cascade;
 create table if not exists public.budget_requests (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
@@ -223,6 +227,7 @@ begin
   end if;
 end $$;
 
+drop table if exists public.trade_execution_audit cascade;
 create table if not exists public.trade_execution_audit (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
