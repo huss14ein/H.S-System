@@ -1,6 +1,4 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
-import { supabase } from '../services/supabaseClient';
-import { AuthContext } from './AuthContext';
 import { Page } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
@@ -16,10 +14,9 @@ export interface AppNotification {
   date: string;
   isRead: boolean;
   pageLink: Page;
+  /** Optional: for price alerts, planned trades */
   symbol?: string;
   severity?: 'info' | 'warning' | 'urgent';
-  actionHint?: string;
-  score?: number;
 }
 
 function loadReadIds(): Set<string> {
@@ -35,7 +32,9 @@ function loadReadIds(): Set<string> {
 }
 
 function saveReadIds(ids: Set<string>) {
-  try { localStorage.setItem(READ_STORAGE_KEY, JSON.stringify([...ids])); } catch {}
+  try {
+    localStorage.setItem(READ_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch (_) {}
 }
 
 type NotificationsContextValue = {
@@ -47,156 +46,99 @@ type NotificationsContextValue = {
 
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
 
-const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
-  info: 1,
-  warning: 2,
-  urgent: 3,
-};
-
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const { data } = useContext(DataContext) ?? {};
-  const auth = useContext(AuthContext);
   const { simulatedPrices } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
-  const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
-
-  useEffect(() => { saveReadIds(readIds); }, [readIds]);
 
   useEffect(() => {
-    let alive = true;
-    const loadPendingBudgetRequests = async () => {
-      if (!supabase || !auth?.user?.id) {
-        if (alive) setPendingBudgetRequestCount(0);
-        return;
-      }
-      const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-      const isAdmin = String((userRow as any)?.role || '').toLowerCase() === 'admin';
-      let query = supabase.from('budget_requests').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
-      if (!isAdmin) query = query.eq('user_id', auth.user.id);
-      const { count } = await query;
-      if (alive) setPendingBudgetRequestCount(Number(count || 0));
-    };
-
-    loadPendingBudgetRequests();
-    const timer = window.setInterval(loadPendingBudgetRequests, 60000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [auth?.user?.id]);
+    saveReadIds(readIds);
+  }, [readIds]);
 
   const notifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
     if (!data) return list;
     const now = new Date();
 
-    const push = (n: AppNotification) => {
-      const sev = n.severity ?? 'info';
-      const recencyHours = Math.max(1, (now.getTime() - new Date(n.date).getTime()) / 3600000);
-      const recencyBoost = 1 / recencyHours;
-      n.score = (severityScore[sev] * 10) + recencyBoost;
-      list.push(n);
-    };
-
-    // Budgets: keep only the top 4 closest to breach
+    // Budgets: over threshold (e.g. 90%+)
     const threshold = data.settings?.budgetThreshold ?? 90;
-    const budgetCandidates = (data.budgets ?? []).map((b) => {
-      const spent = Number((b as any).spent ?? (b as any).used ?? 0);
-      const limit = Number((b as any).limit ?? (b as any).amount ?? 1);
+    (data.budgets ?? []).forEach(b => {
+      const spent = (b as any).spent ?? (b as any).used ?? 0;
+      const limit = (b as any).limit ?? (b as any).amount ?? 1;
       const pct = limit > 0 ? (spent / limit) * 100 : 0;
-      return { b, pct };
-    }).filter((x) => x.pct >= threshold).sort((a, b) => b.pct - a.pct).slice(0, 4);
-
-    budgetCandidates.forEach(({ b, pct }) => {
-      push({
-        id: `budget-${b.id}`,
-        category: 'Budget',
-        message: `"${b.category ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Budgets',
-        severity: pct >= 100 ? 'urgent' : 'warning',
-        actionHint: pct >= 100 ? 'Review and reduce spending or increase approved limit.' : 'Monitor this category and reduce optional spend.',
-      });
-    });
-
-    // Goals near deadline
-    (data.goals ?? []).forEach((g) => {
-      const targetDate = (g as any).targetDate ?? (g as any).target_date;
-      if (!targetDate) return;
-      const d = new Date(targetDate);
-      const daysLeft = Math.ceil((d.getTime() - now.getTime()) / 86400000);
-      if (daysLeft <= 30 && daysLeft >= 0) {
-        push({
-          id: `goal-${g.id}`,
-          category: 'Goal',
-          message: `Goal "${g.name}" deadline is in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
+      if (pct >= threshold) {
+        list.push({
+          id: `budget-${b.id}`,
+          category: 'Budget',
+          message: `"${b.category ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
           date: now.toISOString(),
           isRead: false,
-          pageLink: 'Goals',
-          severity: daysLeft <= 7 ? 'urgent' : 'warning',
-          actionHint: 'Increase monthly allocation or adjust goal deadline.',
+          pageLink: 'Budgets',
+          severity: pct >= 100 ? 'urgent' : 'warning',
         });
       }
     });
 
-    const pendingTx = (data.transactions ?? []).filter((t) => (t.status ?? 'Approved') === 'Pending');
+    // Goals: at risk (optional: deadline within 30 days and underfunded)
+    (data.goals ?? []).forEach(g => {
+      const targetDate = (g as any).targetDate ?? (g as any).target_date;
+      if (targetDate) {
+        const d = new Date(targetDate);
+        const daysLeft = Math.ceil((d.getTime() - now.getTime()) / 86400000);
+        if (daysLeft <= 30 && daysLeft >= 0) {
+          list.push({
+            id: `goal-${g.id}`,
+            category: 'Goal',
+            message: `Goal "${g.name}" deadline is in ${daysLeft} days.`,
+            date: now.toISOString(),
+            isRead: false,
+            pageLink: 'Goals',
+            severity: daysLeft <= 7 ? 'urgent' : 'warning',
+          });
+        }
+      }
+    });
+
+    // Pending transactions (review) — one notification for all pending
+    const pendingTx = (data.transactions ?? []).filter(t => (t.status ?? 'Approved') === 'Pending');
     if (pendingTx.length > 0) {
-      push({
+      const latest = pendingTx
+        .slice()
+        .sort((a, b) => new Date((b as any).date ?? 0).getTime() - new Date((a as any).date ?? 0).getTime())[0];
+      list.push({
         id: 'tx-pending-review',
         category: 'Transaction',
         message: `${pendingTx.length} transaction(s) need category review or approval.`,
-        date: now.toISOString(),
+        date: (latest as any).date ?? now.toISOString(),
         isRead: false,
         pageLink: 'Transactions',
-        severity: pendingTx.length >= 5 ? 'warning' : 'info',
-        actionHint: 'Open Transactions and process pending items.',
+        severity: 'info',
       });
     }
 
-    if (pendingBudgetRequestCount > 0) {
-      push({
-        id: 'budget-requests-pending',
-        category: 'Budget',
-        message: `${pendingBudgetRequestCount} budget request(s) are waiting for review.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Budgets',
-        severity: pendingBudgetRequestCount >= 3 ? 'urgent' : 'warning',
-        actionHint: 'Finalize pending requests to keep budget workflow moving.',
-      });
-    }
-
-    // Cash runway automation (checking+savings vs avg monthly expense)
-    const liquidCash = (data.accounts ?? [])
-      .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
-      .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
-    const monthlyExpensesByKey = new Map<string, number>();
-    (data.transactions ?? []).forEach((t: any) => {
-      if (t.type !== 'expense' || !t.date) return;
-      const d = new Date(t.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + Math.abs(Number(t.amount) || 0));
-    });
-    const monthlyExpenseValues = Array.from(monthlyExpensesByKey.values());
-    const avgMonthlyExpense = monthlyExpenseValues.length > 0 ? monthlyExpenseValues.reduce((a, b) => a + b, 0) / monthlyExpenseValues.length : 0;
-    const runwayMonths = avgMonthlyExpense > 0 ? liquidCash / avgMonthlyExpense : 0;
-    if (avgMonthlyExpense > 0 && runwayMonths > 0 && runwayMonths < 2) {
-      push({
-        id: 'cash-runway-low',
-        category: 'System',
-        message: `Cash runway is low (${runwayMonths.toFixed(1)} months).`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Accounts',
-        severity: runwayMonths < 1 ? 'urgent' : 'warning',
-        actionHint: 'Reduce discretionary expenses or increase income buffers.',
-      });
+    // Budget requests awaiting admin review
+    const pendingBudgetRequests = (data as any).budgetRequests as any[] | undefined;
+    if (Array.isArray(pendingBudgetRequests)) {
+      const awaiting = pendingBudgetRequests.filter(r => (r.status ?? 'Pending') === 'Pending');
+      if (awaiting.length > 0) {
+        const latestReq = awaiting
+          .slice()
+          .sort((a, b) => new Date((b as any).created_at ?? 0).getTime() - new Date((a as any).created_at ?? 0).getTime())[0];
+        list.push({
+          id: 'budget-requests-pending',
+          category: 'Budget',
+          message: `${awaiting.length} budget request(s) are waiting for review.`,
+          date: (latestReq as any).created_at ?? now.toISOString(),
+          isRead: false,
+          pageLink: 'Budgets',
+          severity: 'warning',
+        });
+      }
     }
 
     // Price alerts triggered
-    (data.priceAlerts ?? []).filter((a) => a.status === 'triggered').forEach((a) => {
-      push({
+    (data.priceAlerts ?? []).filter(a => a.status === 'triggered').forEach(a => {
+      list.push({
         id: `price-${a.id}`,
         category: 'PriceAlert',
         message: `${a.symbol} has reached your target price.`,
@@ -205,18 +147,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         pageLink: 'Investments',
         symbol: a.symbol,
         severity: 'urgent',
-        actionHint: 'Review execution decision in Investments.',
       });
     });
 
-    (data.plannedTrades ?? []).filter((p) => p.status === 'Planned').forEach((plan) => {
+    // Planned trades: price condition met (ready to execute)
+    (data.plannedTrades ?? []).filter(p => p.status === 'Planned').forEach(plan => {
       const priceInfo = simulatedPrices?.[plan.symbol];
       if (!priceInfo) return;
       const targetVal = (plan as any).target_value ?? (plan as any).targetValue ?? 0;
       const tradeType = (plan as any).trade_type ?? plan.tradeType ?? 'buy';
       const triggered = (tradeType === 'buy' && priceInfo.price <= targetVal) || (tradeType === 'sell' && priceInfo.price >= targetVal);
       if (triggered) {
-        push({
+        list.push({
           id: `plan-${plan.id}`,
           category: 'Plan',
           message: `Target met: ${tradeType.toUpperCase()} ${plan.name ?? plan.symbol} ready to execute.`,
@@ -225,49 +167,27 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           pageLink: 'Investments',
           symbol: plan.symbol,
           severity: 'urgent',
-          actionHint: 'Open Investments and execute or reschedule this plan.',
         });
       }
     });
 
-    // Smart monthly digest
-    const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
-    const thisMonthExpense = monthlyExpensesByKey.get(thisMonthKey) || 0;
-    const lastMonthExpense = monthlyExpensesByKey.get(lastMonthKey) || 0;
-    if (thisMonthExpense > 0 && lastMonthExpense > 0 && thisMonthExpense > lastMonthExpense * 1.2) {
-      push({
-        id: 'expense-spike-monthly',
-        category: 'Plan',
-        message: `Spending this month is ${(thisMonthExpense / lastMonthExpense * 100 - 100).toFixed(0)}% higher than last month.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Plan',
-        severity: 'warning',
-        actionHint: 'Open Plan to inspect categories driving the spike.',
-      });
-    }
+    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return list;
+  }, [data, simulatedPrices]);
 
-    // Prioritize smarter, keep feed concise
-    return list
-      .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 40);
-  }, [data, simulatedPrices, pendingBudgetRequestCount]);
-
-  const notificationsWithRead = useMemo(
-    () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),
+  const notificationsWithRead = useMemo(() =>
+    notifications.map(n => ({ ...n, isRead: readIds.has(n.id) })),
     [notifications, readIds]
   );
 
-  const unreadCount = useMemo(() => notificationsWithRead.filter((n) => !n.isRead).length, [notificationsWithRead]);
+  const unreadCount = useMemo(() => notificationsWithRead.filter(n => !n.isRead).length, [notificationsWithRead]);
 
   const markAsRead = useCallback((id: string) => {
-    setReadIds((prev) => new Set([...prev, id]));
+    setReadIds(prev => new Set([...prev, id]));
   }, []);
 
   const markAllAsRead = useCallback(() => {
-    setReadIds(() => new Set(notifications.map((n) => n.id)));
+    setReadIds(() => new Set(notifications.map(n => n.id)));
   }, [notifications]);
 
   const value = useMemo<NotificationsContextValue>(() => ({
