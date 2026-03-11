@@ -419,11 +419,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         month: new Date().toISOString().slice(0, 7),
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
+        budgetCategory: 'all' as 'all' | string,
     });
 
     useEffect(() => {
+        if (!pageAction) return;
         if (pageAction === 'open-transaction-modal') {
             handleOpenTransactionModal();
+            clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-by-budget:')) {
+            const [, rawCategory] = pageAction.split(':');
+            const category = rawCategory || '';
+            const monthIso = new Date().toISOString().slice(0, 7);
+            setFilters((prev) => ({
+                ...prev,
+                month: monthIso,
+                budgetCategory: category || 'all',
+            }));
             clearPageAction?.();
         }
     }, [pageAction, clearPageAction]);
@@ -547,8 +561,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
+            const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
         });
     }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 

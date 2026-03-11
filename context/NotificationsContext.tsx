@@ -102,16 +102,38 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     // Pending transactions (review) — one notification for all pending
     const pendingTx = (data.transactions ?? []).filter(t => (t.status ?? 'Approved') === 'Pending');
     if (pendingTx.length > 0) {
-      const latest = pendingTx.sort((a, b) => new Date((b as any).date ?? 0).getTime() - new Date((a as any).date ?? 0).getTime())[0];
+      const latest = pendingTx
+        .slice()
+        .sort((a, b) => new Date((b as any).date ?? 0).getTime() - new Date((a as any).date ?? 0).getTime())[0];
       list.push({
         id: 'tx-pending-review',
         category: 'Transaction',
-        message: `${pendingTx.length} transaction(s) need category review.`,
+        message: `${pendingTx.length} transaction(s) need category review or approval.`,
         date: (latest as any).date ?? now.toISOString(),
         isRead: false,
         pageLink: 'Transactions',
         severity: 'info',
       });
+    }
+
+    // Budget requests awaiting admin review
+    const pendingBudgetRequests = (data as any).budgetRequests as any[] | undefined;
+    if (Array.isArray(pendingBudgetRequests)) {
+      const awaiting = pendingBudgetRequests.filter(r => (r.status ?? 'Pending') === 'Pending');
+      if (awaiting.length > 0) {
+        const latestReq = awaiting
+          .slice()
+          .sort((a, b) => new Date((b as any).created_at ?? 0).getTime() - new Date((a as any).created_at ?? 0).getTime())[0];
+        list.push({
+          id: 'budget-requests-pending',
+          category: 'Budget',
+          message: `${awaiting.length} budget request(s) are waiting for review.`,
+          date: (latestReq as any).created_at ?? now.toISOString(),
+          isRead: false,
+          pageLink: 'Budgets',
+          severity: 'warning',
+        });
+      }
     }
 
     // Price alerts triggered
