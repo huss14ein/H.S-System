@@ -2,21 +2,21 @@ import type { WealthUltraConfig, WealthUltraSystemConfig } from '../types';
 
 /** Front-end only: Wealth Ultra defaults (no database). Used by Settings, Wealth Ultra dashboard, and Recovery Plan. */
 const DEFAULT_CONFIG: Omit<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 'specTickers'> = {
-  fxRate: 0.27,
-  targetCorePct: 70,
-  targetUpsidePct: 25,
-  targetSpecPct: 5,
-  defaultTarget1Pct: 15,
-  defaultTarget2Pct: 25,
-  defaultTrailingPct: 10,
-  monthlyDeposit: 6000,
+  fxRate: 0.2667,
+  targetCorePct: 65,
+  targetUpsidePct: 28,
+  targetSpecPct: 7,
+  defaultTarget1Pct: 14,
+  defaultTarget2Pct: 27,
+  defaultTrailingPct: 11,
+  monthlyDeposit: 8000,
   cashAvailable: 50000,
-  cashReservePct: 10,
-  maxPerTickerPct: 20,
+  cashReservePct: 12,
+  maxPerTickerPct: 16,
   riskWeightLow: 1,
-  riskWeightMed: 1.25,
-  riskWeightHigh: 1.5,
-  riskWeightSpec: 2,
+  riskWeightMed: 1.3,
+  riskWeightHigh: 1.65,
+  riskWeightSpec: 2.2,
 };
 
 export function getDefaultWealthUltraConfig(): WealthUltraConfig {

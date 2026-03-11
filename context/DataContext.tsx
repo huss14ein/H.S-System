@@ -1541,19 +1541,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { data: inserted, error } = await db.from('watchlist').insert(withUser(item)).select().single();
+        const symbol = String(item.symbol || '').trim().toUpperCase();
+        if (!symbol) {
+            alert('Please enter a valid symbol.');
+            return;
+        }
+        if (data.watchlist.some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
+            alert(`${symbol} is already in your watchlist.`);
+            return;
+        }
+        const row = withUser({ ...item, symbol, name: String(item.name || symbol).trim() || symbol });
+        const { data: inserted, error } = await db.from('watchlist').upsert(row, { onConflict: 'user_id,symbol' }).select().single();
         if (error) {
             console.error('Error adding watchlist item:', error);
-            alert(`Failed to add ${item.symbol} to watchlist: ${error.message}`);
+            alert(`Failed to add ${symbol} to watchlist: ${error.message}`);
             return;
         }
         if (inserted) {
             const normalized: WatchlistItem = {
                 user_id: inserted.user_id ?? auth.user.id,
-                symbol: String(inserted.symbol ?? item.symbol ?? '').toUpperCase(),
-                name: String(inserted.name ?? item.name ?? '').trim() || String(inserted.symbol ?? item.symbol ?? '').toUpperCase(),
+                symbol: String(inserted.symbol ?? symbol).toUpperCase(),
+                name: String(inserted.name ?? item.name ?? '').trim() || String(inserted.symbol ?? symbol).toUpperCase(),
             };
-            setData(prev => ({ ...prev, watchlist: [...prev.watchlist, normalized] }));
+            setData(prev => ({
+                ...prev,
+                watchlist: prev.watchlist.some((w) => String(w.symbol || '').toUpperCase() === normalized.symbol)
+                    ? prev.watchlist.map((w) => (String(w.symbol || '').toUpperCase() === normalized.symbol ? normalized : w))
+                    : [...prev.watchlist, normalized],
+            }));
         }
     };
     const deleteWatchlistItem = async (symbol: string) => {

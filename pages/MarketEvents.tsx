@@ -233,6 +233,8 @@ const MarketEvents: React.FC = () => {
   const { data } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [remindersOnly, setRemindersOnly] = useState(false);
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
@@ -454,16 +456,60 @@ const MarketEvents: React.FC = () => {
       .sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
 
-  const filtered = useMemo(() => events.filter((e) =>
-    (categoryFilter === 'All' || e.category === categoryFilter) &&
-    (impactFilter === 'All' || e.impact === impactFilter)
-  ), [events, categoryFilter, impactFilter]);
+  const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return events.filter((e) => {
+      if (categoryFilter !== 'All' && e.category !== categoryFilter) return false;
+      if (impactFilter !== 'All' && e.impact !== impactFilter) return false;
+      if (remindersOnly && !reminders[e.id]) return false;
+      if (!query) return true;
+      const haystack = `${e.title} ${e.description} ${e.symbol || ''} ${e.source}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [events, categoryFilter, impactFilter, searchQuery, remindersOnly, reminders]);
 
   const stats = useMemo(() => {
     const macroCount = filtered.filter((e) => e.category === 'Macro').length;
     const symbolCount = filtered.filter((e) => Boolean(e.symbol)).length;
     const highImpact = filtered.filter((e) => e.impact === 'High').length;
-    return { macroCount, symbolCount, highImpact };
+    const reminderCount = filtered.filter((e) => reminders[e.id]).length;
+    const today = startOfDay(new Date()).getTime();
+    const next7 = filtered.filter((e) => {
+      const days = Math.floor((startOfDay(e.date).getTime() - today) / (1000 * 60 * 60 * 24));
+      return days >= 0 && days <= 7;
+    }).length;
+    return { macroCount, symbolCount, highImpact, reminderCount, next7 };
+  }, [filtered, reminders]);
+
+  const topFocusEvents = useMemo(() => {
+    const scoreImpact: Record<Impact, number> = { High: 3, Medium: 2, Low: 1 };
+    return [...filtered]
+      .map((event) => {
+        const daysUntil = Math.max(0, Math.floor((startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) / (1000 * 60 * 60 * 24)));
+        const urgency = daysUntil <= 1 ? 3 : daysUntil <= 7 ? 2 : 1;
+        const personalized = event.symbol ? 1 : 0;
+        const reminderBoost = reminders[event.id] ? 1 : 0;
+        const score = scoreImpact[event.impact] * 2 + urgency + personalized + reminderBoost;
+        return { event, score, daysUntil };
+      })
+      .sort((a, b) => b.score - a.score || a.daysUntil - b.daysUntil)
+      .slice(0, 5);
+  }, [filtered, reminders]);
+
+
+  const groupedByMonth = useMemo(() => {
+    const map = new Map<string, MarketEventItem[]>();
+    filtered.forEach((event) => {
+      const key = `${event.date.getFullYear()}-${String(event.date.getMonth() + 1).padStart(2, '0')}`;
+      map.set(key, [...(map.get(key) || []), event]);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, items]) => ({
+        key,
+        label: new Date(`${key}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+        items,
+      }));
   }, [filtered]);
 
   const toggleReminder = (eventId: string) => {
@@ -506,6 +552,12 @@ const MarketEvents: React.FC = () => {
       description="Important upcoming dates for markets, your watchlist, and your investment holdings."
       action={
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search symbol, event, source"
+            className="input-base h-9 w-56 text-sm"
+          />
           <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
             <input
               type="checkbox"
@@ -513,6 +565,14 @@ const MarketEvents: React.FC = () => {
               onChange={(e) => setIncludeEstimated(e.target.checked)}
             />
             Include modeled estimates
+          </label>
+          <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={remindersOnly}
+              onChange={(e) => setRemindersOnly(e.target.checked)}
+            />
+            Reminders only
           </label>
           <select className="select-base text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}>
             <option value="All">All categories</option>
@@ -530,7 +590,36 @@ const MarketEvents: React.FC = () => {
         </div>
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
+          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
+            <StatCard label="Next 7 days" value={String(stats.next7)} />
+            <StatCard label="Macro" value={String(stats.macroCount)} />
+            <StatCard label="Symbol-linked" value={String(stats.symbolCount)} />
+            <StatCard label="Reminders" value={String(stats.reminderCount)} />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
+          <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+          <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {topFocusEvents.length === 0 && <p className="text-sm text-slate-500">No focus events for current filters.</p>}
+            {topFocusEvents.map(({ event, score, daysUntil }) => (
+              <div key={`focus-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-800">{event.title}</p>
+                  <span className="text-xs text-indigo-700 font-semibold">Priority {score}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{daysUntil === 0 ? 'Today' : `In ${daysUntil} day${daysUntil === 1 ? '' : 's'}`} • {event.date.toLocaleDateString()}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           The calendar shows provider-backed events (Finnhub economic + earnings) and your portfolio timeline by default. You can optionally enable modeled estimates for broader planning windows.
           The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
@@ -553,32 +642,33 @@ const MarketEvents: React.FC = () => {
           <button type="button" className="btn-outline text-xs" onClick={downloadIcs}>Export filtered calendar (.ics)</button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">High impact events</p><p className="font-semibold text-slate-800">{highImpactLabel(stats.highImpact)}</p></div>
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">Macro events</p><p className="font-semibold text-slate-800">{stats.macroCount}</p></div>
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">Symbol-linked events</p><p className="font-semibold text-slate-800">{stats.symbolCount}</p></div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {filtered.map((event) => (
-            <div key={event.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold text-slate-800">{event.title}</h3>
-                <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                <span className={`px-2 py-0.5 rounded-full border ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
-                <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
-                {event.symbol && <span className="text-slate-700 font-medium">• {event.symbol}</span>}
-                {event.estimated && <span className="text-amber-700">• Estimated</span>}
-                {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
-              </div>
-              <p className="mt-2 text-sm text-slate-600">{event.description}</p>
-              <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
-              <div className="mt-2">
-                <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
-                  {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
-                </button>
+        <div className="space-y-4">
+          {groupedByMonth.map((group) => (
+            <div key={group.key} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">{group.label}</h3>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {group.items.map((event) => (
+                  <div key={event.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="font-semibold text-slate-800">{event.title}</h4>
+                      <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full border ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
+                      <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
+                      {event.symbol && <span className="text-slate-700 font-medium">• {event.symbol}</span>}
+                      {event.estimated && <span className="text-amber-700">• Estimated</span>}
+                      {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">{event.description}</p>
+                    <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
+                    <div className="mt-2">
+                      <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+                        {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
@@ -596,6 +686,15 @@ const MarketEvents: React.FC = () => {
 
 function highImpactLabel(v: number): string {
   return v > 0 ? String(v) : '0';
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/70 bg-white/80 px-3 py-2">
+      <p className="text-[11px] text-slate-500">{label}</p>
+      <p className="text-base font-semibold text-slate-800">{value}</p>
+    </div>
+  );
 }
 
 export default MarketEvents;
