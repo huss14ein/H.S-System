@@ -506,35 +506,21 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     if (attempt < 1) {
                         await new Promise((resolve) => setTimeout(resolve, 250));
                     }
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
-                pendingRows = camelCaseResult.data || [];
-                pendingError = camelCaseResult.error;
-
-                if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
-                    const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
-                    pendingRows = snakeCaseResult.data || [];
-                    pendingError = snakeCaseResult.error;
                 }
 
-                if (!pendingError) break;
-                if (attempt < 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 250));
+                if (pendingError) {
+                    console.error('Error loading admin pending transactions:', pendingError);
+                    setAdminPendingTransactions([]);
+                    const base = pendingError.message || 'Could not load pending transactions.';
+                    const hint = /approve_pending_transaction|reject_pending_transaction|get_pending_transactions_for_admin|transactions|policy|rls/i.test(base)
+                        ? ' Verify latest DB SQL migrations are applied. If RLS limits direct transaction reads, install the get_pending_transactions_for_admin RPC.'
+                        : /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
+                        ? ' Verify latest DB SQL migrations are applied.'
+                        : '';
+                    setPendingLoadError(`${base}${hint}`);
+                    setIsPendingLoading(false);
+                    return;
                 }
-            }
-
-            if (pendingError) {
-                console.error('Error loading admin pending transactions:', pendingError);
-                setAdminPendingTransactions([]);
-                const base = pendingError.message || 'Could not load pending transactions.';
-                const hint = /approve_pending_transaction|reject_pending_transaction|get_pending_transactions_for_admin|transactions|policy|rls/i.test(base)
-                    ? ' Verify latest DB SQL migrations are applied. If RLS limits direct transaction reads, install the get_pending_transactions_for_admin RPC.'
-                const hint = /approve_pending_transaction|reject_pending_transaction|transactions/i.test(base)
-                    ? ' Verify latest DB SQL migrations are applied.'
-                    : '';
-                setPendingLoadError(`${base}${hint}`);
-                setIsPendingLoading(false);
-                return;
             }
 
             const normalized = (pendingRows || []).map((row: any) => ({
@@ -547,7 +533,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         };
 
         loadPendingTransactions();
-    }, [userRole, (data?.transactions ?? []).length, pendingRefreshKey]);
+    }, [userRole, data?.transactions, pendingRefreshKey]);
 
     const filteredTransactions = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
@@ -667,9 +653,22 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             });
 
             if (approveError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (approveError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (statusError.message?.includes('not found') || statusError.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to approve transaction: ${approveError.message}`);
                     return;
                 }
@@ -685,24 +684,48 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     }
                 }
             }
+
+            // Successfully approved - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
         } else {
-            const reason = window.prompt('Optional rejection reason for audit/history:') || '';
+            const reason = window.prompt('Optional rejection reason for audit/history:');
+            if (reason === null) {
+                // User cancelled the prompt
+                return;
+            }
+            const rejectionReason = reason || '';
             const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
                 p_transaction_id: transactionId,
-                p_reason: reason,
+                p_reason: rejectionReason,
             });
 
             if (rejectError) {
-                const { error } = await supabase.from('transactions').update({ status, rejection_reason: reason || null }).eq('id', transactionId);
-                if (error) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (rejectError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
+                // Backward-compatible fallback for environments where the new RPC isn't deployed yet
+                const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
+                if (updateError) {
+                    // If transaction doesn't exist, remove from UI instead of showing error
+                    if (updateError.message?.includes('not found') || updateError.code === 'PGRST116') {
+                        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                        return;
+                    }
                     alert(`Failed to reject transaction: ${rejectError.message}`);
                     return;
                 }
             }
-        }
 
-        setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-        setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            // Successfully rejected - remove from UI
+            setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+            setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+        }
     };
 
     const togglePendingSelection = (transactionId: string) => {

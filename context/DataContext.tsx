@@ -1535,10 +1535,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Watchlist, Alerts, Zakat, Settings ---
     const addWatchlistItem = async (item: WatchlistItem) => {
-        if(!supabase) return;
+        if(!supabase) {
+            console.error('Supabase client not available');
+            return;
+        }
         const db = supabase;
-        await db.from('watchlist').insert(withUser(item));
-        setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
+        const { data: inserted, error } = await db.from('watchlist').insert(withUser(item)).select().single();
+        if (error) {
+            console.error('Error adding watchlist item:', error);
+            alert(`Failed to add ${item.symbol} to watchlist: ${error.message}`);
+            return;
+        }
+        if (inserted) {
+            setData(prev => ({ ...prev, watchlist: [...prev.watchlist, item] }));
+        }
     };
     const deleteWatchlistItem = async (symbol: string) => {
         if(!supabase || !auth?.user) return;

@@ -570,6 +570,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
                     Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.
                 </span>
+                </div>
             </div>
 
             {/* Liquid cash from Accounts (cash flow context) */}
@@ -925,7 +926,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                 </div>
             )}
-            </div>
+                </div>
             </div>
         </PageLayout>
     );

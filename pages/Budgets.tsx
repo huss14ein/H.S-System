@@ -607,41 +607,6 @@ const Budgets: React.FC = () => {
                 });
             });
 
-            });
-
-        ownerSharedTransactions
-            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
-            .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
-                if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
-            });
-
-        const rowsForYear = (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
-
-        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
-
-        if (budgetView === 'Yearly') {
-            const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
-            rowsForYear.forEach((b) => {
-                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const key = `${ownerKey}::${b.category}`;
-                const existing = yearlyByOwnerCategory.get(key);
-                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
-                yearlyByOwnerCategory.set(key, {
-                    ...(existing || b),
-                    category: b.category,
-                    ownerEmail: (b as any).ownerEmail || existing?.ownerEmail,
-                    ownerKey,
-                    yearlyLimit,
-                });
-            });
-
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
@@ -1385,38 +1350,39 @@ const Budgets: React.FC = () => {
                         <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
                     </button>
                     {engineSectionsOpen.monthlyOverrides && (
-                    <div className="mt-2 overflow-x-auto">
-                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
-                    <table className="min-w-full text-xs">
-                        <thead>
-                            <tr className="text-slate-500 border-b">
-                                <th className="text-left py-1 pr-2">Month</th>
-                                <th className="text-left py-1 pr-2">Salary (opt)</th>
-                                <th className="text-left py-1 pr-2">Adults</th>
-                                <th className="text-left py-1 pr-2">Kids</th>
-                                <th className="text-left py-1 pr-2">Uber/support override</th>
-                                <th className="text-left py-1 pr-2">Unusual month override</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {MONTHS.map((label, idx) => {
-                                const month = idx + 1;
-                                const ov = householdOverrides.find((o) => o.month === month);
-                                return (
-                                    <tr key={`hh-month-${month}`} className="border-b border-slate-100">
-                                        <td className="py-1 pr-2">{label}</td>
-                                        <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
-                                        <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-16 p-1 border rounded" /></td>
-                                        <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-16 p-1 border rounded" /></td>
-                                        <td className="py-1 pr-2"><input type="number" value={ov?.rideSupportOverride ?? ''} onChange={(e) => updateMonthlyOverride(month, { rideSupportOverride: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
-                                        <td className="py-1 pr-2"><input type="number" value={ov?.unusualMonthExtra ?? ''} onChange={(e) => updateMonthlyOverride(month, { unusualMonthExtra: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                    </div>
+                        <div className="mt-2 overflow-x-auto">
+                            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
+                                <table className="min-w-full text-xs">
+                                    <thead>
+                                        <tr className="text-slate-500 border-b">
+                                            <th className="text-left py-1 pr-2">Month</th>
+                                            <th className="text-left py-1 pr-2">Salary (opt)</th>
+                                            <th className="text-left py-1 pr-2">Adults</th>
+                                            <th className="text-left py-1 pr-2">Kids</th>
+                                            <th className="text-left py-1 pr-2">Uber/support override</th>
+                                            <th className="text-left py-1 pr-2">Unusual month override</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {MONTHS.map((label, idx) => {
+                                            const month = idx + 1;
+                                            const ov = householdOverrides.find((o) => o.month === month);
+                                            return (
+                                                <tr key={`hh-month-${month}`} className="border-b border-slate-100">
+                                                    <td className="py-1 pr-2">{label}</td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-16 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-16 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.rideSupportOverride ?? ''} onChange={(e) => updateMonthlyOverride(month, { rideSupportOverride: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.unusualMonthExtra ?? ''} onChange={(e) => updateMonthlyOverride(month, { unusualMonthExtra: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     )}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -1485,57 +1451,27 @@ const Budgets: React.FC = () => {
                         <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
                     </button>
                     {engineSectionsOpen.validation && (
-                    <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                    {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
-                        <button
-                            key={scenario.id}
-                            type="button"
-                            className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
-                            onClick={() => {
-                                setSelectedScenario(scenario.id);
-                                setHouseholdAdults(scenario.defaults.adults);
-                                setHouseholdKids(scenario.defaults.kids);
-                                setHouseholdOverrides(scenario.overrides);
-                                setEngineConfig((prev) => ({ ...prev, ...(scenario.config || {}) }));
-                            }}
-                        >
-                            {scenario.label}
-                        </button>
-                    ))}
-                    <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
-                </div>
-                {householdBudgetEngine.recommendations.length > 0 && (
-                    <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
-                        {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
-                    </ul>
-                )}
-                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
-                    <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
-                    {criticalValidationCount > 0 && (
-                        <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
-                            {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m) => (
-                                <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
-                            ))}
-                        </ul>
-                    )}
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                        {householdBudgetEngine.months.filter((m) => m.warnings.some((w) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m) => (
-                            <div key={`res-track-${m.month}`} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
-                                M{m.month}: reserve after deductions {formatCurrencyString(m.reservePoolAfterDeductions, { digits: 0 })}
+                        <>
+                            <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
+                            {criticalValidationCount > 0 && (
+                                <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
+                                    {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m) => (
+                                        <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
+                                    ))}
+                                </ul>
+                            )}
+                            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                {householdBudgetEngine.months.filter((m) => m.warnings.some((w) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m) => (
+                                    <div key={`res-track-${m.month}`} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                                        M{m.month}: reserve after deductions {formatCurrencyString(m.reservePoolAfterDeductions, { digits: 0 })}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                    </>
+                        </>
                     )}
                 </div>
             </SectionCard>
             </div>
-
-            <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
-                </div>
-            </SectionCard>
 
             {budgetData.length > 0 && (
                 <div className="section-card border-l-4 border-emerald-500/60">
@@ -1719,7 +1655,6 @@ const Budgets: React.FC = () => {
                     <p className="text-gray-500">No budgets set for this month.</p>
                 </div>
             )}
-            </div>
 
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
         </PageLayout>

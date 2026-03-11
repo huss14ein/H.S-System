@@ -236,8 +236,6 @@ const MarketEvents: React.FC = () => {
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
-  const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [] });
-  const [reminders, setReminders] = useState<Record<string, true>>({});
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
@@ -304,7 +302,6 @@ const MarketEvents: React.FC = () => {
         }));
 
       setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
-      setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
 
       if (result.mode === 'cache_fresh') {
         getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
@@ -345,7 +342,6 @@ const MarketEvents: React.FC = () => {
     }).catch(() => {
       if (!alive) return;
       setFinnhubState({ mode: 'none', events: [], warnings: ['Live Finnhub calendar is unavailable right now. You can enable modeled estimates from the filter bar if needed.'] });
-      setFinnhubState({ mode: 'none', events: [] });
     });
 
     return () => { alive = false; };
@@ -362,13 +358,6 @@ const MarketEvents: React.FC = () => {
     }
 
     const modeledSymbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
-    const macro: MarketEventItem[] = [];
-    for (let i = 0; i < MONTHS_AHEAD; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      macro.push(...addMacroEventsForMonth(d.getFullYear(), d.getMonth()));
-    }
-
-    const symbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
       const earningsDate = nextEstimatedEarningsDate(now, symbol);
       const divDate = nextEstimatedDividendDate(now, symbol);
       const agmDate = new Date(earningsDate.getFullYear(), earningsDate.getMonth(), Math.max(1, earningsDate.getDate() - 10));
@@ -464,10 +453,6 @@ const MarketEvents: React.FC = () => {
       .filter((e) => e.date >= now && e.date <= end)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
-    return [...finnhubState.events, ...macro, ...symbolEvents, ...portfolioEvents]
-      .filter((e) => e.date >= now && e.date <= end)
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data, trackedSymbols, finnhubState.events]);
 
   const filtered = useMemo(() => events.filter((e) =>
     (categoryFilter === 'All' || e.category === categoryFilter) &&
@@ -563,7 +548,6 @@ const MarketEvents: React.FC = () => {
               {finnhubState.warnings.map((w, idx) => <li key={`finnhub-warn-${idx}`}>{w}</li>)}
             </ul>
           )}
-          </div>
         </div>
         <div className="flex justify-end">
           <button type="button" className="btn-outline text-xs" onClick={downloadIcs}>Export filtered calendar (.ics)</button>
