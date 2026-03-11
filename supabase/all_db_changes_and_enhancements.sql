@@ -68,9 +68,9 @@ begin
 end;
 $$;
 
-drop function if exists public.approve_pending_transaction(uuid);
+
 create or replace function public.approve_pending_transaction(p_transaction_id uuid)
-returns boolean
+returns void
 language plpgsql
 as $$
 declare
@@ -87,7 +87,7 @@ begin
   for update;
 
   if not found then
-    return false;  -- transaction not found (e.g. deleted); no exception
+    raise exception 'Transaction % not found', p_transaction_id;
   end if;
 
   tx_json := to_jsonb(tx);
@@ -108,13 +108,12 @@ begin
     set total_spent = coalesce(total_spent, 0) + abs(tx_amount)
     where name = budget_category_name;
   end if;
-  return true;
 end;
 $$;
 
-drop function if exists public.reject_pending_transaction(uuid, text);
+
 create or replace function public.reject_pending_transaction(p_transaction_id uuid, p_reason text default null)
-returns boolean
+returns void
 language plpgsql
 as $$
 declare
@@ -127,7 +126,7 @@ begin
   for update;
 
   if not found then
-    return false;  -- transaction not found (e.g. deleted); no exception
+    raise exception 'Transaction % not found', p_transaction_id;
   end if;
 
   if tx_status <> 'Pending' then
@@ -138,7 +137,6 @@ begin
   set status = 'Rejected',
       rejection_reason = nullif(trim(coalesce(p_reason, '')), '')
   where id = p_transaction_id;
-  return true;
 end;
 $$;
 
