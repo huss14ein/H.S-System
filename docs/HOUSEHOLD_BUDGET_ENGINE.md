@@ -34,8 +34,8 @@ No manual buckets, no long tables. Advanced users can still open "Advanced: mont
 
 ## Where it runs
 
-- **Budgets page** → "Household Engine" tab: main automated view (profile, optional salary, adults/kids, key metrics, recommendations). When the engine suggests Conservative due to income variance, a hint is shown.
-- **Plan page**: Uses the same engine via `buildHouseholdEngineInputFromPlanData` (planned/actual from Plan rows). Profile, expected salary, adults, kids, and overrides are **shared** with Budgets via `household-profile:<user_id>`.
+- **Budgets page** → "Household Engine" tab: main automated view (profile, optional salary, adults/kids, key metrics, recommendations). When the engine suggests Conservative due to income variance, a hint is shown. Profile, expected salary, adults, kids, and overrides are persisted locally and optionally synced to cloud.
+- **Plan page**: Uses the same engine via `buildHouseholdEngineInputFromPlanData` (planned/actual from Plan rows). Profile, expected salary, adults, kids, and overrides are **shared** with Budgets via `household-profile:<user_id>` (localStorage) and optionally `household_budget_profiles` table (cloud).
 
 ## Technical
 
@@ -43,7 +43,7 @@ No manual buckets, no long tables. Advanced users can still open "Advanced: mont
 - **Auto input (Plan)**: `buildHouseholdEngineInputFromPlanData(monthlyIncomePlanned, monthlyIncomeActual, monthlyExpenseActual, accounts, goals, options)` — same options, for Plan page data.
 - **Helpers**: `suggestProfileFromIncomeVariance(monthlyActualIncome)` returns `'Conservative'` when variance is high; `inferObligationsFromTransactions(transactions, year)` returns partial config for obligations/required expenses.
 - **Presets**: `HOUSEHOLD_ENGINE_PROFILES` (Conservative, Moderate, Growth).
-- **Persistence**: Profile, expected salary, adults, kids, and overrides in localStorage under `household-profile:<user_id>`. Budgets and Plan read/write the same key so choices stay in sync.
+- **Persistence**: Profile, expected salary, adults, kids, and overrides in localStorage under `household-profile:<user_id>`. Budgets and Plan read/write the same key so choices stay in sync. Both pages also sync to `household_budget_profiles` table when cloud is enabled (optional).
 
 ## Privacy
 

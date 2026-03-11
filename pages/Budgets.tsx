@@ -213,25 +213,60 @@ const Budgets: React.FC = () => {
     const currentMonth = currentDate.getMonth() + 1;
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
+    const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
 
     React.useEffect(() => {
         try {
             const raw = localStorage.getItem(householdProfileStorageKey);
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            setHouseholdAdults(Math.max(1, Number(parsed?.adults) || 2));
-            setHouseholdKids(Math.max(0, Number(parsed?.kids) || 0));
-            setHouseholdOverrides(Array.isArray(parsed?.overrides) ? parsed.overrides : []);
-            if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
-                setEngineProfile(parsed.profile as HouseholdEngineProfile);
-            }
-            if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
-                setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
+                if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
+                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
+                    setEngineProfile(parsed.profile as HouseholdEngineProfile);
+                }
+                if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
+                    setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+                }
             }
         } catch {
             // no-op
         }
     }, [householdProfileStorageKey]);
+
+    React.useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        let isMounted = true;
+        (async () => {
+            try {
+                const { data, error } = await db
+                    .from('household_budget_profiles')
+                    .select('profile')
+                    .eq('user_id', userId)
+                    .maybeSingle();
+                if (error || !data || !isMounted) return;
+                const profile = (data as { profile?: any })?.profile;
+                if (!profile || typeof profile !== 'object') return;
+                if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
+                if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
+                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
+                    setEngineProfile(profile.profile as HouseholdEngineProfile);
+                }
+                if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
+                    setExpectedMonthlySalary(profile.expectedMonthlySalary);
+                }
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
+    }, [householdProfileCloudEnabled, auth?.user?.id]);
 
     React.useEffect(() => {
         try {
@@ -246,6 +281,29 @@ const Budgets: React.FC = () => {
             // no-op
         }
     }, [householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileStorageKey]);
+
+    React.useEffect(() => {
+        const userId = auth?.user?.id;
+        const db = supabase;
+        if (!householdProfileCloudEnabled || !userId || !db) return;
+        const payload = {
+            adults: householdAdults,
+            kids: householdKids,
+            overrides: householdOverrides,
+            profile: engineProfile,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+        };
+        const t = window.setTimeout(async () => {
+            try {
+                await db
+                    .from('household_budget_profiles')
+                    .upsert({ user_id: userId, profile: payload }, { onConflict: 'user_id' });
+            } catch {
+                // Optional cloud sync path, safe to ignore when migration is not applied.
+            }
+        }, 700);
+        return () => window.clearTimeout(t);
+    }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const householdBudgetEngine = useMemo(() => {
         const input = buildHouseholdEngineInputFromData(
@@ -877,30 +935,49 @@ const Budgets: React.FC = () => {
             return;
         }
 
-        const duplicateMatch = budgetRequests.some((r) =>
-            r.status === 'Pending' &&
-            r.request_type === requestType &&
-            (requestType === 'NewCategory'
-                ? String(r.category_name || '').trim().toLowerCase() === newCategoryName.trim().toLowerCase()
-                : r.category_id === requestCategoryId)
-        );
+        const selectedCategoryName =
+            requestType === 'IncreaseLimit' && requestCategoryId
+                ? (governanceCategories.find(c => c.id === requestCategoryId)?.name ??
+                   sharedBudgets.find(b => `SHARED::${(b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner'}::${b.category}` === requestCategoryId)?.category ??
+                   '')
+                : '';
+
+        const duplicateMatch = budgetRequests.some((r) => {
+            if (r.status !== 'Pending' || r.request_type !== requestType) return false;
+            if (requestType === 'NewCategory') {
+                return String(r.category_name || '').trim().toLowerCase() === newCategoryName.trim().toLowerCase();
+            }
+            // IncreaseLimit: match by category_id when present, otherwise by category_name for shared-category requests
+            if (requestCategoryId && !requestCategoryId.startsWith('SHARED::')) {
+                return r.category_id === requestCategoryId;
+            }
+            if (!selectedCategoryName) return false;
+            return !r.category_id &&
+                String(r.category_name || '').trim().toLowerCase() === selectedCategoryName.trim().toLowerCase();
+        });
 
         if (duplicateMatch) {
             alert('A similar pending request already exists. Please wait for admin review.');
             return;
         }
 
-        const amount = normalizeToMonthly(enteredAmount, requestAmountPeriod);
+        const monthlyAmount = normalizeToMonthly(enteredAmount, requestAmountPeriod);
 
-        const periodTag = requestAmountPeriod === 'Monthly' ? '' : `[Requested period: ${requestAmountPeriod}]`;
+        const periodTag = requestAmountPeriod === 'Monthly'
+            ? ''
+            : `[Requested period: ${requestAmountPeriod}; Raw: ${enteredAmount}]`;
         const mergedNote = [periodTag, requestNote.trim()].filter(Boolean).join(' ').trim() || null;
+
+        const isSharedSelection = requestType === 'IncreaseLimit' && requestCategoryId.startsWith('SHARED::');
 
         const payloadBase = {
             user_id: auth.user.id,
             request_type: requestType,
-            category_id: requestType === 'IncreaseLimit' ? requestCategoryId || null : null,
-            category_name: requestType === 'NewCategory' ? newCategoryName.trim() : null,
-            amount,
+            category_id: requestType === 'IncreaseLimit' && !isSharedSelection ? (requestCategoryId || null) : null,
+            category_name: requestType === 'NewCategory'
+                ? newCategoryName.trim()
+                : (requestType === 'IncreaseLimit' && isSharedSelection ? selectedCategoryName || null : null),
+            amount: monthlyAmount,
             status: 'Pending'
         };
 
@@ -948,26 +1025,68 @@ const Budgets: React.FC = () => {
         }
 
         if (request.request_type === 'NewCategory') {
-            const { error: insertError } = await supabase
+            const { data: createdCategory, error: insertError } = await supabase
                 .from('categories')
-                .insert({ name: request.category_name, monthly_limit: amount, total_spent: 0 });
-            if (insertError) {
-                alert(`Failed to create category: ${insertError.message}`);
+                .insert({ name: request.category_name, monthly_limit: amount, total_spent: 0 })
+                .select()
+                .single();
+            if (insertError || !createdCategory) {
+                alert(`Failed to create category: ${insertError?.message || 'Unknown error'}`);
                 return;
+            }
+
+            // Grant requester permission so they see this category in their Budgets page and request forms
+            try {
+                await supabase
+                    .from('permissions')
+                    .insert({ user_id: request.user_id, category_id: createdCategory.id })
+                    .then(
+                        (r) => r,
+                        () => ({ error: null } as any)
+                    );
+            } catch {
+                // Non-critical; ignore RLS / unique violations
+            }
+
+            // Auto-create a starting budget row for admin (approver) and requester so category appears in Budgets cards
+            const adminId = auth?.user?.id;
+            const baseBudgetRow = {
+                category: request.category_name,
+                limit: amount,
+                month: currentMonth,
+                year: currentYear,
+                period: 'monthly' as const,
+                tier: (request as any).tier ?? 'Core',
+            };
+            const budgetInserts: any[] = [];
+            if (adminId) {
+                budgetInserts.push({ ...baseBudgetRow, user_id: adminId });
+            }
+            budgetInserts.push({ ...baseBudgetRow, user_id: request.user_id });
+            try {
+                await supabase
+                    .from('budgets')
+                    .insert(budgetInserts)
+                    .then(
+                        (r) => r,
+                        () => ({ error: null } as any)
+                    );
+            } catch {
+                // Optional; ignore failures (RLS / duplicates)
             }
         }
         if (request.request_type === 'IncreaseLimit') {
-            if (!request.category_id) {
-                alert('Increase-limit request is missing a target category.');
-                return;
-            }
-            const { error: updateError } = await supabase
-                .from('categories')
-                .update({ monthly_limit: amount })
-                .eq('id', request.category_id);
-            if (updateError) {
-                alert(`Failed to update category limit: ${updateError.message}`);
-                return;
+            if (request.category_id) {
+                const { error: updateError } = await supabase
+                    .from('categories')
+                    .update({ monthly_limit: amount })
+                    .eq('id', request.category_id);
+                if (updateError) {
+                    alert(`Failed to update category limit: ${updateError.message}`);
+                    return;
+                }
+            } else {
+                // Shared-owner categories without a direct category_id are advisory only; admin adjusts on their own budgets.
             }
         }
 
@@ -1122,7 +1241,15 @@ const Budgets: React.FC = () => {
             </SectionCard>
 
             {!isAdmin && (() => {
-                const selectedCategoryName = requestType === 'IncreaseLimit' && requestCategoryId ? (governanceCategories.find(c => c.id === requestCategoryId)?.name ?? '') : '';
+                const selectedCategoryName = (() => {
+                    if (requestType !== 'IncreaseLimit' || !requestCategoryId) return '';
+                    const own = governanceCategories.find(c => c.id === requestCategoryId)?.name;
+                    if (own) return own;
+                    const shared = sharedBudgets.find(
+                        (b) => `SHARED::${(b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner'}::${b.category}` === requestCategoryId
+                    );
+                    return shared?.category ?? '';
+                })();
                 const currentBudgetRow = requestType === 'IncreaseLimit' && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
                 const currentLimit = currentBudgetRow?.monthlyLimit ?? 0;
                 const currentSpent = currentBudgetRow?.spent ?? 0;
@@ -1147,7 +1274,18 @@ const Budgets: React.FC = () => {
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Category to increase</label>
                                     <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
                                         <option value="">Select category</option>
-                                        {governanceCategories.filter((c) => permittedCategories.includes(c.name)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        {/* Own permitted categories */}
+                                        {governanceCategories
+                                            .filter((c) => permittedCategories.includes(c.name))
+                                            .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        {/* Shared budgets from other owners (by category name) */}
+                                        {Array.from(new Set(sharedBudgets.map((b) => b.category).filter(Boolean))).map((cat) => {
+                                            const anyRow = sharedBudgets.find((b) => b.category === cat);
+                                            if (!anyRow) return null;
+                                            const ownerKey = (anyRow as any).owner_user_id || (anyRow as any).user_id || anyRow.ownerEmail || 'owner';
+                                            const value = `SHARED::${ownerKey}::${cat}`;
+                                            return <option key={value} value={value}>{cat} (shared)</option>;
+                                        })}
                                     </select>
                                     {currentBudgetRow && (
                                         <p className="mt-1 text-xs text-gray-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
@@ -1177,7 +1315,7 @@ const Budgets: React.FC = () => {
                                 <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Submit request</button>
                             </div>
                         </div>
-                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked.</p>
+                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked. Admins also see the original amount and period.</p>
                     </div>
                 );
             })()}
@@ -1190,7 +1328,7 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="text-xs text-gray-500">Proposed (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
@@ -1202,7 +1340,7 @@ const Budgets: React.FC = () => {
             )}
 
 
-            {!isAdmin && respondedRequests.length > 0 && (
+            {isAdmin && respondedRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow p-5 border border-slate-200">
                     <h2 className="text-lg font-semibold mb-3">Reviewed Requests</h2>
                     <div className="space-y-2">
@@ -1210,7 +1348,7 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="text-xs text-gray-500">Amount (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
@@ -1229,14 +1367,16 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Requested (monthly normalized): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="text-xs text-gray-500">
+                                        Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}
+                                    </p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
                                     <button onClick={() => {
-                                        const nextAmount = window.prompt('Approve with custom monthly limit amount:', String(r.amount || ''));
+                                        const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(r.amount || ''));
                                         if (nextAmount == null) return;
                                         const parsed = Number(nextAmount);
                                         if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1253,7 +1393,7 @@ const Budgets: React.FC = () => {
                 </div>
             )}
 
-            {allRespondedRequests.length > 0 && (
+            {isAdmin && allRespondedRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
                     <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
                         <div>
