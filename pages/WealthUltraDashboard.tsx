@@ -31,6 +31,8 @@ import {
 } from '../services/wealthUltraPredictive';
 import { loadDemoData } from '../services/demoDataService';
 import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
+import { computeRiskLaneFromData } from '../services/riskLaneEngine';
+import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -286,6 +288,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   const householdStress = useMemo(
     () => computeHouseholdStressFromData(data),
+    [data]
+  );
+
+  const riskLane = useMemo(
+    () => computeRiskLaneFromData(data, 0),
+    [data]
+  );
+
+  const liquidityRunway = useMemo(
+    () => computeLiquidityRunwayFromData(data),
     [data]
   );
 
@@ -590,6 +602,20 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <div>{householdStress.summary}</div>
                 </div>
               )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Risk lane</p>
+                  <p className="text-sm font-semibold text-slate-900">{riskLane.lane}</p>
+                </div>
+                {liquidityRunway && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] text-slate-600">Cash runway</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {liquidityRunway.monthsOfRunway.toFixed(1)} months
+                    </p>
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2"><p className="text-[11px] text-indigo-600">Regime</p><p className="text-sm font-semibold text-indigo-800">{autoPilotMeta.regime}</p></div>
                 <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2"><p className="text-[11px] text-sky-600">Signal confidence</p><p className="text-sm font-semibold text-sky-800">{autoPilotMeta.confidence}</p></div>
