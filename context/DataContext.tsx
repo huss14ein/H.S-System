@@ -509,8 +509,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     return { data: [], error: err };
                 });
 
+            // Fetch accounts with fallback if linked_account_ids column doesn't exist
+            const accountsPromise = db.from('accounts').select('*').eq('user_id', auth.user.id)
+                .then((r: any) => r, async (err: any) => {
+                    // If error is about missing linked_account_ids column, try without it
+                    if (err?.code === 'PGRST204' && (err?.message?.includes('linkedAccountIds') || err?.message?.includes('linked_account_ids'))) {
+                        try {
+                            // Try selecting specific columns excluding linked_account_ids
+                            const result = await db.from('accounts')
+                                .select('id, user_id, name, type, balance, owner, platform_details')
+                                .eq('user_id', auth.user.id);
+                            return result;
+                        } catch (fallbackErr) {
+                            console.warn('Fallback accounts fetch also failed:', fallbackErr);
+                            return { data: [], error: err };
+                        }
+                    }
+                    return { data: [], error: err };
+                });
+
             const fetchPromises = [
-                db.from('accounts').select('*').eq('user_id', auth.user.id),
+                accountsPromise,
                 db.from('assets').select('*').eq('user_id', auth.user.id),
                 db.from('liabilities').select('*').eq('user_id', auth.user.id),
                 db.from('goals').select('*').eq('user_id', auth.user.id),
@@ -663,7 +682,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ]).then(() => {}, () => {});
 
             // Accounts
-            const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(({ id, ...a }) => ({...a, user_id: userId}))).select();
+            // Handle linked_account_ids gracefully if column doesn't exist
+            const accountsToInsert = mock.accounts.map(({ id, linkedAccountIds, ...a }) => {
+                const accountData: any = { ...a, user_id: userId };
+                // Only include linked_account_ids if the column exists (will fail gracefully if not)
+                if (Array.isArray(linkedAccountIds) && linkedAccountIds.length > 0) {
+                    accountData.linked_account_ids = linkedAccountIds;
+                }
+                return accountData;
+            });
+            const { data: newAccounts, error: accError } = await db.from('accounts').insert(accountsToInsert).select()
+                .then((r: any) => r, async (err: any) => {
+                    // If error is about missing linked_account_ids, retry without it
+                    if (err?.code === 'PGRST204' && (err?.message?.includes('linkedAccountIds') || err?.message?.includes('linked_account_ids'))) {
+                        const accountsWithoutLinks = mock.accounts.map(({ id, linkedAccountIds, ...a }) => ({ ...a, user_id: userId }));
+                        return await db.from('accounts').insert(accountsWithoutLinks).select();
+                    }
+                    return { data: null, error: err };
+                });
             if (accError || !newAccounts) throw accError || new Error("Failed to create accounts");
             
             const accountIdMap = new Map(mock.accounts.map((mockAcc, i) => [mockAcc.id, newAccounts[i].id]));
@@ -1265,12 +1301,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Allow explicitly clearing links by sending an empty array, or setting specific links.
             payload.linked_account_ids = platform.linkedAccountIds;
         }
-        const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
-        if(error) {
-            console.error("Error adding platform:", error);
-            alert(`Failed to add platform: ${error.message}`);
-            throw error;
+        const result = await db.from('accounts').insert(withUser(payload)).select().single();
+        if (result.error?.code === 'PGRST204' && (result.error?.message?.includes('linkedAccountIds') || result.error?.message?.includes('linked_account_ids'))) {
+            // Column doesn't exist, remove it and retry
+            delete payload.linked_account_ids;
+            delete payload.linkedAccountIds;
+            const retryResult = await db.from('accounts').insert(withUser(payload)).select().single();
+            if (retryResult.error) {
+                console.error("Error adding platform:", retryResult.error);
+                alert(`Failed to add platform: ${retryResult.error.message}`);
+                throw retryResult.error;
+            }
+            const normalized = normalizeAccount(retryResult.data);
+            setData(prev => ({ ...prev, accounts: [...prev.accounts, normalized] }));
+            return;
         }
+        if(result.error) {
+            console.error("Error adding platform:", result.error);
+            alert(`Failed to add platform: ${result.error.message}`);
+            throw result.error;
+        }
+        const { data: newPlatform, error } = result;
         if (newPlatform) {
             const normalized = normalizeAccount(newPlatform);
             setData(prev => ({ ...prev, accounts: [...prev.accounts, normalized] }));
@@ -1288,12 +1339,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // If undefined, do not touch existing DB links.
             delete (payload as any).linkedAccountIds;
         }
-        const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
-        if(error) console.error("Error updating platform:", error);
-        else {
+        const result = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
+        if (result.error?.code === 'PGRST204' && (result.error?.message?.includes('linkedAccountIds') || result.error?.message?.includes('linked_account_ids'))) {
+            // Column doesn't exist, remove it and retry
+            delete payload.linked_account_ids;
+            delete payload.linkedAccountIds;
+            const retryResult = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
+            if (retryResult.error) {
+                console.error("Error updating platform:", retryResult.error);
+                return;
+            }
             const normalized = normalizeAccount({ ...platform, ...payload });
             setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
+            return;
         }
+        if(result.error) {
+            console.error("Error updating platform:", result.error);
+            return;
+        }
+        const normalized = normalizeAccount({ ...platform, ...payload });
+        setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
     };
     const deletePlatform = async (platformId: string) => {
         if(!supabase || !auth?.user) return;
