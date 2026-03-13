@@ -5,6 +5,7 @@ import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoa
 import { getAIMarketEventInsight } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useAI } from '../context/AiContext';
+import type { Page } from '../types';
 import { loadDemoData } from '../services/demoDataService';
 
 type Impact = 'High' | 'Medium' | 'Low';

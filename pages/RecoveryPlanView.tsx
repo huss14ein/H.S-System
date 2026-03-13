@@ -34,7 +34,6 @@ interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
   onOpenWealthUltra?: () => void;
   setActivePage?: (page: Page) => void;
-  triggerPageAction?: (page: Page, action: string) => void;
 }
 
 const inferMarketCurrencyFromSymbol = (symbol?: string): TradeCurrency | null => {
@@ -286,7 +285,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       try {
         updateRecoveryExecutionOutcome(execution.id, {
           shares: selectedPlan.newShares || selected.holding.quantity,
-          avgCost: selectedPlan.newAvgCost || selected.holding.avgCost ?? 0,
+          avgCost: (selectedPlan.newAvgCost ?? selected.holding.avgCost) ?? 0,
           currentPrice: selectedPlan.currentPrice,
           plPct: selectedPlan.plPct,
         });
@@ -295,7 +294,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       }
     });
     
-    // Refresh statistics after updates
     if (activeExecutions.length > 0) {
       const stats = calculateRecoveryStatistics();
       setRecoveryStats(stats);

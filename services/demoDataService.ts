@@ -105,7 +105,35 @@ export function generateDemoRecoveryExecutions(): Array<{
   };
 }> {
   const symbols = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA'];
-  const executions = [];
+  const executions: Array<{
+    id: string;
+    symbol: string;
+    timestamp: number;
+    initialPlPct: number;
+    initialPrice: number;
+    initialShares: number;
+    initialAvgCost: number;
+    recoveryConfig: {
+      lossTriggerPct: number;
+      cashCap: number;
+      ladderLevels: number;
+      totalPlannedCost: number;
+    };
+    executionStatus: 'planned' | 'partial' | 'complete' | 'cancelled';
+    currentState?: {
+      shares: number;
+      avgCost: number;
+      currentPrice: number;
+      plPct: number;
+      recoveryProgress: number;
+    };
+    outcome?: {
+      recovered: boolean;
+      recoveryTimeDays?: number;
+      finalPlPct: number;
+      roi: number;
+    };
+  }> = [];
   
   symbols.forEach((symbol, idx) => {
     const daysAgo = (symbols.length - idx) * 15;
@@ -323,7 +351,7 @@ export function generateDemoTransactions(count: number = 50): Array<{
       category,
       subcategory: Math.random() > 0.7 ? 'Subcategory' : undefined,
       budgetCategory: Math.random() > 0.5 ? category : undefined,
-      type: isIncome ? 'income' : 'expense',
+      type: isIncome ? 'income' as const : 'expense' as const,
       accountId: `demo-account-${Math.floor(Math.random() * 3)}`,
       transactionNature: Math.random() > 0.6 ? 'Fixed' : 'Variable',
       expenseType: Math.random() > 0.5 ? 'Core' : 'Discretionary',

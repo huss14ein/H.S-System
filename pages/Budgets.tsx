@@ -35,7 +35,7 @@ import {
     type BudgetAnomaly,
     type SeasonalityPattern,
 } from '../services/householdBudgetAnalytics';
-import { loadDemoData } from '../services/demoDataService';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 
 
