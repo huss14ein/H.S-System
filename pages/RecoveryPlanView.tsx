@@ -18,6 +18,13 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
+import {
+  saveRecoveryExecution,
+  getRecoveryExecutionsBySymbol,
+  calculateRecoveryStatistics,
+  updateRecoveryExecutionOutcome,
+  type RecoveryPlanStatistics,
+} from '../services/recoveryPlanPerformance';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -165,6 +172,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const [isAiRecoveryLoading, setIsAiRecoveryLoading] = useState(false);
   const [isBulkAiRecoveryLoading, setIsBulkAiRecoveryLoading] = useState(false);
   const [aiRecoveryError, setAiRecoveryError] = useState<string | null>(null);
+  const [recoveryStats, setRecoveryStats] = useState<RecoveryPlanStatistics | null>(null);
+  const [showStats, setShowStats] = useState(false);
 
   const positionsWithRecovery = useMemo(() => {
     return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
@@ -216,6 +225,33 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
+
+  // Load recovery statistics
+  useEffect(() => {
+    const stats = calculateRecoveryStatistics();
+    setRecoveryStats(stats);
+  }, [selectedHoldingId]);
+
+  // Track recovery plan when generated
+  const handleGenerateRecoveryPlan = useCallback((holding: Holding, plan: any, positionConfig: RecoveryPositionConfig) => {
+    const executionId = `recovery-${holding.id}-${Date.now()}`;
+    saveRecoveryExecution({
+      id: executionId,
+      symbol: holding.symbol,
+      timestamp: Date.now(),
+      initialPlPct: plan.plPct,
+      initialPrice: plan.currentPrice,
+      initialShares: holding.quantity,
+      initialAvgCost: holding.avgCost ?? 0,
+      recoveryConfig: {
+        lossTriggerPct: positionConfig.lossTriggerPct,
+        cashCap: positionConfig.cashCap,
+        ladderLevels: plan.ladder.length,
+        totalPlannedCost: plan.totalPlannedCost,
+      },
+      executionStatus: 'planned',
+    });
+  }, []);
 
 
 
@@ -346,6 +382,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
               {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
             </span>
+            {recoveryStats && recoveryStats.totalExecutions > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowStats(!showStats)}
+                className="ml-auto text-xs px-3 py-1.5 rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
+              >
+                {showStats ? 'Hide' : 'Show'} Performance Stats
+              </button>
+            )}
           </div>
           <p className="text-sm text-slate-600 max-w-2xl">
             Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
@@ -383,6 +428,54 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           </ul>
         </details>
       </section>
+
+      {/* Performance Statistics */}
+      {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
+        <SectionCard title="Recovery Plan Performance Statistics" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-white">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <div className="rounded-lg border border-indigo-200 bg-white p-4">
+              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-1">Success Rate</p>
+              <p className="text-2xl font-black text-indigo-900 tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
+              <p className="text-xs text-slate-600 mt-1">{recoveryStats.totalExecutions} total executions</p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-white p-4">
+              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Avg Recovery Time</p>
+              <p className="text-2xl font-black text-emerald-900 tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
+              <p className="text-xs text-slate-600 mt-1">days</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-white p-4">
+              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">Avg ROI</p>
+              <p className={`text-2xl font-black tabular-nums ${recoveryStats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {recoveryStats.avgRoi >= 0 ? '+' : ''}{(recoveryStats.avgRoi * 100).toFixed(1)}%
+              </p>
+              <p className="text-xs text-slate-600 mt-1">on recovery capital</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Capital Deployed</p>
+              <p className="text-xl font-black text-slate-900 tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
+              <p className="text-xs text-slate-600 mt-1">Total recovered: {formatCurrencyString(recoveryStats.totalRecovered)}</p>
+            </div>
+          </div>
+          {Object.keys(recoveryStats.bySymbol).length > 0 && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Performance by Symbol</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {Object.entries(recoveryStats.bySymbol).slice(0, 6).map(([symbol, stats]) => (
+                  <div key={symbol} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-sm font-bold text-slate-900">{symbol}</p>
+                    <p className="text-xs text-slate-600 mt-1">
+                      {stats.count} execution{stats.count !== 1 ? 's' : ''} • {(stats.successRate * 100).toFixed(0)}% success
+                    </p>
+                    <p className={`text-xs font-semibold mt-1 ${stats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      Avg ROI: {stats.avgRoi >= 0 ? '+' : ''}{(stats.avgRoi * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -466,6 +559,50 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
       {selected && selectedPlan && (
         <SectionCard title={`${selected.holding.symbol} — Recovery Plan`} className="space-y-5">
+          {(() => {
+            const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol);
+            if (symbolHistory.length > 0) {
+              const lastExecution = symbolHistory[0];
+              const completed = symbolHistory.filter(e => e.executionStatus === 'complete' && e.outcome);
+              const successRate = completed.length > 0
+                ? (completed.filter(e => e.outcome?.recovered).length / completed.length) * 100
+                : 0;
+              return (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 mb-4">
+                  <p className="text-xs font-semibold text-indigo-900 uppercase tracking-wide mb-2">Historical Performance for {selected.holding.symbol}</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <p className="text-indigo-700 font-medium">{symbolHistory.length} previous recovery{symbolHistory.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    {completed.length > 0 && (
+                      <>
+                        <div>
+                          <p className="text-indigo-700 font-medium">Success rate: {successRate.toFixed(0)}%</p>
+                        </div>
+                        {lastExecution.outcome && (
+                          <>
+                            <div>
+                              <p className="text-indigo-700 font-medium">
+                                Last recovery: {lastExecution.outcome.recovered ? 'Success' : 'In progress'}
+                              </p>
+                            </div>
+                            {lastExecution.outcome.recoveryTimeDays && (
+                              <div>
+                                <p className="text-indigo-700 font-medium">
+                                  Recovery time: {lastExecution.outcome.recoveryTimeDays} days
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-slate-600">
               Portfolio: {selected.portfolioName}{' '}
@@ -702,10 +839,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           <div className="flex flex-wrap gap-3 pt-2">
             <button
               type="button"
-              onClick={handleGenerateDraft}
+              onClick={() => {
+                handleGenerateRecoveryPlan(selected.holding, selectedPlan, selected.positionConfig);
+                handleGenerateDraft();
+              }}
               className="px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-secondary font-medium text-sm"
             >
-              Create Draft Orders
+              Create Draft Orders & Track Recovery
             </button>
           </div>
         </SectionCard>
