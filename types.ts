@@ -511,6 +511,8 @@ export interface WealthUltraPosition {
   sleeveType: WealthUltraSleeve;
   riskTier: WealthUltraRiskTier;
   strategyMode: WealthUltraStrategyMode;
+  /** Composite 0–100 risk score based on volatility, drawdown, and concentration; higher = riskier. */
+  riskScore?: number;
   currentShares: number;
   avgCost: number;
   currentPrice: number;
@@ -556,6 +558,10 @@ export interface WealthUltraOrder {
   target1Price?: number;
   target2Price?: number;
   trailingStopPrice?: number;
+  /** Optional engine priority score (higher = more impact per unit of capital). */
+  priorityScore?: number;
+  /** Short human-readable explanation for why this order exists. */
+  rationale?: string;
 }
 
 export type WealthUltraAlertType =
