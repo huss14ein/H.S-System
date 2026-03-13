@@ -63,9 +63,11 @@ interface BudgetModalProps {
     budgetToEdit: Budget | null;
     currentMonth: number;
     currentYear: number;
+    householdAdults?: number;
+    householdKids?: number;
 }
 
-const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
+const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear, householdAdults = 2, householdKids = 0 }) => {
     const { data } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const [category, setCategory] = useState('');
@@ -133,20 +135,14 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         }
     }, [budgetToEdit, isOpen]);
 
-    React.useEffect(() => {
-        if (category && !budgetToEdit && selectedCategoryInfo) {
-            setLimit(String(selectedCategoryInfo.suggestedAmount));
-            setTier(selectedCategoryInfo.tier);
-        }
-    }, [category, budgetToEdit, selectedCategoryInfo]);
 
     const handleAISuggestBudget = useCallback(async () => {
         if (!category || !auth?.user?.id) return;
         setIsLoadingAI(true);
         try {
             const householdInfo = {
-                adults: 2, // Default, can be enhanced to get from context
-                kids: 0,
+                adults: householdAdults,
+                kids: householdKids,
                 monthlyIncome: (data?.transactions ?? [])
                     .filter(t => t.type === 'income')
                     .reduce((sum, t) => {
@@ -184,7 +180,7 @@ Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief
         } finally {
             setIsLoadingAI(false);
         }
-    }, [category, auth?.user?.id, data?.transactions, selectedCategoryInfo]);
+    }, [category, auth?.user?.id, data?.transactions, selectedCategoryInfo, householdAdults, householdKids]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -229,10 +225,19 @@ Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief
                                 items={availableCategories}
                                 selectedItem={category}
                                 onSelectItem={(selected) => {
-                                    const formatted = selected.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+                                    // Ensure proper capitalization: First letter of each word capitalized
+                                    const formatted = selected.trim().split(' ').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                                    ).join(' ');
                                     setCategory(formatted);
+                                    // Auto-fill suggested amount and tier when category is selected
+                                    const categoryInfo = saudiBudgetCategories.find(c => c.name === formatted);
+                                    if (categoryInfo && !budgetToEdit) {
+                                        setLimit(String(categoryInfo.suggestedAmount));
+                                        setTier(categoryInfo.tier);
+                                    }
                                 }}
-                                placeholder="Select a category..."
+                                placeholder="Select a category or type a new one..."
                             />
                             {selectedCategoryInfo && (
                                 <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -2846,7 +2851,7 @@ Ensure total allocated is reasonable (typically 70-85% of income, leaving 15-30%
                 </SectionCard>
             )}
 
-            <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
+            <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} householdAdults={householdAdults} householdKids={householdKids} />
         </PageLayout>
     );
 };
