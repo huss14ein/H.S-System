@@ -22,6 +22,12 @@ import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
+import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
+import { computeRiskLaneFromData } from '../services/riskLaneEngine';
+import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
+import { computeDisciplineScore } from '../services/disciplineScoreEngine';
+import { runShockDrill, SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -149,6 +155,46 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         emergencyTargetAmount: emergencyFund.targetAmount,
     }), [financialMetrics, emergencyFund.monthsCovered, emergencyFund.shortfall, emergencyFund.targetAmount, efStatus, efTrend]);
 
+    const householdStress = useMemo(() => {
+        if (!data) return null;
+        const year = new Date().getFullYear();
+        const input = buildHouseholdEngineInputFromData(
+            (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+            (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            (data.goals ?? []) as any[],
+            {
+                year,
+                expectedMonthlySalary: undefined,
+                adults: 2,
+                kids: 0,
+                profile: 'Moderate',
+                monthlyOverrides: [],
+            }
+        );
+        const result = buildHouseholdBudgetPlan(input);
+        return deriveCashflowStressSummary(result);
+    }, [data]);
+
+    const riskLane = useMemo(
+        () => computeRiskLaneFromData(data, emergencyFund.monthsCovered),
+        [data, emergencyFund.monthsCovered]
+    );
+
+    const liquidityRunway = useMemo(
+        () => computeLiquidityRunwayFromData(data),
+        [data]
+    );
+
+    const discipline = useMemo(
+        () => computeDisciplineScore(data),
+        [data]
+    );
+
+    const shockDrill = useMemo(
+        () => (data ? runShockDrill(data, 'job_loss') : null),
+        [data]
+    );
+
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
         setError(null);
@@ -267,6 +313,84 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             </div>
             
+            {householdStress && (
+                <div className="section-card mt-6">
+                    <h3 className="section-title mb-2">Household Cashflow Stress</h3>
+                    <p className="text-sm text-slate-700 mb-1">
+                        Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
+                    </p>
+                    <p className="text-xs text-slate-600 mb-2">
+                        {householdStress.summary}
+                    </p>
+                    {householdStress.flags.length > 0 && (
+                        <ul className="text-xs text-slate-500 list-disc pl-5 space-y-0.5">
+                            {householdStress.flags.slice(0, 3).map(flag => (
+                                <li key={flag}>{flag}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 mt-6">
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Risk Lane</h3>
+                    <p className="text-sm text-slate-700">
+                        Current lane: <span className="font-semibold">{riskLane.lane}</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                        Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
+                    </p>
+                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
+                        {riskLane.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                    </ul>
+                </div>
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Liquidity Runway</h3>
+                    {liquidityRunway ? (
+                        <>
+                            <p className="text-sm text-slate-700">
+                                Runway: <span className="font-semibold">{liquidityRunway.monthsOfRunway.toFixed(1)} months</span>
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1">
+                                Portfolio drawdown: <span className="font-semibold">{liquidityRunway.drawdownPct.toFixed(1)}%</span>
+                            </p>
+                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons[0]}</p>
+                        </>
+                    ) : (
+                        <p className="text-sm text-slate-500">Not enough data.</p>
+                    )}
+                </div>
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Discipline Score</h3>
+                    <p className="text-sm text-slate-700">
+                        Score: <span className="font-semibold">{discipline.score}/100</span> ({discipline.label})
+                    </p>
+                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
+                        {discipline.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                    </ul>
+                </div>
+            </div>
+
+            <div className="section-card mt-6">
+                <h3 className="section-title mb-2">Shock Drill (Auto)</h3>
+                <p className="text-xs text-slate-500 mb-2">
+                    Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label}</span>
+                </p>
+                {shockDrill ? (
+                    <>
+                        <p className="text-sm text-slate-700">
+                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta, { digits: 0 })}</span>
+                        </p>
+                        <p className="text-sm text-slate-700 mt-1">
+                            Wealth Ultra value delta: <span className="font-semibold">{shockDrill.wealthUltraPortfolioValueDeltaPct.toFixed(1)}%</span>
+                        </p>
+                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote}</p>
+                    </>
+                ) : (
+                    <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
+                )}
+            </div>
 
             <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">

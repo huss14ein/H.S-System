@@ -1,0 +1,138 @@
+import type { FinancialData } from '../types';
+import {
+  buildHouseholdBudgetPlan,
+  buildHouseholdEngineInputFromData,
+  type HouseholdEngineResult,
+  type HouseholdEngineProfile,
+  type HouseholdMonthlyOverride,
+} from './householdBudgetEngine';
+
+export interface CashflowStressSignals {
+  level: 'low' | 'medium' | 'high';
+  affordabilityPressureMonths: number;
+  negativePlannedNetMonths: number;
+  projectedYearEndDelta: number;
+  emergencyGap: number;
+  reserveGap: number;
+  summary: string;
+  flags: string[];
+}
+
+export function deriveCashflowStressSummary(result: HouseholdEngineResult): CashflowStressSignals {
+  const affordabilityPressureMonths = result.months.filter((m) =>
+    m.warnings.some((w) => w.toLowerCase().includes('affordability pressure'))
+  ).length;
+  const negativePlannedNetMonths = result.months.filter((m) => m.plannedNet < 0).length;
+  const projectedYearEndDelta =
+    (result.balanceProjection?.projectedYearEndLiquid ?? 0) -
+    (result.balanceProjection?.openingLiquid ?? 0);
+  const emergencyGap = Math.max(0, result.emergencyGap ?? 0);
+  const reserveGap = Math.max(0, result.reserveGap ?? 0);
+
+  let level: CashflowStressSignals['level'] = 'low';
+  if (
+    negativePlannedNetMonths >= 3 ||
+    affordabilityPressureMonths >= 4 ||
+    (emergencyGap > 0 && projectedYearEndDelta <= 0)
+  ) {
+    level = 'high';
+  } else if (
+    negativePlannedNetMonths > 0 ||
+    affordabilityPressureMonths > 0 ||
+    emergencyGap > 0
+  ) {
+    level = 'medium';
+  }
+
+  const flags: string[] = [];
+  if (negativePlannedNetMonths > 0) {
+    flags.push(`${negativePlannedNetMonths} month(s) with negative planned net cashflow`);
+  }
+  if (affordabilityPressureMonths > 0) {
+    flags.push(`${affordabilityPressureMonths} month(s) with affordability warnings`);
+  }
+  if (emergencyGap > 0) {
+    flags.push(`Emergency fund short by ~${Math.round(emergencyGap).toLocaleString()}`);
+  }
+  if (reserveGap > 0) {
+    flags.push(`Reserve pool short by ~${Math.round(reserveGap).toLocaleString()}`);
+  }
+
+  let summary: string;
+  if (level === 'high') {
+    summary =
+      'Household cashflow is under high stress: address negative months and emergency/reserve gaps before increasing investment risk.';
+  } else if (level === 'medium') {
+    summary =
+      'Cashflow shows some stress signals; keep optional spending flexible and prefer Core and safety buffers when investing.';
+  } else {
+    summary =
+      'Cashflow looks stable; maintain profile and keep emergency and reserve buckets funded as you invest.';
+  }
+
+  return {
+    level,
+    affordabilityPressureMonths,
+    negativePlannedNetMonths,
+    projectedYearEndDelta,
+    emergencyGap,
+    reserveGap,
+    summary,
+    flags,
+  };
+}
+
+export function computeHouseholdStressFromData(
+  data: FinancialData | null | undefined,
+  options?: {
+    year?: number;
+    adults?: number;
+    kids?: number;
+    profile?: HouseholdEngineProfile;
+    expectedMonthlySalary?: number;
+    overrides?: HouseholdMonthlyOverride[];
+  }
+): CashflowStressSignals | null {
+  if (!data) return null;
+
+  const year = options?.year ?? new Date().getFullYear();
+  const adults = options?.adults ?? 2;
+  const kids = options?.kids ?? 0;
+  const profile = options?.profile ?? 'Moderate';
+  const overrides = options?.overrides ?? [];
+
+  const incomeByMonth = Array(12).fill(0);
+  (data.transactions ?? []).forEach((t) => {
+    const d = new Date(t.date);
+    if (d.getFullYear() !== year || t.type !== 'income') return;
+    incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+  });
+  const incomeWithData = incomeByMonth.filter((v) => v > 0);
+  const inferredAvg =
+    incomeWithData.length > 0
+      ? incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length
+      : 0;
+
+  const input = buildHouseholdEngineInputFromData(
+    (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+    (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+    (data.goals ?? []) as any[],
+    {
+      year,
+      expectedMonthlySalary:
+        options?.expectedMonthlySalary && options.expectedMonthlySalary > 0
+          ? options.expectedMonthlySalary
+          : inferredAvg > 0
+          ? inferredAvg
+          : undefined,
+      adults,
+      kids,
+      profile,
+      monthlyOverrides: overrides,
+    }
+  );
+
+  const result = buildHouseholdBudgetPlan(input);
+  return deriveCashflowStressSummary(result);
+}
+

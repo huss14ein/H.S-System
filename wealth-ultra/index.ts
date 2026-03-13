@@ -46,6 +46,19 @@ export interface WealthUltraEngineState {
   capitalEfficiencyRanked: WealthUltraPosition[];
   alerts: WealthUltraAlert[];
   portfolioHealth: WealthUltraPortfolioHealth;
+  diversificationSummary: WealthUltraDiversificationSummary;
+  rebalancePolicy: WealthUltraRebalancePolicy;
+}
+
+export interface WealthUltraDiversificationSummary {
+  uniqueTickers: number;
+  topConcentrationPct: number;
+  topTickers: string[];
+}
+
+export interface WealthUltraRebalancePolicy {
+  mode: 'ON_TRACK' | 'MINOR_ADJUST' | 'REBALANCE' | 'DE_RISK';
+  reasons: string[];
 }
 
 export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltraEngineState {
@@ -81,6 +94,9 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
     alerts
   );
 
+  const diversificationSummary = computeDiversificationSummary(positions, totalPortfolioValue);
+  const rebalancePolicy = deriveRebalancePolicy(allocations, alerts);
+
   return {
     config,
     positions,
@@ -96,6 +112,8 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
     capitalEfficiencyRanked,
     alerts,
     portfolioHealth,
+    diversificationSummary,
+    rebalancePolicy,
   };
 }
 
@@ -156,6 +174,47 @@ function computePortfolioHealth(
   }
 
   return { score, label, summary };
+}
+
+function computeDiversificationSummary(
+  positions: WealthUltraPosition[],
+  totalPortfolioValue: number
+): WealthUltraDiversificationSummary {
+  if (!positions.length || totalPortfolioValue <= 0) {
+    return { uniqueTickers: 0, topConcentrationPct: 0, topTickers: [] };
+  }
+  const sorted = [...positions].sort((a, b) => b.marketValue - a.marketValue);
+  const uniqueTickers = new Set(sorted.map((p) => p.ticker)).size;
+  const top = sorted.slice(0, 3);
+  const topValue = top.reduce((sum, p) => sum + p.marketValue, 0);
+  const topConcentrationPct = (topValue / totalPortfolioValue) * 100;
+  const topTickers = top.map((p) => p.ticker);
+  return { uniqueTickers, topConcentrationPct, topTickers };
+}
+
+function deriveRebalancePolicy(
+  allocations: WealthUltraSleeveAllocation[],
+  alerts: WealthUltraAlert[]
+): WealthUltraRebalancePolicy {
+  const reasons: string[] = [];
+  const hasCritical = alerts.some((a) => a.severity === 'critical');
+  const hasWarning = alerts.some((a) => a.severity === 'warning');
+  const maxDrift = allocations.reduce(
+    (max, a) => Math.max(max, Math.abs(a.driftPct)),
+    0
+  );
+
+  if (hasCritical) reasons.push('Critical portfolio alerts active');
+  if (hasWarning && !hasCritical) reasons.push('Warning-level allocation or risk alerts active');
+  if (maxDrift > 10) reasons.push('At least one sleeve drift exceeds 10% from target');
+  else if (maxDrift > 5) reasons.push('Sleeve drift between 5–10% from target');
+
+  let mode: WealthUltraRebalancePolicy['mode'] = 'ON_TRACK';
+  if (hasCritical || maxDrift > 12) mode = 'DE_RISK';
+  else if (hasWarning || maxDrift > 8) mode = 'REBALANCE';
+  else if (maxDrift > 3) mode = 'MINOR_ADJUST';
+
+  return { mode, reasons };
 }
 
 export {

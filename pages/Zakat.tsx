@@ -15,6 +15,7 @@ import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { buildZakatTradeAdvice } from '../services/zakatTradeAdvisor';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -119,6 +120,11 @@ const Zakat: React.FC = () => {
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
 
+    const zakatAdvice = useMemo(
+        () => buildZakatTradeAdvice(data),
+        [data]
+    );
+
     if (loading) {
         return (
             <div className="flex justify-center items-center h-96">
@@ -207,7 +213,7 @@ const Zakat: React.FC = () => {
                     <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue)} />
                 </SectionCard>
                 
-                 {/* Column 3: Payment Ledger */}
+                {/* Column 3: Payment Ledger + Suggestions */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
                      <div className="flex justify-between items-center">
                         <h3 className="font-semibold text-dark">Payment Progress & Ledger</h3>
@@ -243,6 +249,23 @@ const Zakat: React.FC = () => {
                             </div>
                         ))}
                         {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
+                    </div>
+
+                    <div className="mt-4 border-t pt-4">
+                        <h4 className="font-semibold text-dark mb-2 text-sm flex items-center gap-1">
+                            Trade & Allocation Suggestions
+                        </h4>
+                        {zakatAdvice.suggestions.length === 0 ? (
+                            <p className="text-xs text-slate-500">No specific Zakat-related trade suggestions based on current holdings.</p>
+                        ) : (
+                            <ul className="space-y-2 text-xs text-slate-600">
+                                {zakatAdvice.suggestions.slice(0, 4).map(s => (
+                                    <li key={s.symbol} className="border rounded-md px-3 py-2 bg-slate-50">
+                                        <span className="font-semibold text-slate-900">{s.symbol}:</span> {s.impactDescription}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                 </div>
             </div>

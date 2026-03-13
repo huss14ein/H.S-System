@@ -48,6 +48,7 @@ const AddWatchlistItemModal: React.FC<{
     const [alertCurrency, setAlertCurrency] = useState<PriceAlertCurrency>('USD');
     const nameRef = useRef(name);
     nameRef.current = name;
+    const symbolInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -56,6 +57,10 @@ const AddWatchlistItemModal: React.FC<{
             setSetAlert(false);
             setTargetPrice('');
             setAlertCurrency('USD');
+            // Focus symbol for faster keyboard-driven entry
+            window.setTimeout(() => {
+                symbolInputRef.current?.focus();
+            }, 0);
         }
     }, [isOpen]);
 
@@ -97,9 +102,21 @@ const AddWatchlistItemModal: React.FC<{
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist">
             <form onSubmit={handleSubmit} className="space-y-4">
+                <p className="text-xs text-slate-600">
+                    Add a symbol you want to track. We’ll auto-fill the name when possible, and you can optionally attach a price alert in the same step.
+                </p>
                 <div>
                     <label htmlFor="stock-symbol" className="block text-sm font-medium text-gray-700">Stock Symbol</label>
-                    <input type="text" id="stock-symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g. AAPL or 2222.SR" />
+                    <input
+                        ref={symbolInputRef}
+                        type="text"
+                        id="stock-symbol"
+                        value={symbol}
+                        onChange={e => setSymbol(e.target.value)}
+                        required
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        placeholder="e.g. AAPL or 2222.SR"
+                    />
                 </div>
                 <div>
                     <label htmlFor="stock-name" className="block text-sm font-medium text-gray-700">Company Name</label>

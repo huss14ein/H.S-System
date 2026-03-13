@@ -30,6 +30,9 @@ import {
   type PredictiveInsight,
 } from '../services/wealthUltraPredictive';
 import { loadDemoData } from '../services/demoDataService';
+import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
+import { computeRiskLaneFromData } from '../services/riskLaneEngine';
+import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -283,6 +286,21 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const [benchmarkComparison, setBenchmarkComparison] = useState<BenchmarkComparison | null>(null);
   const [predictiveInsight, setPredictiveInsight] = useState<PredictiveInsight | null>(null);
 
+  const householdStress = useMemo(
+    () => computeHouseholdStressFromData(data),
+    [data]
+  );
+
+  const riskLane = useMemo(
+    () => computeRiskLaneFromData(data, 0),
+    [data]
+  );
+
+  const liquidityRunway = useMemo(
+    () => computeLiquidityRunwayFromData(data),
+    [data]
+  );
+
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
     const priceMap: Record<string, number> = {};
@@ -328,7 +346,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     orders,
     portfolioHealth,
     autoPilotMeta,
-  } = engineState as typeof engineState & { autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number } };
+    diversificationSummary,
+    rebalancePolicy,
+  } = engineState as typeof engineState & {
+    autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number };
+    diversificationSummary: { uniqueTickers: number; topConcentrationPct: number; topTickers: string[] };
+    rebalancePolicy: { mode: 'ON_TRACK' | 'MINOR_ADJUST' | 'REBALANCE' | 'DE_RISK'; reasons: string[] };
+  };
 
   const totalSAR = totalPortfolioValue / config.fxRate;
   const positions = engineState.positions || [];
@@ -569,12 +593,51 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <SectionCard title="Wealth Ultra Engine" className="border-2 border-primary/30 bg-gradient-to-br from-white via-primary/5 to-slate-50 shadow-lg">
             <div className="space-y-4">
               <p className="text-slate-700 leading-relaxed max-w-3xl">Fully automated portfolio autopilot: it self-tunes sleeve targets, per-ticker limits, cash reserve, deployment budget, and exit parameters from your live holdings, market drift, and transaction behavior—so you can run with minimal manual input.</p>
+              {householdStress && (
+                <div className="rounded-lg border px-3 py-2 text-xs flex flex-col gap-1
+                  border-emerald-200 bg-emerald-50 text-emerald-800">
+                  <div className="font-semibold">
+                    Household cashflow stress: <span className="uppercase">{householdStress.level}</span>
+                  </div>
+                  <div>{householdStress.summary}</div>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Risk lane</p>
+                  <p className="text-sm font-semibold text-slate-900">{riskLane.lane}</p>
+                </div>
+                {liquidityRunway && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] text-slate-600">Cash runway</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {liquidityRunway.monthsOfRunway.toFixed(1)} months
+                    </p>
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2"><p className="text-[11px] text-indigo-600">Regime</p><p className="text-sm font-semibold text-indigo-800">{autoPilotMeta.regime}</p></div>
                 <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2"><p className="text-[11px] text-sky-600">Signal confidence</p><p className="text-sm font-semibold text-sky-800">{autoPilotMeta.confidence}</p></div>
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"><p className="text-[11px] text-emerald-600">Downside pressure</p><p className="text-sm font-semibold text-emerald-800">{(autoPilotMeta.downsidePressure * 100).toFixed(0)}%</p></div>
                 <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2"><p className="text-[11px] text-amber-600">Volatility score</p><p className="text-sm font-semibold text-amber-800">{(autoPilotMeta.volatilityScore * 100).toFixed(1)}</p></div>
                 <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2"><p className="text-[11px] text-violet-600">Deposit source</p><p className="text-sm font-semibold text-violet-800">{autoPilotMeta.monthlyDepositSource}</p></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Rebalance policy</p>
+                  <p className="text-sm font-semibold text-slate-900">{rebalancePolicy.mode.replace('_', ' ')}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Top 3 concentration</p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {diversificationSummary.topConcentrationPct.toFixed(0)}% • {diversificationSummary.topTickers.join(', ') || '—'}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Distinct tickers</p>
+                  <p className="text-sm font-semibold text-slate-900">{diversificationSummary.uniqueTickers}</p>
+                </div>
               </div>
               {positionCount > 0 && (
                 <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-slate-200">

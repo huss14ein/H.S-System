@@ -22,6 +22,7 @@ import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -379,6 +380,25 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
+    const projectedAnnualSurplus = useMemo(() => {
+        const monthlyNet = new Map<string, number>();
+        const year = new Date().getFullYear();
+        (data?.transactions ?? []).forEach(t => {
+            const d = new Date(t.date);
+            if (d.getFullYear() !== year) return;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + t.amount);
+        });
+        if (monthlyNet.size === 0) return averageMonthlySavings * 12;
+        const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);
+        return totalNet;
+    }, [data?.transactions, averageMonthlySavings]);
+
+    const fundingPlan = useMemo(
+        () => computeGoalFundingPlan(data, projectedAnnualSurplus),
+        [data, projectedAnnualSurplus]
+    );
+
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
         return [...(data?.goals ?? [])].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || a.name.localeCompare(b.name));
@@ -469,6 +489,32 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         <div className="border-t mt-4 pt-4 flex justify-between items-center">
              <div><span className="font-semibold">Total Allocated: </span><span className={`font-bold ${totalAllocation > 100 ? 'text-danger' : 'text-success'}`}>{totalAllocation}%</span>{totalAllocation > 100 && <p className="text-xs text-danger">Total cannot exceed 100%.</p>}</div>
              <button type="button" onClick={handleSaveAllocations} disabled={totalAllocation > 100} className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed">Save Strategy</button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="System Funding Suggestions" className="bg-white border border-slate-200">
+        <p className="text-xs text-slate-600 mb-3">
+            Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan.totalMonthlySurplus, { digits: 0 })}</span> per month.
+        </p>
+        {(fundingPlan.suggestions.length === 0) && (
+            <p className="text-sm text-slate-500">Add goals with future deadlines to see suggested monthly funding per goal.</p>
+        )}
+        <div className="space-y-2">
+            {fundingPlan.suggestions.map(s => (
+                <div key={s.goalId} className="flex justify-between items-center text-xs border rounded-md px-3 py-2 bg-slate-50">
+                    <div>
+                        <p className="font-semibold text-slate-900">{(data?.goals ?? []).find(g => g.id === s.goalId)?.name ?? s.name}</p>
+                        <p className="text-slate-500 mt-0.5">
+                            Required: {formatCurrencyString(s.requiredPerMonth, { digits: 0 })} / mo · Suggested: {formatCurrencyString(s.suggestedPerMonth, { digits: 0 })} / mo
+                        </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                        s.status === 'on_track' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                        {s.status === 'on_track' ? 'On track' : 'Need more'}
+                    </span>
+                </div>
+            ))}
         </div>
       </SectionCard>
 

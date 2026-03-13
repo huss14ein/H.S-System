@@ -110,6 +110,10 @@ export interface HouseholdEngineResult {
   recommendations: string[];
   /** Suggested profile when income variance is high (engine recommends Conservative). */
   suggestedProfile?: HouseholdEngineProfile | null;
+  /** Remaining emergency fund gap at year-end plan (0 when fully funded or surplus). */
+  emergencyGap?: number;
+  /** Remaining reserve gap at year-end plan (0 when fully funded or surplus). */
+  reserveGap?: number;
   plannedVsActual: {
     plannedIncome: number;
     actualIncome: number;
@@ -712,6 +716,8 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
     annualBuckets,
     recommendations,
     suggestedProfile: suggested ?? undefined,
+    emergencyGap: round2(Math.max(0, remainingEmergencyGap)),
+    reserveGap: round2(Math.max(0, remainingReserveGap)),
     plannedVsActual: { plannedIncome, actualIncome, plannedOutflow, actualOutflow, plannedNet, actualNet },
     balanceProjection: {
       openingLiquid: toCurrency(input.liquidBalance),
