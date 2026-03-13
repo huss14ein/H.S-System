@@ -22,6 +22,8 @@ import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
+import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -149,6 +151,26 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         emergencyTargetAmount: emergencyFund.targetAmount,
     }), [financialMetrics, emergencyFund.monthsCovered, emergencyFund.shortfall, emergencyFund.targetAmount, efStatus, efTrend]);
 
+    const householdStress = useMemo(() => {
+        if (!data) return null;
+        const year = new Date().getFullYear();
+        const input = buildHouseholdEngineInputFromData(
+            (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+            (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            (data.goals ?? []) as any[],
+            {
+                year,
+                expectedMonthlySalary: undefined,
+                adults: 2,
+                kids: 0,
+                profile: 'Moderate',
+                monthlyOverrides: [],
+            }
+        );
+        const result = buildHouseholdBudgetPlan(input);
+        return deriveCashflowStressSummary(result);
+    }, [data]);
+
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
         setError(null);
@@ -267,6 +289,24 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             </div>
             
+            {householdStress && (
+                <div className="section-card mt-6">
+                    <h3 className="section-title mb-2">Household Cashflow Stress</h3>
+                    <p className="text-sm text-slate-700 mb-1">
+                        Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
+                    </p>
+                    <p className="text-xs text-slate-600 mb-2">
+                        {householdStress.summary}
+                    </p>
+                    {householdStress.flags.length > 0 && (
+                        <ul className="text-xs text-slate-500 list-disc pl-5 space-y-0.5">
+                            {householdStress.flags.slice(0, 3).map(flag => (
+                                <li key={flag}>{flag}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
 
             <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">

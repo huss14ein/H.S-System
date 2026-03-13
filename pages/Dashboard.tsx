@@ -131,30 +131,33 @@ const UpcomingBills: React.FC = () => {
     const formatDate = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const upcomingBills = useMemo(() => {
-        const recurringExpenses = new Map<string, { amount: number; lastDate: Date; count: number }>();
+        const recurringExpenses = new Map<string, { totalAmount: number; lastAmount: number; lastDate: Date; count: number }>();
         const now = new Date();
 
         // Find recurring fixed expenses from the last year
         data.transactions
             .filter(t => t.type === 'expense' && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() -1, now.getMonth(), now.getDate()))
             .forEach(t => {
-                const existing = recurringExpenses.get(t.description) || { amount: 0, lastDate: new Date(0), count: 0 };
+                const existing = recurringExpenses.get(t.description) || { totalAmount: 0, lastAmount: 0, lastDate: new Date(0), count: 0 };
+                const thisAmount = Math.abs(t.amount);
                 recurringExpenses.set(t.description, {
-                    amount: Math.abs(t.amount),
+                    totalAmount: existing.totalAmount + thisAmount,
+                    lastAmount: thisAmount,
                     lastDate: new Date(Math.max(existing.lastDate.getTime(), new Date(t.date).getTime())),
                     count: existing.count + 1
                 });
             });
 
         const bills = [];
-        for (const [name, { amount, lastDate, count }] of recurringExpenses.entries()) {
+        for (const [name, { totalAmount, lastAmount, lastDate, count }] of recurringExpenses.entries()) {
             if (count > 1) { // Consider it recurring if it happened more than once
                 const nextDueDate = new Date(lastDate);
                 // Simple assumption of monthly recurrence for this example
                 nextDueDate.setMonth(nextDueDate.getMonth() + 1);
                 
                 if (nextDueDate > now && nextDueDate < new Date(now.getFullYear(), now.getMonth() + 2, 0)) { // If due in the next ~month
-                     bills.push({ name, date: nextDueDate, amount });
+                     const avgAmount = totalAmount / count;
+                     bills.push({ name, date: nextDueDate, amount: lastAmount, avgAmount });
                 }
             }
         }
@@ -170,7 +173,9 @@ const UpcomingBills: React.FC = () => {
                         <li key={bill.name} className="flex justify-between items-center text-sm">
                             <div>
                                 <p className="font-medium text-dark">{bill.name}</p>
-                                <p className="text-xs text-gray-500">Due: {formatDate(bill.date)}</p>
+                                <p className="text-xs text-gray-500">
+                                    Due: {formatDate(bill.date)} • Typical: {formatCurrencyString(bill.avgAmount)}
+                                </p>
                             </div>
                             <p className="font-semibold text-dark">{formatCurrencyString(bill.amount)}</p>
                         </li>
