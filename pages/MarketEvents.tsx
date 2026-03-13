@@ -678,8 +678,6 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
   }, [filtered, reminders]);
 
   const topFocusEvents = useMemo(() => {
-    const now = Date.now();
-
     return filtered
       .map((event) => {
         const daysUntil = Math.max(

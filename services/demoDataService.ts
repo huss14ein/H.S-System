@@ -204,7 +204,25 @@ export function generateDemoMarketEvents(): Array<{
   };
 }> {
   const now = new Date();
-  const events = [];
+  const events: Array<{
+    id: string;
+    date: Date;
+    title: string;
+    description: string;
+    source: string;
+    category: 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
+    impact: 'High' | 'Medium' | 'Low';
+    symbol?: string;
+    estimated?: boolean;
+    detailedInfo?: {
+      meetingType?: string;
+      historicalContext?: string;
+      keyMetrics?: string[];
+      relatedEvents?: string[];
+      marketImpactHistory?: string;
+      preparationTips?: string[];
+    };
+  }> = [];
   
   // FOMC Meeting
   events.push({
@@ -324,7 +342,21 @@ export function generateDemoTransactions(count: number = 50): Array<{
   transactionNature?: 'Fixed' | 'Variable';
   expenseType?: 'Core' | 'Discretionary';
 }> {
-  const transactions = [];
+  type DemoTransaction = {
+    id: string;
+    date: string;
+    description: string;
+    amount: number;
+    category: string;
+    subcategory?: string;
+    budgetCategory?: string;
+    type: 'income' | 'expense';
+    accountId?: string;
+    transactionNature?: 'Fixed' | 'Variable';
+    expenseType?: 'Core' | 'Discretionary';
+  };
+
+  const transactions: DemoTransaction[] = [];
   const categories = ['Food', 'Transportation', 'Housing', 'Utilities', 'Health', 'Education', 'Entertainment', 'Shopping', 'Savings & Investments'];
   const descriptions = [
     'Grocery Store', 'Restaurant', 'Gas Station', 'Uber Ride', 'Rent Payment', 'Electric Bill', 'Internet Bill',

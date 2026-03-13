@@ -74,7 +74,7 @@ const deriveDynamicPositionConfig = (
     cashCap: Number(cashCap.toFixed(2)),
   };
 };
-function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction }: RecoveryPlanViewProps) {
+function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
