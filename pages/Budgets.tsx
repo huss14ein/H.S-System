@@ -78,36 +78,197 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
-    // Saudi Arabia-specific budget categories with typical monthly amounts for a family
-    const saudiBudgetCategories = useMemo(() => {
-        const categories = [
-            { name: 'Housing & Rent', suggestedAmount: 5000, tier: 'Core' as const, description: 'Monthly rent or mortgage payment' },
-            { name: 'Groceries & Food', suggestedAmount: 2500, tier: 'Core' as const, description: 'Monthly groceries and household food items' },
-            { name: 'Utilities', suggestedAmount: 800, tier: 'Core' as const, description: 'Electricity, water, gas, internet, and phone bills' },
-            { name: 'Transportation', suggestedAmount: 1500, tier: 'Core' as const, description: 'Car payments, fuel, maintenance, and public transport' },
-            { name: 'Education', suggestedAmount: 2000, tier: 'Core' as const, description: 'School fees, tuition, books, and educational materials' },
-            { name: 'Healthcare & Medical', suggestedAmount: 1000, tier: 'Core' as const, description: 'Medical insurance, doctor visits, medications' },
-            { name: 'Insurance', suggestedAmount: 800, tier: 'Core' as const, description: 'Health, car, life, and property insurance' },
-            { name: 'Personal Care', suggestedAmount: 600, tier: 'Supporting' as const, description: 'Haircuts, cosmetics, toiletries, and personal hygiene' },
-            { name: 'Clothing & Apparel', suggestedAmount: 800, tier: 'Supporting' as const, description: 'Clothing, shoes, and accessories for family' },
-            { name: 'Entertainment & Recreation', suggestedAmount: 1000, tier: 'Optional' as const, description: 'Movies, restaurants, outings, and leisure activities' },
-            { name: 'Dining Out', suggestedAmount: 1200, tier: 'Optional' as const, description: 'Restaurant meals and takeout' },
-            { name: 'Shopping & Retail', suggestedAmount: 1000, tier: 'Optional' as const, description: 'General shopping and retail purchases' },
-            { name: 'Savings & Investments', suggestedAmount: 2000, tier: 'Core' as const, description: 'Emergency fund, savings, and investment contributions' },
-            { name: 'Charity & Zakat', suggestedAmount: 500, tier: 'Core' as const, description: 'Monthly charity and Zakat contributions' },
-            { name: 'Home Maintenance', suggestedAmount: 500, tier: 'Supporting' as const, description: 'Repairs, maintenance, and home improvements' },
-            { name: 'Children Activities', suggestedAmount: 600, tier: 'Supporting' as const, description: 'Extracurricular activities, sports, and hobbies for children' },
-            { name: 'Gifts & Celebrations', suggestedAmount: 400, tier: 'Optional' as const, description: 'Birthdays, weddings, and special occasions' },
-            { name: 'Travel & Vacations', suggestedAmount: 1500, tier: 'Optional' as const, description: 'Travel expenses and vacation planning' },
-            { name: 'Subscriptions & Memberships', suggestedAmount: 300, tier: 'Optional' as const, description: 'Streaming services, gym memberships, and subscriptions' },
-            { name: 'Pet Care', suggestedAmount: 300, tier: 'Supporting' as const, description: 'Pet food, veterinary care, and pet supplies' },
-            { name: 'Miscellaneous', suggestedAmount: 500, tier: 'Optional' as const, description: 'Other expenses not covered above' },
-        ];
-        return categories.map(cat => ({
-            ...cat,
-            name: cat.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' '),
-        }));
+    // Calculate dynamic amounts based on family size
+    const calculateFamilyAdjustedAmount = useCallback((baseAmount: number, perAdult: number, perKid: number, adults: number, kids: number): number => {
+        return baseAmount + (perAdult * adults) + (perKid * kids);
     }, []);
+
+    // Saudi Arabia-specific budget categories with dynamic amounts based on family size
+    const saudiBudgetCategories = useMemo(() => {
+        const adults = householdAdults || 2;
+        const kids = householdKids || 0;
+        
+        // Base amounts are for a family of 2 adults, scaled by family size
+        const categories = [
+            { 
+                name: 'Housing & Rent', 
+                baseAmount: 5000, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Core' as const, 
+                description: 'Monthly rent or mortgage payment (typically fixed regardless of family size)' 
+            },
+            { 
+                name: 'Groceries & Food', 
+                baseAmount: 1500, 
+                perAdult: 800, 
+                perKid: 500, 
+                tier: 'Core' as const, 
+                description: 'Monthly groceries and household food items' 
+            },
+            { 
+                name: 'Utilities', 
+                baseAmount: 600, 
+                perAdult: 150, 
+                perKid: 50, 
+                tier: 'Core' as const, 
+                description: 'Electricity, water, gas, internet, and phone bills' 
+            },
+            { 
+                name: 'Transportation', 
+                baseAmount: 1200, 
+                perAdult: 400, 
+                perKid: 200, 
+                tier: 'Core' as const, 
+                description: 'Car payments, fuel, maintenance, and public transport' 
+            },
+            { 
+                name: 'Education', 
+                baseAmount: 0, 
+                perAdult: 0, 
+                perKid: 2000, 
+                tier: 'Core' as const, 
+                description: 'School fees, tuition, books, and educational materials per child' 
+            },
+            { 
+                name: 'Healthcare & Medical', 
+                baseAmount: 600, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Core' as const, 
+                description: 'Medical insurance, doctor visits, medications' 
+            },
+            { 
+                name: 'Insurance', 
+                baseAmount: 600, 
+                perAdult: 200, 
+                perKid: 100, 
+                tier: 'Core' as const, 
+                description: 'Health, car, life, and property insurance' 
+            },
+            { 
+                name: 'Personal Care', 
+                baseAmount: 400, 
+                perAdult: 150, 
+                perKid: 80, 
+                tier: 'Supporting' as const, 
+                description: 'Haircuts, cosmetics, toiletries, and personal hygiene' 
+            },
+            { 
+                name: 'Clothing & Apparel', 
+                baseAmount: 500, 
+                perAdult: 200, 
+                perKid: 150, 
+                tier: 'Supporting' as const, 
+                description: 'Clothing, shoes, and accessories for family' 
+            },
+            { 
+                name: 'Entertainment & Recreation', 
+                baseAmount: 600, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Optional' as const, 
+                description: 'Movies, restaurants, outings, and leisure activities' 
+            },
+            { 
+                name: 'Dining Out', 
+                baseAmount: 800, 
+                perAdult: 300, 
+                perKid: 150, 
+                tier: 'Optional' as const, 
+                description: 'Restaurant meals and takeout' 
+            },
+            { 
+                name: 'Shopping & Retail', 
+                baseAmount: 600, 
+                perAdult: 250, 
+                perKid: 150, 
+                tier: 'Optional' as const, 
+                description: 'General shopping and retail purchases' 
+            },
+            { 
+                name: 'Savings & Investments', 
+                baseAmount: 2000, 
+                perAdult: 500, 
+                perKid: 300, 
+                tier: 'Core' as const, 
+                description: 'Emergency fund, savings, and investment contributions' 
+            },
+            { 
+                name: 'Charity & Zakat', 
+                baseAmount: 500, 
+                perAdult: 100, 
+                perKid: 50, 
+                tier: 'Core' as const, 
+                description: 'Monthly charity and Zakat contributions' 
+            },
+            { 
+                name: 'Home Maintenance', 
+                baseAmount: 500, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Supporting' as const, 
+                description: 'Repairs, maintenance, and home improvements' 
+            },
+            { 
+                name: 'Children Activities', 
+                baseAmount: 0, 
+                perAdult: 0, 
+                perKid: 600, 
+                tier: 'Supporting' as const, 
+                description: 'Extracurricular activities, sports, and hobbies per child' 
+            },
+            { 
+                name: 'Gifts & Celebrations', 
+                baseAmount: 300, 
+                perAdult: 50, 
+                perKid: 50, 
+                tier: 'Optional' as const, 
+                description: 'Birthdays, weddings, and special occasions' 
+            },
+            { 
+                name: 'Travel & Vacations', 
+                baseAmount: 1000, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Optional' as const, 
+                description: 'Travel expenses and vacation planning' 
+            },
+            { 
+                name: 'Subscriptions & Memberships', 
+                baseAmount: 200, 
+                perAdult: 80, 
+                perKid: 30, 
+                tier: 'Optional' as const, 
+                description: 'Streaming services, gym memberships, and subscriptions' 
+            },
+            { 
+                name: 'Pet Care', 
+                baseAmount: 300, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Supporting' as const, 
+                description: 'Pet food, veterinary care, and pet supplies' 
+            },
+            { 
+                name: 'Miscellaneous', 
+                baseAmount: 400, 
+                perAdult: 100, 
+                perKid: 50, 
+                tier: 'Optional' as const, 
+                description: 'Other expenses not covered above' 
+            },
+        ];
+        return categories.map(cat => {
+            const suggestedAmount = calculateFamilyAdjustedAmount(cat.baseAmount, cat.perAdult, cat.perKid, adults, kids);
+            return {
+                name: cat.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' '),
+                suggestedAmount: Math.round(suggestedAmount),
+                tier: cat.tier,
+                description: cat.description,
+            };
+        });
+    }, [householdAdults, householdKids, calculateFamilyAdjustedAmount]);
 
     const availableCategories = useMemo(() => {
         const allPossible = saudiBudgetCategories.map(c => c.name);
@@ -152,16 +313,18 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             };
             const prompt = `As a financial advisor for a family living in Saudi Arabia, suggest an appropriate monthly budget amount for "${category}" category. 
             
-Family composition: ${householdInfo.adults} adults, ${householdInfo.kids} children
+Family composition: ${householdInfo.adults} adult${householdInfo.adults !== 1 ? 's' : ''}, ${householdInfo.kids} child${householdInfo.kids !== 1 ? 'ren' : ''}
 Estimated monthly income: ${householdInfo.monthlyIncome.toFixed(0)} SAR
+Total family members: ${householdInfo.adults + householdInfo.kids}
 
 Consider:
-- Typical living costs in Saudi Arabia
-- Family size and needs
-- Current suggested amount: ${selectedCategoryInfo?.suggestedAmount || 0} SAR
+- Typical living costs in Saudi Arabia for a family of ${householdInfo.adults + householdInfo.kids} members
+- Family size impact: each additional adult typically adds 30-50% to variable expenses, each child adds 20-40%
+- Current suggested amount (already adjusted for family size): ${selectedCategoryInfo?.suggestedAmount || 0} SAR
 - Category type: ${selectedCategoryInfo?.tier || 'Optional'}
+- Income level and financial capacity
 
-Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief explanation"}`;
+Provide a realistic, practical amount that accounts for the family size. Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief explanation"}`;
 
             const response = await getAISummary(prompt, 'budgets');
             const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -244,7 +407,12 @@ Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief
                                     <div className="flex items-start justify-between">
                                         <div className="flex-1">
                                             <p className="text-xs font-semibold text-blue-900 mb-1">{selectedCategoryInfo.description}</p>
-                                            <p className="text-xs text-blue-700">Suggested amount: <span className="font-bold">{selectedCategoryInfo.suggestedAmount.toLocaleString()} SAR/month</span></p>
+                                            <p className="text-xs text-blue-700">
+                                                Suggested amount: <span className="font-bold">{selectedCategoryInfo.suggestedAmount.toLocaleString()} SAR/month</span>
+                                                {householdAdults > 2 || householdKids > 0 && (
+                                                    <span className="text-blue-600 ml-2">(adjusted for {householdAdults} adult{householdAdults !== 1 ? 's' : ''}{householdKids > 0 ? `, ${householdKids} child${householdKids !== 1 ? 'ren' : ''}` : ''})</span>
+                                                )}
+                                            </p>
                                             <p className="text-xs text-blue-600 mt-1">Type: <span className="font-medium">{selectedCategoryInfo.tier}</span></p>
                                         </div>
                                         <button
@@ -2101,22 +2269,52 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 setIsLoadingAIBudgets(true);
                                 try {
                                     const monthlyIncome = expectedMonthlySalary || suggestedMonthlySalary || 15000;
+                                    const totalFamilyMembers = householdAdults + householdKids;
                                     const prompt = `As a financial advisor for a family in Saudi Arabia, suggest comprehensive monthly budget allocations.
 
-Family: ${householdAdults} adults, ${householdKids} children
+Family Composition: ${householdAdults} adult${householdAdults !== 1 ? 's' : ''}, ${householdKids} child${householdKids !== 1 ? 'ren' : ''} (Total: ${totalFamilyMembers} members)
 Monthly Income: ${monthlyIncome.toLocaleString()} SAR
+
+CRITICAL: All amounts MUST be adjusted for family size:
+- Base amounts are for 2 adults
+- Each additional adult adds 30-50% to variable expenses (food, utilities, personal care, etc.)
+- Each child adds 20-40% to variable expenses
+- Fixed costs (housing, insurance base) remain relatively constant
+- Education costs scale directly with number of children
+- Transportation costs increase with more drivers/adults
 
 Provide a JSON response with budget categories and suggested monthly amounts in SAR:
 {
   "budgets": [
-    {"category": "Category Name", "amount": number, "tier": "Core|Supporting|Optional", "reasoning": "brief explanation"}
+    {"category": "Category Name", "amount": number, "tier": "Core|Supporting|Optional", "reasoning": "brief explanation including family size adjustment"}
   ],
   "totalAllocated": number,
   "remainingForSavings": number,
   "recommendations": ["insight1", "insight2"]
 }
 
-Use Saudi Arabia-specific categories like: Housing & Rent, Groceries & Food, Utilities, Transportation, Education, Healthcare & Medical, Insurance, Personal Care, Clothing & Apparel, Entertainment & Recreation, Dining Out, Shopping & Retail, Savings & Investments, Charity & Zakat, Home Maintenance, Children Activities, Gifts & Celebrations, Travel & Vacations, Subscriptions & Memberships, Pet Care, Miscellaneous.
+Use Saudi Arabia-specific categories with proper capitalization (Title Case):
+- Housing & Rent (fixed, ~5000-8000 SAR)
+- Groceries & Food (scales with family: base 1500 + 800/adult + 500/child)
+- Utilities (scales: base 600 + 150/adult + 50/child)
+- Transportation (scales: base 1200 + 400/adult + 200/child)
+- Education (2000 SAR per child)
+- Healthcare & Medical (scales: base 600 + 300/adult + 200/child)
+- Insurance (scales: base 600 + 200/adult + 100/child)
+- Personal Care (scales: base 400 + 150/adult + 80/child)
+- Clothing & Apparel (scales: base 500 + 200/adult + 150/child)
+- Entertainment & Recreation (scales: base 600 + 300/adult + 200/child)
+- Dining Out (scales: base 800 + 300/adult + 150/child)
+- Shopping & Retail (scales: base 600 + 250/adult + 150/child)
+- Savings & Investments (scales: base 2000 + 500/adult + 300/child)
+- Charity & Zakat (scales: base 500 + 100/adult + 50/child)
+- Home Maintenance (fixed ~500 SAR)
+- Children Activities (600 SAR per child)
+- Gifts & Celebrations (scales: base 300 + 50/adult + 50/child)
+- Travel & Vacations (scales: base 1000 + 300/adult + 200/child)
+- Subscriptions & Memberships (scales: base 200 + 80/adult + 30/child)
+- Pet Care (fixed ~300 SAR)
+- Miscellaneous (scales: base 400 + 100/adult + 50/child)
 
 Ensure total allocated is reasonable (typically 70-85% of income, leaving 15-30% for savings).`;
 
