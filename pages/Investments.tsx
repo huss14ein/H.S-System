@@ -673,7 +673,12 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`${holding.symbol} — Share details`}
+            maxWidthClass="max-w-4xl"
+        >
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">

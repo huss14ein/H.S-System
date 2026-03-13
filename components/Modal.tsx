@@ -6,11 +6,24 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /**
+   * Optional Tailwind max-width utility for the modal panel.
+   * Defaults to a comfortable dialog width, but can be overridden
+   * (e.g. 'max-w-3xl', 'max-w-4xl', 'max-w-5xl') for wider layouts
+   * such as the Share details window.
+   */
+  maxWidthClass?: string;
 }
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({
+  isOpen,
+  onClose,
+  title,
+  children,
+  maxWidthClass = 'max-w-lg',
+}) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -67,7 +80,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
     >
       <div
         ref={panelRef}
-        className="bg-white rounded-xl shadow-xl max-w-lg w-full mb-8 border border-slate-200 min-w-0 overflow-hidden"
+        className={`bg-white rounded-xl shadow-xl ${maxWidthClass} w-full mb-8 border border-slate-200 min-w-0 overflow-hidden`}
         role="document"
         onClick={e => e.stopPropagation()}
         onKeyDown={handleKeyDown}
