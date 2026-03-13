@@ -255,19 +255,23 @@ const RecordTradeModal: React.FC<{
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
     
-    const selectedInvestmentAccount = useMemo(() => 
-        accountId ? investmentAccounts.find(acc => acc.id === accountId) : null,
+    const selectedInvestmentAccount = useMemo(
+        () => (accountId ? investmentAccounts.find(acc => acc.id === accountId) : null),
         [accountId, investmentAccounts]
     );
     
     const linkedCashAccounts = useMemo(() => {
-        if (!selectedInvestmentAccount?.linkedAccountIds || selectedInvestmentAccount.linkedAccountIds.length === 0) {
-            return [];
-        }
-        return allAccounts.filter(acc => 
-            selectedInvestmentAccount.linkedAccountIds!.includes(acc.id) && 
-            (acc.type === 'Checking' || acc.type === 'Savings')
+        const cashAccounts = allAccounts.filter(
+            acc => acc.type === 'Checking' || acc.type === 'Savings'
         );
+        // When platform has explicit linkedAccountIds, restrict to those;
+        // otherwise allow any cash account for simpler auto-transfer UX.
+        if (selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0) {
+            return cashAccounts.filter(acc =>
+                selectedInvestmentAccount.linkedAccountIds!.includes(acc.id)
+            );
+        }
+        return cashAccounts;
     }, [selectedInvestmentAccount, allAccounts]);
     
     const isNewHolding = useMemo(() => {
@@ -393,12 +397,10 @@ const RecordTradeModal: React.FC<{
             if (!accountId) return 'Please select a platform.';
             const amt = parseFloat(cashAmount);
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
-            if (selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0) {
-                if (!linkedCashAccountId) {
-                    return type === 'deposit' 
-                        ? 'Please select the cash account this deposit came from.'
-                        : 'Please select the cash account this withdrawal goes to.';
-                }
+            if (linkedCashAccounts.length > 0 && !linkedCashAccountId) {
+                return type === 'deposit'
+                    ? 'Please select the cash account this deposit came from.'
+                    : 'Please select the cash account this withdrawal goes to.';
             }
             return null;
         }
@@ -553,7 +555,7 @@ const RecordTradeModal: React.FC<{
                 </div>
                 {isCashFlow ? (
                     <>
-                        {selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0 ? (
+                        {linkedCashAccounts.length > 0 ? (
                             <div>
                                 <label htmlFor="linked-cash-account" className="block text-sm font-medium text-gray-700">
                                     {type === 'deposit' ? 'Source Cash Account' : 'Destination Cash Account'}
@@ -573,15 +575,18 @@ const RecordTradeModal: React.FC<{
                                     ))}
                                 </select>
                                 <p className="text-xs text-slate-500 mt-1">
-                                    {type === 'deposit' 
+                                    {type === 'deposit'
                                         ? 'Select the cash account where this deposit came from.'
                                         : 'Select the cash account where this withdrawal will go.'}
+                                    {selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0 && (
+                                        <> Only accounts explicitly linked to <span className="font-semibold">{selectedInvestmentAccount.name}</span> are shown.</>
+                                    )}
                                 </p>
                             </div>
                         ) : (
                             <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
-                                <p className="font-medium">No linked cash accounts</p>
-                                <p className="mt-1">This platform doesn't have any linked cash accounts. Edit the platform in Accounts to link cash accounts for deposits/withdrawals.</p>
+                                <p className="font-medium">No cash accounts available</p>
+                                <p className="mt-1">Create a Checking or Savings account from the Accounts page to use as a funding source for this platform.</p>
                             </div>
                         )}
                         <div>

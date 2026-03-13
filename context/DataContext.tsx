@@ -1221,7 +1221,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const db = supabase;
         const payload: any = { ...platform, balance: 0 };
-        if (platform.linkedAccountIds && Array.isArray(platform.linkedAccountIds)) {
+        if (Array.isArray(platform.linkedAccountIds)) {
+            // Allow explicitly clearing links by sending an empty array, or setting specific links.
             payload.linked_account_ids = platform.linkedAccountIds;
         }
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
@@ -1239,8 +1240,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase || !auth?.user) return;
         const db = supabase;
         const payload: any = { ...platform };
-        if (platform.linkedAccountIds && Array.isArray(platform.linkedAccountIds)) {
+        if (Array.isArray(platform.linkedAccountIds)) {
+            // Keep platform.linkedAccountIds as the single source of truth and always sync it to DB.
+            // When empty, this explicitly clears previously linked cash accounts.
             payload.linked_account_ids = platform.linkedAccountIds;
+        } else {
+            // If undefined, do not touch existing DB links.
+            delete (payload as any).linkedAccountIds;
         }
         const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
         if(error) console.error("Error updating platform:", error);
