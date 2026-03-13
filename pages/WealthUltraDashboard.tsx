@@ -1279,7 +1279,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           </div>
           
           {/* Hero & Health Status */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-8">
               {gridItems.find(item => item.id === 'hero')?.content}
             </div>
@@ -1316,7 +1316,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift analysis, and deployment planning</p>
           </div>
           
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Sleeve Allocation */}
             <div className="lg:col-span-8">
               {gridItems.find(item => item.id === 'sleeve-allocation')?.content}
@@ -1337,7 +1337,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <p className="text-xs text-slate-500 mt-1">Generated orders and actionable alerts</p>
           </div>
           
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Orders */}
             <div className="lg:col-span-7">
               {gridItems.find(item => item.id === 'orders')?.content}
