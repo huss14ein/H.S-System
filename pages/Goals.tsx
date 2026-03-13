@@ -22,6 +22,7 @@ import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -78,9 +79,14 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const rawTargetAmount = Number(targetAmount) || 0;
+        if (!Number.isFinite(rawTargetAmount) || rawTargetAmount < 0) {
+            alert('Please enter a valid target amount greater than or equal to 0.');
+            return;
+        }
         const goalData = {
             name,
-            targetAmount: parseFloat(targetAmount) || 0,
+            targetAmount: rawTargetAmount,
             deadline,
             priority,
         };
@@ -151,22 +157,36 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const investments = data?.investments ?? [];
 
         assets.filter(a => a.goalId === goal.id).forEach(a => {
-            linkedItems.push({ name: a.name, value: a.value });
+            const value = Math.max(0, Number(a.value) || 0);
+            if (Number.isFinite(value)) {
+                linkedItems.push({ name: a.name, value });
+            }
         });
 
         investments.forEach(p => {
             const holdings = p.holdings ?? [];
             if (p.goalId === goal.id) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
-                linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
+                const portfolioValue = holdings.reduce((sum, h) => {
+                    const value = toSAR(h.currentValue, p.currency, exchangeRate);
+                    return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+                }, 0);
+                if (Number.isFinite(portfolioValue)) {
+                    linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
+                }
             } else {
                 holdings.filter(h => h.goalId === goal.id).forEach(h => {
-                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue, p.currency, exchangeRate) });
+                    const value = toSAR(h.currentValue, p.currency, exchangeRate);
+                    if (Number.isFinite(value)) {
+                        linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: Math.max(0, value) });
+                    }
                 });
             }
         });
 
-        const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
+        const totalValue = linkedItems.reduce((sum, item) => {
+            const value = Number(item.value) || 0;
+            return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
     }, [data?.assets, data?.investments, goal.id, exchangeRate]);
@@ -180,14 +200,24 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
-        const currentAmount = calculatedCurrentAmount;
-        const deadline = new Date(goal.deadline);
-        const now = new Date();
-        const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
-        const progressPercent = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
-        const remainingAmount = Math.max(0, goal.targetAmount - currentAmount);
-        const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+        const currentAmount = Math.max(0, Number.isFinite(calculatedCurrentAmount) ? calculatedCurrentAmount : 0);
+        let monthsLeft = 0;
+        try {
+            const deadline = new Date(goal.deadline);
+            const now = new Date();
+            if (Number.isFinite(deadline.getTime()) && Number.isFinite(now.getTime())) {
+                monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
+            }
+        } catch (error) {
+            console.warn('Error calculating months left for goal:', error, goal);
+        }
+        const targetAmount = Math.max(0, Number(goal.targetAmount) || 0);
+        const progressPercent = targetAmount > 0 && Number.isFinite(currentAmount) ? Math.min(1000, (currentAmount / targetAmount) * 100) : 0;
+        const remainingAmount = Math.max(0, targetAmount - currentAmount);
+        const requiredMonthlyContribution = monthsLeft > 0 && Number.isFinite(remainingAmount) ? remainingAmount / monthsLeft : (Number.isFinite(remainingAmount) ? remainingAmount : 0);
+        const allocationPercent = Math.max(0, Math.min(100, Number(goal.savingsAllocationPercent) || 0));
+        const safeMonthlySavings = Math.max(0, Number.isFinite(monthlySavings) ? monthlySavings : 0);
+        const projectedMonthlyContribution = safeMonthlySavings * (allocationPercent / 100);
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
         if (progressPercent >= 100) {
@@ -329,16 +359,27 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-        (data?.transactions ?? []).filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
-            const monthKey = t.date.slice(0, 7); // YYYY-MM
-            const currentNet = monthlyNet.get(monthKey) || 0;
-            monthlyNet.set(monthKey, currentNet + t.amount); // amount is positive for income, negative for expense
+        (data?.transactions ?? []).forEach(t => {
+            try {
+                const txDate = new Date(t.date);
+                if (!Number.isFinite(txDate.getTime()) || txDate <= sixMonthsAgo) return;
+                const amount = Number(t.amount) || 0;
+                if (!Number.isFinite(amount)) return;
+                const monthKey = t.date.slice(0, 7); // YYYY-MM
+                const currentNet = monthlyNet.get(monthKey) || 0;
+                monthlyNet.set(monthKey, currentNet + amount); // amount is positive for income, negative for expense
+            } catch (error) {
+                console.warn('Error processing transaction for monthly savings:', error, t);
+            }
         });
         
         if (monthlyNet.size === 0) return 7500; // Default if no recent transactions
         
-        const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
-        return Math.max(0, totalNet / monthlyNet.size);
+        const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => {
+            const value = Number(net) || 0;
+            return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        return Math.max(0, Number.isFinite(totalNet) ? totalNet / monthlyNet.size : 0);
     }, [data?.transactions]);
 
     const { totalTargetAmount, totalCurrentAmount } = useMemo(() => {
@@ -358,20 +399,30 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         investments.forEach(p => {
             const holdings = p.holdings ?? [];
             if (p.goalId) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
-                goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
+                const portfolioValue = holdings.reduce((sum, h) => {
+                    const value = toSAR(h.currentValue, p.currency, exchangeRate);
+                    return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+                }, 0);
+                if (Number.isFinite(portfolioValue)) {
+                    goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
+                }
             } else {
                 holdings.forEach(h => {
                     if (h.goalId) {
-                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue, p.currency, exchangeRate));
+                        const value = toSAR(h.currentValue, p.currency, exchangeRate);
+                        if (Number.isFinite(value)) {
+                            goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + Math.max(0, value));
+                        }
                     }
                 });
             }
         });
 
         goals.forEach(goal => {
-            totalTarget += goal.targetAmount;
-            totalCurrent += goalAssetValues.get(goal.id) || 0;
+            const target = Math.max(0, Number(goal.targetAmount) || 0);
+            const current = Math.max(0, goalAssetValues.get(goal.id) || 0);
+            if (Number.isFinite(target)) totalTarget += target;
+            if (Number.isFinite(current)) totalCurrent += current;
         });
 
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent };
@@ -383,14 +434,26 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         const monthlyNet = new Map<string, number>();
         const year = new Date().getFullYear();
         (data?.transactions ?? []).forEach(t => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== year) return;
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + t.amount);
+            try {
+                const d = new Date(t.date);
+                if (!Number.isFinite(d.getTime()) || d.getFullYear() !== year) return;
+                const amount = Number(t.amount) || 0;
+                if (!Number.isFinite(amount)) return;
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + amount);
+            } catch (error) {
+                console.warn('Error processing transaction for annual surplus:', error, t);
+            }
         });
-        if (monthlyNet.size === 0) return averageMonthlySavings * 12;
-        const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);
-        return totalNet;
+        if (monthlyNet.size === 0) {
+            const projected = averageMonthlySavings * 12;
+            return Number.isFinite(projected) ? Math.max(0, projected) : 0;
+        }
+        const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => {
+            const value = Number(v) || 0;
+            return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        return Number.isFinite(totalNet) ? Math.max(0, totalNet) : 0;
     }, [data?.transactions, averageMonthlySavings]);
 
     const fundingPlan = useMemo(
@@ -424,17 +487,71 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     };
     
     const handleAllocationChange = (goalId: string, value: string) => {
-        const percent = Math.max(0, Math.min(100, parseInt(value, 10) || 0));
+        const parsed = Number(value) || 0;
+        const percent = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
         setAllocations(prev => ({ ...prev, [goalId]: percent }));
     };
 
-    const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => sum + p, 0), [allocations]);
+    const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => {
+        const value = Math.max(0, Math.min(100, Number(p) || 0));
+        return sum + (Number.isFinite(value) ? value : 0);
+    }, 0), [allocations]);
     
     const handleSaveAllocations = () => {
         const allocationArray = Object.entries(allocations).map(([id, savingsAllocationPercent]) => ({ id, savingsAllocationPercent }));
         updateGoalAllocations(allocationArray);
         alert("Savings allocation strategy saved!");
     };
+
+    const handleExportGoals = useCallback(() => {
+        try {
+            const exportData = {
+                summary: {
+                    totalTargetAmount,
+                    totalCurrentAmount,
+                    overallProgress: totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0,
+                    averageMonthlySavings,
+                    projectedAnnualSurplus,
+                    totalAllocation,
+                },
+                goals: (data?.goals ?? []).map(goal => {
+                    const goalAssets = (data?.assets ?? []).filter(a => a.goalId === goal.id);
+                    const goalInvestments = (data?.investments ?? []).filter(p => p.goalId === goal.id || (p.holdings ?? []).some(h => h.goalId === goal.id));
+                    return {
+                        id: goal.id,
+                        name: goal.name,
+                        targetAmount: goal.targetAmount,
+                        deadline: goal.deadline,
+                        priority: goal.priority,
+                        savingsAllocationPercent: goal.savingsAllocationPercent || 0,
+                        linkedAssetsCount: goalAssets.length,
+                        linkedInvestmentsCount: goalInvestments.length,
+                    };
+                }),
+                fundingPlan: {
+                    totalMonthlySurplus: fundingPlan.totalMonthlySurplus,
+                    suggestions: fundingPlan.suggestions.map(s => ({
+                        goalId: s.goalId,
+                        name: s.name,
+                        requiredPerMonth: s.requiredPerMonth,
+                        suggestedPerMonth: s.suggestedPerMonth,
+                        status: s.status,
+                    })),
+                },
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `goals-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting goals:', error);
+            alert('Failed to export goals. Please try again.');
+        }
+    }, [data?.goals, data?.assets, data?.investments, totalTargetAmount, totalCurrentAmount, averageMonthlySavings, projectedAnnualSurplus, totalAllocation, fundingPlan]);
 
     if (loading) {
         return (
@@ -450,6 +567,10 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
       action={
         <div className="flex items-center gap-2">
+          <button type="button" onClick={handleExportGoals} className="btn-ghost flex items-center gap-2" title="Export goals data">
+            <ArrowDownTrayIcon className="h-5 w-5" />
+            Export
+          </button>
           {setActivePage && (
             <button type="button" onClick={() => setActivePage('Plan')} className="btn-outline flex items-center gap-1.5">
               <LinkIcon className="h-4 w-4" /> See impact in Plan
