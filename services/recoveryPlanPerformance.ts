@@ -47,6 +47,12 @@ const MAX_EXECUTIONS = 500;
 export function saveRecoveryExecution(execution: RecoveryPlanExecution): void {
   if (typeof window === 'undefined') return;
   try {
+    // Validate execution data
+    if (!execution || !execution.id || !execution.symbol || typeof execution.timestamp !== 'number') {
+      console.warn('Invalid recovery execution data:', execution);
+      return;
+    }
+    
     const existing = getRecoveryExecutions();
     const updated = [...existing.filter(e => e.id !== execution.id), execution]
       .sort((a, b) => b.timestamp - a.timestamp)
@@ -181,6 +187,105 @@ export function calculateRecoveryStatistics(): RecoveryPlanStatistics {
   };
 }
 
+export interface RecoveryTimelineProjection {
+  estimatedDaysToRecovery: number;
+  confidence: 'high' | 'medium' | 'low';
+  factors: string[];
+  historicalAverageDays?: number;
+  projectedRecoveryDate?: Date;
+}
+
+/**
+ * Project recovery timeline based on historical data and current position state
+ */
+export function projectRecoveryTimeline(
+  symbol: string,
+  initialPlPct: number,
+  currentPlPct: number,
+  lossTriggerPct: number
+): RecoveryTimelineProjection {
+  const executions = getRecoveryExecutionsBySymbol(symbol);
+  const completed = executions.filter(e => 
+    e.executionStatus === 'complete' && 
+    e.outcome?.recovered && 
+    e.outcome.recoveryTimeDays
+  );
+  
+  // Calculate historical average recovery time for this symbol
+  const historicalRecoveryTimes = completed.map(e => e.outcome!.recoveryTimeDays!);
+  const historicalAverageDays = historicalRecoveryTimes.length > 0
+    ? historicalRecoveryTimes.reduce((a, b) => a + b, 0) / historicalRecoveryTimes.length
+    : undefined;
+  
+  // Calculate recovery progress
+  const initialLoss = Math.abs(initialPlPct);
+  const currentLoss = Math.abs(currentPlPct);
+  const recoveryProgress = initialLoss > 0
+    ? Math.min(100, Math.max(0, ((initialLoss - currentLoss) / initialLoss) * 100))
+    : 0;
+  
+  // Estimate remaining time based on progress and historical data
+  let estimatedDaysToRecovery = 0;
+  let confidence: 'high' | 'medium' | 'low' = 'low';
+  const factors: string[] = [];
+  
+  if (recoveryProgress > 0 && historicalAverageDays) {
+    // If we have progress and historical data, estimate based on progress rate
+    const progressRate = recoveryProgress / 100;
+    const estimatedTotalDays = historicalAverageDays / progressRate;
+    estimatedDaysToRecovery = Math.max(0, estimatedTotalDays - (Date.now() - executions[0]?.timestamp || Date.now()) / (1000 * 60 * 60 * 24));
+    confidence = historicalRecoveryTimes.length >= 3 ? 'high' : historicalRecoveryTimes.length >= 1 ? 'medium' : 'low';
+    factors.push(`Based on ${historicalRecoveryTimes.length} historical recovery${historicalRecoveryTimes.length > 1 ? 's' : ''}`);
+  } else if (historicalAverageDays) {
+    // Use historical average if no progress yet
+    estimatedDaysToRecovery = historicalAverageDays;
+    confidence = historicalRecoveryTimes.length >= 3 ? 'high' : 'medium';
+    factors.push(`Based on ${historicalRecoveryTimes.length} historical recovery${historicalRecoveryTimes.length > 1 ? 's' : ''}`);
+  } else {
+    // Fallback estimation based on loss severity
+    const lossSeverity = Math.abs(initialPlPct);
+    if (lossSeverity < 15) {
+      estimatedDaysToRecovery = 30;
+      factors.push('Mild loss severity suggests faster recovery');
+    } else if (lossSeverity < 25) {
+      estimatedDaysToRecovery = 60;
+      factors.push('Moderate loss severity');
+    } else {
+      estimatedDaysToRecovery = 90;
+      factors.push('Significant loss severity may require longer recovery');
+    }
+    confidence = 'low';
+    factors.push('No historical data available for this symbol');
+  }
+  
+  // Adjust based on current progress
+  if (recoveryProgress > 50) {
+    factors.push(`Strong recovery progress (${recoveryProgress.toFixed(0)}%)`);
+    estimatedDaysToRecovery = Math.max(7, estimatedDaysToRecovery * 0.5);
+  } else if (recoveryProgress > 25) {
+    factors.push(`Moderate recovery progress (${recoveryProgress.toFixed(0)}%)`);
+    estimatedDaysToRecovery = Math.max(14, estimatedDaysToRecovery * 0.75);
+  }
+  
+  // Consider loss trigger threshold
+  if (lossTriggerPct < 15) {
+    factors.push('Conservative loss trigger suggests proactive recovery');
+  } else if (lossTriggerPct > 20) {
+    factors.push('Higher loss trigger may delay recovery start');
+  }
+  
+  const projectedRecoveryDate = new Date();
+  projectedRecoveryDate.setDate(projectedRecoveryDate.getDate() + Math.ceil(estimatedDaysToRecovery));
+  
+  return {
+    estimatedDaysToRecovery: Math.ceil(estimatedDaysToRecovery),
+    confidence,
+    factors,
+    historicalAverageDays,
+    projectedRecoveryDate,
+  };
+}
+
 export function updateRecoveryExecutionOutcome(
   executionId: string,
   currentState: {
@@ -190,43 +295,56 @@ export function updateRecoveryExecutionOutcome(
     plPct: number;
   }
 ): void {
-  const executions = getRecoveryExecutions();
-  const execution = executions.find(e => e.id === executionId);
-  if (!execution) return;
-  
-  const initialPlPct = execution.initialPlPct;
-  const recovered = currentState.plPct > -5; // Consider recovered if within 5% of breakeven
-  const recoveryProgress = initialPlPct < 0
-    ? Math.min(100, Math.max(0, ((currentState.plPct - initialPlPct) / Math.abs(initialPlPct)) * 100))
-    : 0;
-  
-  const daysSinceStart = execution.currentState
-    ? Math.floor((Date.now() - execution.timestamp) / (1000 * 60 * 60 * 24))
-    : 0;
-  
-  const capitalDeployed = execution.fills
-    ? execution.fills.reduce((sum, fill) => sum + (fill.qty * fill.price), 0)
-    : execution.recoveryConfig.totalPlannedCost;
-  
-  const roi = capitalDeployed > 0 && execution.currentState
-    ? ((currentState.plPct - initialPlPct) / 100) * (capitalDeployed / execution.initialShares / execution.initialPrice)
-    : 0;
-  
-  execution.currentState = {
-    ...currentState,
-    recoveryProgress,
-  };
-  
-  execution.executionStatus = recovered ? 'complete' : execution.executionStatus;
-  
-  if (recovered || execution.executionStatus === 'complete') {
-    execution.outcome = {
-      recovered,
-      recoveryTimeDays: recovered ? daysSinceStart : undefined,
-      finalPlPct: currentState.plPct,
-      roi,
+  try {
+    // Validate current state
+    if (!currentState || !Number.isFinite(currentState.shares) || !Number.isFinite(currentState.plPct)) {
+      console.warn('Invalid recovery execution current state:', currentState);
+      return;
+    }
+    
+    const executions = getRecoveryExecutions();
+    const execution = executions.find(e => e.id === executionId);
+    if (!execution) return;
+    
+    const initialPlPct = execution.initialPlPct;
+    const recovered = currentState.plPct > -5; // Consider recovered if within 5% of breakeven
+    const recoveryProgress = initialPlPct < 0
+      ? Math.min(100, Math.max(0, ((currentState.plPct - initialPlPct) / Math.abs(initialPlPct)) * 100))
+      : 0;
+    
+    const daysSinceStart = Math.floor((Date.now() - execution.timestamp) / (1000 * 60 * 60 * 24));
+    
+    const capitalDeployed = execution.fills
+      ? execution.fills.reduce((sum, fill) => sum + (fill.qty * fill.price), 0)
+      : execution.recoveryConfig.totalPlannedCost;
+    
+    const roi = capitalDeployed > 0 && execution.initialShares > 0 && execution.initialPrice > 0
+      ? ((currentState.plPct - initialPlPct) / 100) * (capitalDeployed / execution.initialShares / execution.initialPrice)
+      : 0;
+    
+    execution.currentState = {
+      shares: Math.max(0, currentState.shares),
+      avgCost: Math.max(0, currentState.avgCost),
+      currentPrice: Math.max(0, currentState.currentPrice),
+      plPct: currentState.plPct,
+      recoveryProgress: Math.max(0, Math.min(100, recoveryProgress)),
     };
+    
+    if (recovered && execution.executionStatus !== 'complete') {
+      execution.executionStatus = 'complete';
+    }
+    
+    if (recovered || execution.executionStatus === 'complete') {
+      execution.outcome = {
+        recovered,
+        recoveryTimeDays: recovered ? Math.max(0, daysSinceStart) : undefined,
+        finalPlPct: currentState.plPct,
+        roi: Number.isFinite(roi) ? roi : 0,
+      };
+    }
+    
+    saveRecoveryExecution(execution);
+  } catch (error) {
+    console.warn('Failed to update recovery execution outcome:', error);
   }
-  
-  saveRecoveryExecution(execution);
 }

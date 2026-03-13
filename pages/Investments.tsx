@@ -1606,7 +1606,7 @@ const PlatformView: React.FC<{
                     <div>
                         <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-bold text-slate-800">Portfolios</h2><span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">Integrated with plan + execution</span></div>
                         <p className="text-sm text-slate-600 mt-0.5 max-w-2xl">
-                            Manage platforms and portfolios. Each portfolio has a base currency (SAR or USD). Record trades in that currency. Click a share for full details. Integrated with Investment Plan, Recovery Plan, and Wealth Ultra.
+                            Manage platforms and portfolios. Each portfolio has a base currency (SAR or USD). Record trades in that currency. Click a share for full details. Integrated with Investment Plan, Recovery Plan, Wealth Ultra, and Market Events.
                         </p>
                         {(setActiveTab || setActivePage) && (
                             <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -1620,7 +1620,14 @@ const PlatformView: React.FC<{
                                         <button type="button" onClick={() => setActiveTab('Watchlist')} className="text-sm font-medium text-primary hover:underline">Watchlist</button>
                                     </>
                                 )}
-                                {setActivePage && <>{setActiveTab && <span className="text-slate-300">·</span>}<button type="button" onClick={() => setActivePage('Wealth Ultra')} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button></>}
+                                {setActivePage && (
+                                    <>
+                                        {setActiveTab && <span className="text-slate-300">·</span>}
+                                        <button type="button" onClick={() => setActivePage('Wealth Ultra')} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button>
+                                        <span className="text-slate-300">·</span>
+                                        <button type="button" onClick={() => setActivePage('Market Events')} className="text-sm font-medium text-primary hover:underline">Market Events</button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
@@ -3254,7 +3261,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView />;
-      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
       default: return null;

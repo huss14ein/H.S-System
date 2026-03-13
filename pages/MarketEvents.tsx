@@ -411,10 +411,33 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
   const [aiInsights, setAiInsights] = useState<Record<string, { insight: string; action: string; relevance: string }>>({});
   const [loadingInsights, setLoadingInsights] = useState<Set<string>>(new Set());
 
-  const trackedSymbols = useMemo(() => Array.from(new Set([
-    ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
-    ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
-  ])), [data]);
+  const trackedSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    // Add watchlist symbols
+    (data?.watchlist ?? []).forEach(w => {
+      const sym = w.symbol?.trim().toUpperCase();
+      if (sym) symbols.add(sym);
+    });
+    // Add investment holdings
+    (data?.investments ?? []).forEach(p => {
+      (p.holdings ?? []).forEach(h => {
+        const sym = h.symbol?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+    });
+    // Add symbols from investment plan
+    if (data?.investmentPlan) {
+      (data.investmentPlan.corePortfolio ?? []).forEach((p: { ticker?: string }) => {
+        const sym = p.ticker?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+      (data.investmentPlan.upsideSleeve ?? []).forEach((p: { ticker?: string }) => {
+        const sym = p.ticker?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+    }
+    return Array.from(symbols);
+  }, [data]);
 
   useEffect(() => {
     try {
@@ -815,8 +838,35 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
     >
       <div className="space-y-4">
         <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
-          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
+              <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+            </div>
+            {setActivePage && (
+              <div className="flex flex-col gap-2 shrink-0 ml-4">
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Wealth Ultra')}
+                  className="text-xs px-2 py-1 border border-violet-300 text-violet-700 rounded hover:bg-violet-50 whitespace-nowrap"
+                >
+                  Wealth Ultra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePage('Investments');
+                    if (triggerPageAction) {
+                      setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 border border-rose-300 text-rose-700 rounded hover:bg-rose-50 whitespace-nowrap"
+                >
+                  Recovery Plan
+                </button>
+              </div>
+            )}
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
@@ -827,8 +877,35 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
-          <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
+              <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+            </div>
+            {setActivePage && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Wealth Ultra')}
+                  className="text-xs px-2 py-1 border border-violet-300 text-violet-700 rounded hover:bg-violet-50"
+                >
+                  Wealth Ultra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePage('Investments');
+                    if (triggerPageAction) {
+                      setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 border border-rose-300 text-rose-700 rounded hover:bg-rose-50"
+                >
+                  Recovery Plan
+                </button>
+              </div>
+            )}
+          </div>
           <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
             {topFocusEvents.length === 0 && <p className="text-sm text-slate-500">No focus events for current filters.</p>}
             {topFocusEvents.map(({ event, score, daysUntil }) => (
@@ -838,6 +915,20 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
                   <span className="text-xs text-indigo-700 font-semibold">Priority {score}</span>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">{daysUntil === 0 ? 'Today' : `In ${daysUntil} day${daysUntil === 1 ? '' : 's'}`} • {event.date.toLocaleDateString()}</p>
+                {event.symbol && setActivePage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage('Investments');
+                      if (triggerPageAction) {
+                        setTimeout(() => triggerPageAction('Investments', `focus-symbol:${event.symbol}`), 100);
+                      }
+                    }}
+                    className="mt-2 text-xs text-primary hover:underline"
+                  >
+                    View {event.symbol} in Investments →
+                  </button>
+                )}
               </div>
             ))}
           </div>

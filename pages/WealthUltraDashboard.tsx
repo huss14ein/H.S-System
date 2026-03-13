@@ -9,6 +9,7 @@ import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -20,6 +21,12 @@ import {
   getSleeveDriftHistory,
   type PerformanceMetrics,
 } from '../services/wealthUltraPerformance';
+import {
+  fetchBenchmarkData,
+  calculateBenchmarkComparison,
+  type BenchmarkComparison,
+} from '../services/benchmarkService';
+import { getRelatedPages } from '../services/crossPageIntegration';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -270,6 +277,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { isAiAvailable } = useAI();
   const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics | null>(null);
   const [performanceTrend, setPerformanceTrend] = useState<Array<{ date: Date; value: number; returnPct: number }>>([]);
+  const [benchmarkComparison, setBenchmarkComparison] = useState<BenchmarkComparison | null>(null);
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
@@ -429,39 +437,84 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     }
   }, [alerts]);
 
-  // Save performance snapshot
+  // Save performance snapshot automatically (once per day, or when significant changes occur)
   useEffect(() => {
-    if (loading || positions.length === 0) return;
+    if (loading || positions.length === 0 || totalPortfolioValue <= 0) return;
+    
     const now = Date.now();
-    const lastSnapshot = getPerformanceSnapshots()[0];
-    // Only save once per day
-    if (lastSnapshot && (now - lastSnapshot.timestamp) < 24 * 60 * 60 * 1000) return;
-
-    savePerformanceSnapshot({
-      timestamp: now,
-      totalPortfolioValue,
-      allocations,
-      positions: positions.map(p => ({
-        symbol: p.ticker,
-        marketValue: p.marketValue,
-        plPct: p.plPct,
-        sleeveType: p.sleeveType,
-      })),
-      metrics: {
-        totalReturn: 0, // Will be calculated from snapshots
-        totalReturnPct: 0,
-      },
-    });
+    const snapshots = getPerformanceSnapshots();
+    const lastSnapshot = snapshots[0];
+    
+    // Check if we should save a new snapshot
+    let shouldSave = false;
+    
+    if (!lastSnapshot) {
+      // First snapshot - save immediately
+      shouldSave = true;
+    } else {
+      const timeSinceLastSnapshot = now - lastSnapshot.timestamp;
+      const hoursSinceLastSnapshot = timeSinceLastSnapshot / (1000 * 60 * 60);
+      
+      // Save if:
+      // 1. More than 24 hours have passed (daily snapshot)
+      // 2. Portfolio value changed by more than 2% (significant change)
+      const valueChange = Math.abs((totalPortfolioValue - lastSnapshot.totalPortfolioValue) / lastSnapshot.totalPortfolioValue);
+      if (hoursSinceLastSnapshot >= 24 || valueChange > 0.02) {
+        shouldSave = true;
+      }
+    }
+    
+    if (shouldSave) {
+      savePerformanceSnapshot({
+        timestamp: now,
+        totalPortfolioValue,
+        allocations,
+        positions: positions.map(p => ({
+          symbol: p.ticker,
+          marketValue: p.marketValue,
+          plPct: p.plPct,
+          sleeveType: p.sleeveType,
+        })),
+        metrics: {
+          totalReturn: 0, // Will be calculated from snapshots
+          totalReturnPct: 0,
+        },
+      });
+    }
   }, [totalPortfolioValue, allocations, positions, loading]);
 
-  // Calculate performance metrics
+  // Calculate performance metrics dynamically
   useEffect(() => {
     const snapshots = getPerformanceSnapshots();
-    if (snapshots.length < 2) return;
-    const metrics = calculatePerformanceMetrics(snapshots, totalPortfolioValue);
-    setPerformanceMetrics(metrics);
-    const trend = getPerformanceTrend(snapshots, 30);
-    setPerformanceTrend(trend);
+    if (snapshots.length < 2) {
+      setPerformanceMetrics(null);
+      setPerformanceTrend([]);
+      return;
+    }
+    
+    try {
+      const metrics = calculatePerformanceMetrics(snapshots, totalPortfolioValue);
+      if (metrics) {
+        setPerformanceMetrics(metrics);
+        const trend = getPerformanceTrend(snapshots, 30);
+        setPerformanceTrend(trend);
+        
+        // Fetch and calculate benchmark comparison
+        fetchBenchmarkData().then(benchmarks => {
+          if (benchmarks.length > 0 && trend.length > 0) {
+            const portfolioReturn = trend[trend.length - 1].returnPct;
+            const comparison = calculateBenchmarkComparison(portfolioReturn, benchmarks);
+            setBenchmarkComparison(comparison);
+          }
+        }).catch(error => {
+          console.warn('Failed to fetch benchmark data:', error);
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to calculate performance metrics:', error);
+      setPerformanceMetrics(null);
+      setPerformanceTrend([]);
+    }
   }, [totalPortfolioValue]);
 
   useEffect(() => {
@@ -1149,6 +1202,30 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       action={
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
+          {setActivePage && (
+            <>
+              <button
+                type="button"
+                onClick={() => setActivePage('Market Events')}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-indigo-300 text-indigo-700 rounded-xl hover:bg-indigo-50 text-sm font-medium transition-colors"
+              >
+                <CalendarDaysIcon className="h-5 w-5" />
+                Market Events
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePage('Investments');
+                  if (triggerPageAction) {
+                    setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-rose-300 text-rose-700 rounded-xl hover:bg-rose-50 text-sm font-medium transition-colors"
+              >
+                Recovery Plan
+              </button>
+            </>
+          )}
           {triggerPageAction && (
             <button
               type="button"
@@ -1290,9 +1367,34 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         {/* Performance Analytics Section */}
         {performanceMetrics && (
           <section className="space-y-6">
-            <div className="border-b border-slate-200 pb-2">
-              <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Performance Analytics</h2>
-              <p className="text-xs text-slate-500 mt-1">Historical performance metrics and risk analysis</p>
+            <div className="border-b border-slate-200 pb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Performance Analytics</h2>
+                <p className="text-xs text-slate-500 mt-1">Historical performance metrics and risk analysis (auto-updated daily when portfolio value changes by &gt;2% or every 24 hours)</p>
+              </div>
+              {setActivePage && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActivePage('Market Events')}
+                    className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
+                  >
+                    View Market Events Impact
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage('Investments');
+                      if (triggerPageAction) {
+                        setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                      }
+                    }}
+                    className="text-xs px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50"
+                  >
+                    Check Recovery Plans
+                  </button>
+                </div>
+              )}
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1412,6 +1514,68 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                         />
                       );
                     })}
+                  </div>
+                </div>
+              </SectionCard>
+            )}
+
+            {benchmarkComparison && benchmarkComparison.benchmarks.length > 0 && (
+              <SectionCard title="Benchmark Comparison" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white shadow-md">
+                <div className="space-y-4">
+                  <div className="rounded-lg border-2 border-indigo-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Your Portfolio</p>
+                      <p className={`text-2xl font-black tabular-nums ${benchmarkComparison.portfolioReturn >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {benchmarkComparison.portfolioReturn >= 0 ? '+' : ''}{benchmarkComparison.portfolioReturn.toFixed(2)}%
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500">30-day return</p>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {benchmarkComparison.benchmarks.map((benchmark) => {
+                      const outperformance = benchmarkComparison.outperformance[benchmark.symbol];
+                      const isOutperforming = outperformance > 0;
+                      return (
+                        <div
+                          key={benchmark.symbol}
+                          className={`rounded-lg border-2 p-4 ${
+                            isOutperforming
+                              ? 'border-emerald-200 bg-emerald-50/50'
+                              : 'border-slate-200 bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{benchmark.name}</p>
+                              <p className="text-xs text-slate-500">{benchmark.symbol}</p>
+                            </div>
+                            <p className={`text-xl font-black tabular-nums ${benchmark.returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {benchmark.returnPct >= 0 ? '+' : ''}{benchmark.returnPct.toFixed(2)}%
+                            </p>
+                          </div>
+                          <div className="mt-3 pt-3 border-t border-slate-200">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-semibold text-slate-600">Outperformance</p>
+                              <p className={`text-lg font-black tabular-nums ${isOutperforming ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                {isOutperforming ? '+' : ''}{outperformance.toFixed(2)}%
+                              </p>
+                            </div>
+                            <p className={`text-xs mt-1 ${isOutperforming ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {isOutperforming
+                                ? `Your portfolio is outperforming ${benchmark.name}`
+                                : `${benchmark.name} is outperforming your portfolio`}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+                    <p className="text-xs text-indigo-800">
+                      <span className="font-semibold">Note:</span> Benchmark data is simulated for demonstration. In production, this would fetch real-time data from market APIs.
+                    </p>
                   </div>
                 </div>
               </SectionCard>

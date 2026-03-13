@@ -49,8 +49,19 @@ const MAX_SNAPSHOTS = 365; // Keep 1 year of daily snapshots
 export function savePerformanceSnapshot(snapshot: PerformanceSnapshot): void {
   if (typeof window === 'undefined') return;
   try {
+    // Validate snapshot data
+    if (!snapshot || typeof snapshot.timestamp !== 'number' || !Number.isFinite(snapshot.totalPortfolioValue)) {
+      console.warn('Invalid performance snapshot data:', snapshot);
+      return;
+    }
+    
     const existing = getPerformanceSnapshots();
-    const updated = [...existing, snapshot]
+    // Remove duplicates (same timestamp within 1 hour)
+    const deduplicated = existing.filter(s => 
+      Math.abs(s.timestamp - snapshot.timestamp) > 60 * 60 * 1000
+    );
+    
+    const updated = [snapshot, ...deduplicated]
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, MAX_SNAPSHOTS);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));

@@ -93,55 +93,70 @@ export function predictFutureMonths(
 ): PredictiveForecast[] {
   const forecasts: PredictiveForecast[] = [];
   
-  if (months.length < 3) return forecasts;
+  if (!months || months.length < 3) return forecasts;
   
-  // Calculate averages and trends from last 3 months
-  const recentMonths = months.slice(-3);
-  const avgIncome = recentMonths.reduce((sum, m) => sum + m.incomeActual, 0) / recentMonths.length;
-  const avgExpense = recentMonths.reduce((sum, m) => sum + m.totalActualOutflow, 0) / recentMonths.length;
-  
-  // Calculate trend
-  const incomeTrend = recentMonths.length >= 2
-    ? (recentMonths[recentMonths.length - 1].incomeActual - recentMonths[0].incomeActual) / recentMonths.length
-    : 0;
-  const expenseTrend = recentMonths.length >= 2
-    ? (recentMonths[recentMonths.length - 1].totalActualOutflow - recentMonths[0].totalActualOutflow) / recentMonths.length
-    : 0;
-  
-  // Calculate variance for confidence
-  const incomeVariance = recentMonths.reduce((sum, m) => {
-    const diff = m.incomeActual - avgIncome;
-    return sum + (diff * diff);
-  }, 0) / recentMonths.length;
-  const incomeStdDev = Math.sqrt(incomeVariance);
-  const incomeCv = avgIncome > 0 ? incomeStdDev / avgIncome : 0;
-  
-  const confidence: 'high' | 'medium' | 'low' = incomeCv < 0.1 ? 'high' : incomeCv < 0.25 ? 'medium' : 'low';
-  
-  for (let i = 1; i <= forecastMonths; i++) {
-    const predictedIncome = avgIncome + (incomeTrend * i);
-    const predictedExpense = avgExpense + (expenseTrend * i);
-    const predictedNet = predictedIncome - predictedExpense;
+  try {
+    // Calculate averages and trends from last 3 months (use actual if available, otherwise planned)
+    const recentMonths = months.slice(-3);
+    const avgIncome = recentMonths.reduce((sum, m) => {
+      const income = m.incomeActual > 0 ? m.incomeActual : m.incomePlanned;
+      return sum + Math.max(0, income);
+    }, 0) / recentMonths.length;
     
-    const factors: string[] = [];
-    if (Math.abs(incomeTrend) > avgIncome * 0.05) {
-      factors.push(incomeTrend > 0 ? 'Increasing income trend' : 'Decreasing income trend');
-    }
-    if (Math.abs(expenseTrend) > avgExpense * 0.05) {
-      factors.push(expenseTrend > 0 ? 'Increasing expense trend' : 'Decreasing expense trend');
-    }
-    if (incomeCv > 0.25) {
-      factors.push('High income variability');
-    }
+    const avgExpense = recentMonths.reduce((sum, m) => {
+      const expense = m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow;
+      return sum + Math.max(0, expense);
+    }, 0) / recentMonths.length;
     
-    forecasts.push({
-      month: months.length + i,
-      predictedIncome: Math.max(0, predictedIncome),
-      predictedExpense: Math.max(0, predictedExpense),
-      predictedNet,
-      confidence,
-      factors,
-    });
+    // Calculate trend (use actual if available)
+    const incomeValues = recentMonths.map(m => m.incomeActual > 0 ? m.incomeActual : m.incomePlanned);
+    const expenseValues = recentMonths.map(m => m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow);
+    
+    const incomeTrend = incomeValues.length >= 2
+      ? (incomeValues[incomeValues.length - 1] - incomeValues[0]) / incomeValues.length
+      : 0;
+    const expenseTrend = expenseValues.length >= 2
+      ? (expenseValues[expenseValues.length - 1] - expenseValues[0]) / expenseValues.length
+      : 0;
+    
+    // Calculate variance for confidence
+    const incomeVariance = incomeValues.reduce((sum, val) => {
+      const diff = val - avgIncome;
+      return sum + (diff * diff);
+    }, 0) / incomeValues.length;
+    const incomeStdDev = Math.sqrt(Math.max(0, incomeVariance));
+    const incomeCv = avgIncome > 0 ? incomeStdDev / avgIncome : 0;
+    
+    const confidence: 'high' | 'medium' | 'low' = incomeCv < 0.1 ? 'high' : incomeCv < 0.25 ? 'medium' : 'low';
+    
+    for (let i = 1; i <= forecastMonths; i++) {
+      const predictedIncome = Math.max(0, avgIncome + (incomeTrend * i));
+      const predictedExpense = Math.max(0, avgExpense + (expenseTrend * i));
+      const predictedNet = predictedIncome - predictedExpense;
+      
+      const factors: string[] = [];
+      if (avgIncome > 0 && Math.abs(incomeTrend) > avgIncome * 0.05) {
+        factors.push(incomeTrend > 0 ? 'Increasing income trend' : 'Decreasing income trend');
+      }
+      if (avgExpense > 0 && Math.abs(expenseTrend) > avgExpense * 0.05) {
+        factors.push(expenseTrend > 0 ? 'Increasing expense trend' : 'Decreasing expense trend');
+      }
+      if (incomeCv > 0.25) {
+        factors.push('High income variability');
+      }
+      
+      forecasts.push({
+        month: months.length + i,
+        predictedIncome: Number.isFinite(predictedIncome) ? predictedIncome : 0,
+        predictedExpense: Number.isFinite(predictedExpense) ? predictedExpense : 0,
+        predictedNet: Number.isFinite(predictedNet) ? predictedNet : 0,
+        confidence,
+        factors,
+      });
+    }
+  } catch (error) {
+    console.warn('Failed to predict future months:', error);
+    return [];
   }
   
   return forecasts;

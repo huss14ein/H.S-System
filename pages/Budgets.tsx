@@ -360,17 +360,24 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         );
         const result = buildHouseholdBudgetPlan(input);
         
-        // Calculate predictive analytics
-        if (result.months.length >= 3) {
-            const forecasts = predictFutureMonths(result.months, 3);
-            setPredictiveForecasts(forecasts);
-            
-            const commonScenarios = generateCommonScenarios(result, input.goals);
-            setScenarios(commonScenarios);
-            
-            const detectedAnomalies = detectAnomalies(result.months);
-            setAnomalies(detectedAnomalies);
-        } else {
+        // Calculate predictive analytics dynamically
+        try {
+            if (result.months.length >= 3) {
+                const forecasts = predictFutureMonths(result.months, 3);
+                setPredictiveForecasts(forecasts);
+                
+                const commonScenarios = generateCommonScenarios(result, input.goals);
+                setScenarios(commonScenarios);
+                
+                const detectedAnomalies = detectAnomalies(result.months);
+                setAnomalies(detectedAnomalies);
+            } else {
+                setPredictiveForecasts([]);
+                setScenarios([]);
+                setAnomalies([]);
+            }
+        } catch (error) {
+            console.warn('Failed to calculate household budget analytics:', error);
             setPredictiveForecasts([]);
             setScenarios([]);
             setAnomalies([]);
@@ -1612,9 +1619,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Household Budget Engine">
-                <p className="text-sm text-slate-700 font-medium">
-                    Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
-                </p>
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-slate-700 font-medium">
+                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
+                    </p>
+                    {triggerPageAction && (
+                        <button
+                            type="button"
+                            onClick={() => triggerPageAction('Market Events', 'focus-macro')}
+                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
+                        >
+                            Check Market Events
+                        </button>
+                    )}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
