@@ -24,6 +24,8 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import { useCallback } from 'react';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -151,7 +153,8 @@ const AccountCardComponent: React.FC<{
     onDeleteAccount: (acc: Account) => void;
     linkedPortfoliosCount?: number;
     readOnly?: boolean;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false }) => {
+    setActivePage?: (page: Page) => void;
+}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, setActivePage }) => {
     const { formatCurrencyString } = useFormatCurrency();
 
     const getAccountIcon = (type: Account['type']) => {
@@ -191,8 +194,11 @@ const AccountCardComponent: React.FC<{
                 {(() => {
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
+                    const balance = Number(account.balance) || 0;
                     return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${balance >= 0 ? 'text-dark' : 'text-danger'}`}>
+                            {formatCurrencyString(balance)}
+                        </p>
                     ) : (
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
@@ -203,6 +209,16 @@ const AccountCardComponent: React.FC<{
                     </p>
                 )}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
+                {setActivePage && (
+                    <button
+                        type="button"
+                        onClick={() => setActivePage('Transactions')}
+                        className="mt-2 text-xs text-primary hover:underline"
+                        title="View transactions for this account"
+                    >
+                        View Transactions →
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -243,16 +259,23 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 .rpc('get_shared_accounts_for_me')
                 .then((r) => r, () => ({ data: [] as any[] } as any));
             const rows = (sharedRows || []) as any[];
-            setSharedAccounts(rows.map((r) => ({
-                id: String(r.account_id ?? r.id ?? ''),
-                name: String(r.name ?? 'Shared Account'),
-                type: (r.type === 'Savings' || r.type === 'Investment' || r.type === 'Credit' ? r.type : 'Checking') as Account['type'],
-                balance: Number(r.balance ?? 0),
-                owner: r.owner ?? undefined,
-                ownerEmail: r.owner_email ?? r.ownerEmail ?? r.owner_user_id,
-                user_id: r.user_id,
-                show_balance: r.show_balance !== undefined ? r.show_balance : true,
-            })).filter((r) => !!r.id));
+            setSharedAccounts(rows.map((r) => {
+                try {
+                    const balance = Number(r.balance ?? 0);
+                    return {
+                        id: String(r.account_id ?? r.id ?? ''),
+                        name: String(r.name ?? 'Shared Account'),
+                        type: (r.type === 'Savings' || r.type === 'Investment' || r.type === 'Credit' ? r.type : 'Checking') as Account['type'],
+                        balance: Number.isFinite(balance) ? balance : 0,
+                        owner: r.owner ?? undefined,
+                        ownerEmail: r.owner_email ?? r.ownerEmail ?? r.owner_user_id,
+                        user_id: r.user_id,
+                        show_balance: r.show_balance !== undefined ? r.show_balance : true,
+                    };
+                } catch {
+                    return null;
+                }
+            }).filter((r): r is SharedAccountRow => !!r && !!r.id));
 
             if (admin) {
                 const { data: users, error } = await supabase.rpc('list_shareable_users');
@@ -268,23 +291,44 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [auth?.user?.id, data.accounts.length]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
-        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
-        const credit = data.accounts.filter(a => a.type === 'Credit');
-        const investments = data.accounts.filter(a => a.type === 'Investment');
+        try {
+            const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
+            const credit = data.accounts.filter(a => a.type === 'Credit');
+            const investments = data.accounts.filter(a => a.type === 'Investment');
 
-        const totalCash = cash.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalCredit = credit.reduce((sum, acc) => sum + acc.balance, 0);
+            const totalCash = Math.max(0, cash.reduce((sum, acc) => {
+                const balance = Number(acc.balance) || 0;
+                return sum + (Number.isFinite(balance) ? Math.max(0, balance) : 0);
+            }, 0));
+            const totalCredit = Math.max(0, credit.reduce((sum, acc) => {
+                const balance = Number(acc.balance) || 0;
+                return sum + (Number.isFinite(balance) ? Math.abs(balance) : 0);
+            }, 0));
 
-        const investmentsWithUpdatedBalance = investments.map(acc => {
-            const portfolioValue = data.investments
-                .filter(p => p.accountId === acc.id)
-                .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
-            return { ...acc, balance: portfolioValue };
-        });
+            const investmentsWithUpdatedBalance = investments.map(acc => {
+                try {
+                    const portfolioValue = Math.max(0, data.investments
+                        .filter(p => p.accountId === acc.id)
+                        .reduce((pSum, p) => {
+                            const value = getPortfolioHoldingsValueInSAR(p, exchangeRate);
+                            return pSum + (Number.isFinite(value) ? value : 0);
+                        }, 0));
+                    return { ...acc, balance: portfolioValue };
+                } catch {
+                    return { ...acc, balance: 0 };
+                }
+            });
 
-        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + acc.balance, 0);
+            const totalInvestments = Math.max(0, investmentsWithUpdatedBalance.reduce((sum, acc) => {
+                const balance = Number(acc.balance) || 0;
+                return sum + (Number.isFinite(balance) ? balance : 0);
+            }, 0));
 
-        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
+            return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
+        } catch (error) {
+            console.error('Error calculating account totals:', error);
+            return { cashAccounts: [], creditAccounts: [], investmentAccounts: [], totalCash: 0, totalCredit: 0, totalInvestments: 0 };
+        }
     }, [data.accounts, data.investments, exchangeRate]);
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
@@ -342,7 +386,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert('Please select both accounts and enter an amount.');
             return;
         }
-        const amount = parseFloat(transferAmount);
+        const amount = Number(transferAmount) || 0;
         if (!Number.isFinite(amount) || amount <= 0) {
             alert('Please enter a valid positive amount.');
             return;
@@ -353,8 +397,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert('Selected accounts not found.');
             return;
         }
-        if (fromAccount.balance < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance)}`);
+        const fromBalance = Number(fromAccount.balance) || 0;
+        if (!Number.isFinite(fromBalance) || fromBalance < amount) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(Math.max(0, fromBalance))}`);
             return;
         }
         if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
@@ -395,12 +440,60 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         }
     };
 
+    const handleExportAccounts = useCallback(() => {
+        try {
+            const exportData = {
+                summary: {
+                    totalCash,
+                    totalCredit,
+                    totalInvestments,
+                    cashAccountsCount: cashAccounts.length,
+                    creditAccountsCount: creditAccounts.length,
+                    investmentAccountsCount: investmentAccounts.length,
+                },
+                accounts: [
+                    ...cashAccounts.map(acc => ({ ...acc, category: 'Cash' })),
+                    ...creditAccounts.map(acc => ({ ...acc, category: 'Credit' })),
+                    ...investmentAccounts.map(acc => ({ ...acc, category: 'Investment' })),
+                ],
+                sharedAccounts: sharedAccounts.map(acc => ({ ...acc, category: 'Shared' })),
+                emergencyFund: {
+                    emergencyCash: emergencyFund.emergencyCash,
+                    monthsCovered: emergencyFund.monthsCovered,
+                    shortfall: emergencyFund.shortfall,
+                },
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `accounts-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting accounts:', error);
+            alert('Failed to export accounts. Please try again.');
+        }
+    }, [cashAccounts, creditAccounts, investmentAccounts, sharedAccounts, totalCash, totalCredit, totalInvestments, emergencyFund]);
+
     return (
         <PageLayout
             title="Accounts"
             description="Track checking, savings, credit, and investment accounts."
             action={
-                <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
+                <div className="flex flex-wrap items-center gap-2">
+                    <button 
+                        type="button" 
+                        onClick={handleExportAccounts} 
+                        className="btn-outline flex items-center gap-1.5"
+                        title="Export accounts data"
+                    >
+                        <ArrowDownTrayIcon className="h-4 w-4" />
+                        Export
+                    </button>
+                    <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
+                </div>
             }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
@@ -476,7 +569,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCashAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
+                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
                     ))}
                 </div>
             </section>
@@ -485,7 +578,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCreditAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
+                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
                     ))}
                 </div>
             </section>
@@ -496,7 +589,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = data.investments.filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} />
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} setActivePage={setActivePage} />
                         );
                     })}
                 </div>
