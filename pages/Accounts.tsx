@@ -538,39 +538,53 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             </div>
 
             {isAdmin && (
-                <section className="section-card mt-6">
-                    <h3 className="section-title text-base mb-3">Share account with another user</h3>
-                    <p className="text-sm text-slate-600 mb-4">Share read-only account visibility with a specific user, similar to budget sharing.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                        <div>
-                            <label className="block text-xs font-medium text-slate-700 mb-1.5">Account</label>
-                            <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base w-full">
-                                <option value="">Select account</option>
-                                {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-slate-700 mb-1.5">User email</label>
-                            <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base w-full">
-                                <option value="">Select user</option>
-                                {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
-                            </select>
-                        </div>
-                        <div className="flex items-center gap-2 p-2 bg-slate-50 rounded border border-slate-200">
-                            <input
-                                type="checkbox"
-                                id="share-show-balance"
-                                checked={shareShowBalance}
-                                onChange={(e) => setShareShowBalance(e.target.checked)}
-                                className="h-4 w-4 text-primary focus:ring-primary"
-                            />
-                            <label htmlFor="share-show-balance" className="text-xs text-slate-700 cursor-pointer">Show balance</label>
-                        </div>
-                        <button type="button" onClick={handleShareAccount} className="btn-primary w-full md:w-auto">Share Account</button>
+                <SectionCard className="mt-6">
+                    <div className="mb-4">
+                        <h3 className="text-base font-semibold text-slate-900 mb-2">Share account with another user</h3>
+                        <p className="text-sm text-slate-600">Share read-only account visibility with a specific user, similar to budget sharing.</p>
                     </div>
-                    {shareError && <p className="text-sm text-rose-600 mt-3 p-2 bg-rose-50 rounded border border-rose-200">{shareError}</p>}
-                    {shareSuccess && <p className="text-sm text-emerald-600 mt-3 p-2 bg-emerald-50 rounded border border-emerald-200">{shareSuccess}</p>}
-                </section>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-2">Account</label>
+                                <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base w-full">
+                                    <option value="">Select account</option>
+                                    {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-2">User email</label>
+                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base w-full">
+                                    <option value="">Select user</option>
+                                    {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-slate-200">
+                            <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                <input
+                                    type="checkbox"
+                                    id="share-show-balance"
+                                    checked={shareShowBalance}
+                                    onChange={(e) => setShareShowBalance(e.target.checked)}
+                                    className="h-4 w-4 text-primary focus:ring-primary rounded"
+                                />
+                                <label htmlFor="share-show-balance" className="text-sm text-slate-700 cursor-pointer font-medium">Show balance to recipient</label>
+                            </div>
+                            <button type="button" onClick={handleShareAccount} className="btn-primary whitespace-nowrap">Share Account</button>
+                        </div>
+                        {shareError && (
+                            <div className="mt-3 p-3 bg-rose-50 rounded-lg border border-rose-200">
+                                <p className="text-sm text-rose-700 font-medium">{shareError}</p>
+                            </div>
+                        )}
+                        {shareSuccess && (
+                            <div className="mt-3 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                                <p className="text-sm text-emerald-700 font-medium">{shareSuccess}</p>
+                            </div>
+                        )}
+                    </div>
+                </SectionCard>
             )}
 
             <section className="section-card mt-6">

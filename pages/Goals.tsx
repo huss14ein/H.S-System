@@ -392,7 +392,10 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
         assets.forEach(a => {
             if (a.goalId) {
-                goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + a.value);
+                const value = Math.max(0, Number(a.value) || 0);
+                if (Number.isFinite(value)) {
+                    goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + value);
+                }
             }
         });
 

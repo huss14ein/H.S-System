@@ -114,7 +114,7 @@ const App: React.FC = () => {
       case 'Plan': return <Plan setActivePage={setActivePage} />;
       case 'Forecast': return <Forecast />;
       case 'Analysis': return <Analysis />;
-      case 'Zakat': return <Zakat />;
+      case 'Zakat': return <Zakat setActivePage={setActivePage} />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;

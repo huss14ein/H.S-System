@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useEffect } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import Card from '../components/Card';
 import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
@@ -6,7 +6,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Modal from '../components/Modal';
-import { ZakatPayment } from '../types';
+import { ZakatPayment, Page } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
@@ -15,6 +15,7 @@ import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { buildZakatTradeAdvice } from '../services/zakatTradeAdvisor';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -23,7 +24,12 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onSave({ amount: parseFloat(amount) || 0, date, notes });
+        const rawAmount = Number(amount) || 0;
+        if (!Number.isFinite(rawAmount) || rawAmount < 0) {
+            alert('Please enter a valid payment amount greater than or equal to 0.');
+            return;
+        }
+        onSave({ amount: rawAmount, date, notes });
         setAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setNotes('');
@@ -52,7 +58,7 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 };
 
 
-const Zakat: React.FC = () => {
+const Zakat: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -80,25 +86,38 @@ const Zakat: React.FC = () => {
     // Use local form values for immediate feedback; fallback to saved settings so nisab actually affects calculation
     const nisab = useMemo(() => {
         if (useNisabAmount) {
-            const local = parseFloat(localNisabAmount);
+            const local = Number(localNisabAmount) || 0;
             if (Number.isFinite(local) && local > 0) return local;
-            if (nisabAmountSetting != null && Number.isFinite(Number(nisabAmountSetting))) return Number(nisabAmountSetting);
+            if (nisabAmountSetting != null) {
+                const setting = Number(nisabAmountSetting);
+                if (Number.isFinite(setting) && setting > 0) return setting;
+            }
         }
-        const localGold = parseFloat(localGoldPrice);
-        const effectiveGold = Number.isFinite(localGold) && localGold > 0 ? localGold : goldPrice;
-        return effectiveGold * 85;
+        const localGold = Number(localGoldPrice) || 0;
+        const effectiveGold = Number.isFinite(localGold) && localGold > 0 ? localGold : (Number.isFinite(goldPrice) && goldPrice > 0 ? goldPrice : 275);
+        const calculated = effectiveGold * 85;
+        return Number.isFinite(calculated) ? Math.max(0, calculated) : 0;
     }, [useNisabAmount, localNisabAmount, nisabAmountSetting, localGoldPrice, goldPrice]);
 
     const zakatableAssets = useMemo(() => {
         const accounts = data?.accounts ?? [];
         const investments = data?.investments ?? [];
         const commodityHoldings = data?.commodityHoldings ?? [];
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => {
+            const balance = Math.max(0, Number(acc.balance) || 0);
+            return sum + (Number.isFinite(balance) ? balance : 0);
+        }, 0);
         const invValue = investments
             .flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })))
             .filter(h => h.zakahClass === 'Zakatable')
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
-        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + c.currentValue, 0);
+            .reduce((sum, h) => {
+                const value = toSAR(h.currentValue, h.portfolioCurrency, exchangeRate);
+                return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+            }, 0);
+        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => {
+            const value = Math.max(0, Number(c.currentValue) || 0);
+            return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
         const total = cash + invValue + commodities;
         return { cash, investments: invValue, commodities, total };
     }, [data?.accounts, data?.investments, data?.commodityHoldings, exchangeRate]);
@@ -106,23 +125,92 @@ const Zakat: React.FC = () => {
     const deductibleLiabilities = useMemo(() => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
-        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        const shortTermDebts = accounts.filter(a => a.type === 'Credit').reduce((sum, acc) => {
+            const balance = Number(acc.balance) || 0;
+            if (balance < 0 && Number.isFinite(balance)) {
+                return sum + Math.abs(balance);
+            }
+            return sum;
+        }, 0);
         // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
-        const trackedLiabilities = liabilities.filter(l => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum, liability) => sum + Math.abs(liability.amount ?? 0), 0);
-        const total = shortTermDebts + trackedLiabilities + otherDebts;
-        return { shortTermDebts, trackedLiabilities, otherDebts, total };
+        const trackedLiabilities = liabilities.filter(l => l.status === 'Active').reduce((sum, liability) => {
+            const amount = Number(liability.amount) || 0;
+            if (amount < 0 && Number.isFinite(amount)) {
+                return sum + Math.abs(amount);
+            }
+            return sum;
+        }, 0);
+        const safeOtherDebts = Math.max(0, Number.isFinite(otherDebts) ? otherDebts : 0);
+        const total = shortTermDebts + trackedLiabilities + safeOtherDebts;
+        return { shortTermDebts, trackedLiabilities, otherDebts: safeOtherDebts, total };
     }, [otherDebts, data?.accounts, data?.liabilities]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
-    const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
+    const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => {
+        const amount = Math.max(0, Number(p.amount) || 0);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
 
     const zakatAdvice = useMemo(
         () => buildZakatTradeAdvice(data),
         [data]
     );
+
+    const handleExportZakat = useCallback(() => {
+        try {
+            const exportData = {
+                summary: {
+                    zakatableAssets: {
+                        cash: zakatableAssets.cash,
+                        investments: zakatableAssets.investments,
+                        commodities: zakatableAssets.commodities,
+                        total: zakatableAssets.total,
+                    },
+                    deductibleLiabilities: {
+                        shortTermDebts: deductibleLiabilities.shortTermDebts,
+                        trackedLiabilities: deductibleLiabilities.trackedLiabilities,
+                        otherDebts: deductibleLiabilities.otherDebts,
+                        total: deductibleLiabilities.total,
+                    },
+                    netZakatableWealth,
+                    nisab,
+                    isNisabMet,
+                    zakatDue,
+                    totalPaid,
+                    outstandingZakat,
+                },
+                settings: {
+                    goldPrice: Number.isFinite(goldPrice) ? goldPrice : 275,
+                    useNisabAmount,
+                    nisabAmount: useNisabAmount ? (Number.isFinite(Number(localNisabAmount)) ? Number(localNisabAmount) : null) : null,
+                },
+                payments: (data?.zakatPayments ?? []).map(p => ({
+                    id: p.id,
+                    amount: p.amount,
+                    date: p.date,
+                    notes: p.notes,
+                })),
+                suggestions: zakatAdvice.suggestions.map(s => ({
+                    symbol: s.symbol,
+                    impactDescription: s.impactDescription,
+                })),
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `zakat-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting zakat data:', error);
+            alert('Failed to export zakat data. Please try again.');
+        }
+    }, [zakatableAssets, deductibleLiabilities, netZakatableWealth, nisab, isNisabMet, zakatDue, totalPaid, outstandingZakat, goldPrice, useNisabAmount, localNisabAmount, data?.zakatPayments, zakatAdvice]);
 
     if (loading) {
         return (
@@ -136,6 +224,12 @@ const Zakat: React.FC = () => {
         <PageLayout
             title="Zakat Calculator"
             description="Estimate your annual Zakat based on your tracked assets and liabilities."
+            action={
+                <button type="button" onClick={handleExportZakat} className="btn-ghost flex items-center gap-2" title="Export zakat data">
+                    <ArrowDownTrayIcon className="h-5 w-5" />
+                    Export
+                </button>
+            }
         >
             <div className="alert-warning max-w-3xl mb-6">
                 <div className="flex">
@@ -175,7 +269,10 @@ const Zakat: React.FC = () => {
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities)}</span></div>
                             <div>
                                 <label htmlFor="other-debts" className="block text-sm font-medium text-gray-700">Other Short-Term Debts</label>
-                                <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="input-base mt-1" />
+                                <input type="number" id="other-debts" value={otherDebts} onChange={e => {
+                                    const value = Number(e.target.value) || 0;
+                                    setOtherDebts(Number.isFinite(value) ? Math.max(0, value) : 0);
+                                }} placeholder="Enter value" className="input-base mt-1" min="0" step="0.01" />
                             </div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Liabilities</span><span>{formatCurrencyString(deductibleLiabilities.total)}</span></div>
                         </div>
@@ -191,12 +288,18 @@ const Zakat: React.FC = () => {
                         {useNisabAmount ? (
                             <div>
                                 <label htmlFor="nisab-amount" className="block text-sm font-medium text-gray-700 flex items-center">Nisab amount <InfoHint text="Minimum wealth threshold in your currency. If your net zakatable wealth is below this, you do not owe Zakat. Can be set directly (e.g. from local authority) instead of using gold price × 85 grams." /></label>
-                                <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { const v = parseFloat(localNisabAmount); if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); }} className="input-base mt-1" min="0" step="1" />
+                                <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { 
+                                    const v = Number(localNisabAmount) || 0;
+                                    if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); 
+                                }} className="input-base mt-1" min="0" step="1" />
                             </div>
                         ) : (
                             <div>
                                 <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700 flex items-center">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: Nisab = price × 85 grams. If your net zakatable wealth is below that value, you do not owe Zakat." /></label>
-                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="input-base mt-1" />
+                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { 
+                                    const v = Number(localGoldPrice) || 275;
+                                    if (Number.isFinite(v) && v > 0) updateSettings({ goldPrice: v }); 
+                                }} className="input-base mt-1" min="0" step="0.01" />
                             </div>
                         )}
                     </div>
