@@ -1346,13 +1346,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } else {
             portfolio = data.investments.find(p => p.id === portfolioId);
             if (!portfolio) throw new Error("Portfolio not found");
+            
+            // Validate that portfolio belongs to the selected account
+            const portfolioAccountId = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts);
+            const tradeAccountId = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            
+            if (tradeAccountId && portfolioAccountId && tradeAccountId !== portfolioAccountId) {
+                throw new Error(`Portfolio "${portfolio.name}" belongs to a different platform. Please select the correct platform for this portfolio.`);
+            }
+            
             normalizedSymbol = (tradeData.symbol || '').trim().toUpperCase();
             existingHolding = portfolio.holdings.find((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
             if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
             }
-            accountIdForInsert = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts) ?? resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            accountIdForInsert = portfolioAccountId ?? tradeAccountId;
             if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
             const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
             if (!accountExists) throw new Error("Selected account is not in the system (or portfolio points to a deleted account).");

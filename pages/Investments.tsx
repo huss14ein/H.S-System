@@ -305,6 +305,15 @@ const RecordTradeModal: React.FC<{
     }, [isOpen, initialData, investmentAccounts, appCurrency]);
 
     useEffect(() => {
+        // When account changes, ensure portfolio belongs to that account
+        if (accountId && portfolioId) {
+            const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+            if (!portfolioBelongsToAccount) {
+                // Portfolio doesn't belong to selected account, clear it
+                setPortfolioId('');
+            }
+        }
+        
         if (initialData?.portfolioId && portfoliosForAccount.some((p) => p.id === initialData.portfolioId)) {
             setPortfolioId(initialData.portfolioId);
             return;
@@ -314,7 +323,7 @@ const RecordTradeModal: React.FC<{
         } else {
             setPortfolioId('');
         }
-    }, [portfoliosForAccount, initialData?.portfolioId]);
+    }, [accountId, portfoliosForAccount, initialData?.portfolioId, portfolioId]);
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
@@ -358,7 +367,15 @@ const RecordTradeModal: React.FC<{
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
             return null;
         }
+        if (!accountId) return 'Please select a platform.';
         if (!portfolioId) return 'Please select a portfolio.';
+        
+        // Ensure portfolio belongs to selected account
+        const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+        if (!portfolioBelongsToAccount) {
+            return 'Selected portfolio does not belong to the selected platform. Please select a portfolio from this platform.';
+        }
+        
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return 'Symbol is required.';
@@ -366,14 +383,14 @@ const RecordTradeModal: React.FC<{
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
         if (type === 'sell' && portfolioId) {
-            const portfolio = portfolios.find(p => p.id === portfolioId);
+            const portfolio = portfoliosForAccount.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
             const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
         return null;
-    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfoliosForAccount]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -397,6 +414,14 @@ const RecordTradeModal: React.FC<{
                     currency: tradeCurrency,
                 }, undefined);
             } else {
+                // Final validation: ensure portfolio belongs to account before saving
+                const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+                if (!portfolioBelongsToAccount) {
+                    setSubmitError('Selected portfolio does not belong to the selected platform. Please select a portfolio from this platform.');
+                    setIsSubmitting(false);
+                    return;
+                }
+                
                 await onSave({
                     accountId, portfolioId, type,
                     symbol: symbol.toUpperCase().trim(),
@@ -456,10 +481,22 @@ const RecordTradeModal: React.FC<{
                     {!isCashFlow && (
                     <div>
                         <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
-                        <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
-                             <option value="" disabled>Select Portfolio</option>
+                        <select 
+                            id="portfolio-id" 
+                            value={portfolioId} 
+                            onChange={e => setPortfolioId(e.target.value)} 
+                            required 
+                            disabled={!accountId || portfoliosForAccount.length === 0} 
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100"
+                        >
+                            <option value="" disabled>
+                                {!accountId ? 'Select platform first' : portfoliosForAccount.length === 0 ? 'No portfolios in this platform' : 'Select Portfolio'}
+                            </option>
                             {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
+                        {accountId && portfoliosForAccount.length === 0 && (
+                            <p className="text-xs text-amber-600 mt-1">Create a portfolio for this platform first from the Portfolios tab.</p>
+                        )}
                     </div>
                     )}
                 </div>
