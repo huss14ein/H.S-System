@@ -25,6 +25,15 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import {
+    predictFutureMonths,
+    analyzeScenario,
+    generateCommonScenarios,
+    detectAnomalies,
+    type PredictiveForecast,
+    type ScenarioAnalysis,
+    type BudgetAnomaly,
+} from '../services/householdBudgetAnalytics';
 
 
 
@@ -204,6 +213,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
     const [selectedScenario, setSelectedScenario] = useState('custom');
+    const [showPredictiveAnalytics, setShowPredictiveAnalytics] = useState(false);
+    const [showScenarioPlanning, setShowScenarioPlanning] = useState(false);
+    const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
+    const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
+    const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
