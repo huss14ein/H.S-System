@@ -119,7 +119,7 @@ const App: React.FC = () => {
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Market Events': return <MarketEvents />;
+      case 'Market Events': return <MarketEvents setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };

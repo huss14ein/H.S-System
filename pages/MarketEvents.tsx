@@ -22,6 +22,14 @@ interface MarketEventItem {
   aiInsight?: string;
   aiAction?: string;
   portfolioRelevance?: string;
+  detailedInfo?: {
+    meetingType?: string;
+    historicalContext?: string;
+    keyMetrics?: string[];
+    relatedEvents?: string[];
+    marketImpactHistory?: string;
+    preparationTips?: string[];
+  };
 }
 
 interface FinnhubCalendarState {
@@ -276,16 +284,96 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
     },
   ];
 
-  if ([0, 2, 4, 6, 8, 10].includes(month % 12)) {
+  // FOMC meetings occur 8 times per year, typically in Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
+  // Some meetings include Summary of Economic Projections (SEP) and press conferences
+  const fomcMonths = [0, 2, 4, 5, 6, 8, 10, 11]; // Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
+  if (fomcMonths.includes(month % 12)) {
+    const isQuarterly = [2, 5, 8, 11].includes(month % 12); // Mar, Jun, Sep, Dec have SEP and press conferences
+    const meetingType = isQuarterly ? 'FOMC Meeting with SEP & Press Conference' : 'FOMC Meeting';
     events.push({
       id: `fomc-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 3, 3),
-      title: 'Federal Reserve (FOMC) Decision',
-      description: 'Policy statement and rate decision; major cross-asset volatility catalyst.',
+      title: `Federal Reserve (FOMC) ${isQuarterly ? 'Quarterly' : 'Regular'} Meeting`,
+      description: `${isQuarterly ? 'Quarterly meeting with Summary of Economic Projections (SEP), dot plot, and Chair press conference. ' : 'Regular policy meeting with statement and rate decision. '}Major cross-asset volatility catalyst affecting rates, USD, equities, bonds, and commodities.`,
       source: 'Macro (estimated schedule)',
       category: 'Macro',
       impact: 'High',
       estimated: true,
+      detailedInfo: {
+        meetingType: isQuarterly ? 'Quarterly (with SEP)' : 'Regular',
+        historicalContext: 'FOMC decisions directly impact interest rates, which affect borrowing costs, currency strength, equity valuations, and bond prices. Rate hikes typically strengthen USD and can pressure equities; rate cuts typically weaken USD and support equities.',
+        keyMetrics: [
+          'Federal Funds Rate decision',
+          isQuarterly ? 'Dot plot (rate projections)' : '',
+          isQuarterly ? 'Summary of Economic Projections (GDP, inflation, unemployment)' : '',
+          'Policy statement language (hawkish/dovish)',
+          isQuarterly ? 'Press conference Q&A' : '',
+        ].filter(Boolean),
+        relatedEvents: [
+          'CPI Inflation Release',
+          'Nonfarm Payrolls (NFP)',
+          'GDP Release',
+          'PCE Inflation',
+        ],
+        marketImpactHistory: 'Historically, FOMC meetings cause 1-3% intraday volatility in major indices. Rate surprises (unexpected hikes/cuts) can cause 5%+ moves. The dot plot and economic projections provide forward guidance affecting markets for weeks.',
+        preparationTips: [
+          'Review recent CPI, NFP, and GDP data before the meeting',
+          'Monitor Fed funds futures for market expectations',
+          'Consider reducing leverage before high-impact meetings',
+          'Watch for changes in forward guidance language',
+          isQuarterly ? 'Review dot plot shifts vs. previous quarter' : '',
+          'Monitor USD strength/weakness post-announcement',
+        ].filter(Boolean),
+      },
+    });
+  }
+
+  // Federal Tax Policy Meetings (estimated - typically occur around tax season and budget cycles)
+  if ([1, 2, 9, 10].includes(month % 12)) { // Feb, Mar, Oct, Nov - tax policy windows
+    events.push({
+      id: `federal-tax-${year}-${month}`,
+      date: month === 1 ? nthWeekdayOfMonth(year, month, 1, 1) : // Feb: Budget proposal
+            month === 2 ? nthWeekdayOfMonth(year, month, 1, 2) : // Mar: Tax policy discussions
+            month === 9 ? nthWeekdayOfMonth(year, month, 1, 2) : // Oct: Tax planning season
+            nthWeekdayOfMonth(year, month, 1, 3), // Nov: Year-end tax considerations
+      title: month === 1 ? 'Federal Budget Proposal & Tax Policy Window' :
+             month === 2 ? 'Congressional Tax Policy Hearings' :
+             month === 9 ? 'Tax Planning Season Begins' :
+             'Year-End Tax Policy Considerations',
+      description: month === 1 ? 'Annual federal budget proposal includes tax policy changes affecting capital gains, corporate taxes, and individual tax brackets. Can impact equity valuations, REITs, and dividend strategies.' :
+                 month === 2 ? 'Congressional hearings on tax policy changes, potential rate adjustments, and tax code modifications. Affects market sentiment and sector allocations.' :
+                 month === 9 ? 'Tax planning season begins with considerations for year-end tax strategies, capital gains harvesting, and tax-loss selling opportunities.' :
+                 'Year-end tax policy considerations including potential changes to tax rates, deductions, and investment-related tax provisions.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: month === 1 || month === 2 ? 'High' : 'Medium',
+      estimated: true,
+      detailedInfo: {
+        meetingType: month === 1 ? 'Budget Proposal' : month === 2 ? 'Policy Hearings' : month === 9 ? 'Planning Season' : 'Year-End Considerations',
+        historicalContext: 'Tax policy changes can significantly impact markets. Capital gains tax increases typically pressure equities, especially growth stocks. Corporate tax changes affect earnings and valuations. Dividend tax changes impact income strategies.',
+        keyMetrics: [
+          'Capital gains tax rate proposals',
+          'Corporate tax rate changes',
+          'Dividend tax treatment',
+          'Tax deduction modifications',
+          'Estate tax provisions',
+          'Tax-loss harvesting opportunities',
+        ],
+        relatedEvents: [
+          'FOMC Decision',
+          'GDP Release',
+          'Federal Budget Deadline',
+        ],
+        marketImpactHistory: 'Major tax policy changes (e.g., Tax Cuts and Jobs Act 2017) caused significant market moves. Capital gains tax increases historically correlate with market volatility. REITs and dividend stocks are particularly sensitive to tax policy changes.',
+        preparationTips: [
+          'Review proposed tax changes and their sector impacts',
+          'Consider tax-loss harvesting before year-end',
+          'Monitor dividend tax treatment changes',
+          'Evaluate impact on REITs and MLPs',
+          'Assess corporate tax changes on earnings',
+          'Plan for potential capital gains tax adjustments',
+        ],
+      },
     });
   }
 
@@ -305,7 +393,12 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   return events;
 }
 
-const MarketEvents: React.FC = () => {
+interface MarketEventsProps {
+  setActivePage?: (page: string) => void;
+  triggerPageAction?: (page: string, action: string) => void;
+}
+
+const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageAction }) => {
   const { data } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
@@ -616,15 +709,26 @@ const MarketEvents: React.FC = () => {
         watchlist: (data?.watchlist ?? []).map(w => w.symbol).filter(Boolean),
       };
       
+      // Enhanced event data with detailed info for AI
+      const enhancedEventData = {
+        title: event.title,
+        description: event.description,
+        category: event.category,
+        impact: event.impact,
+        symbol: event.symbol,
+        date: event.date.toISOString(),
+        id: event.id,
+        detailedInfo: event.detailedInfo ? {
+          meetingType: event.detailedInfo.meetingType,
+          historicalContext: event.detailedInfo.historicalContext,
+          keyMetrics: event.detailedInfo.keyMetrics,
+          marketImpactHistory: event.detailedInfo.marketImpactHistory,
+          preparationTips: event.detailedInfo.preparationTips,
+        } : undefined,
+      };
+      
       const insight = await getAIMarketEventInsight(
-        {
-          title: event.title,
-          description: event.description,
-          category: event.category,
-          impact: event.impact,
-          symbol: event.symbol,
-          date: event.date.toISOString(),
-        },
+        enhancedEventData,
         portfolio
       );
       
@@ -782,6 +886,63 @@ const MarketEvents: React.FC = () => {
                     <p className="mt-2 text-sm text-slate-600">{event.description}</p>
                     <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
                     
+                    {event.detailedInfo && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                          <p className="text-xs font-semibold text-indigo-900 uppercase tracking-wide mb-2">Detailed Event Information</p>
+                          {event.detailedInfo.meetingType && (
+                            <p className="text-xs text-indigo-800 mb-2">
+                              <span className="font-semibold">Meeting Type:</span> {event.detailedInfo.meetingType}
+                            </p>
+                          )}
+                          {event.detailedInfo.historicalContext && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Historical Context:</p>
+                              <p className="text-xs text-indigo-700 leading-relaxed">{event.detailedInfo.historicalContext}</p>
+                            </div>
+                          )}
+                          {event.detailedInfo.keyMetrics && event.detailedInfo.keyMetrics.length > 0 && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Key Metrics to Watch:</p>
+                              <ul className="text-xs text-indigo-700 list-disc list-inside space-y-0.5">
+                                {event.detailedInfo.keyMetrics.map((metric, idx) => (
+                                  <li key={idx}>{metric}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {event.detailedInfo.relatedEvents && event.detailedInfo.relatedEvents.length > 0 && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Related Events:</p>
+                              <div className="flex flex-wrap gap-1">
+                                {event.detailedInfo.relatedEvents.map((related, idx) => (
+                                  <span key={idx} className="text-xs px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded">
+                                    {related}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {event.detailedInfo.marketImpactHistory && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Market Impact History:</p>
+                              <p className="text-xs text-indigo-700 leading-relaxed">{event.detailedInfo.marketImpactHistory}</p>
+                            </div>
+                          )}
+                          {event.detailedInfo.preparationTips && event.detailedInfo.preparationTips.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Preparation Tips:</p>
+                              <ul className="text-xs text-indigo-700 list-disc list-inside space-y-0.5">
+                                {event.detailedInfo.preparationTips.map((tip, idx) => (
+                                  <li key={idx}>{tip}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
                     {isAiAvailable && (
                       <div className="mt-3 pt-3 border-t border-slate-200">
                         {aiInsights[event.id] ? (
@@ -836,10 +997,47 @@ const MarketEvents: React.FC = () => {
                       </div>
                     )}
                     
-                    <div className="mt-2 flex items-center gap-2">
+                    <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
                         {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
                       </button>
+                      {event.symbol && setActivePage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActivePage('Investments');
+                            if (triggerPageAction) {
+                              setTimeout(() => triggerPageAction('Investments', `focus-symbol:${event.symbol}`), 100);
+                            }
+                          }}
+                          className="text-xs px-2 py-1 rounded border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
+                        >
+                          View {event.symbol} in Investments
+                        </button>
+                      )}
+                      {(event.category === 'Macro' && event.impact === 'High') && setActivePage && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setActivePage('Wealth Ultra')}
+                            className="text-xs px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            Review Portfolio Strategy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePage('Investments');
+                              if (triggerPageAction) {
+                                setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                              }
+                            }}
+                            className="text-xs px-2 py-1 rounded border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          >
+                            Check Recovery Plans
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
