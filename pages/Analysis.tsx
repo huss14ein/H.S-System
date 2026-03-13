@@ -10,6 +10,7 @@ import ChartContainer from '../components/charts/ChartContainer';
 import type { Transaction } from '../types';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
@@ -203,7 +204,10 @@ const Analysis: React.FC = () => {
     }
 
     return (
-        <PageLayout title="Financial Analysis">
+        <PageLayout 
+            title="Financial Analysis"
+            action={<DemoDataButton page="Analysis" />}
+        >
             <AIAdvisor pageContext="analysis" contextData={contextData} />
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 mt-6">

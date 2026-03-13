@@ -17,6 +17,7 @@ import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -822,7 +823,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     return (
         <PageLayout
             title="Cash Flow"
-            action={<button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>}
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    <DemoDataButton page="Transactions" options={{ includeTransactions: true }} />
+                    <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                </div>
+            }
         >
             <SectionCard
                 title="Recurring (monthly) transactions"

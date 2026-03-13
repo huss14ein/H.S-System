@@ -21,6 +21,7 @@ import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -182,6 +183,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             action={
                 setActivePage && (
                     <div className="flex flex-wrap items-center gap-2">
+                        <DemoDataButton page="Summary" />
                         <button
                             type="button"
                             onClick={() => setActivePage('Wealth Ultra')}

@@ -14,6 +14,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -130,6 +131,7 @@ const Zakat: React.FC = () => {
         <PageLayout
             title="Zakat Calculator"
             description="Estimate your annual Zakat based on your tracked assets and liabilities."
+            action={<DemoDataButton page="Zakat" options={{ includeAssets: true, includeLiabilities: true }} />}
         >
             <div className="alert-warning max-w-3xl mb-6">
                 <div className="flex">

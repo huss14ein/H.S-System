@@ -14,6 +14,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -236,6 +237,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             description="Track liabilities, including debts and money owed back to you. Mark as Paid to keep a reference; totals show only unpaid."
             action={
                 <div className="flex flex-wrap items-center gap-3">
+                    <DemoDataButton page="Liabilities" options={{ includeLiabilities: true }} />
                     <div className="flex items-center gap-2">
                         <label htmlFor="status-filter" className="text-sm font-medium text-gray-700">Show:</label>
                         <select

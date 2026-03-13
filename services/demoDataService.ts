@@ -10,6 +10,11 @@ export interface DemoDataOptions {
   includeBudgets?: boolean;
   includeInvestments?: boolean;
   includeTransactions?: boolean;
+  includeAccounts?: boolean;
+  includeGoals?: boolean;
+  includeAssets?: boolean;
+  includeLiabilities?: boolean;
+  includeAll?: boolean;
 }
 
 /**
@@ -277,10 +282,225 @@ export function generateDemoBudgetMonths(count: number = 12): Array<{
 }
 
 /**
+ * Generate demo transactions
+ */
+export function generateDemoTransactions(count: number = 50): Array<{
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  category: string;
+  subcategory?: string;
+  budgetCategory?: string;
+  type: 'income' | 'expense';
+  accountId?: string;
+  transactionNature?: 'Fixed' | 'Variable';
+  expenseType?: 'Core' | 'Discretionary';
+}> {
+  const transactions = [];
+  const categories = ['Food', 'Transportation', 'Housing', 'Utilities', 'Health', 'Education', 'Entertainment', 'Shopping', 'Savings & Investments'];
+  const descriptions = [
+    'Grocery Store', 'Restaurant', 'Gas Station', 'Uber Ride', 'Rent Payment', 'Electric Bill', 'Internet Bill',
+    'Doctor Visit', 'Pharmacy', 'Tuition Fee', 'Movie Ticket', 'Shopping Mall', 'Investment Deposit', 'Salary',
+    'Freelance Work', 'Dividend Payment', 'Interest Income'
+  ];
+  
+  const now = Date.now();
+  for (let i = 0; i < count; i++) {
+    const daysAgo = Math.floor(Math.random() * 90);
+    const date = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
+    const isIncome = Math.random() > 0.85;
+    const category = categories[Math.floor(Math.random() * categories.length)];
+    const description = descriptions[Math.floor(Math.random() * descriptions.length)];
+    const amount = isIncome 
+      ? 1000 + Math.random() * 5000
+      : -(50 + Math.random() * 500);
+    
+    transactions.push({
+      id: `demo-tx-${i}-${date.getTime()}`,
+      date: date.toISOString().split('T')[0],
+      description,
+      amount,
+      category,
+      subcategory: Math.random() > 0.7 ? 'Subcategory' : undefined,
+      budgetCategory: Math.random() > 0.5 ? category : undefined,
+      type: isIncome ? 'income' : 'expense',
+      accountId: `demo-account-${Math.floor(Math.random() * 3)}`,
+      transactionNature: Math.random() > 0.6 ? 'Fixed' : 'Variable',
+      expenseType: Math.random() > 0.5 ? 'Core' : 'Discretionary',
+    });
+  }
+  
+  return transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+/**
+ * Generate demo accounts
+ */
+export function generateDemoAccounts(): Array<{
+  id: string;
+  name: string;
+  type: string;
+  balance: number;
+  currency: string;
+}> {
+  return [
+    { id: 'demo-checking-1', name: 'Primary Checking', type: 'Checking', balance: 5000 + Math.random() * 3000, currency: 'SAR' },
+    { id: 'demo-savings-1', name: 'Emergency Savings', type: 'Savings', balance: 15000 + Math.random() * 10000, currency: 'SAR' },
+    { id: 'demo-investment-1', name: 'Investment Account', type: 'Investment', balance: 50000 + Math.random() * 50000, currency: 'USD' },
+    { id: 'demo-retirement-1', name: 'Retirement Plan', type: 'Retirement', balance: 100000 + Math.random() * 50000, currency: 'SAR' },
+  ];
+}
+
+/**
+ * Generate demo goals
+ */
+export function generateDemoGoals(): Array<{
+  id: string;
+  name: string;
+  targetAmount: number;
+  currentAmount: number;
+  targetDate: string;
+  priority: 'High' | 'Medium' | 'Low';
+  category: string;
+}> {
+  const now = new Date();
+  return [
+    {
+      id: 'demo-goal-1',
+      name: 'Emergency Fund',
+      targetAmount: 50000,
+      currentAmount: 25000 + Math.random() * 10000,
+      targetDate: new Date(now.getFullYear() + 1, now.getMonth(), 1).toISOString().split('T')[0],
+      priority: 'High',
+      category: 'Savings',
+    },
+    {
+      id: 'demo-goal-2',
+      name: 'Vacation Fund',
+      targetAmount: 10000,
+      currentAmount: 3000 + Math.random() * 2000,
+      targetDate: new Date(now.getFullYear(), now.getMonth() + 6, 1).toISOString().split('T')[0],
+      priority: 'Medium',
+      category: 'Travel',
+    },
+    {
+      id: 'demo-goal-3',
+      name: 'Home Down Payment',
+      targetAmount: 200000,
+      currentAmount: 50000 + Math.random() * 30000,
+      targetDate: new Date(now.getFullYear() + 2, now.getMonth(), 1).toISOString().split('T')[0],
+      priority: 'High',
+      category: 'Housing',
+    },
+  ];
+}
+
+/**
+ * Generate demo assets
+ */
+export function generateDemoAssets(): Array<{
+  id: string;
+  name: string;
+  type: string;
+  value: number;
+  purchaseDate: string;
+  category: string;
+}> {
+  const now = new Date();
+  return [
+    {
+      id: 'demo-asset-1',
+      name: 'Primary Residence',
+      type: 'Real Estate',
+      value: 500000 + Math.random() * 200000,
+      purchaseDate: new Date(now.getFullYear() - 5, 0, 1).toISOString().split('T')[0],
+      category: 'Property',
+    },
+    {
+      id: 'demo-asset-2',
+      name: 'Vehicle',
+      type: 'Vehicle',
+      value: 30000 + Math.random() * 20000,
+      purchaseDate: new Date(now.getFullYear() - 2, 6, 1).toISOString().split('T')[0],
+      category: 'Transportation',
+    },
+    {
+      id: 'demo-asset-3',
+      name: 'Investment Property',
+      type: 'Real Estate',
+      value: 300000 + Math.random() * 100000,
+      purchaseDate: new Date(now.getFullYear() - 3, 3, 1).toISOString().split('T')[0],
+      category: 'Property',
+    },
+  ];
+}
+
+/**
+ * Generate demo liabilities
+ */
+export function generateDemoLiabilities(): Array<{
+  id: string;
+  name: string;
+  type: string;
+  balance: number;
+  interestRate: number;
+  minimumPayment: number;
+  dueDate: string;
+}> {
+  const now = new Date();
+  return [
+    {
+      id: 'demo-liability-1',
+      name: 'Mortgage',
+      type: 'Mortgage',
+      balance: 300000 + Math.random() * 100000,
+      interestRate: 3.5 + Math.random() * 1.5,
+      minimumPayment: 1500 + Math.random() * 500,
+      dueDate: new Date(now.getFullYear(), now.getMonth() + 1, 15).toISOString().split('T')[0],
+    },
+    {
+      id: 'demo-liability-2',
+      name: 'Credit Card',
+      type: 'Credit Card',
+      balance: 5000 + Math.random() * 3000,
+      interestRate: 18 + Math.random() * 5,
+      minimumPayment: 150 + Math.random() * 100,
+      dueDate: new Date(now.getFullYear(), now.getMonth() + 1, 20).toISOString().split('T')[0],
+    },
+    {
+      id: 'demo-liability-3',
+      name: 'Car Loan',
+      type: 'Loan',
+      balance: 15000 + Math.random() * 10000,
+      interestRate: 4.5 + Math.random() * 2,
+      minimumPayment: 300 + Math.random() * 200,
+      dueDate: new Date(now.getFullYear(), now.getMonth() + 1, 10).toISOString().split('T')[0],
+    },
+  ];
+}
+
+/**
  * Load demo data into localStorage for testing
  */
 export function loadDemoData(options: DemoDataOptions = {}): void {
   if (typeof window === 'undefined') return;
+  
+  // If includeAll is true, set all flags to true
+  if (options.includeAll) {
+    options = {
+      includeWealthUltra: true,
+      includeRecoveryPlan: true,
+      includeMarketEvents: true,
+      includeBudgets: true,
+      includeInvestments: true,
+      includeTransactions: true,
+      includeAccounts: true,
+      includeGoals: true,
+      includeAssets: true,
+      includeLiabilities: true,
+    };
+  }
   
   try {
     // Wealth Ultra Performance Snapshots
@@ -295,7 +515,7 @@ export function loadDemoData(options: DemoDataOptions = {}): void {
       window.localStorage.setItem('recovery-plan-executions:v1', JSON.stringify(executions));
     }
     
-    // Market Events (stored separately, would need integration)
+    // Market Events
     if (options.includeMarketEvents !== false) {
       const events = generateDemoMarketEvents();
       window.localStorage.setItem('demo-market-events:v1', JSON.stringify(events.map(e => ({
@@ -304,10 +524,40 @@ export function loadDemoData(options: DemoDataOptions = {}): void {
       }))));
     }
     
-    // Budget Months (would need integration with budget engine)
+    // Budget Months
     if (options.includeBudgets !== false) {
       const months = generateDemoBudgetMonths(12);
       window.localStorage.setItem('demo-budget-months:v1', JSON.stringify(months));
+    }
+    
+    // Transactions
+    if (options.includeTransactions !== false) {
+      const transactions = generateDemoTransactions(50);
+      window.localStorage.setItem('demo-transactions:v1', JSON.stringify(transactions));
+    }
+    
+    // Accounts
+    if (options.includeAccounts !== false) {
+      const accounts = generateDemoAccounts();
+      window.localStorage.setItem('demo-accounts:v1', JSON.stringify(accounts));
+    }
+    
+    // Goals
+    if (options.includeGoals !== false) {
+      const goals = generateDemoGoals();
+      window.localStorage.setItem('demo-goals:v1', JSON.stringify(goals));
+    }
+    
+    // Assets
+    if (options.includeAssets !== false) {
+      const assets = generateDemoAssets();
+      window.localStorage.setItem('demo-assets:v1', JSON.stringify(assets));
+    }
+    
+    // Liabilities
+    if (options.includeLiabilities !== false) {
+      const liabilities = generateDemoLiabilities();
+      window.localStorage.setItem('demo-liabilities:v1', JSON.stringify(liabilities));
     }
     
     console.log('Demo data loaded successfully');
@@ -327,6 +577,11 @@ export function clearDemoData(): void {
     window.localStorage.removeItem('recovery-plan-executions:v1');
     window.localStorage.removeItem('demo-market-events:v1');
     window.localStorage.removeItem('demo-budget-months:v1');
+    window.localStorage.removeItem('demo-transactions:v1');
+    window.localStorage.removeItem('demo-accounts:v1');
+    window.localStorage.removeItem('demo-goals:v1');
+    window.localStorage.removeItem('demo-assets:v1');
+    window.localStorage.removeItem('demo-liabilities:v1');
     console.log('Demo data cleared');
   } catch (error) {
     console.warn('Failed to clear demo data:', error);

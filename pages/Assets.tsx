@@ -490,7 +490,16 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     ];
 
     return (
-        <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
+        <PageLayout 
+            title="Assets" 
+            description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." 
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    <DemoDataButton page="Assets" options={{ includeAssets: true }} />
+                    <AddMenu actions={addActions} />
+                </div>
+            }
+        >
 
             <SectionCard title="Sukuk in Finova" className="overflow-hidden">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
