@@ -19,6 +19,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
@@ -166,54 +167,62 @@ const AccountCardComponent: React.FC<{
         }
     };
 
+    const balance = Number(account.balance) || 0;
+    const sharedAccount = account as SharedAccountRow;
+    const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
+    const borderColor = account.type === 'Checking' || account.type === 'Savings' 
+        ? 'border-t-emerald-500' 
+        : account.type === 'Credit' 
+        ? 'border-t-rose-500' 
+        : 'border-t-indigo-500';
+
     return (
-        <div className="section-card flex flex-col h-full border-t-4 border-t-slate-200 hover:shadow-lg transition-shadow">
-            <div className="flex items-start justify-between gap-2 min-h-[32px]">
-                <div className="flex items-center gap-3 min-w-0">
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderColor} hover:shadow-lg transition-all duration-200`}>
+            <div className="flex items-start justify-between gap-2 min-h-[32px] mb-4">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                     {getAccountIcon(account.type)}
-                    <div className="min-w-0">
-                        <h3 className="font-semibold text-dark break-words">{account.name}</h3>
-                        <p className="text-xs text-slate-500">
-                            {account.type}
+                    <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-dark break-words text-base">{account.name}</h3>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                            <span className="text-xs text-slate-500">{account.type}</span>
                             {linkedPortfoliosCount != null && linkedPortfoliosCount > 0 && (
-                                <span className="ml-1 text-indigo-600">· {linkedPortfoliosCount} portfolio{linkedPortfoliosCount !== 1 ? 's' : ''}</span>
+                                <span className="text-xs px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded">· {linkedPortfoliosCount} portfolio{linkedPortfoliosCount !== 1 ? 's' : ''}</span>
                             )}
-                            {readOnly && <span className="ml-1 text-amber-700">· Shared view</span>}
-                        </p>
+                            {readOnly && <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">· Shared</span>}
+                        </div>
                     </div>
                 </div>
                 {!readOnly && (
                     <div className="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" onClick={() => onEditAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit account"><PencilIcon className="h-4 w-4"/></button>
-                        <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onEditAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100 transition-colors" aria-label="Edit account" title="Edit account"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50 transition-colors" aria-label="Delete account" title="Delete account"><TrashIcon className="h-4 w-4"/></button>
                     </div>
                 )}
             </div>
-            <div className="mt-4 pt-4 border-t border-slate-100 min-w-0 overflow-hidden">
-                <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
-                {(() => {
-                    const sharedAccount = account as SharedAccountRow;
-                    const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
-                    const balance = Number(account.balance) || 0;
-                    return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${balance >= 0 ? 'text-dark' : 'text-danger'}`}>
-                            {formatCurrencyString(balance)}
-                        </p>
-                    ) : (
-                        <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
-                    );
-                })()}
+            <div className="mt-auto pt-4 border-t border-slate-100 min-w-0">
+                <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Current Balance</p>
+                {canShowBalance ? (
+                    <p className={`metric-value text-2xl font-bold tabular-nums ${balance >= 0 ? 'text-dark' : 'text-danger'}`}>
+                        {formatCurrencyString(balance)}
+                    </p>
+                ) : (
+                    <p className="metric-value text-sm text-slate-400">Balance hidden</p>
+                )}
                 {account.type === 'Investment' && account.linkedAccountIds && account.linkedAccountIds.length > 0 && (
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-2">
                         Linked to {account.linkedAccountIds.length} cash account{account.linkedAccountIds.length > 1 ? 's' : ''}
                     </p>
                 )}
-                {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
+                {readOnly && (
+                    <p className="text-xs text-slate-500 mt-2">
+                        Owner: <span className="font-medium">{(account as SharedAccountRow).ownerEmail || 'Shared account'}</span>
+                    </p>
+                )}
                 {setActivePage && (
                     <button
                         type="button"
                         onClick={() => setActivePage('Transactions')}
-                        className="mt-2 text-xs text-primary hover:underline"
+                        className="mt-3 text-xs text-primary hover:underline font-medium flex items-center gap-1"
                         title="View transactions for this account"
                     >
                         View Transactions →
@@ -502,103 +511,164 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                  <Card title="Total Investment Value" value={formatCurrencyString(totalInvestments)} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of linked investment portfolios." />
             </div>
 
-            <div className="section-card border-l-4 border-emerald-500/50 mt-4">
-                <h3 className="section-title text-base">Emergency fund (liquid cash)</h3>
-                <p className="text-lg font-semibold text-dark tabular-nums">{formatCurrencyString(emergencyFund.emergencyCash)} = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses</p>
-                <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{formatCurrencyString(emergencyFund.shortfall)}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.'}</p>
-                {setActivePage && <button type="button" onClick={() => setActivePage('Summary')} className="mt-2 text-sm text-primary font-medium hover:underline">View full breakdown on Summary →</button>}
+            <div className="section-card border-l-4 border-emerald-500/50 mt-6">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                        <h3 className="section-title text-base mb-2">Emergency fund (liquid cash)</h3>
+                        <p className="text-lg font-semibold text-dark tabular-nums mb-1">
+                            {formatCurrencyString(emergencyFund.emergencyCash)} = <strong className={emergencyFund.monthsCovered >= EMERGENCY_FUND_TARGET_MONTHS ? 'text-emerald-600' : 'text-amber-600'}>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses
+                        </p>
+                        <p className="text-sm text-slate-600">
+                            Target: <strong>{EMERGENCY_FUND_TARGET_MONTHS} months</strong>. {emergencyFund.shortfall > 0 ? (
+                                <>Shortfall: <strong className="text-amber-700">{formatCurrencyString(emergencyFund.shortfall)}</strong>. Build savings in Checking/Savings to reach the target.</>
+                            ) : (
+                                <span className="text-emerald-700 font-medium">Target met. Your liquid cash is adequate for emergencies.</span>
+                            )}
+                        </p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Summary')} className="mt-3 text-sm text-primary font-medium hover:underline">
+                                View full breakdown on Summary →
+                            </button>
+                        )}
+                    </div>
+                    <div className={`flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center ${emergencyFund.monthsCovered >= EMERGENCY_FUND_TARGET_MONTHS ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                        <ShieldCheckIcon className={`h-8 w-8 ${emergencyFund.monthsCovered >= EMERGENCY_FUND_TARGET_MONTHS ? 'text-emerald-600' : 'text-amber-600'}`} />
+                    </div>
+                </div>
             </div>
 
             {isAdmin && (
-                <section className="section-card mt-4">
-                    <h3 className="section-title text-base">Share account with another user</h3>
-                    <p className="text-sm text-slate-600 mb-3">Share read-only account visibility with a specific user, similar to budget sharing.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                <section className="section-card mt-6">
+                    <h3 className="section-title text-base mb-3">Share account with another user</h3>
+                    <p className="text-sm text-slate-600 mb-4">Share read-only account visibility with a specific user, similar to budget sharing.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                         <div>
-                            <label className="block text-xs text-slate-500 mb-1">Account</label>
-                            <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base">
+                            <label className="block text-xs font-medium text-slate-700 mb-1.5">Account</label>
+                            <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base w-full">
                                 <option value="">Select account</option>
                                 {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label className="block text-xs text-slate-500 mb-1">User email</label>
-                            <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
+                            <label className="block text-xs font-medium text-slate-700 mb-1.5">User email</label>
+                            <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base w-full">
                                 <option value="">Select user</option>
                                 {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
                             </select>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 p-2 bg-slate-50 rounded border border-slate-200">
                             <input
                                 type="checkbox"
                                 id="share-show-balance"
                                 checked={shareShowBalance}
                                 onChange={(e) => setShareShowBalance(e.target.checked)}
-                                className="h-4 w-4"
+                                className="h-4 w-4 text-primary focus:ring-primary"
                             />
-                            <label htmlFor="share-show-balance" className="text-xs text-slate-600">Show balance</label>
+                            <label htmlFor="share-show-balance" className="text-xs text-slate-700 cursor-pointer">Show balance</label>
                         </div>
-                        <button type="button" onClick={handleShareAccount} className="btn-primary">Share Account</button>
+                        <button type="button" onClick={handleShareAccount} className="btn-primary w-full md:w-auto">Share Account</button>
                     </div>
-                    {shareError && <p className="text-sm text-rose-600 mt-2">{shareError}</p>}
-                    {shareSuccess && <p className="text-sm text-emerald-600 mt-2">{shareSuccess}</p>}
+                    {shareError && <p className="text-sm text-rose-600 mt-3 p-2 bg-rose-50 rounded border border-rose-200">{shareError}</p>}
+                    {shareSuccess && <p className="text-sm text-emerald-600 mt-3 p-2 bg-emerald-50 rounded border border-emerald-200">{shareSuccess}</p>}
                 </section>
             )}
 
-            <section className="section-card mt-4">
+            <section className="section-card mt-6">
                 <div className="flex items-center justify-between mb-3">
-                    <h3 className="section-title text-base">Transfer Between Accounts</h3>
-                    <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary text-sm">
+                    <div>
+                        <h3 className="section-title text-base">Transfer Between Accounts</h3>
+                        <p className="text-sm text-slate-600 mt-1">Move money between your accounts (e.g., Checking → Savings, Savings → Investment). Creates matching withdrawal and deposit transactions.</p>
+                    </div>
+                    <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary flex-shrink-0 ml-4">
                         Transfer Funds
                     </button>
                 </div>
-                <p className="text-xs text-slate-600">Move money between your accounts (e.g., Checking → Savings, Savings → Investment). Creates matching withdrawal and deposit transactions.</p>
             </section>
 
             {setActivePage && (
-                <div className="flex flex-wrap gap-2 p-4 section-card">
-                    <span className="text-sm text-slate-600 self-center mr-2">Quick links:</span>
-                    <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost py-1.5">Transactions</button>
-                    <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-indigo-700 hover:bg-indigo-50">Investments</button>
-                    <button type="button" onClick={() => setActivePage('Plan')} className="btn-ghost py-1.5 text-primary hover:bg-primary/5">Plan</button>
-                    <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-amber-700 hover:bg-amber-50">Budgets</button>
+                <div className="flex flex-wrap items-center gap-3 p-4 section-card mt-6 bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200">
+                    <span className="text-sm font-medium text-slate-700">Quick links:</span>
+                    <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost py-1.5 text-sm">Transactions</button>
+                    <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-sm text-indigo-700 hover:bg-indigo-50">Investments</button>
+                    <button type="button" onClick={() => setActivePage('Plan')} className="btn-ghost py-1.5 text-sm text-primary hover:bg-primary/5">Plan</button>
+                    <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-sm text-amber-700 hover:bg-amber-50">Budgets</button>
+                    <button type="button" onClick={() => setActivePage('Summary')} className="btn-ghost py-1.5 text-sm text-emerald-700 hover:bg-emerald-50">Summary</button>
                 </div>
             )}
 
-            <section>
-                <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
-                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedCashAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
-                    ))}
+            <section className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="section-title text-xl">Cash Accounts</h2>
+                    <span className="text-sm text-slate-500">{orderedCashAccounts.length} account{orderedCashAccounts.length !== 1 ? 's' : ''}</span>
                 </div>
+                {orderedCashAccounts.length > 0 ? (
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {orderedCashAccounts.map((acc) => (
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
+                        ))}
+                    </div>
+                ) : (
+                    <div className="section-card p-8 text-center">
+                        <BanknotesIcon className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500 font-medium">No cash accounts yet</p>
+                        <p className="text-sm text-slate-400 mt-1">Create a Checking or Savings account to get started</p>
+                        <button type="button" onClick={() => handleOpenAccountModal()} className="mt-4 btn-primary text-sm">Add Cash Account</button>
+                    </div>
+                )}
             </section>
 
-            <section>
-                <h2 className="section-title text-xl mb-4">Credit Cards</h2>
-                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedCreditAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
-                    ))}
+            <section className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="section-title text-xl">Credit Cards</h2>
+                    <span className="text-sm text-slate-500">{orderedCreditAccounts.length} account{orderedCreditAccounts.length !== 1 ? 's' : ''}</span>
                 </div>
+                {orderedCreditAccounts.length > 0 ? (
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {orderedCreditAccounts.map((acc) => (
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} setActivePage={setActivePage} />
+                        ))}
+                    </div>
+                ) : (
+                    <div className="section-card p-8 text-center">
+                        <CreditCardIcon className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500 font-medium">No credit cards yet</p>
+                        <p className="text-sm text-slate-400 mt-1">Add credit card accounts to track your debt</p>
+                        <button type="button" onClick={() => handleOpenAccountModal()} className="mt-4 btn-primary text-sm">Add Credit Card</button>
+                    </div>
+                )}
             </section>
 
-            <section>
-                <h2 className="section-title text-xl mb-4">Investment Platforms</h2>
-                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedInvestmentAccounts.map((acc) => {
-                        const linkedCount = data.investments.filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
-                        return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} setActivePage={setActivePage} />
-                        );
-                    })}
+            <section className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="section-title text-xl">Investment Platforms</h2>
+                    <span className="text-sm text-slate-500">{orderedInvestmentAccounts.length} platform{orderedInvestmentAccounts.length !== 1 ? 's' : ''}</span>
                 </div>
+                {orderedInvestmentAccounts.length > 0 ? (
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {orderedInvestmentAccounts.map((acc) => {
+                            const linkedCount = data.investments.filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
+                            return (
+                                <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} setActivePage={setActivePage} />
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="section-card p-8 text-center">
+                        <ArrowTrendingUpIcon className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500 font-medium">No investment platforms yet</p>
+                        <p className="text-sm text-slate-400 mt-1">Add investment platforms to track your portfolios</p>
+                        <button type="button" onClick={() => handleOpenAccountModal()} className="mt-4 btn-primary text-sm">Add Investment Platform</button>
+                    </div>
+                )}
             </section>
 
             {sharedAccounts.length > 0 && (
-                <section>
-                    <h2 className="section-title text-xl mb-4">Shared With Me</h2>
-                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                <section className="mt-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="section-title text-xl">Shared With Me</h2>
+                        <span className="text-sm text-slate-500">{sharedAccounts.length} shared account{sharedAccounts.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         {sharedAccounts.map((acc) => (
                             <AccountCardComponent key={`shared-${acc.id}-${acc.ownerEmail || ''}`} account={acc} onEditAccount={() => {}} onDeleteAccount={() => {}} readOnly />
                         ))}
