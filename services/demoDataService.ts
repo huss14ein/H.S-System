@@ -559,10 +559,8 @@ export function loadDemoData(options: DemoDataOptions = {}): void {
       const liabilities = generateDemoLiabilities();
       window.localStorage.setItem('demo-liabilities:v1', JSON.stringify(liabilities));
     }
-    
-    console.log('Demo data loaded successfully');
-  } catch (error) {
-    console.warn('Failed to load demo data:', error);
+  } catch {
+    // Ignore demo data errors in production builds
   }
 }
 
@@ -582,8 +580,7 @@ export function clearDemoData(): void {
     window.localStorage.removeItem('demo-goals:v1');
     window.localStorage.removeItem('demo-assets:v1');
     window.localStorage.removeItem('demo-liabilities:v1');
-    console.log('Demo data cleared');
-  } catch (error) {
-    console.warn('Failed to clear demo data:', error);
+  } catch {
+    // Ignore demo clear errors in production builds
   }
 }
