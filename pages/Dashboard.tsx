@@ -26,10 +26,16 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { loadDemoData } from '../services/demoDataService';
+import { useMarketData } from '../context/MarketDataContext';
+import { Holding, InvestmentPortfolio, HoldingAssetClass } from '../types';
+import Modal from '../components/Modal';
+import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
+import { ChartBarIcon } from '../components/icons/ChartBarIcon';
+import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -265,6 +271,378 @@ type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance'
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
 
+type InvestmentViewMode = 'all' | 'portfolio' | 'assetClass';
+type InvestmentTimePeriod = 'current' | '1M' | '3M' | '6M' | '1Y';
+
+interface EnhancedHolding extends Holding {
+    portfolioName?: string;
+    portfolioCurrency?: string;
+    gainLoss: number;
+    gainLossPercent: number;
+    valueInSAR: number;
+}
+
+const InvestmentChartEnhanced: React.FC<{ 
+    holdings: EnhancedHolding[];
+    portfolios: InvestmentPortfolio[];
+    exchangeRate: number;
+    formatCurrencyString: (value: number, options?: { digits?: number }) => string;
+    setActivePage: (page: Page) => void;
+}> = ({ holdings, portfolios, exchangeRate, formatCurrencyString, setActivePage }) => {
+    const { lastUpdated, refreshPrices, isRefreshing } = useMarketData();
+    const [viewMode, setViewMode] = useState<InvestmentViewMode>('all');
+    const [timePeriod, setTimePeriod] = useState<InvestmentTimePeriod>('current');
+    const [selectedHolding, setSelectedHolding] = useState<EnhancedHolding | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+
+    const portfolioMap = new Map(portfolios.map(p => [p.id, p]));
+
+    const processedData = useMemo(() => {
+        let dataToShow = holdings;
+
+        // Filter by time period (for now, we only have current data, but structure is ready)
+        if (timePeriod !== 'current') {
+            // Future: filter by transaction dates
+            dataToShow = holdings;
+        }
+
+        // Group by view mode
+        if (viewMode === 'portfolio') {
+            const byPortfolio = new Map<string, EnhancedHolding[]>();
+            dataToShow.forEach(h => {
+                const portfolioId = h.portfolio_id || 'unassigned';
+                const portfolio = portfolioMap.get(portfolioId);
+                const portfolioName = portfolio?.name || 'Unassigned';
+                if (!byPortfolio.has(portfolioName)) {
+                    byPortfolio.set(portfolioName, []);
+                }
+                byPortfolio.get(portfolioName)!.push(h);
+            });
+
+            // Aggregate holdings by portfolio
+            return Array.from(byPortfolio.entries()).map(([portfolioName, portfolioHoldings]) => {
+                const totalValue = portfolioHoldings.reduce((sum, h) => sum + h.valueInSAR, 0);
+                const totalCost = portfolioHoldings.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+                const totalQuantity = portfolioHoldings.reduce((sum, h) => sum + h.quantity, 0);
+                const totalGainLoss = totalValue - totalCost;
+                const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+                return {
+                    symbol: portfolioName,
+                    name: portfolioName,
+                    currentValue: totalValue,
+                    valueInSAR: totalValue,
+                    quantity: totalQuantity,
+                    avgCost: totalQuantity > 0 ? totalCost / totalQuantity : 0,
+                    gainLoss: totalGainLoss,
+                    gainLossPercent: totalGainLossPercent,
+                    portfolioName,
+                    assetClass: undefined as HoldingAssetClass | undefined,
+                } as EnhancedHolding;
+            });
+        } else if (viewMode === 'assetClass') {
+            const byAssetClass = new Map<HoldingAssetClass | 'Other', EnhancedHolding[]>();
+            dataToShow.forEach(h => {
+                const assetClass = h.assetClass || 'Other';
+                if (!byAssetClass.has(assetClass)) {
+                    byAssetClass.set(assetClass, []);
+                }
+                byAssetClass.get(assetClass)!.push(h);
+            });
+
+            return Array.from(byAssetClass.entries()).map(([assetClass, classHoldings]) => {
+                const totalValue = classHoldings.reduce((sum, h) => sum + h.valueInSAR, 0);
+                const totalCost = classHoldings.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+                const totalGainLoss = totalValue - totalCost;
+                const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+                return {
+                    symbol: assetClass,
+                    name: assetClass,
+                    currentValue: totalValue,
+                    valueInSAR: totalValue,
+                    quantity: classHoldings.reduce((sum, h) => sum + h.quantity, 0),
+                    avgCost: totalCost / classHoldings.reduce((sum, h) => sum + h.quantity, 0),
+                    gainLoss: totalGainLoss,
+                    gainLossPercent: totalGainLossPercent,
+                    assetClass,
+                } as EnhancedHolding;
+            });
+        }
+
+        return dataToShow;
+    }, [holdings, viewMode, timePeriod, portfolioMap]);
+
+    const totalValue = processedData.reduce((sum, h) => sum + h.valueInSAR, 0);
+    const totalCost = processedData.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+    const totalGainLoss = totalValue - totalCost;
+    const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+
+    const formatTimeAgo = (date: Date | null) => {
+        if (!date) return 'Never';
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    };
+
+    return (
+        <>
+            <div className="flex flex-col h-full">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                        <h3 className="section-title">Investment Allocation & Performance</h3>
+                        {lastUpdated && (
+                            <span className="text-xs text-slate-500 flex items-center gap-1">
+                                <InformationCircleIcon className="h-3 w-3" />
+                                Updated {formatTimeAgo(lastUpdated)}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); refreshPrices(); }}
+                            disabled={isRefreshing}
+                            className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+                            title="Refresh prices"
+                        >
+                            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Summary Stats */}
+                {processedData.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 mb-3 p-2 bg-slate-50 rounded-lg">
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">Portfolio Value</p>
+                            <p className="text-sm font-semibold text-dark">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">Total Gain/Loss</p>
+                            <p className={`text-sm font-semibold ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {totalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(totalGainLoss, { digits: 0 })}
+                            </p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">ROI</p>
+                            <p className={`text-sm font-semibold ${totalGainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {totalGainLossPercent >= 0 ? '+' : ''}{totalGainLossPercent.toFixed(1)}%
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* View Mode Toggle */}
+                {processedData.length > 0 && (
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setViewMode('all'); }}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'all' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Show all holdings"
+                            >
+                                <Squares2X2Icon className="h-3 w-3 inline mr-1" />
+                                All
+                            </button>
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setViewMode('portfolio'); }}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'portfolio' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Group by portfolio"
+                            >
+                                <ChartBarIcon className="h-3 w-3 inline mr-1" />
+                                Portfolio
+                            </button>
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setViewMode('assetClass'); }}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'assetClass' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Group by asset class"
+                            >
+                                <ChartBarIcon className="h-3 w-3 inline mr-1" />
+                                Asset Class
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                            {(['current', '1M', '3M', '6M', '1Y'] as InvestmentTimePeriod[]).map(period => (
+                                <button
+                                    key={period}
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setTimePeriod(period); }}
+                                    className={`px-2 py-1 text-xs rounded transition-colors ${
+                                        timePeriod === period ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                    }`}
+                                    title={`${period === 'current' ? 'Current' : period} view`}
+                                >
+                                    {period === 'current' ? 'Now' : period}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Chart */}
+                <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden">
+                    {processedData.length > 0 ? (
+                        <div 
+                            className="h-full cursor-pointer"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // Allow clicking on chart to go to Investments page
+                                setActivePage('Investments');
+                            }}
+                        >
+                            <PerformanceTreemap 
+                                data={processedData.map(h => ({
+                                    ...h,
+                                    symbol: h.symbol || h.name || 'Unknown',
+                                    name: h.name || h.symbol || 'Unknown',
+                                    currentValue: h.valueInSAR,
+                                    gainLossPercent: h.gainLossPercent,
+                                }))}
+                            />
+                        </div>
+                    ) : (
+                        <div className="empty-state h-full flex flex-col items-center justify-center p-6 text-center">
+                            <ArrowTrendingUpIcon className="h-12 w-12 text-slate-300 mb-3" />
+                            <p className="text-sm font-medium text-slate-600 mb-1">No investment holdings yet</p>
+                            <p className="text-xs text-slate-500 mb-4">Add portfolios and holdings in the Investments page to see allocation and performance.</p>
+                            <button 
+                                type="button" 
+                                onClick={(e) => { e.stopPropagation(); setActivePage('Investments'); }}
+                                className="btn-primary text-sm px-4 py-2"
+                            >
+                                Go to Investments →
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {/* Holdings List (for click-through) */}
+                {processedData.length > 0 && processedData.length <= 10 && (
+                    <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                        {processedData.map((h, idx) => (
+                            <div
+                                key={idx}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedHolding(h);
+                                    setIsModalOpen(true);
+                                }}
+                                className="flex items-center justify-between p-2 rounded hover:bg-slate-50 cursor-pointer text-xs"
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-slate-800 truncate">{h.name || h.symbol}</p>
+                                    {h.portfolioName && <p className="text-slate-500 text-xs">{h.portfolioName}</p>}
+                                </div>
+                                <div className="text-right ml-2">
+                                    <p className="font-semibold text-slate-800">{formatCurrencyString(h.valueInSAR, { digits: 0 })}</p>
+                                    <p className={`text-xs ${h.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {h.gainLossPercent >= 0 ? '+' : ''}{h.gainLossPercent.toFixed(1)}%
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Holding Details Modal */}
+            <Modal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                title={selectedHolding ? `${selectedHolding.name || selectedHolding.symbol} Details` : 'Holding Details'}
+            >
+                {selectedHolding && (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-xs text-slate-500">Symbol</p>
+                                <p className="font-semibold">{selectedHolding.symbol}</p>
+                            </div>
+                            {selectedHolding.portfolioName && (
+                                <div>
+                                    <p className="text-xs text-slate-500">Portfolio</p>
+                                    <p className="font-semibold">{selectedHolding.portfolioName}</p>
+                                </div>
+                            )}
+                            {selectedHolding.assetClass && (
+                                <div>
+                                    <p className="text-xs text-slate-500">Asset Class</p>
+                                    <p className="font-semibold">{selectedHolding.assetClass}</p>
+                                </div>
+                            )}
+                            {selectedHolding.portfolioCurrency && (
+                                <div>
+                                    <p className="text-xs text-slate-500">Currency</p>
+                                    <p className="font-semibold">{selectedHolding.portfolioCurrency}</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-xs text-slate-500">Quantity</p>
+                                <p className="font-semibold">{selectedHolding.quantity.toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Avg Cost</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.avgCost, { digits: 2 })}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Current Value</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.valueInSAR, { digits: 2 })}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Total Cost</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.avgCost * selectedHolding.quantity, { digits: 2 })}</p>
+                            </div>
+                        </div>
+                        <div className="border-t pt-4">
+                            <div className="flex justify-between items-center">
+                                <p className="text-sm font-medium text-slate-700">Gain/Loss</p>
+                                <div className="text-right">
+                                    <p className={`text-lg font-bold ${selectedHolding.gainLoss >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {selectedHolding.gainLoss >= 0 ? '+' : ''}{formatCurrencyString(selectedHolding.gainLoss, { digits: 2 })}
+                                    </p>
+                                    <p className={`text-sm ${selectedHolding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {selectedHolding.gainLossPercent >= 0 ? '+' : ''}{selectedHolding.gainLossPercent.toFixed(2)}%
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsModalOpen(false);
+                                    setActivePage('Investments');
+                                }}
+                                className="btn-primary flex-1 text-sm"
+                            >
+                                View in Investments →
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+        </>
+    );
+};
+
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
@@ -347,14 +725,35 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
             
-            // Investment data
-            const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
-            const investmentTreemapData = allHoldings.map(h => {
-                 const totalCost = h.avgCost * h.quantity;
-                 const gainLoss = h.currentValue - totalCost;
-                 const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-                 return { ...h, gainLoss, gainLossPercent };
-            });
+            // Investment data with portfolio and currency info
+            const portfolioMap = new Map((data.investments || []).map(p => [p.id, p]));
+            const allHoldings = (data.investments || []).flatMap(p => 
+                (p.holdings || []).map(h => ({
+                    ...h,
+                    portfolio_id: p.id,
+                    portfolioName: p.name,
+                    portfolioCurrency: p.currency || 'USD',
+                }))
+            );
+            const investmentTreemapData: EnhancedHolding[] = allHoldings
+                .filter(h => h.quantity > 0 && (h.currentValue > 0 || (h.avgCost > 0 && h.quantity > 0))) // Filter out invalid holdings
+                .map(h => {
+                    const totalCost = (h.avgCost || 0) * (h.quantity || 0);
+                    // Use currentValue if available, otherwise fallback to cost basis
+                    const marketValue = h.currentValue > 0 ? h.currentValue : totalCost;
+                    // Convert to SAR if needed
+                    const valueInSAR = h.portfolioCurrency === 'SAR' ? marketValue : marketValue * exchangeRate;
+                    const costInSAR = h.portfolioCurrency === 'SAR' ? totalCost : totalCost * exchangeRate;
+                    const gainLoss = valueInSAR - costInSAR;
+                    const gainLossPercent = costInSAR > 0 ? (gainLoss / costInSAR) * 100 : 0;
+                    return { 
+                        ...h, 
+                        currentValue: marketValue,
+                        valueInSAR,
+                        gainLoss, 
+                        gainLossPercent 
+                    };
+                });
             const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
             const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
             const netCapital = totalInvested - totalWithdrawn;
@@ -569,15 +968,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                     <h3 className="section-title">Monthly Cash Flow</h3>
                     <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
                  </div>
-                 <div className="lg:col-span-2 section-card-hover flex flex-col" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
-                    <h3 className="section-title">Investment Allocation & Performance</h3>
-                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden">
-                        {investmentTreemapData.length > 0 ? (
-                            <PerformanceTreemap data={investmentTreemapData} />
-                        ) : (
-                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
-                        )}
-                    </div>
+                 <div className="lg:col-span-2 section-card flex flex-col">
+                    <InvestmentChartEnhanced
+                        holdings={investmentTreemapData}
+                        portfolios={data.investments || []}
+                        exchangeRate={exchangeRate}
+                        formatCurrencyString={formatCurrencyString}
+                        setActivePage={setActivePage}
+                    />
                  </div>
             </div>
             

@@ -21,6 +21,12 @@ import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
+import { useMarketData } from '../context/MarketDataContext';
+import { InvestmentPortfolio, HoldingAssetClass } from '../types';
+import Modal from '../components/Modal';
+import { InformationCircleIcon as InfoIcon } from '../components/icons/InformationCircleIcon';
+import { ChartBarIcon } from '../components/icons/ChartBarIcon';
+import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
 import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
 import { computeRiskLaneFromData } from '../services/riskLaneEngine';
@@ -59,6 +65,323 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
     <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 );
+
+type InvestmentViewMode = 'all' | 'portfolio' | 'assetClass';
+
+interface EnhancedHoldingSummary {
+    id: string;
+    symbol: string;
+    name?: string;
+    quantity: number;
+    avgCost: number;
+    currentValue: number;
+    valueInSAR: number;
+    portfolio_id?: string;
+    portfolioName?: string;
+    portfolioCurrency?: string;
+    assetClass?: HoldingAssetClass;
+    gainLoss: number;
+    gainLossPercent: number;
+}
+
+const EnhancedInvestmentChart: React.FC<{
+    holdings: EnhancedHoldingSummary[];
+    portfolios: InvestmentPortfolio[];
+    exchangeRate: number;
+    formatCurrencyString: (value: number, options?: { digits?: number }) => string;
+    setActivePage?: (page: Page) => void;
+}> = ({ holdings, portfolios, exchangeRate, formatCurrencyString, setActivePage }) => {
+    const { lastUpdated, refreshPrices, isRefreshing } = useMarketData();
+    const [viewMode, setViewMode] = useState<InvestmentViewMode>('all');
+    const [selectedHolding, setSelectedHolding] = useState<EnhancedHoldingSummary | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+
+    const portfolioMap = new Map(portfolios.map(p => [p.id, p]));
+
+    const processedData = useMemo(() => {
+        if (viewMode === 'portfolio') {
+            const byPortfolio = new Map<string, EnhancedHoldingSummary[]>();
+            holdings.forEach(h => {
+                const portfolioName = h.portfolioName || 'Unassigned';
+                if (!byPortfolio.has(portfolioName)) {
+                    byPortfolio.set(portfolioName, []);
+                }
+                byPortfolio.get(portfolioName)!.push(h);
+            });
+
+            return Array.from(byPortfolio.entries()).map(([portfolioName, portfolioHoldings]) => {
+                const totalValue = portfolioHoldings.reduce((sum, h) => sum + h.valueInSAR, 0);
+                const totalCost = portfolioHoldings.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+                const totalQuantity = portfolioHoldings.reduce((sum, h) => sum + h.quantity, 0);
+                const totalGainLoss = totalValue - totalCost;
+                const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+                return {
+                    symbol: portfolioName,
+                    name: portfolioName,
+                    currentValue: totalValue,
+                    valueInSAR: totalValue,
+                    quantity: totalQuantity,
+                    avgCost: totalQuantity > 0 ? totalCost / totalQuantity : 0,
+                    gainLoss: totalGainLoss,
+                    gainLossPercent: totalGainLossPercent,
+                    portfolioName,
+                } as EnhancedHoldingSummary;
+            });
+        } else if (viewMode === 'assetClass') {
+            const byAssetClass = new Map<HoldingAssetClass | 'Other', EnhancedHoldingSummary[]>();
+            holdings.forEach(h => {
+                const assetClass = h.assetClass || 'Other';
+                if (!byAssetClass.has(assetClass)) {
+                    byAssetClass.set(assetClass, []);
+                }
+                byAssetClass.get(assetClass)!.push(h);
+            });
+
+            return Array.from(byAssetClass.entries()).map(([assetClass, classHoldings]) => {
+                const totalValue = classHoldings.reduce((sum, h) => sum + h.valueInSAR, 0);
+                const totalCost = classHoldings.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+                const totalQuantity = classHoldings.reduce((sum, h) => sum + h.quantity, 0);
+                const totalGainLoss = totalValue - totalCost;
+                const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+                return {
+                    symbol: assetClass,
+                    name: assetClass,
+                    currentValue: totalValue,
+                    valueInSAR: totalValue,
+                    quantity: totalQuantity,
+                    avgCost: totalQuantity > 0 ? totalCost / totalQuantity : 0,
+                    gainLoss: totalGainLoss,
+                    gainLossPercent: totalGainLossPercent,
+                    assetClass,
+                } as EnhancedHoldingSummary;
+            });
+        }
+
+        return holdings;
+    }, [holdings, viewMode, portfolioMap]);
+
+    const totalValue = processedData.reduce((sum, h) => sum + h.valueInSAR, 0);
+    const totalCost = processedData.reduce((sum, h) => sum + (h.avgCost * h.quantity), 0);
+    const totalGainLoss = totalValue - totalCost;
+    const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
+
+    const formatTimeAgo = (date: Date | null) => {
+        if (!date) return 'Never';
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    };
+
+    return (
+        <>
+            <div className="section-card flex flex-col h-[450px]">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                        <h3 className="section-title">Investment Allocation & Performance</h3>
+                        {lastUpdated && (
+                            <span className="text-xs text-slate-500 flex items-center gap-1">
+                                <InfoIcon className="h-3 w-3" />
+                                Updated {formatTimeAgo(lastUpdated)}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => refreshPrices()}
+                            disabled={isRefreshing}
+                            className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+                            title="Refresh prices"
+                        >
+                            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Summary Stats */}
+                {processedData.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 mb-3 p-2 bg-slate-50 rounded-lg">
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">Portfolio Value</p>
+                            <p className="text-sm font-semibold text-dark">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">Total Gain/Loss</p>
+                            <p className={`text-sm font-semibold ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {totalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(totalGainLoss, { digits: 0 })}
+                            </p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-xs text-slate-500">ROI</p>
+                            <p className={`text-sm font-semibold ${totalGainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {totalGainLossPercent >= 0 ? '+' : ''}{totalGainLossPercent.toFixed(1)}%
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* View Mode Toggle */}
+                {processedData.length > 0 && (
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                            <button
+                                type="button"
+                                onClick={() => setViewMode('all')}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'all' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Show all holdings"
+                            >
+                                <Squares2X2Icon className="h-3 w-3 inline mr-1" />
+                                All
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setViewMode('portfolio')}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'portfolio' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Group by portfolio"
+                            >
+                                <ChartBarIcon className="h-3 w-3 inline mr-1" />
+                                Portfolio
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setViewMode('assetClass')}
+                                className={`px-2 py-1 text-xs rounded transition-colors ${
+                                    viewMode === 'assetClass' ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title="Group by asset class"
+                            >
+                                <ChartBarIcon className="h-3 w-3 inline mr-1" />
+                                Asset Class
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Chart */}
+                <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                    {processedData.length > 0 ? (
+                        <div 
+                            className="h-full cursor-pointer"
+                            onClick={() => setActivePage && setActivePage('Investments')}
+                        >
+                            <PerformanceTreemap 
+                                data={processedData.map(h => ({
+                                    ...h,
+                                    symbol: h.symbol || h.name || 'Unknown',
+                                    name: h.name || h.symbol || 'Unknown',
+                                    currentValue: h.valueInSAR,
+                                    gainLossPercent: h.gainLossPercent,
+                                }))}
+                            />
+                        </div>
+                    ) : (
+                        <div className="empty-state h-full flex flex-col items-center justify-center p-6 text-center">
+                            <ArrowTrendingUpIcon className="h-12 w-12 text-slate-300 mb-3" />
+                            <p className="text-sm font-medium text-slate-600 mb-1">No investment holdings yet</p>
+                            <p className="text-xs text-slate-500 mb-4">Add portfolios and holdings in the Investments page to see allocation and performance.</p>
+                            {setActivePage && (
+                                <button 
+                                    type="button" 
+                                    onClick={() => setActivePage('Investments')}
+                                    className="btn-primary text-sm px-4 py-2"
+                                >
+                                    Go to Investments →
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Holding Details Modal */}
+            <Modal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                title={selectedHolding ? `${selectedHolding.name || selectedHolding.symbol} Details` : 'Holding Details'}
+            >
+                {selectedHolding && (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-xs text-slate-500">Symbol</p>
+                                <p className="font-semibold">{selectedHolding.symbol}</p>
+                            </div>
+                            {selectedHolding.portfolioName && (
+                                <div>
+                                    <p className="text-xs text-slate-500">Portfolio</p>
+                                    <p className="font-semibold">{selectedHolding.portfolioName}</p>
+                                </div>
+                            )}
+                            {selectedHolding.assetClass && (
+                                <div>
+                                    <p className="text-xs text-slate-500">Asset Class</p>
+                                    <p className="font-semibold">{selectedHolding.assetClass}</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-xs text-slate-500">Quantity</p>
+                                <p className="font-semibold">{selectedHolding.quantity.toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Avg Cost</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.avgCost, { digits: 2 })}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Current Value</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.valueInSAR, { digits: 2 })}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500">Total Cost</p>
+                                <p className="font-semibold">{formatCurrencyString(selectedHolding.avgCost * selectedHolding.quantity, { digits: 2 })}</p>
+                            </div>
+                        </div>
+                        <div className="border-t pt-4">
+                            <div className="flex justify-between items-center">
+                                <p className="text-sm font-medium text-slate-700">Gain/Loss</p>
+                                <div className="text-right">
+                                    <p className={`text-lg font-bold ${selectedHolding.gainLoss >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {selectedHolding.gainLoss >= 0 ? '+' : ''}{formatCurrencyString(selectedHolding.gainLoss, { digits: 2 })}
+                                    </p>
+                                    <p className={`text-sm ${selectedHolding.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {selectedHolding.gainLossPercent >= 0 ? '+' : ''}{selectedHolding.gainLossPercent.toFixed(2)}%
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        {setActivePage && (
+                            <div className="flex gap-2 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsModalOpen(false);
+                                        setActivePage('Investments');
+                                    }}
+                                    className="btn-primary flex-1 text-sm"
+                                >
+                                    View in Investments →
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
+        </>
+    );
+};
 
 interface SummaryProps {
   setActivePage?: (page: Page) => void;
@@ -119,13 +442,31 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const netWorthPrevMonth = netWorth - monthlyPnL;
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
-        const allHoldings = investments.flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })));
-        const investmentTreemapData = allHoldings.map(h => {
-             const totalCost = h.avgCost * h.quantity;
-             const gainLoss = h.currentValue - totalCost;
-             const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-             return { ...h, gainLoss, gainLossPercent };
-        });
+        const allHoldings = investments.flatMap(p => 
+            (p.holdings || []).map(h => ({
+                ...h,
+                portfolio_id: p.id,
+                portfolioName: p.name,
+                portfolioCurrency: p.currency || 'USD',
+            }))
+        );
+        const investmentTreemapData = allHoldings
+            .filter(h => h.quantity > 0 && (h.currentValue > 0 || (h.avgCost > 0 && h.quantity > 0)))
+            .map(h => {
+                const totalCost = (h.avgCost || 0) * (h.quantity || 0);
+                const marketValue = h.currentValue > 0 ? h.currentValue : totalCost;
+                const valueInSAR = toSAR(marketValue, h.portfolioCurrency || 'USD', exchangeRate);
+                const costInSAR = toSAR(totalCost, h.portfolioCurrency || 'USD', exchangeRate);
+                const gainLoss = valueInSAR - costInSAR;
+                const gainLossPercent = costInSAR > 0 ? (gainLoss / costInSAR) * 100 : 0;
+                return { 
+                    ...h, 
+                    currentValue: marketValue,
+                    valueInSAR,
+                    gainLoss, 
+                    gainLossPercent 
+                };
+            });
 
         const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
         const individualStocksValue = investmentTreemapData
@@ -298,16 +639,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         <p className="text-sm text-slate-600 text-center px-6">Historical net worth chart is available for Admin only.</p>
                     </div>
                 )}
-                <div className="section-card flex flex-col h-[450px]">
-                    <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
-                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
-                        {investmentTreemapData.length > 0 ? (
-                            <PerformanceTreemap data={investmentTreemapData} />
-                        ) : (
-                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
-                        )}
-                    </div>
-                </div>
+                <EnhancedInvestmentChart
+                    holdings={investmentTreemapData}
+                    portfolios={investments}
+                    exchangeRate={exchangeRate}
+                    formatCurrencyString={formatCurrencyString}
+                    setActivePage={setActivePage}
+                />
             </div>
             
             {householdStress && (
