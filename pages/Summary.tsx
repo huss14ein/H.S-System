@@ -754,7 +754,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 )}
                 <EnhancedInvestmentChart
                     holdings={investmentTreemapData}
-                    portfolios={investments}
+                    portfolios={data?.investments || []}
                     exchangeRate={exchangeRate}
                     formatCurrencyString={formatCurrencyString}
                     setActivePage={setActivePage}
