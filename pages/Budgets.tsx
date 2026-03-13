@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext } from 'react';
+import React, { useMemo, useState, useContext, useEffect } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -175,6 +175,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const HISTORY_PAGE_SIZE = 15;
 
     const [currentDate, setCurrentDate] = useState(new Date());
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
@@ -218,9 +220,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         budgetTier?: BudgetTier;
         utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
     };
-
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth() + 1;
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
     const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
@@ -1231,7 +1230,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, governanceCategories]);
 
     const pendingRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status === 'Pending'), [sortedFilteredRequests]);
-    const respondedRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status !== 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
