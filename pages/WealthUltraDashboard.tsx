@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useEffect } from 'react';
+import React, { useMemo, useContext, useEffect, useState } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -12,6 +12,14 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import {
+  savePerformanceSnapshot,
+  getPerformanceSnapshots,
+  calculatePerformanceMetrics,
+  getPerformanceTrend,
+  getSleeveDriftHistory,
+  type PerformanceMetrics,
+} from '../services/wealthUltraPerformance';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -260,6 +268,8 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics | null>(null);
+  const [performanceTrend, setPerformanceTrend] = useState<Array<{ date: Date; value: number; returnPct: number }>>([]);
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
@@ -418,6 +428,41 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       return [];
     }
   }, [alerts]);
+
+  // Save performance snapshot
+  useEffect(() => {
+    if (loading || positions.length === 0) return;
+    const now = Date.now();
+    const lastSnapshot = getPerformanceSnapshots()[0];
+    // Only save once per day
+    if (lastSnapshot && (now - lastSnapshot.timestamp) < 24 * 60 * 60 * 1000) return;
+
+    savePerformanceSnapshot({
+      timestamp: now,
+      totalPortfolioValue,
+      allocations,
+      positions: positions.map(p => ({
+        symbol: p.ticker,
+        marketValue: p.marketValue,
+        plPct: p.plPct,
+        sleeveType: p.sleeveType,
+      })),
+      metrics: {
+        totalReturn: 0, // Will be calculated from snapshots
+        totalReturnPct: 0,
+      },
+    });
+  }, [totalPortfolioValue, allocations, positions, loading]);
+
+  // Calculate performance metrics
+  useEffect(() => {
+    const snapshots = getPerformanceSnapshots();
+    if (snapshots.length < 2) return;
+    const metrics = calculatePerformanceMetrics(snapshots, totalPortfolioValue);
+    setPerformanceMetrics(metrics);
+    const trend = getPerformanceTrend(snapshots, 30);
+    setPerformanceTrend(trend);
+  }, [totalPortfolioValue]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1241,6 +1286,138 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             {gridItems.find(item => item.id === 'positions')?.content}
           </div>
         </section>
+
+        {/* Performance Analytics Section */}
+        {performanceMetrics && (
+          <section className="space-y-6">
+            <div className="border-b border-slate-200 pb-2">
+              <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Performance Analytics</h2>
+              <p className="text-xs text-slate-500 mt-1">Historical performance metrics and risk analysis</p>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <SectionCard title="Risk-Adjusted Returns" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Sharpe Ratio</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.sharpeRatio.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.sharpeRatio > 1 ? 'Excellent' : performanceMetrics.sharpeRatio > 0.5 ? 'Good' : 'Needs improvement'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Sortino Ratio</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.sortinoRatio.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">Downside risk-adjusted</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Max Drawdown</p>
+                      <p className="text-xl font-black text-rose-700 tabular-nums">{performanceMetrics.maxDrawdownPct.toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">{formatCurrencyString(performanceMetrics.maxDrawdown)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Volatility</p>
+                      <p className="text-xl font-black text-slate-900 tabular-nums">{(performanceMetrics.volatility * 100).toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">Annualized</p>
+                    </div>
+                  </div>
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Trading Performance" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Win Rate</p>
+                      <p className="text-2xl font-black text-emerald-700 tabular-nums">{(performanceMetrics.winRate * 100).toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.winRate > 0.6 ? 'Strong' : performanceMetrics.winRate > 0.5 ? 'Balanced' : 'Review strategy'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Profit Factor</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.profitFactor.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.profitFactor > 2 ? 'Excellent' : performanceMetrics.profitFactor > 1.5 ? 'Good' : 'Needs improvement'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Avg Win</p>
+                      <p className="text-xl font-black text-emerald-700 tabular-nums">+{performanceMetrics.avgWin.toFixed(1)}%</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Avg Loss</p>
+                      <p className="text-xl font-black text-rose-700 tabular-nums">{performanceMetrics.avgLoss.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                </div>
+              </SectionCard>
+            </div>
+
+            <SectionCard title="Sleeve Performance Attribution" className="border-2 border-slate-200 bg-white shadow-md">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Object.entries(performanceMetrics.sleevePerformance).map(([sleeve, perf]) => (
+                  <div key={sleeve} className={`rounded-xl border-2 p-4 ${SLEEVE_BG[sleeve as WealthUltraSleeve]}`}>
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">{sleeve} Sleeve</p>
+                    <p className={`text-2xl font-black tabular-nums ${perf.returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {perf.returnPct >= 0 ? '+' : ''}{perf.returnPct.toFixed(1)}%
+                    </p>
+                    <p className="text-sm text-slate-700 mt-1">{formatCurrencyString(perf.return)}</p>
+                    <p className="text-xs text-slate-600 mt-2">
+                      Contribution: {perf.contribution.toFixed(1)}% of total return
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {performanceTrend.length > 0 && (
+              <SectionCard title="30-Day Performance Trend" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Portfolio Value Trend</p>
+                      <p className="text-sm text-slate-700 mt-1">
+                        {performanceTrend.length > 0 && (
+                          <>
+                            {performanceTrend[0].date.toLocaleDateString()} → {performanceTrend[performanceTrend.length - 1].date.toLocaleDateString()}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    {performanceTrend.length > 0 && (
+                      <div className="text-right">
+                        <p className={`text-xl font-black tabular-nums ${performanceTrend[performanceTrend.length - 1].returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {performanceTrend[performanceTrend.length - 1].returnPct >= 0 ? '+' : ''}{performanceTrend[performanceTrend.length - 1].returnPct.toFixed(2)}%
+                        </p>
+                        <p className="text-xs text-slate-500">30-day return</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-48 bg-slate-50 rounded-lg border border-slate-200 p-4 flex items-end justify-between gap-1">
+                    {performanceTrend.map((point, idx) => {
+                      const maxValue = Math.max(...performanceTrend.map(p => p.value));
+                      const minValue = Math.min(...performanceTrend.map(p => p.value));
+                      const range = maxValue - minValue || 1;
+                      const height = ((point.value - minValue) / range) * 100;
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex-1 rounded-t transition-all ${
+                            point.returnPct >= 0 ? 'bg-emerald-500' : 'bg-rose-500'
+                          }`}
+                          style={{ height: `${Math.max(5, height)}%` }}
+                          title={`${point.date.toLocaleDateString()}: ${formatCurrencyString(point.value)} (${point.returnPct >= 0 ? '+' : ''}${point.returnPct.toFixed(1)}%)`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </SectionCard>
+            )}
+          </section>
+        )}
 
         {/* History & Monitoring Section */}
         <section className="space-y-6">
