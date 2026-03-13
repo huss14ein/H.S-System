@@ -129,7 +129,12 @@ const Forecast: React.FC = () => {
             
             // Calculate cash (positive balances from Checking/Savings accounts only)
             const cashAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
-            const totalCash = Math.max(0, cashAccounts.reduce((sum, acc) => sum + Math.max(0, Number(acc.balance) || 0), 0));
+            const cashAndSavingsPositive = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0));
+            const cashAndSavingsNegative = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) < 0)
+                .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0));
             
             // Calculate commodities
             const totalCommodities = Math.max(0, commodityHoldings.reduce((sum, ch) => sum + (Number(ch.currentValue) || 0), 0));
@@ -138,16 +143,17 @@ const Forecast: React.FC = () => {
             const investmentValue = Math.max(0, getAllInvestmentsValueInSAR(investments, exchangeRate));
             
             // Total assets = physical assets + cash + commodities + investments
-            const totalAssets = totalPhysicalAssets + totalCash + totalCommodities + investmentValue;
+            const totalAssets = totalPhysicalAssets + cashAndSavingsPositive + totalCommodities + investmentValue;
             
-            // Calculate debts (negative liabilities + negative credit card balances)
+            // Calculate debts (negative liabilities + negative credit card balances + negative cash balances)
             const totalDebt = Math.max(0, 
                 liabilities
                     .filter(l => (Number(l.amount) || 0) < 0)
                     .reduce((sum, liab) => sum + Math.abs(Number(liab.amount) || 0), 0) +
                 accounts
                     .filter(a => a.type === 'Credit' && (Number(a.balance) || 0) < 0)
-                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0)
+                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0) +
+                cashAndSavingsNegative
             );
             
             // Calculate receivables (positive liabilities)
@@ -163,7 +169,7 @@ const Forecast: React.FC = () => {
             return { 
                 netWorth: Math.max(0, netWorth), 
                 investmentValue,
-                totalCash,
+                totalCash: cashAndSavingsPositive,
                 totalDebt,
                 totalReceivable,
             };

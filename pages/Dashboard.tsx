@@ -694,34 +694,74 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
             // Current Month Calculations
-            const monthlyTransactions = (data.transactions || []).filter(t => new Date(t.date) >= firstDayOfMonth);
-            const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-            const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const monthlyTransactions = (data.transactions || []).filter(t => {
+                try {
+                    return new Date(t.date) >= firstDayOfMonth;
+                } catch {
+                    return false;
+                }
+            });
+            const monthlyIncome = Math.max(0, monthlyTransactions
+                .filter(t => t.type === 'income')
+                .reduce((sum, t) => sum + (Number(t.amount) || 0), 0));
+            const monthlyExpenses = Math.max(0, monthlyTransactions
+                .filter(t => t.type === 'expense')
+                .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0));
             const monthlyPnL = monthlyIncome - monthlyExpenses;
-            const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
+            const budgetToMonthly = (b: { limit: number; period?: string }) => {
+                const limit = Number(b.limit) || 0;
+                if (b.period === 'yearly') return limit / 12;
+                if (b.period === 'weekly') return limit * (52 / 12);
+                if (b.period === 'daily') return limit * (365 / 12);
+                return limit;
+            };
+            const totalBudget = Math.max(0, (data.budgets || []).reduce((sum, b) => sum + budgetToMonthly(b), 0));
             const budgetVariance = totalBudget - monthlyExpenses;
             
             // Previous Month P&L for trend
             const lastMonthTransactions = (data.transactions || []).filter(t => {
-                const date = new Date(t.date);
-                return date >= firstDayOfLastMonth && date < firstDayOfMonth;
+                try {
+                    const date = new Date(t.date);
+                    return date >= firstDayOfLastMonth && date < firstDayOfMonth;
+                } catch {
+                    return false;
+                }
             });
-            const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const lastMonthIncome = Math.max(0, lastMonthTransactions
+                .filter(t => t.type === 'income')
+                .reduce((sum, t) => sum + (Number(t.amount) || 0), 0));
+            const lastMonthExpenses = Math.max(0, lastMonthTransactions
+                .filter(t => t.type === 'expense')
+                .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0));
+            const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
             
             // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
-            const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments || [], exchangeRate);
+            const totalCommodities = Math.max(0, (data.commodityHoldings || []).reduce((sum, ch) => sum + (Number(ch.currentValue) || 0), 0));
+            const totalInvestmentsValue = Math.max(0, getAllInvestmentsValueInSAR(data.investments || [], exchangeRate));
             const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
-            const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-            const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) +
+            const cashAndSavingsPositive = Math.max(0, cashSavingsAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0));
+            const cashAndSavingsNegative = Math.max(0, cashSavingsAccounts
+                .filter(a => (Number(a.balance) || 0) < 0)
+                .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0));
+            const totalAssets = Math.max(0, (data.assets || []).reduce((sum, asset) => sum + (Number(asset.value) || 0), 0)) +
                                cashAndSavingsPositive +
                                totalCommodities +
                                totalInvestmentsValue;
-            const totalDebt = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
-            const totalReceivable = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-            const netWorth = totalAssets - totalDebt + totalReceivable;
+            const totalDebt = Math.max(0, 
+                (data.liabilities || [])
+                    .filter((l: { amount?: number }) => (Number(l.amount) || 0) < 0)
+                    .reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(Number(liab.amount) || 0), 0) + 
+                (data.accounts || [])
+                    .filter(a => a.type === 'Credit' && (Number(a.balance) || 0) < 0)
+                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0) + 
+                cashAndSavingsNegative
+            );
+            const totalReceivable = Math.max(0, (data.liabilities || [])
+                .filter((l: { amount?: number }) => (Number(l.amount) || 0) > 0)
+                .reduce((sum: number, liab: { amount?: number }) => sum + (Number(liab.amount) || 0), 0));
+            const netWorth = Math.max(0, totalAssets - totalDebt + totalReceivable);
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
             
@@ -754,17 +794,28 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                         gainLossPercent 
                     };
                 });
-            const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-            const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
-            const netCapital = totalInvested - totalWithdrawn;
+            const totalInvested = Math.max(0, (data.investmentTransactions || [])
+                .filter(t => t.type === 'buy')
+                .reduce((sum, t) => sum + (Number(t.total) || 0), 0));
+            const totalWithdrawn = Math.max(0, (data.investmentTransactions || [])
+                .filter(t => t.type === 'sell')
+                .reduce((sum, t) => sum + Math.abs(Number(t.total) || 0), 0));
+            const netCapital = Math.max(0, totalInvested - totalWithdrawn);
             const totalGainLoss = totalInvestmentsValue - netCapital;
-            const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
+            const roi = netCapital > 0 && Number.isFinite(totalGainLoss / netCapital) ? (totalGainLoss / netCapital) : 0;
             
             const monthlySpending = new Map<string, number>();
             monthlyTransactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
+                try {
                     const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
-                    monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
-                });
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    if (Number.isFinite(amount) && amount > 0) {
+                        monthlySpending.set(t.budgetCategory!, currentSpend + amount);
+                    }
+                } catch {
+                    // Skip invalid transactions
+                }
+            });
 
             const monthlyBudgets = (data.budgets || [])
                 .map(budget => {
@@ -778,14 +829,36 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             // Cashflow Chart Data
             const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
             const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-            (data.transactions || []).filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
-                const monthKey = t.date.slice(0, 7); // YYYY-MM
-                const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
-                if(t.type === 'income') current.income += t.amount;
-                else current.expenses += Math.abs(t.amount);
-                monthlyCashflowMap.set(monthKey, current);
+            (data.transactions || []).filter(t => {
+                try {
+                    return new Date(t.date) >= twelveMonthsAgo;
+                } catch {
+                    return false;
+                }
+            }).forEach(t => {
+                try {
+                    const monthKey = t.date.slice(0, 7); // YYYY-MM
+                    const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
+                    const amount = Number(t.amount) || 0;
+                    if (Number.isFinite(amount) && amount !== 0) {
+                        if (t.type === 'income') {
+                            current.income += amount;
+                        } else if (t.type === 'expense') {
+                            current.expenses += Math.abs(amount);
+                        }
+                        monthlyCashflowMap.set(monthKey, current);
+                    }
+                } catch {
+                    // Skip invalid transactions
+                }
             });
-            const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
+            const monthlyCashflowData = Array.from(monthlyCashflowMap.entries())
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([key, value]) => ({ 
+                    name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), 
+                    income: Math.max(0, value.income),
+                    expenses: Math.max(0, value.expenses)
+                }));
 
             const uncategorizedTransactions = (data.transactions || []).filter(t => t.type === 'expense' && !t.budgetCategory);
             
@@ -793,18 +866,36 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
             // 30-day projected cash: current cash + average monthly net (last 6 months)
             const cashAccounts = (data.accounts || []).filter(a => ['Checking', 'Savings'].includes(a.type));
-            const currentCash = cashAccounts.reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+            const currentCash = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0));
             const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-            const recentTx = (data.transactions || []).filter(t => new Date(t.date) >= sixMonthsAgo);
+            const recentTx = (data.transactions || []).filter(t => {
+                try {
+                    return new Date(t.date) >= sixMonthsAgo;
+                } catch {
+                    return false;
+                }
+            });
             const monthlyNets = new Map<string, number>();
             recentTx.forEach(t => {
-                const key = t.date.slice(0, 7);
-                monthlyNets.set(key, (monthlyNets.get(key) || 0) + t.amount);
+                try {
+                    const key = t.date.slice(0, 7);
+                    const current = monthlyNets.get(key) || 0;
+                    const amount = Number(t.amount) || 0;
+                    if (t.type === 'income') {
+                        monthlyNets.set(key, current + amount);
+                    } else if (t.type === 'expense') {
+                        monthlyNets.set(key, current - Math.abs(amount));
+                    }
+                } catch {
+                    // Skip invalid transactions
+                }
             });
             const avgMonthlyNet = monthlyNets.size > 0
                 ? Array.from(monthlyNets.values()).reduce((a, b) => a + b, 0) / monthlyNets.size
                 : monthlyPnL;
-            const projectedCash30d = currentCash + avgMonthlyNet;
+            const projectedCash30d = Math.max(0, currentCash + avgMonthlyNet);
 
             return {
                 kpiSummary: {

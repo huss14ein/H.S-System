@@ -341,9 +341,13 @@ const AssetLiabilityChart: React.FC = () => {
             const liab = data?.liabilities ?? [];
 
             const totalInvestments = Math.max(0, getAllInvestmentsValueInSAR(inv, exchangeRate));
-            const totalCash = Math.max(0, acc
-                .filter(a => a.type !== 'Credit')
-                .reduce((sum, a) => sum + Math.max(0, Number(a.balance) || 0), 0));
+            const cashAccounts = acc.filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const totalCash = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, a) => sum + (Number(a.balance) || 0), 0));
+            const cashAndSavingsNegative = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) < 0)
+                .reduce((sum, a) => sum + Math.abs(Number(a.balance) || 0), 0));
             const totalPhysicalAssets = Math.max(0, ast
                 .reduce((sum, asset) => sum + Math.max(0, Number(asset.value) || 0), 0));
             const totalDebt = Math.max(0, liab
@@ -351,7 +355,8 @@ const AssetLiabilityChart: React.FC = () => {
                 .reduce((sum, l) => sum + Math.abs(Number(l.amount) || 0), 0)
                 + acc
                     .filter(a => a.type === 'Credit' && (Number(a.balance) || 0) < 0)
-                    .reduce((sum, a) => sum + Math.abs(Number(a.balance) || 0), 0));
+                    .reduce((sum, a) => sum + Math.abs(Number(a.balance) || 0), 0)
+                + cashAndSavingsNegative);
             const totalReceivable = Math.max(0, liab
                 .filter((l) => (Number(l.amount) || 0) > 0 || l.type === 'Receivable')
                 .reduce((sum, l) => sum + Math.max(0, Number(l.amount) || 0), 0));
@@ -478,9 +483,13 @@ const Analysis: React.FC = () => {
             const trendData = buildTrendData(transactions, 6);
 
             const totalInvestments = Math.max(0, getAllInvestmentsValueInSAR(investments, exchangeRate));
-            const totalCash = Math.max(0, accounts
-                .filter(a => a.type !== 'Credit')
-                .reduce((sum, acc) => sum + Math.max(0, Number(acc.balance) || 0), 0));
+            const cashAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const totalCash = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0));
+            const cashAndSavingsNegative = Math.max(0, cashAccounts
+                .filter(a => (Number(a.balance) || 0) < 0)
+                .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0));
             const totalPhysicalAssets = Math.max(0, assets
                 .reduce((sum, asset) => sum + Math.max(0, Number(asset.value) || 0), 0));
             const totalDebt = Math.max(0, liabilities
@@ -488,7 +497,8 @@ const Analysis: React.FC = () => {
                 .reduce((sum, liab) => sum + Math.abs(Number(liab.amount) || 0), 0)
                 + accounts
                     .filter(a => a.type === 'Credit' && (Number(a.balance) || 0) < 0)
-                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0));
+                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0)
+                + cashAndSavingsNegative);
             const totalReceivable = Math.max(0, liabilities
                 .filter((l) => (Number(l.amount) || 0) > 0 || l.type === 'Receivable')
                 .reduce((sum, liab) => sum + Math.max(0, Number(liab.amount) || 0), 0));
