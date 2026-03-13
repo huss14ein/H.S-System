@@ -1017,9 +1017,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let newTx: any = null;
         let error: any = null;
         for (const payload of transactionPayloadVariants(transaction)) {
-            const result = await db.from('transactions').insert(withUser(payload)).select().single();
-            newTx = result.data;
-            error = result.error;
+            // If recurring_id doesn't exist in schema, remove it from payload
+            const payloadToUse = { ...payload };
+            const result = await db.from('transactions').insert(withUser(payloadToUse)).select().single();
+            if (result.error?.code === 'PGRST204' && (result.error?.message?.includes('recurringId') || result.error?.message?.includes('recurring_id'))) {
+                // Column doesn't exist, remove it and retry
+                delete payloadToUse.recurring_id;
+                delete payloadToUse.recurringId;
+                const retryResult = await db.from('transactions').insert(withUser(payloadToUse)).select().single();
+                newTx = retryResult.data;
+                error = retryResult.error;
+            } else {
+                newTx = result.data;
+                error = result.error;
+            }
             if (!error) break;
             if (!isMissingColumnError(error)) break;
         }
@@ -1039,8 +1050,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         let error: any = null;
         for (const payload of transactionPayloadVariants(transaction)) {
-            const result = await db.from('transactions').update(payload).match({ id: transaction.id, user_id: auth.user.id });
-            error = result.error;
+            // If recurring_id doesn't exist in schema, remove it from payload
+            const payloadToUse = { ...payload };
+            const result = await db.from('transactions').update(payloadToUse).match({ id: transaction.id, user_id: auth.user.id });
+            if (result.error?.code === 'PGRST204' && (result.error?.message?.includes('recurringId') || result.error?.message?.includes('recurring_id'))) {
+                // Column doesn't exist, remove it and retry
+                delete payloadToUse.recurring_id;
+                delete payloadToUse.recurringId;
+                const retryResult = await db.from('transactions').update(payloadToUse).match({ id: transaction.id, user_id: auth.user.id });
+                error = retryResult.error;
+            } else {
+                error = result.error;
+            }
             if (!error) break;
             if (!isMissingColumnError(error)) break;
         }
