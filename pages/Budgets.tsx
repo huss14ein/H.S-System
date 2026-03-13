@@ -67,7 +67,7 @@ interface BudgetModalProps {
     householdKids?: number;
 }
 
-const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear, householdAdults = 2, householdKids = 0 }) => {
+const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear, householdAdults = 2, householdKids = 3 }) => {
     const { data } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const [category, setCategory] = useState('');
@@ -521,7 +521,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     }, [currentYear, currentMonth]);
     const [householdAdults, setHouseholdAdults] = useState(2);
-    const [householdKids, setHouseholdKids] = useState(0);
+    const [householdKids, setHouseholdKids] = useState(3);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
@@ -562,6 +562,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 const parsed = JSON.parse(raw);
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                // If no saved data, use default: 2 adults, 3 kids
+                if (!parsed?.adults && !parsed?.kids) {
+                    setHouseholdAdults(2);
+                    setHouseholdKids(3);
+                }
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
                 if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
                     setEngineProfile(parsed.profile as HouseholdEngineProfile);
@@ -596,6 +601,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (!profile || typeof profile !== 'object') return;
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                // If no saved profile, use default: 2 adults, 3 kids
+                if (!profile?.adults && !profile?.kids) {
+                    setHouseholdAdults(2);
+                    setHouseholdKids(3);
+                }
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
                 if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
                     setEngineProfile(profile.profile as HouseholdEngineProfile);
