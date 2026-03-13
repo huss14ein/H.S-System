@@ -116,6 +116,7 @@ const EnhancedInvestmentChart: React.FC<{
                 const totalGainLoss = totalValue - totalCost;
                 const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
                 return {
+                    id: `portfolio-${portfolioName}`,
                     symbol: portfolioName,
                     name: portfolioName,
                     currentValue: totalValue,
@@ -144,6 +145,7 @@ const EnhancedInvestmentChart: React.FC<{
                 const totalGainLoss = totalValue - totalCost;
                 const totalGainLossPercent = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
                 return {
+                    id: `assetclass-${assetClass}`,
                     symbol: assetClass,
                     name: assetClass,
                     currentValue: totalValue,
@@ -272,19 +274,60 @@ const EnhancedInvestmentChart: React.FC<{
                 {/* Chart */}
                 <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
                     {processedData.length > 0 ? (
-                        <div 
-                            className="h-full cursor-pointer"
-                            onClick={() => setActivePage && setActivePage('Investments')}
-                        >
-                            <PerformanceTreemap 
-                                data={processedData.map(h => ({
-                                    ...h,
-                                    symbol: h.symbol || h.name || 'Unknown',
-                                    name: h.name || h.symbol || 'Unknown',
-                                    currentValue: h.valueInSAR,
-                                    gainLossPercent: h.gainLossPercent,
-                                }))}
-                            />
+                        <div className="h-full relative group">
+                            <div 
+                                className="h-full cursor-pointer"
+                                onClick={() => setActivePage && setActivePage('Investments')}
+                                title="Click to view in Investments page"
+                            >
+                                <PerformanceTreemap 
+                                    data={processedData.map(h => ({
+                                        ...h,
+                                        symbol: h.symbol || h.name || 'Unknown',
+                                        name: h.name || h.symbol || 'Unknown',
+                                        currentValue: h.valueInSAR,
+                                        gainLossPercent: h.gainLossPercent,
+                                    }))}
+                                />
+                            </div>
+                            {/* Holdings List for Click-Through */}
+                            {processedData.length > 0 && processedData.length <= 15 && (
+                                <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-slate-200 p-2 max-h-24 overflow-y-auto">
+                                    <p className="text-xs text-slate-500 mb-1 font-semibold">Quick View:</p>
+                                    <div className="flex flex-wrap gap-1">
+                                        {processedData.slice(0, 10).map((h, idx) => (
+                                            <button
+                                                key={h.id || idx}
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedHolding(h);
+                                                    setIsModalOpen(true);
+                                                }}
+                                                className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-100 hover:border-primary transition-colors flex items-center gap-1"
+                                                title={`Click for details: ${h.name || h.symbol} - ${formatCurrencyString(h.valueInSAR, { digits: 0 })} (${h.gainLossPercent >= 0 ? '+' : ''}${h.gainLossPercent.toFixed(1)}%)`}
+                                            >
+                                                <span className="font-medium truncate max-w-[80px]">{h.name || h.symbol}</span>
+                                                <span className={`text-xs font-semibold ${h.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                    {h.gainLossPercent >= 0 ? '+' : ''}{h.gainLossPercent.toFixed(1)}%
+                                                </span>
+                                            </button>
+                                        ))}
+                                        {processedData.length > 10 && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActivePage && setActivePage('Investments');
+                                                }}
+                                                className="text-xs px-2 py-1 rounded border border-primary text-primary hover:bg-primary/10 transition-colors"
+                                            >
+                                                +{processedData.length - 10} more →
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="empty-state h-full flex flex-col items-center justify-center p-6 text-center">
@@ -410,77 +453,129 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     }, [auth?.user?.id]);
 
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
-        const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const transactions = data?.transactions ?? [];
-        const recentTransactions = transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
-
-        const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = recentTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
-        const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
-        const monthlyPnL = monthlyIncome - monthlyExpenses;
-
-        const liabilities = data?.liabilities ?? [];
-        const accounts = data?.accounts ?? [];
-        const assets = data?.assets ?? [];
-        const commodityHoldings = data?.commodityHoldings ?? [];
-        const investments = data?.investments ?? [];
-        const cashSavingsAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
-        const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
-        const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
-        const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
-        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
-                           cashAndSavingsPositive +
-                           totalCommodities +
-                           totalInvestmentsValue;
-        const netWorth = totalAssets - totalDebt + totalReceivable;
-        const debtToAssetRatio = totalAssets > 0 ? totalDebt / totalAssets : 0;
-        
-        const netWorthPrevMonth = netWorth - monthlyPnL;
-        const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
-        
-        const allHoldings = investments.flatMap(p => 
-            (p.holdings || []).map(h => ({
-                ...h,
-                portfolio_id: p.id,
-                portfolioName: p.name,
-                portfolioCurrency: p.currency || 'USD',
-            }))
-        );
-        const investmentTreemapData = allHoldings
-            .filter(h => h.quantity > 0 && (h.currentValue > 0 || (h.avgCost > 0 && h.quantity > 0)))
-            .map(h => {
-                const totalCost = (h.avgCost || 0) * (h.quantity || 0);
-                const marketValue = h.currentValue > 0 ? h.currentValue : totalCost;
-                const valueInSAR = toSAR(marketValue, h.portfolioCurrency || 'USD', exchangeRate);
-                const costInSAR = toSAR(totalCost, h.portfolioCurrency || 'USD', exchangeRate);
-                const gainLoss = valueInSAR - costInSAR;
-                const gainLossPercent = costInSAR > 0 ? (gainLoss / costInSAR) * 100 : 0;
-                return { 
-                    ...h, 
-                    currentValue: marketValue,
-                    valueInSAR,
-                    gainLoss, 
-                    gainLossPercent 
-                };
+        try {
+            const now = new Date();
+            const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const transactions = data?.transactions ?? [];
+            const recentTransactions = transactions.filter(t => {
+                try {
+                    return new Date(t.date) >= firstDayOfMonth;
+                } catch {
+                    return false;
+                }
             });
 
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
-        const individualStocksValue = investmentTreemapData
-            .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
-        const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
-        let investmentStyle = 'Balanced';
-        if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
-        else if (investmentConcentration < 0.2) investmentStyle = 'Conservative (High concentration in funds/ETFs)';
+            const monthlyIncome = Math.max(0, recentTransactions
+                .filter(t => t.type === 'income')
+                .reduce((sum, t) => sum + (Number(t.amount) || 0), 0));
+            const monthlyExpenses = Math.max(0, recentTransactions
+                .filter(t => t.type === 'expense')
+                .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0));
+            const savingsRate = monthlyIncome > 0 ? Math.max(0, Math.min(1, (monthlyIncome - monthlyExpenses) / monthlyIncome)) : 0;
+            const monthlyPnL = monthlyIncome - monthlyExpenses;
 
-        return { 
-            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
-            investmentTreemapData
-        };
+            const liabilities = data?.liabilities ?? [];
+            const accounts = data?.accounts ?? [];
+            const assets = data?.assets ?? [];
+            const commodityHoldings = data?.commodityHoldings ?? [];
+            const investments = data?.investments ?? [];
+            const cashSavingsAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const cashAndSavingsPositive = Math.max(0, cashSavingsAccounts
+                .filter(a => (Number(a.balance) || 0) > 0)
+                .reduce((sum, acc) => sum + (Number(acc.balance) || 0), 0));
+            const cashAndSavingsNegative = Math.max(0, cashSavingsAccounts
+                .filter(a => (Number(a.balance) || 0) < 0)
+                .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0));
+            const totalDebt = Math.max(0, liabilities
+                .filter(l => (Number(l.amount) || 0) < 0)
+                .reduce((sum, liab) => sum + Math.abs(Number(liab.amount) || 0), 0) + 
+                accounts
+                    .filter(a => a.type === 'Credit' && (Number(a.balance) || 0) < 0)
+                    .reduce((sum, acc) => sum + Math.abs(Number(acc.balance) || 0), 0) + 
+                cashAndSavingsNegative);
+            const totalReceivable = Math.max(0, liabilities
+                .filter(l => (Number(l.amount) || 0) > 0)
+                .reduce((sum, liab) => sum + (Number(liab.amount) || 0), 0));
+            const totalCommodities = Math.max(0, commodityHoldings
+                .reduce((sum, ch) => sum + (Number(ch.currentValue) || 0), 0));
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
+            const totalAssets = Math.max(0, assets.reduce((sum, asset) => sum + (Number(asset.value) || 0), 0)) +
+                               cashAndSavingsPositive +
+                               totalCommodities +
+                               totalInvestmentsValue;
+            const netWorth = totalAssets - totalDebt + totalReceivable;
+            const debtToAssetRatio = totalAssets > 0 ? Math.min(1, Math.max(0, totalDebt / totalAssets)) : 0;
+            
+            const netWorthPrevMonth = netWorth - monthlyPnL;
+            const netWorthTrend = netWorthPrevMonth !== 0 && Math.abs(netWorthPrevMonth) > 0.01 
+                ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 
+                : 0;
+        
+            const allHoldings = investments.flatMap(p => 
+                (p.holdings || []).map(h => ({
+                    ...h,
+                    portfolio_id: p.id,
+                    portfolioName: p.name,
+                    portfolioCurrency: p.currency || 'USD',
+                }))
+            );
+            const investmentTreemapData = allHoldings
+                .filter(h => {
+                    const qty = Number(h.quantity) || 0;
+                    const currVal = Number(h.currentValue) || 0;
+                    const avgCost = Number(h.avgCost) || 0;
+                    return qty > 0 && (currVal > 0 || (avgCost > 0 && qty > 0));
+                })
+                .map(h => {
+                    const qty = Number(h.quantity) || 0;
+                    const avgCost = Number(h.avgCost) || 0;
+                    const currVal = Number(h.currentValue) || 0;
+                    const totalCost = avgCost * qty;
+                    const marketValue = currVal > 0 ? currVal : totalCost;
+                    const valueInSAR = toSAR(marketValue, h.portfolioCurrency || 'USD', exchangeRate);
+                    const costInSAR = toSAR(totalCost, h.portfolioCurrency || 'USD', exchangeRate);
+                    const gainLoss = valueInSAR - costInSAR;
+                    const gainLossPercent = costInSAR > 0.01 ? (gainLoss / costInSAR) * 100 : 0;
+                    return { 
+                        ...h, 
+                        quantity: qty,
+                        avgCost,
+                        currentValue: marketValue,
+                        valueInSAR,
+                        gainLoss, 
+                        gainLossPercent 
+                    };
+                });
+
+            // Use valueInSAR which is already converted, don't convert again
+            const totalInvestments = Math.max(0, investmentTreemapData.reduce((sum, h) => sum + h.valueInSAR, 0));
+            const individualStocksValue = Math.max(0, investmentTreemapData
+                .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
+                .reduce((sum, h) => sum + h.valueInSAR, 0));
+            const investmentConcentration = totalInvestments > 0.01 ? Math.min(1, Math.max(0, individualStocksValue / totalInvestments)) : 0;
+            let investmentStyle = 'Balanced';
+            if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
+            else if (investmentConcentration < 0.2) investmentStyle = 'Conservative (High concentration in funds/ETFs)';
+
+            return { 
+                financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
+                investmentTreemapData
+            };
+        } catch (error) {
+            console.error('Error calculating financial metrics:', error);
+            return {
+                financialMetrics: { 
+                    netWorth: 0, 
+                    monthlyIncome: 0, 
+                    monthlyExpenses: 0, 
+                    savingsRate: 0, 
+                    debtToAssetRatio: 0, 
+                    investmentStyle: 'Balanced', 
+                    netWorthTrend: 0 
+                },
+                investmentTreemapData: []
+            };
+        }
     }, [data, exchangeRate]);
 
     const emergencyFund = useEmergencyFund(data);
@@ -567,9 +662,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             description="Key metrics and AI-generated financial persona with report card and suggestions."
             action={
                 setActivePage && (
-                    <button
-                        type="button"
-                        onClick={() => setActivePage('Wealth Ultra')}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Wealth Ultra')}
                             className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
                         >
                             Wealth Ultra
@@ -616,13 +712,30 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 )}
 
                 <div className="lg:col-span-2 cards-grid grid grid-cols-1 sm:grid-cols-2">
-                    <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
-                    <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
-                    <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
+                    <Card 
+                        title="This Month's Income" 
+                        value={formatCurrencyString(Math.max(0, financialMetricsWithEf.monthlyIncome))} 
+                        valueColor="text-success"
+                        tooltip="Total income from all transactions this month."
+                    />
+                    <Card 
+                        title="This Month's Expenses" 
+                        value={formatCurrencyString(Math.max(0, financialMetricsWithEf.monthlyExpenses))} 
+                        valueColor="text-danger"
+                        tooltip="Total expenses from all transactions this month."
+                    />
+                    <Card 
+                        title="Savings Rate" 
+                        value={`${Math.max(0, Math.min(100, financialMetricsWithEf.savingsRate * 100)).toFixed(1)}%`} 
+                        valueColor={financialMetricsWithEf.savingsRate >= 0.2 ? 'text-success' : financialMetricsWithEf.savingsRate >= 0.1 ? 'text-yellow-600' : 'text-danger'}
+                        tooltip={`The percentage of your income you are saving. ${financialMetricsWithEf.savingsRate >= 0.2 ? 'Excellent!' : financialMetricsWithEf.savingsRate >= 0.1 ? 'Good, but could be better.' : 'Consider increasing your savings rate.'}`}
+                        trend={financialMetricsWithEf.savingsRate >= 0.2 ? 'Excellent' : financialMetricsWithEf.savingsRate >= 0.1 ? 'Good' : 'Low'}
+                        indicatorColor={financialMetricsWithEf.savingsRate >= 0.2 ? 'green' : financialMetricsWithEf.savingsRate >= 0.1 ? 'yellow' : 'red'}
+                    />
                     <Card 
                         title="Emergency Fund" 
                         value={`${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months`}
-                        tooltip={`Liquid cash covers ${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`}
+                        tooltip={`Liquid cash covers ${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ' Target met!'}`}
                         trend={financialMetricsWithEf.efTrend}
                         indicatorColor={financialMetricsWithEf.efStatus as 'green' | 'yellow' | 'red'}
                     />
@@ -649,126 +762,233 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             </div>
             
             {householdStress && (
-                <div className="section-card mt-6">
-                    <h3 className="section-title mb-2">Household Cashflow Stress</h3>
-                    <p className="text-sm text-slate-700 mb-1">
-                        Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
-                    </p>
-                    <p className="text-xs text-slate-600 mb-2">
+                <div className={`section-card mt-6 border-l-4 ${
+                    householdStress.level === 'Low' ? 'border-green-500' :
+                    householdStress.level === 'Moderate' ? 'border-yellow-500' :
+                    householdStress.level === 'High' ? 'border-orange-500' :
+                    'border-red-500'
+                }`}>
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="section-title">Household Cashflow Stress</h3>
+                        <span className={`px-2 py-1 rounded text-xs font-semibold uppercase ${
+                            householdStress.level === 'Low' ? 'bg-green-100 text-green-800' :
+                            householdStress.level === 'Moderate' ? 'bg-yellow-100 text-yellow-800' :
+                            householdStress.level === 'High' ? 'bg-orange-100 text-orange-800' :
+                            'bg-red-100 text-red-800'
+                        }`}>
+                            {householdStress.level}
+                        </span>
+                    </div>
+                    <p className="text-sm text-slate-700 mb-2">
                         {householdStress.summary}
                     </p>
                     {householdStress.flags.length > 0 && (
-                        <ul className="text-xs text-slate-500 list-disc pl-5 space-y-0.5">
-                            {householdStress.flags.slice(0, 3).map(flag => (
-                                <li key={flag}>{flag}</li>
-                            ))}
-                        </ul>
+                        <div className="mt-3 pt-3 border-t border-slate-200">
+                            <p className="text-xs font-semibold text-slate-600 mb-2">Key Indicators:</p>
+                            <ul className="text-xs text-slate-600 list-disc pl-5 space-y-1">
+                                {householdStress.flags.slice(0, 5).map((flag, idx) => (
+                                    <li key={idx}>{flag}</li>
+                                ))}
+                            </ul>
+                        </div>
                     )}
                 </div>
             )}
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 mt-6">
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Risk Lane</h3>
-                    <p className="text-sm text-slate-700">
-                        Current lane: <span className="font-semibold">{riskLane.lane}</span>
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                        Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
-                    </p>
-                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {riskLane.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
-                    </ul>
-                </div>
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Liquidity Runway</h3>
-                    {liquidityRunway ? (
-                        <>
-                            <p className="text-sm text-slate-700">
-                                Runway: <span className="font-semibold">{liquidityRunway.monthsOfRunway.toFixed(1)} months</span>
-                            </p>
-                            <p className="text-xs text-slate-500 mt-1">
-                                Portfolio drawdown: <span className="font-semibold">{liquidityRunway.drawdownPct.toFixed(1)}%</span>
-                            </p>
-                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons[0]}</p>
-                        </>
-                    ) : (
-                        <p className="text-sm text-slate-500">Not enough data.</p>
+                <div className="section-card border-l-4 border-blue-500">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="section-title">Risk Lane</h3>
+                        <ShieldCheckIcon className="h-5 w-5 text-blue-500" />
+                    </div>
+                    <div className="mb-3">
+                        <p className="text-sm text-slate-700">
+                            Current lane: <span className="font-semibold text-blue-700">{riskLane.lane}</span>
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
+                        </p>
+                    </div>
+                    {riskLane.reasons.length > 0 && (
+                        <div className="pt-2 border-t border-slate-200">
+                            <p className="text-xs font-semibold text-slate-600 mb-1">Analysis:</p>
+                            <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
+                                {riskLane.reasons.slice(0, 3).map((r, idx) => <li key={idx}>{r}</li>)}
+                            </ul>
+                        </div>
                     )}
                 </div>
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Discipline Score</h3>
-                    <p className="text-sm text-slate-700">
-                        Score: <span className="font-semibold">{discipline.score}/100</span> ({discipline.label})
-                    </p>
-                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {discipline.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
-                    </ul>
+                <div className="section-card border-l-4 border-emerald-500">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="section-title">Liquidity Runway</h3>
+                        <BanknotesIcon className="h-5 w-5 text-emerald-500" />
+                    </div>
+                    {liquidityRunway ? (
+                        <>
+                            <div className="mb-3">
+                                <p className="text-sm text-slate-700">
+                                    Runway: <span className={`font-semibold text-lg ${
+                                        liquidityRunway.monthsOfRunway >= 12 ? 'text-emerald-600' :
+                                        liquidityRunway.monthsOfRunway >= 6 ? 'text-yellow-600' :
+                                        'text-red-600'
+                                    }`}>{liquidityRunway.monthsOfRunway.toFixed(1)} months</span>
+                                </p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Portfolio drawdown: <span className="font-semibold">{liquidityRunway.drawdownPct.toFixed(1)}%</span>
+                                </p>
+                            </div>
+                            {liquidityRunway.reasons.length > 0 && (
+                                <div className="pt-2 border-t border-slate-200">
+                                    <p className="text-xs text-slate-600">{liquidityRunway.reasons[0]}</p>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="p-3 bg-slate-50 rounded-lg">
+                            <p className="text-sm text-slate-500">Not enough data.</p>
+                            <p className="text-xs text-slate-400 mt-1">Add accounts and transactions to calculate liquidity runway.</p>
+                        </div>
+                    )}
+                </div>
+                <div className="section-card border-l-4 border-purple-500">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="section-title">Discipline Score</h3>
+                        <PiggyBankIcon className="h-5 w-5 text-purple-500" />
+                    </div>
+                    <div className="mb-3">
+                        <div className="flex items-baseline gap-2">
+                            <p className="text-2xl font-bold text-purple-600">{discipline.score}</p>
+                            <p className="text-sm text-slate-500">/100</p>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1 font-semibold">{discipline.label}</p>
+                    </div>
+                    {discipline.reasons.length > 0 && (
+                        <div className="pt-2 border-t border-slate-200">
+                            <p className="text-xs font-semibold text-slate-600 mb-1">Factors:</p>
+                            <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
+                                {discipline.reasons.slice(0, 3).map((r, idx) => <li key={idx}>{r}</li>)}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             </div>
 
             <div className="section-card mt-6">
                 <h3 className="section-title mb-2">Shock Drill (Auto)</h3>
                 <p className="text-xs text-slate-500 mb-2">
-                    Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label}</span>
+                    Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label || 'Job Loss Scenario'}</span>
                 </p>
                 {shockDrill ? (
                     <>
-                        <p className="text-sm text-slate-700">
-                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta, { digits: 0 })}</span>
-                        </p>
-                        <p className="text-sm text-slate-700 mt-1">
-                            Wealth Ultra value delta: <span className="font-semibold">{shockDrill.wealthUltraPortfolioValueDeltaPct.toFixed(1)}%</span>
-                        </p>
-                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                            <div className="p-3 bg-slate-50 rounded-lg">
+                                <p className="text-xs text-slate-500 mb-1">Household Year-End Delta</p>
+                                <p className={`text-lg font-bold ${shockDrill.householdProjectedYearEndDelta >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    {shockDrill.householdProjectedYearEndDelta >= 0 ? '+' : ''}{formatCurrencyString(shockDrill.householdProjectedYearEndDelta, { digits: 0 })}
+                                </p>
+                            </div>
+                            <div className="p-3 bg-slate-50 rounded-lg">
+                                <p className="text-xs text-slate-500 mb-1">Wealth Ultra Portfolio Delta</p>
+                                <p className={`text-lg font-bold ${shockDrill.wealthUltraPortfolioValueDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    {shockDrill.wealthUltraPortfolioValueDeltaPct >= 0 ? '+' : ''}{shockDrill.wealthUltraPortfolioValueDeltaPct.toFixed(1)}%
+                                </p>
+                            </div>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-2 p-2 bg-amber-50 border-l-4 border-amber-400 rounded">{shockDrill.combinedRiskNote}</p>
                     </>
                 ) : (
-                    <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
+                    <div className="p-4 bg-slate-50 rounded-lg text-center">
+                        <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
+                        <p className="text-xs text-slate-400 mt-1">Add transactions, accounts, and investments to enable shock drill analysis.</p>
+                    </div>
                 )}
             </div>
 
-            <div className="section-card max-w-full">
+            <div className="section-card max-w-full border-t-4 border-primary">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
-                    <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
-                        <SparklesIcon className="h-5 w-5 mr-2" />
+                    <div className="flex flex-col">
+                        <div className="flex items-center space-x-2">
+                            <LightBulbIcon className="h-6 w-6 text-yellow-500" />
+                            <h2 className="text-xl font-semibold text-dark">Financial Advisor</h2>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">AI-powered financial analysis with personalized recommendations</p>
+                    </div>
+                    <button 
+                        onClick={handleGenerateAnalysis} 
+                        disabled={isLoading} 
+                        className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-sm"
+                    >
+                        <SparklesIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                         {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
                     </button>
                 </div>
-                {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
-                {!isLoading && error && (
-                    <div className="alert-error">
-                         <h4 className="font-bold">AI Analysis Error</h4>
-                         <SafeMarkdownRenderer content={error} />
-                         <button type="button" onClick={handleGenerateAnalysis} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
+                {isLoading && (
+                    <div className="text-center p-8">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary mb-3"></div>
+                        <p className="text-gray-500">Crafting your personal financial summary...</p>
+                        <p className="text-xs text-gray-400 mt-1">This may take a few moments</p>
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click "Generate Advisor Summary" to run the advisor manually.</div>}
+                {!isLoading && error && (
+                    <div className="alert-error border-l-4 border-red-500">
+                         <h4 className="font-bold text-red-800 mb-2">AI Analysis Error</h4>
+                         <SafeMarkdownRenderer content={error} />
+                         <button 
+                             type="button" 
+                             onClick={handleGenerateAnalysis} 
+                             className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200 transition-colors"
+                         >
+                             Retry Analysis
+                         </button>
+                    </div>
+                )}
+                {!isLoading && !analysis && !error && (
+                    <div className="text-center p-8 bg-slate-50 rounded-lg border-2 border-dashed border-slate-300">
+                        <LightBulbIcon className="h-12 w-12 text-slate-400 mx-auto mb-3" />
+                        <p className="text-gray-600 font-medium mb-1">Ready to analyze your financial health</p>
+                        <p className="text-sm text-gray-500">Click "Generate Advisor Summary" to get personalized insights and recommendations.</p>
+                    </div>
+                )}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
-                        <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">
-                             <SparklesIcon className="h-10 w-10 text-primary mx-auto mb-2" />
-                             <h3 className="text-2xl font-bold text-dark">{analysis.persona.title}</h3>
-                             <p className="text-gray-600 mt-2 max-w-2xl mx-auto">{analysis.persona.description}</p>
+                        <div className="text-center bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg border border-blue-200 shadow-sm">
+                             <SparklesIcon className="h-12 w-12 text-primary mx-auto mb-3" />
+                             <h3 className="text-2xl font-bold text-dark mb-2">{analysis.persona.title}</h3>
+                             <p className="text-gray-700 mt-2 max-w-2xl mx-auto leading-relaxed">{analysis.persona.description}</p>
                         </div>
                         <div>
-                            <h3 className="text-xl font-semibold text-dark mb-4 text-center">Financial Health Report Card</h3>
-                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
-                                {analysis.reportCard.map(item => (
-                                    <div key={item.metric} className={`p-4 rounded-lg border-l-4 ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}>
-                                        <div className="flex items-start justify-between">
-                                            <div className="flex items-center space-x-3">
+                            <h3 className="text-xl font-semibold text-dark mb-4 text-center flex items-center justify-center gap-2">
+                                <ShieldCheckIcon className="h-6 w-6 text-primary" />
+                                Financial Health Report Card
+                            </h3>
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {analysis.reportCard.map((item, idx) => (
+                                    <div 
+                                        key={item.metric} 
+                                        className={`p-5 rounded-lg border-l-4 shadow-sm transition-all hover:shadow-md ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}
+                                        style={{ animationDelay: `${idx * 100}ms` }}
+                                    >
+                                        <div className="flex items-start justify-between mb-3">
+                                            <div className="flex items-center space-x-3 flex-1">
                                                  <MetricIcon metric={item.metric} />
-                                                 <div>
-                                                    <p className="font-bold text-dark">{item.metric}</p>
-                                                    <p className={`text-sm font-semibold ${getRatingColors(item.rating).text}`}>{item.rating} ({item.value})</p>
+                                                 <div className="flex-1 min-w-0">
+                                                    <p className="font-bold text-dark text-base">{item.metric}</p>
+                                                    <p className={`text-sm font-semibold mt-0.5 ${getRatingColors(item.rating).text}`}>
+                                                        {item.rating} <span className="text-xs opacity-75">({item.value})</span>
+                                                    </p>
                                                  </div>
                                             </div>
-                                             {getRatingColors(item.rating).icon}
+                                             <div className="flex-shrink-0">{getRatingColors(item.rating).icon}</div>
                                         </div>
-                                        <div className="mt-3 text-sm text-gray-700 space-y-2">
-                                            <p><strong className="font-medium">Analysis:</strong> {item.analysis}</p>
-                                            <p><strong className="font-medium">Suggestion:</strong> {item.suggestion}</p>
+                                        <div className="mt-3 pt-3 border-t border-slate-200/50 text-sm text-gray-700 space-y-2">
+                                            <div>
+                                                <strong className="font-semibold text-slate-800">Analysis:</strong>
+                                                <p className="mt-1">{item.analysis}</p>
+                                            </div>
+                                            <div>
+                                                <strong className="font-semibold text-slate-800">Suggestion:</strong>
+                                                <p className="mt-1 text-primary font-medium">{item.suggestion}</p>
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
