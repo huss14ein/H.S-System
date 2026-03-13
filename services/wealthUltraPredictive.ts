@@ -3,8 +3,6 @@
  * AI-powered market condition forecasts and allocation recommendations
  */
 
-import { getAIMarketEventInsight } from './geminiService';
-
 export interface MarketConditionForecast {
   timeframe: '1-week' | '1-month' | '3-months';
   outlook: 'bullish' | 'neutral' | 'bearish';
@@ -49,7 +47,7 @@ export async function generatePredictiveAnalytics(
       }
     }
     
-    // Generate forecast based on recent performance
+    // Generate forecast based on recent performance and current allocations
     const recentReturns = recentPerformance.slice(-7).map(p => p.returnPct);
     const avgReturn = recentReturns.length > 0
       ? recentReturns.reduce((a, b) => a + b, 0) / recentReturns.length
@@ -58,6 +56,11 @@ export async function generatePredictiveAnalytics(
       ? Math.sqrt(recentReturns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / recentReturns.length)
       : 0;
     
+    // Basic allocation context (use to enrich key factors and ensure parameters are used)
+    const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.marketValue, 0) || portfolioValue;
+    const specAllocation = currentAllocations.find(a => a.sleeve === 'Spec')?.marketValue ?? 0;
+    const specWeightPct = totalAllocated > 0 ? (specAllocation / totalAllocated) * 100 : 0;
+
     // Determine outlook based on performance
     let outlook: 'bullish' | 'neutral' | 'bearish' = 'neutral';
     let confidence: 'high' | 'medium' | 'low' = 'medium';
@@ -80,6 +83,10 @@ export async function generatePredictiveAnalytics(
       if (volatility > 2) {
         keyFactors.push('Elevated volatility');
       }
+    }
+
+    if (specWeightPct > 10) {
+      keyFactors.push(`Speculative allocation elevated at ~${specWeightPct.toFixed(1)}% of portfolio`);
     }
     
     // Calculate allocation adjustments

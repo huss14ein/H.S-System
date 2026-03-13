@@ -27,7 +27,6 @@ import {
 } from '../services/householdBudgetEngine';
 import {
     predictFutureMonths,
-    analyzeScenario,
     generateCommonScenarios,
     detectAnomalies,
     detectSeasonality,
@@ -1293,19 +1292,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
     return (
         <PageLayout
-            action={
-                <button
-                    type="button"
-                    onClick={() => {
-                        loadDemoData({ includeBudgets: true });
-                        window.location.reload();
-                    }}
-                    className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
-                    title="Load demo data for testing"
-                >
-                    Load Demo Data
-                </button>
-            }
             title={`Budgets (${budgetView})`}
             description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
             action={
@@ -1328,17 +1314,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            loadDemoData({ includeBudgets: true });
-                            window.location.reload();
-                        }}
-                        className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
-                        title="Load demo data for testing"
-                    >
-                        Load Demo Data
-                    </button>
+                    <DemoDataButton page="Budgets" options={{ includeBudgets: true }} />
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history

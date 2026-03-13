@@ -3,8 +3,6 @@
  * Tracks recovery plan execution history and success rates
  */
 
-import type { RecoveryPlanResult } from '../types';
-
 export interface RecoveryPlanExecution {
   id: string;
   symbol: string;

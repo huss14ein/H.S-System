@@ -3,7 +3,7 @@
  * Tracks historical performance, calculates metrics, and provides analytics
  */
 
-import type { WealthUltraPosition, WealthUltraSleeveAllocation } from '../types';
+import type { WealthUltraSleeveAllocation } from '../types';
 
 export interface PerformanceSnapshot {
   timestamp: number;

@@ -18,7 +18,6 @@ import {
   getPerformanceSnapshots,
   calculatePerformanceMetrics,
   getPerformanceTrend,
-  getSleeveDriftHistory,
   type PerformanceMetrics,
 } from '../services/wealthUltraPerformance';
 import {
@@ -31,7 +30,6 @@ import {
   type PredictiveInsight,
 } from '../services/wealthUltraPredictive';
 import { loadDemoData } from '../services/demoDataService';
-import { getRelatedPages } from '../services/crossPageIntegration';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -284,7 +282,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const [performanceTrend, setPerformanceTrend] = useState<Array<{ date: Date; value: number; returnPct: number }>>([]);
   const [benchmarkComparison, setBenchmarkComparison] = useState<BenchmarkComparison | null>(null);
   const [predictiveInsight, setPredictiveInsight] = useState<PredictiveInsight | null>(null);
-  const [showDemoData, setShowDemoData] = useState(false);
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);

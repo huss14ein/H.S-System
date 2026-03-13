@@ -105,8 +105,6 @@ export function calculateBenchmarkComparison(
  * Get benchmark performance for a specific time period
  * This would be enhanced with real API calls in production
  */
-export async function getBenchmarkPerformance(
-  days: number = 30
-): Promise<BenchmarkData[]> {
+export async function getBenchmarkPerformance(): Promise<BenchmarkData[]> {
   return fetchBenchmarkData();
 }

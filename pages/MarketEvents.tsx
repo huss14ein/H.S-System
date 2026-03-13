@@ -290,7 +290,6 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   const fomcMonths = [0, 2, 4, 5, 6, 8, 10, 11]; // Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
   if (fomcMonths.includes(month % 12)) {
     const isQuarterly = [2, 5, 8, 11].includes(month % 12); // Mar, Jun, Sep, Dec have SEP and press conferences
-    const meetingType = isQuarterly ? 'FOMC Meeting with SEP & Press Conference' : 'FOMC Meeting';
     events.push({
       id: `fomc-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 3, 3),
@@ -395,8 +394,8 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 }
 
 interface MarketEventsProps {
-  setActivePage?: (page: string) => void;
-  triggerPageAction?: (page: string, action: string) => void;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
 const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageAction }) => {
@@ -678,19 +677,53 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
   }, [filtered, reminders]);
 
   const topFocusEvents = useMemo(() => {
-    const scoreImpact: Record<Impact, number> = { High: 3, Medium: 2, Low: 1 };
-    return [...filtered]
+    const now = Date.now();
+
+    return filtered
       .map((event) => {
-        const daysUntil = Math.max(0, Math.floor((startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) / (1000 * 60 * 60 * 24)));
-        const urgency = daysUntil <= 1 ? 3 : daysUntil <= 7 ? 2 : 1;
-        const personalized = event.symbol ? 1 : 0;
+        const daysUntil = Math.max(
+          0,
+          Math.floor(
+            (startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) /
+              (1000 * 60 * 60 * 24)
+          )
+        );
+
+        // Base impact score
+        const impactScore = event.impact === 'High' ? 3 : event.impact === 'Medium' ? 2 : 1;
+
+        // Portfolio relevance score (symbol-linked events get higher impact)
+        let portfolioImpactScore = 0;
+        if (event.symbol) {
+          const symbolUpper = event.symbol.toUpperCase();
+          const inTracked = trackedSymbols.includes(symbolUpper);
+          if (inTracked) {
+            portfolioImpactScore = 2;
+          }
+        } else if (event.category === 'Macro' && event.impact === 'High') {
+          portfolioImpactScore = 3;
+        }
+
+        // Timing urgency score
+        const urgencyScore = daysUntil <= 1 ? 3 : daysUntil <= 3 ? 2 : daysUntil <= 7 ? 1 : 0;
+
+        // Reminder boost
         const reminderBoost = reminders[event.id] ? 1 : 0;
-        const score = scoreImpact[event.impact] * 2 + urgency + personalized + reminderBoost;
-        return { event, score, daysUntil };
+
+        // Total priority score
+        const score = impactScore + portfolioImpactScore + urgencyScore + reminderBoost;
+
+        return {
+          event,
+          score,
+          daysUntil,
+          portfolioImpactScore,
+          urgencyScore,
+        };
       })
       .sort((a, b) => b.score - a.score || a.daysUntil - b.daysUntil)
-      .slice(0, 5);
-  }, [filtered, reminders]);
+      .slice(0, 6);
+  }, [filtered, reminders, trackedSymbols]);
 
 
   const groupedByMonth = useMemo(() => {

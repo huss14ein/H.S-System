@@ -1583,7 +1583,22 @@ export type SuggestedAnalystEligibility = {
 
 /** Suggest analyst & eligibility parameters from AI based on universe and context. Use to auto-fill the plan; no manual entry required. */
 export const getAIMarketEventInsight = async (
-    event: { title: string; description: string; category: string; impact: string; symbol?: string; date: string; id?: string },
+    event: {
+        title: string;
+        description: string;
+        category: string;
+        impact: string;
+        symbol?: string;
+        date: string;
+        id?: string;
+        detailedInfo?: {
+            meetingType?: string;
+            historicalContext?: string;
+            keyMetrics?: string[];
+            marketImpactHistory?: string;
+            preparationTips?: string[];
+        };
+    },
     portfolio: { holdings: Array<{ symbol: string; quantity: number; currentValue: number }>; watchlist: string[] }
 ): Promise<{ insight: string; action: string; relevance: string }> => {
     const eventId = event.id || `${event.title}-${event.date}-${event.symbol || 'general'}`;

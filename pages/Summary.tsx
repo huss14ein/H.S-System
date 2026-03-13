@@ -57,10 +57,9 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 
 interface SummaryProps {
   setActivePage?: (page: Page) => void;
-  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();

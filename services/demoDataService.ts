@@ -37,7 +37,6 @@ export function generateDemoPerformanceSnapshots(count: number = 30): Array<{
     const timestamp = Date.now() - (daysAgo * 24 * 60 * 60 * 1000);
     
     // Simulate portfolio growth with some volatility
-    const growthFactor = 1 + (Math.random() * 0.02 - 0.01); // ±1% daily variation
     const portfolioValue = baseValue * Math.pow(1.001, daysAgo) * (1 + (Math.random() - 0.5) * 0.02);
     
     const allocations = sleeves.map(sleeve => ({
