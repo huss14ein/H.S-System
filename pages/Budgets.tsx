@@ -1917,6 +1917,60 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     </div>
                 )}
 
+                {/* Spending Trends Visualization */}
+                {householdBudgetEngine.months.length >= 3 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <h4 className="text-sm font-bold text-slate-900 mb-4">Spending Trends (Last 6 Months)</h4>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                            <div className="h-48 flex items-end justify-between gap-1">
+                                {householdBudgetEngine.months.slice(-6).map((month, idx) => {
+                                    const maxExpense = Math.max(...householdBudgetEngine.months.slice(-6).map(m => 
+                                        m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow
+                                    ));
+                                    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
+                                    const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
+                                    const income = month.incomeActual > 0 ? month.incomeActual : month.incomePlanned;
+                                    const net = income - expense;
+                                    
+                                    return (
+                                        <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                                            <div className="w-full flex flex-col items-center gap-0.5" style={{ height: '180px' }}>
+                                                {/* Income bar */}
+                                                <div
+                                                    className="w-full rounded-t bg-emerald-500 transition-all"
+                                                    style={{ height: `${maxExpense > 0 ? (income / maxExpense) * 100 : 0}%`, minHeight: income > 0 ? '2px' : '0' }}
+                                                    title={`${MONTHS[(month.month - 1) % 12]}: Income ${formatCurrencyString(income)}`}
+                                                />
+                                                {/* Expense bar */}
+                                                <div
+                                                    className={`w-full rounded-b transition-all ${
+                                                        net >= 0 ? 'bg-rose-400' : 'bg-rose-600'
+                                                    }`}
+                                                    style={{ height: `${height}%`, minHeight: expense > 0 ? '2px' : '0' }}
+                                                    title={`${MONTHS[(month.month - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
+                                                />
+                                            </div>
+                                            <p className="text-[10px] text-slate-600 font-medium mt-1">
+                                                {MONTHS[(month.month - 1) % 12].substring(0, 3)}
+                                            </p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 bg-emerald-500 rounded"></div>
+                                    <span className="text-slate-600">Income</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 bg-rose-400 rounded"></div>
+                                    <span className="text-slate-600">Expense</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Action Buttons */}
                 <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
                     {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
