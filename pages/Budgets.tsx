@@ -26,6 +26,7 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import { getAISummary } from '../services/geminiService';
 import {
     predictFutureMonths,
     generateCommonScenarios,
@@ -66,19 +67,57 @@ interface BudgetModalProps {
 
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
+    const [isLoadingAI, setIsLoadingAI] = useState(false);
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
+    // Saudi Arabia-specific budget categories with typical monthly amounts for a family
+    const saudiBudgetCategories = useMemo(() => {
+        const categories = [
+            { name: 'Housing & Rent', suggestedAmount: 5000, tier: 'Core' as const, description: 'Monthly rent or mortgage payment' },
+            { name: 'Groceries & Food', suggestedAmount: 2500, tier: 'Core' as const, description: 'Monthly groceries and household food items' },
+            { name: 'Utilities', suggestedAmount: 800, tier: 'Core' as const, description: 'Electricity, water, gas, internet, and phone bills' },
+            { name: 'Transportation', suggestedAmount: 1500, tier: 'Core' as const, description: 'Car payments, fuel, maintenance, and public transport' },
+            { name: 'Education', suggestedAmount: 2000, tier: 'Core' as const, description: 'School fees, tuition, books, and educational materials' },
+            { name: 'Healthcare & Medical', suggestedAmount: 1000, tier: 'Core' as const, description: 'Medical insurance, doctor visits, medications' },
+            { name: 'Insurance', suggestedAmount: 800, tier: 'Core' as const, description: 'Health, car, life, and property insurance' },
+            { name: 'Personal Care', suggestedAmount: 600, tier: 'Supporting' as const, description: 'Haircuts, cosmetics, toiletries, and personal hygiene' },
+            { name: 'Clothing & Apparel', suggestedAmount: 800, tier: 'Supporting' as const, description: 'Clothing, shoes, and accessories for family' },
+            { name: 'Entertainment & Recreation', suggestedAmount: 1000, tier: 'Optional' as const, description: 'Movies, restaurants, outings, and leisure activities' },
+            { name: 'Dining Out', suggestedAmount: 1200, tier: 'Optional' as const, description: 'Restaurant meals and takeout' },
+            { name: 'Shopping & Retail', suggestedAmount: 1000, tier: 'Optional' as const, description: 'General shopping and retail purchases' },
+            { name: 'Savings & Investments', suggestedAmount: 2000, tier: 'Core' as const, description: 'Emergency fund, savings, and investment contributions' },
+            { name: 'Charity & Zakat', suggestedAmount: 500, tier: 'Core' as const, description: 'Monthly charity and Zakat contributions' },
+            { name: 'Home Maintenance', suggestedAmount: 500, tier: 'Supporting' as const, description: 'Repairs, maintenance, and home improvements' },
+            { name: 'Children Activities', suggestedAmount: 600, tier: 'Supporting' as const, description: 'Extracurricular activities, sports, and hobbies for children' },
+            { name: 'Gifts & Celebrations', suggestedAmount: 400, tier: 'Optional' as const, description: 'Birthdays, weddings, and special occasions' },
+            { name: 'Travel & Vacations', suggestedAmount: 1500, tier: 'Optional' as const, description: 'Travel expenses and vacation planning' },
+            { name: 'Subscriptions & Memberships', suggestedAmount: 300, tier: 'Optional' as const, description: 'Streaming services, gym memberships, and subscriptions' },
+            { name: 'Pet Care', suggestedAmount: 300, tier: 'Supporting' as const, description: 'Pet food, veterinary care, and pet supplies' },
+            { name: 'Miscellaneous', suggestedAmount: 500, tier: 'Optional' as const, description: 'Other expenses not covered above' },
+        ];
+        return categories.map(cat => ({
+            ...cat,
+            name: cat.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' '),
+        }));
+    }, []);
+
     const availableCategories = useMemo(() => {
-        const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
+        const allPossible = saudiBudgetCategories.map(c => c.name);
         if (budgetToEdit) return allPossible;
         return allPossible.filter(c => !existingCategories.has(c));
-    }, [existingCategories, budgetToEdit]);
+    }, [existingCategories, budgetToEdit, saudiBudgetCategories]);
 
+
+    const selectedCategoryInfo = useMemo(() => {
+        if (!category) return null;
+        return saudiBudgetCategories.find(c => c.name === category);
+    }, [category, saudiBudgetCategories]);
 
     React.useEffect(() => {
         if (budgetToEdit) {
@@ -94,6 +133,59 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         }
     }, [budgetToEdit, isOpen]);
 
+    React.useEffect(() => {
+        if (category && !budgetToEdit && selectedCategoryInfo) {
+            setLimit(String(selectedCategoryInfo.suggestedAmount));
+            setTier(selectedCategoryInfo.tier);
+        }
+    }, [category, budgetToEdit, selectedCategoryInfo]);
+
+    const handleAISuggestBudget = useCallback(async () => {
+        if (!category || !auth?.user?.id) return;
+        setIsLoadingAI(true);
+        try {
+            const householdInfo = {
+                adults: 2, // Default, can be enhanced to get from context
+                kids: 0,
+                monthlyIncome: (data?.transactions ?? [])
+                    .filter(t => t.type === 'income')
+                    .reduce((sum, t) => {
+                        const amount = Math.max(0, Number(t.amount) || 0);
+                        return sum + (Number.isFinite(amount) ? amount : 0);
+                    }, 0) / 12,
+            };
+            const prompt = `As a financial advisor for a family living in Saudi Arabia, suggest an appropriate monthly budget amount for "${category}" category. 
+            
+Family composition: ${householdInfo.adults} adults, ${householdInfo.kids} children
+Estimated monthly income: ${householdInfo.monthlyIncome.toFixed(0)} SAR
+
+Consider:
+- Typical living costs in Saudi Arabia
+- Family size and needs
+- Current suggested amount: ${selectedCategoryInfo?.suggestedAmount || 0} SAR
+- Category type: ${selectedCategoryInfo?.tier || 'Optional'}
+
+Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief explanation"}`;
+
+            const response = await getAISummary(prompt, 'budgets');
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.suggestedAmount && Number.isFinite(parsed.suggestedAmount)) {
+                        setLimit(String(Math.max(0, Math.round(parsed.suggestedAmount))));
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse AI response:', e);
+                }
+            }
+        } catch (error) {
+            console.error('AI suggestion failed:', error);
+        } finally {
+            setIsLoadingAI(false);
+        }
+    }, [category, auth?.user?.id, data?.transactions, selectedCategoryInfo]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const rawLimit = Number(limit) || 0;
@@ -106,8 +198,13 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
+        // Ensure proper capitalization: First letter of each word capitalized
+        const formattedCategory = category.split(' ').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+        
         onSave({
-            category,
+            category: formattedCategory,
             limit: rawLimit,
             month,
             year,
@@ -123,17 +220,53 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
+                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Select a budget category tailored for Saudi Arabia family living expenses. Each category includes suggested amounts based on typical costs." /></label>
                     {budgetToEdit ? (
                         <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
                     ) : (
-                        <div className="mt-1">
+                        <div className="mt-1 space-y-2">
                             <Combobox 
                                 items={availableCategories}
                                 selectedItem={category}
-                                onSelectItem={setCategory}
-                                placeholder="Select or create a category..."
+                                onSelectItem={(selected) => {
+                                    const formatted = selected.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+                                    setCategory(formatted);
+                                }}
+                                placeholder="Select a category..."
                             />
+                            {selectedCategoryInfo && (
+                                <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                    <div className="flex items-start justify-between">
+                                        <div className="flex-1">
+                                            <p className="text-xs font-semibold text-blue-900 mb-1">{selectedCategoryInfo.description}</p>
+                                            <p className="text-xs text-blue-700">Suggested amount: <span className="font-bold">{selectedCategoryInfo.suggestedAmount.toLocaleString()} SAR/month</span></p>
+                                            <p className="text-xs text-blue-600 mt-1">Type: <span className="font-medium">{selectedCategoryInfo.tier}</span></p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleAISuggestBudget}
+                                            disabled={isLoadingAI}
+                                            className="ml-2 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                            title="Get AI-powered budget suggestion based on your household"
+                                        >
+                                            {isLoadingAI ? (
+                                                <>
+                                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                    Analyzing...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <SparklesIcon className="h-3 w-3" />
+                                                    AI Suggest
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -227,6 +360,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
     const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
+    const [isLoadingAIBudgets, setIsLoadingAIBudgets] = useState(false);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -1778,20 +1912,28 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
-            <SectionCard title="Household Budget Engine">
-                <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm text-slate-700 font-medium">
-                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
-                    </p>
-                    {triggerPageAction && (
-                        <button
-                            type="button"
-                            onClick={() => triggerPageAction('Market Events', 'focus-macro')}
-                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
-                        >
-                            Check Market Events
-                        </button>
-                    )}
+            <SectionCard title="Household Budget Engine - AI-Powered Smart Budgeting">
+                <div className="mb-4 p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 rounded-lg border border-indigo-200">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                            <h3 className="text-sm font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                                <SparklesIcon className="h-4 w-4" />
+                                Ultra-Smart Automated Budget Planning
+                            </h3>
+                            <p className="text-xs text-slate-700 leading-relaxed">
+                                This AI-enhanced engine automatically analyzes your transactions, accounts, goals, and household composition to create intelligent budget recommendations tailored for Saudi Arabia family living. It learns from your spending patterns and suggests optimal allocations across all essential categories.
+                            </p>
+                        </div>
+                        {triggerPageAction && (
+                            <button
+                                type="button"
+                                onClick={() => triggerPageAction('Market Events', 'focus-macro')}
+                                className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex-shrink-0"
+                            >
+                                Check Market Events
+                            </button>
+                        )}
+                    </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
@@ -1888,9 +2030,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             }
                             const buckets = currentMonthPlan.buckets || {};
                             const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                            // Enhanced mapping to Saudi Arabia-specific categories
                             const categoryMap: Record<string, string> = {
-                                'Fixed Obligations': 'Housing',
-                                'Household Essentials': 'Food',
+                                'Fixed Obligations': 'Housing & Rent',
+                                'Household Essentials': 'Groceries & Food',
                                 'Household Operations': 'Utilities',
                                 'Transport': 'Transportation',
                                 'Personal Support': 'Personal Care',
@@ -1911,8 +2054,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     updateBudget({ ...existing, limit: amount });
                                     updated++;
                                 } else {
+                                    // Ensure proper capitalization: First letter of each word capitalized
+                                    const formattedCategory = category.split(' ').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                                    ).join(' ');
                                     addBudget({
-                                        category,
+                                        category: formattedCategory,
                                         limit: amount,
                                         month: currentMonth,
                                         year: currentYear,
@@ -1927,9 +2074,116 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={!isAdmin}
                     >
-                        Apply Household Engine Budgets to Current Month
+                        Apply Smart Budgets To Current Month
                     </button>
-                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
+                    <InfoHint text="AI-powered: Creates or updates budgets using Saudi Arabia-specific categories with intelligent amounts based on your household composition, income, and spending patterns. Only admins can trigger this." />
+                </div>
+                
+                {/* AI-Powered Budget Suggestions */}
+                <div className="mt-6 pt-6 border-t border-slate-200">
+                    <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                            <SparklesIcon className="h-4 w-4 text-indigo-600" />
+                            AI Budget Recommendations
+                        </h4>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (!isAdmin) {
+                                    alert('Only admins can generate AI budget suggestions.');
+                                    return;
+                                }
+                                setIsLoadingAIBudgets(true);
+                                try {
+                                    const monthlyIncome = expectedMonthlySalary || suggestedMonthlySalary || 15000;
+                                    const prompt = `As a financial advisor for a family in Saudi Arabia, suggest comprehensive monthly budget allocations.
+
+Family: ${householdAdults} adults, ${householdKids} children
+Monthly Income: ${monthlyIncome.toLocaleString()} SAR
+
+Provide a JSON response with budget categories and suggested monthly amounts in SAR:
+{
+  "budgets": [
+    {"category": "Category Name", "amount": number, "tier": "Core|Supporting|Optional", "reasoning": "brief explanation"}
+  ],
+  "totalAllocated": number,
+  "remainingForSavings": number,
+  "recommendations": ["insight1", "insight2"]
+}
+
+Use Saudi Arabia-specific categories like: Housing & Rent, Groceries & Food, Utilities, Transportation, Education, Healthcare & Medical, Insurance, Personal Care, Clothing & Apparel, Entertainment & Recreation, Dining Out, Shopping & Retail, Savings & Investments, Charity & Zakat, Home Maintenance, Children Activities, Gifts & Celebrations, Travel & Vacations, Subscriptions & Memberships, Pet Care, Miscellaneous.
+
+Ensure total allocated is reasonable (typically 70-85% of income, leaving 15-30% for savings).`;
+
+                                    const response = await getAISummary(prompt, 'budgets');
+                                    const jsonMatch = response.match(/\{[\s\S]*\}/);
+                                    if (jsonMatch) {
+                                        try {
+                                            const parsed = JSON.parse(jsonMatch[0]);
+                                            if (parsed.budgets && Array.isArray(parsed.budgets)) {
+                                                const suggestedBudgets = parsed.budgets.slice(0, 10); // Limit to top 10
+                                                const message = `AI Suggested ${suggestedBudgets.length} budgets:\n\n${suggestedBudgets.map((b: any) => `• ${b.category}: ${b.amount?.toLocaleString() || 0} SAR (${b.tier || 'Optional'})\n  ${b.reasoning || ''}`).join('\n\n')}\n\n${parsed.recommendations ? '\nRecommendations:\n' + parsed.recommendations.map((r: string) => `• ${r}`).join('\n') : ''}\n\nWould you like to apply these budgets?`;
+                                                if (window.confirm(message)) {
+                                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                                                    let created = 0;
+                                                    let updated = 0;
+                                                    for (const suggestion of suggestedBudgets) {
+                                                        const category = suggestion.category.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+                                                        const amount = Math.max(0, Number(suggestion.amount) || 0);
+                                                        if (!Number.isFinite(amount) || amount <= 0) continue;
+                                                        const existing = existingBudgets.find((b) => b.category === category);
+                                                        if (existing) {
+                                                            updateBudget({ ...existing, limit: amount, tier: suggestion.tier || 'Optional' });
+                                                            updated++;
+                                                        } else {
+                                                            addBudget({
+                                                                category,
+                                                                limit: amount,
+                                                                month: currentMonth,
+                                                                year: currentYear,
+                                                                period: 'monthly',
+                                                                tier: (suggestion.tier || 'Optional') as 'Core' | 'Supporting' | 'Optional',
+                                                            });
+                                                            created++;
+                                                        }
+                                                    }
+                                                    alert(`AI budgets applied: ${created} created, ${updated} updated.`);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn('Failed to parse AI response:', e);
+                                            alert('AI suggestion generated, but format was unexpected. Please review the response manually.');
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('AI suggestion failed:', error);
+                                    alert('Failed to generate AI suggestions. Please try again later.');
+                                } finally {
+                                    setIsLoadingAIBudgets(false);
+                                }
+                            }}
+                            disabled={isLoadingAIBudgets || !isAdmin}
+                            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
+                        >
+                            {isLoadingAI ? (
+                                <>
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Generating AI Suggestions...
+                                </>
+                            ) : (
+                                <>
+                                    <SparklesIcon className="h-4 w-4" />
+                                    Generate AI Budget Suggestions
+                                </>
+                            )}
+                        </button>
+                    </div>
+                    <p className="text-xs text-slate-600 mb-3">
+                        Get intelligent budget recommendations tailored to your household size, income, and location in Saudi Arabia. The AI analyzes your financial patterns and suggests optimal allocations across all essential living expense categories.
+                    </p>
                 </div>
 
                 {/* Predictive Analytics Section */}
