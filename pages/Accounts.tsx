@@ -150,7 +150,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
+    const { data, addPlatform, updatePlatform, deletePlatform, addTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -167,6 +167,11 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [shareError, setShareError] = useState<string | null>(null);
     const [shareSuccess, setShareSuccess] = useState<string | null>(null);
     const [sharedAccounts, setSharedAccounts] = useState<SharedAccountRow[]>([]);
+    const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+    const [transferFromAccount, setTransferFromAccount] = useState('');
+    const [transferToAccount, setTransferToAccount] = useState('');
+    const [transferAmount, setTransferAmount] = useState('');
+    const [transferDescription, setTransferDescription] = useState('');
 
     useEffect(() => {
         const loadSharingState = async () => {
@@ -273,6 +278,64 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         setShareShowBalance(true);
     };
 
+    const handleTransfer = async () => {
+        if (!transferFromAccount || !transferToAccount || !transferAmount) {
+            alert('Please select both accounts and enter an amount.');
+            return;
+        }
+        const amount = parseFloat(transferAmount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Please enter a valid positive amount.');
+            return;
+        }
+        const fromAccount = data.accounts.find(a => a.id === transferFromAccount);
+        const toAccount = data.accounts.find(a => a.id === transferToAccount);
+        if (!fromAccount || !toAccount) {
+            alert('Selected accounts not found.');
+            return;
+        }
+        if (fromAccount.balance < amount) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance)}`);
+            return;
+        }
+        if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
+            return;
+        }
+        try {
+            const description = transferDescription.trim() || `Transfer from ${fromAccount.name} to ${toAccount.name}`;
+            const today = new Date().toISOString().split('T')[0];
+            
+            // Create withdrawal transaction
+            await addTransaction({
+                date: today,
+                description: `${description} (from ${fromAccount.name})`,
+                amount: -amount,
+                category: 'Transfers',
+                type: 'expense',
+                accountId: transferFromAccount,
+            });
+            
+            // Create deposit transaction
+            await addTransaction({
+                date: today,
+                description: `${description} (to ${toAccount.name})`,
+                amount: amount,
+                category: 'Transfers',
+                type: 'income',
+                accountId: transferToAccount,
+            });
+            
+            alert('Transfer completed successfully.');
+            setIsTransferModalOpen(false);
+            setTransferFromAccount('');
+            setTransferToAccount('');
+            setTransferAmount('');
+            setTransferDescription('');
+        } catch (error) {
+            alert(`Failed to complete transfer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    };
+
     return (
         <PageLayout
             title="Accounts"
@@ -328,6 +391,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 </section>
             )}
 
+            <section className="section-card mt-4">
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="section-title text-base">Transfer Between Accounts</h3>
+                    <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary text-sm">
+                        Transfer Funds
+                    </button>
+                </div>
+                <p className="text-xs text-slate-600">Move money between your accounts (e.g., Checking → Savings, Savings → Investment). Creates matching withdrawal and deposit transactions.</p>
+            </section>
+
             {setActivePage && (
                 <div className="flex flex-wrap gap-2 p-4 section-card">
                     <span className="text-sm text-slate-600 self-center mr-2">Quick links:</span>
@@ -381,6 +454,85 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
+            
+            <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">
+                <form onSubmit={(e) => { e.preventDefault(); handleTransfer(); }} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            From Account <InfoHint text="Account to withdraw funds from" />
+                        </label>
+                        <select
+                            value={transferFromAccount}
+                            onChange={(e) => setTransferFromAccount(e.target.value)}
+                            required
+                            className="select-base"
+                        >
+                            <option value="">Select source account</option>
+                            {data.accounts.filter(a => a.type !== 'Credit').map(acc => (
+                                <option key={acc.id} value={acc.id}>
+                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                </option>
+                            ))}
+                        </select>
+                        {transferFromAccount && (() => {
+                            const acc = data.accounts.find(a => a.id === transferFromAccount);
+                            return acc && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Available balance: {formatCurrencyString(acc.balance)}
+                                </p>
+                            );
+                        })()}
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            To Account <InfoHint text="Account to deposit funds into" />
+                        </label>
+                        <select
+                            value={transferToAccount}
+                            onChange={(e) => setTransferToAccount(e.target.value)}
+                            required
+                            className="select-base"
+                        >
+                            <option value="">Select destination account</option>
+                            {data.accounts.filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
+                                <option key={acc.id} value={acc.id}>
+                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Amount <InfoHint text="Amount to transfer" />
+                        </label>
+                        <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={transferAmount}
+                            onChange={(e) => setTransferAmount(e.target.value)}
+                            required
+                            className="input-base"
+                            placeholder="0.00"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Description (Optional) <InfoHint text="Optional note for the transfer" />
+                        </label>
+                        <input
+                            type="text"
+                            value={transferDescription}
+                            onChange={(e) => setTransferDescription(e.target.value)}
+                            className="input-base"
+                            placeholder="e.g., Monthly savings transfer"
+                        />
+                    </div>
+                    <button type="submit" className="w-full btn-primary">
+                        Complete Transfer
+                    </button>
+                </form>
+            </Modal>
         </PageLayout>
     );
 };

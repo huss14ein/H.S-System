@@ -2,6 +2,9 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getAIMarketEventInsight } from '../services/geminiService';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { useAI } from '../context/AiContext';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -16,6 +19,9 @@ interface MarketEventItem {
   impact: Impact;
   symbol?: string;
   estimated?: boolean;
+  aiInsight?: string;
+  aiAction?: string;
+  portfolioRelevance?: string;
 }
 
 interface FinnhubCalendarState {
@@ -198,6 +204,76 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
       impact: 'Low',
       estimated: true,
     },
+    {
+      id: `retail-sales-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 2),
+      title: 'US Retail Sales Release',
+      description: 'Consumer spending data is a key indicator of economic health and can impact consumer discretionary stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+    },
+    {
+      id: `consumer-confidence-${year}-${month}`,
+      date: lastWeekdayOfMonth(year, month, 2),
+      title: 'US Consumer Confidence Index',
+      description: 'Consumer sentiment affects spending patterns and retail sector performance.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `housing-starts-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 3),
+      title: 'US Housing Starts & Building Permits',
+      description: 'Housing data impacts construction, materials, and financial sectors.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `durable-goods-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 4, 4),
+      title: 'US Durable Goods Orders',
+      description: 'Business investment indicator affecting industrial and manufacturing stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `jobless-claims-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 4, 1),
+      title: 'US Weekly Jobless Claims',
+      description: 'Weekly labor market indicator providing timely signals on employment trends.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `ism-manufacturing-${year}-${month}`,
+      date: firstWeekdayOfMonth(year, month, 1),
+      title: 'US ISM Manufacturing PMI',
+      description: 'Key manufacturing activity indicator affecting industrial and cyclical stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+    },
+    {
+      id: `ism-services-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 1, 1),
+      title: 'US ISM Services PMI',
+      description: 'Services sector activity indicator affecting consumer and service-oriented stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+    },
   ];
 
   if ([0, 2, 4, 6, 8, 10].includes(month % 12)) {
@@ -231,6 +307,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 
 const MarketEvents: React.FC = () => {
   const { data } = useContext(DataContext)!;
+  const { isAiAvailable } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -238,6 +315,8 @@ const MarketEvents: React.FC = () => {
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
+  const [aiInsights, setAiInsights] = useState<Record<string, { insight: string; action: string; relevance: string }>>({});
+  const [loadingInsights, setLoadingInsights] = useState<Set<string>>(new Set());
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
@@ -521,6 +600,46 @@ const MarketEvents: React.FC = () => {
     });
   };
 
+  const loadAIInsight = async (event: MarketEventItem) => {
+    if (!isAiAvailable || aiInsights[event.id] || loadingInsights.has(event.id)) return;
+    
+    setLoadingInsights(prev => new Set(prev).add(event.id));
+    try {
+      const portfolio = {
+        holdings: (data?.investments ?? []).flatMap(p => 
+          (p.holdings ?? []).map(h => ({
+            symbol: h.symbol,
+            quantity: h.quantity,
+            currentValue: h.currentValue || 0,
+          }))
+        ),
+        watchlist: (data?.watchlist ?? []).map(w => w.symbol).filter(Boolean),
+      };
+      
+      const insight = await getAIMarketEventInsight(
+        {
+          title: event.title,
+          description: event.description,
+          category: event.category,
+          impact: event.impact,
+          symbol: event.symbol,
+          date: event.date.toISOString(),
+        },
+        portfolio
+      );
+      
+      setAiInsights(prev => ({ ...prev, [event.id]: insight }));
+    } catch (error) {
+      console.warn('Failed to load AI insight:', error);
+    } finally {
+      setLoadingInsights(prev => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
+  };
+
   const downloadIcs = () => {
     const rows = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Finova//Market Events//EN'];
     filtered.slice(0, 500).forEach((event) => {
@@ -662,7 +781,62 @@ const MarketEvents: React.FC = () => {
                     </div>
                     <p className="mt-2 text-sm text-slate-600">{event.description}</p>
                     <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
-                    <div className="mt-2">
+                    
+                    {isAiAvailable && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        {aiInsights[event.id] ? (
+                          <div className="space-y-2">
+                            <div className="flex items-start gap-2">
+                              <SparklesIcon className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs font-semibold text-indigo-900">AI Insight:</p>
+                                <p className="text-xs text-slate-700 mt-0.5">{aiInsights[event.id].insight}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <span className="text-xs text-slate-500 shrink-0">Action:</span>
+                              <p className="text-xs text-slate-700 flex-1">{aiInsights[event.id].action}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">Relevance:</span>
+                              <span className={`text-xs px-2 py-0.5 rounded ${
+                                aiInsights[event.id].relevance.toLowerCase().includes('high') 
+                                  ? 'bg-red-100 text-red-700' 
+                                  : aiInsights[event.id].relevance.toLowerCase().includes('medium')
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}>
+                                {aiInsights[event.id].relevance}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => loadAIInsight(event)}
+                            disabled={loadingInsights.has(event.id)}
+                            className="text-xs px-2 py-1 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {loadingInsights.has(event.id) ? (
+                              <>
+                                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <SparklesIcon className="h-3 w-3" />
+                                Get AI Insight
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="mt-2 flex items-center gap-2">
                       <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
                         {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
                       </button>
