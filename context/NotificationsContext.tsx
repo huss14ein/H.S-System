@@ -59,6 +59,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const { simulatedPrices } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => { saveReadIds(readIds); }, [readIds]);
 
@@ -70,9 +71,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         return;
       }
       const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-      const isAdmin = String((userRow as any)?.role || '').toLowerCase() === 'admin';
+      const adminStatus = String((userRow as any)?.role || '').toLowerCase() === 'admin';
+      if (alive) setIsAdmin(adminStatus);
       let query = supabase.from('budget_requests').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
-      if (!isAdmin) query = query.eq('user_id', auth.user.id);
+      if (!adminStatus) query = query.eq('user_id', auth.user.id);
       const { count } = await query;
       if (alive) setPendingBudgetRequestCount(Number(count || 0));
     };
@@ -140,17 +142,34 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     });
 
-    const pendingTx = (data.transactions ?? []).filter((t) => (t.status ?? 'Approved') === 'Pending');
-    if (pendingTx.length > 0) {
+    // Transaction approval notifications - only for admins
+    if (isAdmin) {
+      const pendingTx = (data.transactions ?? []).filter((t) => (t.status ?? 'Approved') === 'Pending');
+      if (pendingTx.length > 0) {
+        push({
+          id: 'tx-pending-review',
+          category: 'Transaction',
+          message: `${pendingTx.length} transaction(s) need approval.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Transactions',
+          severity: pendingTx.length >= 5 ? 'urgent' : 'warning',
+          actionHint: 'Open Transactions and review pending items.',
+        });
+      }
+    }
+    
+    // User notifications for their own budget requests
+    if (!isAdmin && pendingBudgetRequestCount > 0) {
       push({
-        id: 'tx-pending-review',
-        category: 'Transaction',
-        message: `${pendingTx.length} transaction(s) need category review or approval.`,
+        id: 'my-budget-requests-pending',
+        category: 'Budget',
+        message: `You have ${pendingBudgetRequestCount} budget request(s) pending admin review.`,
         date: now.toISOString(),
         isRead: false,
-        pageLink: 'Transactions',
-        severity: pendingTx.length >= 5 ? 'warning' : 'info',
-        actionHint: 'Open Transactions and process pending items.',
+        pageLink: 'Budgets',
+        severity: 'info',
+        actionHint: 'View your requests in the Budgets page.',
       });
     }
 
@@ -253,7 +272,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, pendingBudgetRequestCount]);
+  }, [data, simulatedPrices, pendingBudgetRequestCount, isAdmin]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

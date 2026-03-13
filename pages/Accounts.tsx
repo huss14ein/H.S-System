@@ -25,7 +25,7 @@ import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
 
-type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string };
+type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -134,7 +134,15 @@ const AccountCardComponent: React.FC<{
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100 min-w-0 overflow-hidden">
                 <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
-                <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                {(() => {
+                    const sharedAccount = account as SharedAccountRow;
+                    const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
+                    return canShowBalance ? (
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                    ) : (
+                        <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
+                    );
+                })()}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
             </div>
         </div>
@@ -155,6 +163,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
     const [shareAccountId, setShareAccountId] = useState('');
+    const [shareShowBalance, setShareShowBalance] = useState(true);
     const [shareError, setShareError] = useState<string | null>(null);
     const [shareSuccess, setShareSuccess] = useState<string | null>(null);
     const [sharedAccounts, setSharedAccounts] = useState<SharedAccountRow[]>([]);
@@ -178,6 +187,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 owner: r.owner ?? undefined,
                 ownerEmail: r.owner_email ?? r.ownerEmail ?? r.owner_user_id,
                 user_id: r.user_id,
+                show_balance: r.show_balance !== undefined ? r.show_balance : true,
             })).filter((r) => !!r.id));
 
             if (admin) {
@@ -248,7 +258,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         }
         const { error } = await supabase
             .from('account_shares')
-            .upsert({ owner_user_id: auth.user.id, shared_with_user_id: target.id, account_id: shareAccountId }, { onConflict: 'owner_user_id,shared_with_user_id,account_id' });
+            .upsert({ owner_user_id: auth.user.id, shared_with_user_id: target.id, account_id: shareAccountId, show_balance: shareShowBalance }, { onConflict: 'owner_user_id,shared_with_user_id,account_id' });
         if (error) {
             const msg = (error.message || '').trim();
             setShareError(/account_shares|relation .* does not exist/i.test(msg)
@@ -260,6 +270,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         setShareError(null);
         setShareSuccess('Account shared successfully.');
         setShareTargetEmail('');
+        setShareShowBalance(true);
     };
 
     return (
@@ -299,6 +310,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                 <option value="">Select user</option>
                                 {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
                             </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                id="share-show-balance"
+                                checked={shareShowBalance}
+                                onChange={(e) => setShareShowBalance(e.target.checked)}
+                                className="h-4 w-4"
+                            />
+                            <label htmlFor="share-show-balance" className="text-xs text-slate-600">Show balance</label>
                         </div>
                         <button type="button" onClick={handleShareAccount} className="btn-primary">Share Account</button>
                     </div>

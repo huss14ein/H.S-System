@@ -190,6 +190,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
+    const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    
+    // Update shared transaction month filter when current month changes
+    useEffect(() => {
+        setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    }, [currentYear, currentMonth]);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
@@ -1184,6 +1190,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
+        
+        // Refresh budgets data to show newly created budgets from finalized requests
+        // The DataContext will automatically refresh when budgets are added/updated via addBudget/updateBudget
     };
 
     const rejectBudgetRequest = async (requestId: string) => {
@@ -1412,25 +1421,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             )}
 
 
-            {isAdmin && respondedRequests.length > 0 && (
-                <div className="bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow p-5 border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-3">Reviewed Requests</h2>
-                    <div className="space-y-2">
-                        {respondedRequests.map((r) => (
-                            <div key={r.id} className="p-3 border rounded flex items-center justify-between">
-                                <div>
-                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Amount (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
-                                </div>
-                                <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
             {isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-amber-50 to-orange-50 rounded-lg shadow p-5 border border-amber-200">
                     <h2 className="text-lg font-semibold mb-3 flex items-center">Budget Request Review <InfoHint text="Finalize directly or adjust amount before finalizing. Rejections remain in history timeline." /></h2>
@@ -1475,55 +1465,109 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 </div>
             )}
 
-            {isAdmin && allRespondedRequests.length > 0 && (
+            {isAdmin && (pendingRequests.length > 0 || allRespondedRequests.length > 0) && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
-                    <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
-                        <div>
-                            <h2 className="text-lg font-semibold">Request History</h2>
-                            <p className="text-xs text-gray-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h2 className="text-lg font-semibold">Budget Request Review & History</h2>
+                        <div className="flex items-center gap-2">
+                            <select value={requestStatusFilter} onChange={(e) => setRequestStatusFilter(e.target.value as any)} className="p-2 border rounded text-sm">
+                                <option value="All">All statuses</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Finalized">Finalized</option>
+                                <option value="Rejected">Rejected</option>
+                            </select>
                         </div>
-                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded shrink-0">{allRespondedRequests.length} total</span>
-                        <span className="text-violet-600 shrink-0">{historyCollapsed ? '▼ Expand' : '▲ Collapse'}</span>
-                    </button>
-                    {!historyCollapsed && (
-                        <>
-                            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                                <table className="w-full text-sm border-collapse">
-                                    <thead className="sticky top-0 bg-violet-50/95 z-10">
-                                        <tr className="border-b border-violet-200">
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
-                                            <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {visibleHistoryRequests.map((r) => (
-                                            <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
-                                                <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
-                                                <td className="py-2 px-2">{r.request_type}</td>
-                                                <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
-                                                <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
-                                                <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                                <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
-                                                    <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                    </div>
+                    {pendingRequests.length > 0 && requestStatusFilter === 'All' && (
+                        <div className="mb-4 space-y-3">
+                            <h3 className="text-sm font-semibold text-amber-800">Pending Review</h3>
+                            {pendingRequests.map((r) => (
+                                <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2 bg-white">
+                                    <div>
+                                        <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                        <p className="text-xs text-gray-500">
+                                            {(() => {
+                                                const meta = parseRequestedAmountMeta(r);
+                                                if (meta.rawAmount && meta.rawPeriod) {
+                                                    return <>Requested: {formatCurrencyString(meta.rawAmount, { digits: 0 })} ({meta.rawPeriod}) · Monthly equivalent: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                                }
+                                                return <>Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                            })()}
+                                        </p>
+                                        {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                        <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
+                                        <button onClick={() => {
+                                            const requestedMeta = parseRequestedAmountMeta(r);
+                                            const suggestedAmount = requestedMeta.rawAmount && requestedMeta.rawPeriod
+                                                ? normalizeToMonthly(requestedMeta.rawAmount, requestedMeta.rawPeriod)
+                                                : Number(r.amount || 0);
+                                            const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(suggestedAmount || ''));
+                                            if (nextAmount == null) return;
+                                            const parsed = Number(nextAmount);
+                                            if (!Number.isFinite(parsed) || parsed <= 0) {
+                                                alert('Please enter a valid amount greater than 0.');
+                                                return;
+                                            }
+                                            finalizeBudgetRequest(r, parsed);
+                                        }} className="px-3 py-1 text-xs rounded bg-emerald-700 text-white">Adjust & Finalize</button>
+                                        <button onClick={() => rejectBudgetRequest(r.id)} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {allRespondedRequests.length > 0 && (requestStatusFilter === 'All' || requestStatusFilter === 'Finalized' || requestStatusFilter === 'Rejected') && (
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-sm font-semibold text-violet-800">Request History</h3>
+                                <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="text-xs text-violet-600 hover:text-violet-800">
+                                    {historyCollapsed ? '▼ Expand' : '▲ Collapse'}
+                                </button>
                             </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                                {hasMoreHistory && (
-                                    <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
-                                )}
-                                {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
-                                    <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
-                                )}
-                            </div>
-                        </>
+                            {!historyCollapsed && (
+                                <>
+                                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                                        <table className="w-full text-sm border-collapse">
+                                            <thead className="sticky top-0 bg-violet-50/95 z-10">
+                                                <tr className="border-b border-violet-200">
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
+                                                    <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {visibleHistoryRequests.filter((r) => requestStatusFilter === 'All' || r.status === requestStatusFilter).map((r) => (
+                                                    <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
+                                                        <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                                        <td className="py-2 px-2">{r.request_type}</td>
+                                                        <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
+                                                        <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
+                                                        <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
+                                                        <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
+                                                            <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        {hasMoreHistory && (
+                                            <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
+                                        )}
+                                        {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
+                                            <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -1618,6 +1662,67 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         </ul>
                     </div>
                 )}
+                <div className="mt-4 flex items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            if (!isAdmin) {
+                                alert('Only admins can create budgets from household engine.');
+                                return;
+                            }
+                            if (!window.confirm(`This will create/update budgets for ${currentYear}-${currentMonth} based on the household engine output. Existing budgets for this month will be updated. Continue?`)) {
+                                return;
+                            }
+                            const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
+                            if (!currentMonthPlan) {
+                                alert('No household engine plan available for current month.');
+                                return;
+                            }
+                            const buckets = currentMonthPlan.buckets || {};
+                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                            const categoryMap: Record<string, string> = {
+                                'Fixed Obligations': 'Housing',
+                                'Household Essentials': 'Food',
+                                'Household Operations': 'Utilities',
+                                'Transport': 'Transportation',
+                                'Personal Support': 'Personal Care',
+                                'Reserve Savings': 'Savings & Investments',
+                                'Emergency Savings': 'Savings & Investments',
+                                'Goal Savings': 'Savings & Investments',
+                                'Kids Future Savings': 'Education',
+                                'Retirement Savings': 'Savings & Investments',
+                                'Investing': 'Savings & Investments',
+                            };
+                            let created = 0;
+                            let updated = 0;
+                            for (const [bucketName, amount] of Object.entries(buckets)) {
+                                if (!amount || amount <= 0) continue;
+                                const category = categoryMap[bucketName] || bucketName;
+                                const existing = existingBudgets.find((b) => b.category === category);
+                                if (existing) {
+                                    updateBudget({ ...existing, limit: amount });
+                                    updated++;
+                                } else {
+                                    addBudget({
+                                        category,
+                                        limit: amount,
+                                        month: currentMonth,
+                                        year: currentYear,
+                                        period: 'monthly',
+                                        tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
+                                    });
+                                    created++;
+                                }
+                            }
+                            alert(`Household engine budgets applied: ${created} created, ${updated} updated.`);
+                        }}
+                        className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!isAdmin}
+                    >
+                        Apply Household Engine Budgets to Current Month
+                    </button>
+                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
+                </div>
                 <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
                     <summary className="p-3 cursor-pointer text-sm font-medium text-slate-600">Advanced: monthly overrides & scenarios</summary>
                     <div className="p-3 pt-0 space-y-3">
@@ -1768,39 +1873,65 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
                 <SectionCard title="Shared-budget transaction visibility">
-                    <p className="text-xs text-slate-500 mb-3">
-                        Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
-                    </p>
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Date</th>
-                                    <th className="px-3 py-2 text-left">Category</th>
-                                    <th className="px-3 py-2 text-left">Contributor</th>
-                                    <th className="px-3 py-2 text-left">Description</th>
-                                    <th className="px-3 py-2 text-left">Status</th>
-                                    <th className="px-3 py-2 text-right">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
-                                    <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
-                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
-                                        <td className="px-3 py-2">{tx.budget_category}</td>
-                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
-                                        <td className="px-3 py-2">{tx.description || '—'}</td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                {tx.status ?? 'Approved'}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <p className="text-xs text-slate-500">
+                            Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-600 font-medium">Filter by month:</label>
+                            <input
+                                type="month"
+                                value={sharedTxMonthFilter}
+                                onChange={(e) => setSharedTxMonthFilter(e.target.value)}
+                                className="p-1.5 border border-slate-300 rounded text-sm"
+                            />
+                        </div>
                     </div>
+                    {(() => {
+                        const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
+                        const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
+                            const txDate = new Date(tx.transaction_date || tx.date);
+                            return txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
+                        });
+                        return (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                <table className="min-w-full text-sm">
+                                    <thead className="bg-slate-50">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Date</th>
+                                            <th className="px-3 py-2 text-left">Category</th>
+                                            <th className="px-3 py-2 text-left">Contributor</th>
+                                            <th className="px-3 py-2 text-left">Description</th>
+                                            <th className="px-3 py-2 text-left">Status</th>
+                                            <th className="px-3 py-2 text-right">Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredTxs.length > 0 ? (
+                                            filteredTxs.map((tx, idx) => (
+                                                <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
+                                                    <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                                    <td className="px-3 py-2">{tx.budget_category}</td>
+                                                    <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                                    <td className="px-3 py-2">{tx.description || '—'}</td>
+                                                    <td className="px-3 py-2">
+                                                        <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                            {tx.status ?? 'Approved'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            <tr>
+                                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">No transactions found for selected month</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    })()}
                 </SectionCard>
             )}
 

@@ -722,6 +722,43 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             await ensurePendingStatusCleared(transactionId, 'Approved');
+            
+            // Refresh transaction data to get updated status and sync to shared budgets
+            const { data: updatedTx } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('id', transactionId)
+                .maybeSingle();
+            
+            if (updatedTx) {
+                // Find the transaction in local state and update it, which will trigger sync to shared budgets
+                const existingTx = data?.transactions?.find(t => t.id === transactionId);
+                if (existingTx) {
+                    // Use updateTransaction which handles syncSharedBudgetTransactionMirror
+                    await updateTransaction({
+                        ...existingTx,
+                        status: 'Approved' as const,
+                    });
+                } else {
+                    // If not in local state, add it
+                    const newTx = {
+                        id: updatedTx.id,
+                        date: updatedTx.date,
+                        description: updatedTx.description,
+                        amount: Number(updatedTx.amount),
+                        category: updatedTx.category,
+                        subcategory: updatedTx.subcategory,
+                        budgetCategory: updatedTx.budget_category || updatedTx.budgetCategory,
+                        type: updatedTx.type,
+                        accountId: updatedTx.account_id || updatedTx.accountId,
+                        status: 'Approved' as const,
+                        transactionNature: updatedTx.transaction_nature || updatedTx.transactionNature,
+                        expenseType: updatedTx.expense_type || updatedTx.expenseType,
+                    };
+                    await updateTransaction(newTx as Transaction);
+                }
+            }
+            
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
