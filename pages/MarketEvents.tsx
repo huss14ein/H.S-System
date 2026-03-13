@@ -2,6 +2,11 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getAIMarketEventInsight } from '../services/geminiService';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { useAI } from '../context/AiContext';
+import type { Page } from '../types';
+import { loadDemoData } from '../services/demoDataService';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -16,6 +21,17 @@ interface MarketEventItem {
   impact: Impact;
   symbol?: string;
   estimated?: boolean;
+  aiInsight?: string;
+  aiAction?: string;
+  portfolioRelevance?: string;
+  detailedInfo?: {
+    meetingType?: string;
+    historicalContext?: string;
+    keyMetrics?: string[];
+    relatedEvents?: string[];
+    marketImpactHistory?: string;
+    preparationTips?: string[];
+  };
 }
 
 interface FinnhubCalendarState {
@@ -198,18 +214,167 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
       impact: 'Low',
       estimated: true,
     },
-  ];
-
-  if ([0, 2, 4, 6, 8, 10].includes(month % 12)) {
-    events.push({
-      id: `fomc-${year}-${month}`,
-      date: nthWeekdayOfMonth(year, month, 3, 3),
-      title: 'Federal Reserve (FOMC) Decision',
-      description: 'Policy statement and rate decision; major cross-asset volatility catalyst.',
+    {
+      id: `retail-sales-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 2),
+      title: 'US Retail Sales Release',
+      description: 'Consumer spending data is a key indicator of economic health and can impact consumer discretionary stocks.',
       source: 'Macro (estimated schedule)',
       category: 'Macro',
       impact: 'High',
       estimated: true,
+    },
+    {
+      id: `consumer-confidence-${year}-${month}`,
+      date: lastWeekdayOfMonth(year, month, 2),
+      title: 'US Consumer Confidence Index',
+      description: 'Consumer sentiment affects spending patterns and retail sector performance.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `housing-starts-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 3),
+      title: 'US Housing Starts & Building Permits',
+      description: 'Housing data impacts construction, materials, and financial sectors.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `durable-goods-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 4, 4),
+      title: 'US Durable Goods Orders',
+      description: 'Business investment indicator affecting industrial and manufacturing stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `jobless-claims-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 4, 1),
+      title: 'US Weekly Jobless Claims',
+      description: 'Weekly labor market indicator providing timely signals on employment trends.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `ism-manufacturing-${year}-${month}`,
+      date: firstWeekdayOfMonth(year, month, 1),
+      title: 'US ISM Manufacturing PMI',
+      description: 'Key manufacturing activity indicator affecting industrial and cyclical stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+    },
+    {
+      id: `ism-services-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 1, 1),
+      title: 'US ISM Services PMI',
+      description: 'Services sector activity indicator affecting consumer and service-oriented stocks.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+    },
+  ];
+
+  // FOMC meetings occur 8 times per year, typically in Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
+  // Some meetings include Summary of Economic Projections (SEP) and press conferences
+  const fomcMonths = [0, 2, 4, 5, 6, 8, 10, 11]; // Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
+  if (fomcMonths.includes(month % 12)) {
+    const isQuarterly = [2, 5, 8, 11].includes(month % 12); // Mar, Jun, Sep, Dec have SEP and press conferences
+    events.push({
+      id: `fomc-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 3, 3),
+      title: `Federal Reserve (FOMC) ${isQuarterly ? 'Quarterly' : 'Regular'} Meeting`,
+      description: `${isQuarterly ? 'Quarterly meeting with Summary of Economic Projections (SEP), dot plot, and Chair press conference. ' : 'Regular policy meeting with statement and rate decision. '}Major cross-asset volatility catalyst affecting rates, USD, equities, bonds, and commodities.`,
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'High',
+      estimated: true,
+      detailedInfo: {
+        meetingType: isQuarterly ? 'Quarterly (with SEP)' : 'Regular',
+        historicalContext: 'FOMC decisions directly impact interest rates, which affect borrowing costs, currency strength, equity valuations, and bond prices. Rate hikes typically strengthen USD and can pressure equities; rate cuts typically weaken USD and support equities.',
+        keyMetrics: [
+          'Federal Funds Rate decision',
+          isQuarterly ? 'Dot plot (rate projections)' : '',
+          isQuarterly ? 'Summary of Economic Projections (GDP, inflation, unemployment)' : '',
+          'Policy statement language (hawkish/dovish)',
+          isQuarterly ? 'Press conference Q&A' : '',
+        ].filter(Boolean),
+        relatedEvents: [
+          'CPI Inflation Release',
+          'Nonfarm Payrolls (NFP)',
+          'GDP Release',
+          'PCE Inflation',
+        ],
+        marketImpactHistory: 'Historically, FOMC meetings cause 1-3% intraday volatility in major indices. Rate surprises (unexpected hikes/cuts) can cause 5%+ moves. The dot plot and economic projections provide forward guidance affecting markets for weeks.',
+        preparationTips: [
+          'Review recent CPI, NFP, and GDP data before the meeting',
+          'Monitor Fed funds futures for market expectations',
+          'Consider reducing leverage before high-impact meetings',
+          'Watch for changes in forward guidance language',
+          isQuarterly ? 'Review dot plot shifts vs. previous quarter' : '',
+          'Monitor USD strength/weakness post-announcement',
+        ].filter(Boolean),
+      },
+    });
+  }
+
+  // Federal Tax Policy Meetings (estimated - typically occur around tax season and budget cycles)
+  if ([1, 2, 9, 10].includes(month % 12)) { // Feb, Mar, Oct, Nov - tax policy windows
+    events.push({
+      id: `federal-tax-${year}-${month}`,
+      date: month === 1 ? nthWeekdayOfMonth(year, month, 1, 1) : // Feb: Budget proposal
+            month === 2 ? nthWeekdayOfMonth(year, month, 1, 2) : // Mar: Tax policy discussions
+            month === 9 ? nthWeekdayOfMonth(year, month, 1, 2) : // Oct: Tax planning season
+            nthWeekdayOfMonth(year, month, 1, 3), // Nov: Year-end tax considerations
+      title: month === 1 ? 'Federal Budget Proposal & Tax Policy Window' :
+             month === 2 ? 'Congressional Tax Policy Hearings' :
+             month === 9 ? 'Tax Planning Season Begins' :
+             'Year-End Tax Policy Considerations',
+      description: month === 1 ? 'Annual federal budget proposal includes tax policy changes affecting capital gains, corporate taxes, and individual tax brackets. Can impact equity valuations, REITs, and dividend strategies.' :
+                 month === 2 ? 'Congressional hearings on tax policy changes, potential rate adjustments, and tax code modifications. Affects market sentiment and sector allocations.' :
+                 month === 9 ? 'Tax planning season begins with considerations for year-end tax strategies, capital gains harvesting, and tax-loss selling opportunities.' :
+                 'Year-end tax policy considerations including potential changes to tax rates, deductions, and investment-related tax provisions.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: month === 1 || month === 2 ? 'High' : 'Medium',
+      estimated: true,
+      detailedInfo: {
+        meetingType: month === 1 ? 'Budget Proposal' : month === 2 ? 'Policy Hearings' : month === 9 ? 'Planning Season' : 'Year-End Considerations',
+        historicalContext: 'Tax policy changes can significantly impact markets. Capital gains tax increases typically pressure equities, especially growth stocks. Corporate tax changes affect earnings and valuations. Dividend tax changes impact income strategies.',
+        keyMetrics: [
+          'Capital gains tax rate proposals',
+          'Corporate tax rate changes',
+          'Dividend tax treatment',
+          'Tax deduction modifications',
+          'Estate tax provisions',
+          'Tax-loss harvesting opportunities',
+        ],
+        relatedEvents: [
+          'FOMC Decision',
+          'GDP Release',
+          'Federal Budget Deadline',
+        ],
+        marketImpactHistory: 'Major tax policy changes (e.g., Tax Cuts and Jobs Act 2017) caused significant market moves. Capital gains tax increases historically correlate with market volatility. REITs and dividend stocks are particularly sensitive to tax policy changes.',
+        preparationTips: [
+          'Review proposed tax changes and their sector impacts',
+          'Consider tax-loss harvesting before year-end',
+          'Monitor dividend tax treatment changes',
+          'Evaluate impact on REITs and MLPs',
+          'Assess corporate tax changes on earnings',
+          'Plan for potential capital gains tax adjustments',
+        ],
+      },
     });
   }
 
@@ -229,8 +394,14 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   return events;
 }
 
-const MarketEvents: React.FC = () => {
+interface MarketEventsProps {
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}
+
+const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageAction }) => {
   const { data } = useContext(DataContext)!;
+  const { isAiAvailable } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -238,11 +409,36 @@ const MarketEvents: React.FC = () => {
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
+  const [aiInsights, setAiInsights] = useState<Record<string, { insight: string; action: string; relevance: string }>>({});
+  const [loadingInsights, setLoadingInsights] = useState<Set<string>>(new Set());
 
-  const trackedSymbols = useMemo(() => Array.from(new Set([
-    ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
-    ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
-  ])), [data]);
+  const trackedSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    // Add watchlist symbols
+    (data?.watchlist ?? []).forEach(w => {
+      const sym = w.symbol?.trim().toUpperCase();
+      if (sym) symbols.add(sym);
+    });
+    // Add investment holdings
+    (data?.investments ?? []).forEach(p => {
+      (p.holdings ?? []).forEach(h => {
+        const sym = h.symbol?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+    });
+    // Add symbols from investment plan
+    if (data?.investmentPlan) {
+      (data.investmentPlan.corePortfolio ?? []).forEach((p: { ticker?: string }) => {
+        const sym = p.ticker?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+      (data.investmentPlan.upsideSleeve ?? []).forEach((p: { ticker?: string }) => {
+        const sym = p.ticker?.trim().toUpperCase();
+        if (sym) symbols.add(sym);
+      });
+    }
+    return Array.from(symbols);
+  }, [data]);
 
   useEffect(() => {
     try {
@@ -482,19 +678,51 @@ const MarketEvents: React.FC = () => {
   }, [filtered, reminders]);
 
   const topFocusEvents = useMemo(() => {
-    const scoreImpact: Record<Impact, number> = { High: 3, Medium: 2, Low: 1 };
-    return [...filtered]
+    return filtered
       .map((event) => {
-        const daysUntil = Math.max(0, Math.floor((startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) / (1000 * 60 * 60 * 24)));
-        const urgency = daysUntil <= 1 ? 3 : daysUntil <= 7 ? 2 : 1;
-        const personalized = event.symbol ? 1 : 0;
+        const daysUntil = Math.max(
+          0,
+          Math.floor(
+            (startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) /
+              (1000 * 60 * 60 * 24)
+          )
+        );
+
+        // Base impact score
+        const impactScore = event.impact === 'High' ? 3 : event.impact === 'Medium' ? 2 : 1;
+
+        // Portfolio relevance score (symbol-linked events get higher impact)
+        let portfolioImpactScore = 0;
+        if (event.symbol) {
+          const symbolUpper = event.symbol.toUpperCase();
+          const inTracked = trackedSymbols.includes(symbolUpper);
+          if (inTracked) {
+            portfolioImpactScore = 2;
+          }
+        } else if (event.category === 'Macro' && event.impact === 'High') {
+          portfolioImpactScore = 3;
+        }
+
+        // Timing urgency score
+        const urgencyScore = daysUntil <= 1 ? 3 : daysUntil <= 3 ? 2 : daysUntil <= 7 ? 1 : 0;
+
+        // Reminder boost
         const reminderBoost = reminders[event.id] ? 1 : 0;
-        const score = scoreImpact[event.impact] * 2 + urgency + personalized + reminderBoost;
-        return { event, score, daysUntil };
+
+        // Total priority score
+        const score = impactScore + portfolioImpactScore + urgencyScore + reminderBoost;
+
+        return {
+          event,
+          score,
+          daysUntil,
+          portfolioImpactScore,
+          urgencyScore,
+        };
       })
       .sort((a, b) => b.score - a.score || a.daysUntil - b.daysUntil)
-      .slice(0, 5);
-  }, [filtered, reminders]);
+      .slice(0, 6);
+  }, [filtered, reminders, trackedSymbols]);
 
 
   const groupedByMonth = useMemo(() => {
@@ -519,6 +747,57 @@ const MarketEvents: React.FC = () => {
       else next[eventId] = true;
       return next;
     });
+  };
+
+  const loadAIInsight = async (event: MarketEventItem) => {
+    if (!isAiAvailable || aiInsights[event.id] || loadingInsights.has(event.id)) return;
+    
+    setLoadingInsights(prev => new Set(prev).add(event.id));
+    try {
+      const portfolio = {
+        holdings: (data?.investments ?? []).flatMap(p => 
+          (p.holdings ?? []).map(h => ({
+            symbol: h.symbol,
+            quantity: h.quantity,
+            currentValue: h.currentValue || 0,
+          }))
+        ),
+        watchlist: (data?.watchlist ?? []).map(w => w.symbol).filter(Boolean),
+      };
+      
+      // Enhanced event data with detailed info for AI
+      const enhancedEventData = {
+        title: event.title,
+        description: event.description,
+        category: event.category,
+        impact: event.impact,
+        symbol: event.symbol,
+        date: event.date.toISOString(),
+        id: event.id,
+        detailedInfo: event.detailedInfo ? {
+          meetingType: event.detailedInfo.meetingType,
+          historicalContext: event.detailedInfo.historicalContext,
+          keyMetrics: event.detailedInfo.keyMetrics,
+          marketImpactHistory: event.detailedInfo.marketImpactHistory,
+          preparationTips: event.detailedInfo.preparationTips,
+        } : undefined,
+      };
+      
+      const insight = await getAIMarketEventInsight(
+        enhancedEventData,
+        portfolio
+      );
+      
+      setAiInsights(prev => ({ ...prev, [event.id]: insight }));
+    } catch (error) {
+      console.warn('Failed to load AI insight:', error);
+    } finally {
+      setLoadingInsights(prev => {
+        const next = new Set(prev);
+        next.delete(event.id);
+        return next;
+      });
+    }
   };
 
   const downloadIcs = () => {
@@ -587,13 +866,51 @@ const MarketEvents: React.FC = () => {
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              loadDemoData({ includeMarketEvents: true });
+              window.location.reload();
+            }}
+            className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+            title="Load demo data for testing"
+          >
+            Load Demo Data
+          </button>
         </div>
       }
     >
       <div className="space-y-4">
         <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
-          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
+              <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+            </div>
+            {setActivePage && (
+              <div className="flex flex-col gap-2 shrink-0 ml-4">
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Wealth Ultra')}
+                  className="text-xs px-2 py-1 border border-violet-300 text-violet-700 rounded hover:bg-violet-50 whitespace-nowrap"
+                >
+                  Wealth Ultra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePage('Investments');
+                    if (triggerPageAction) {
+                      setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 border border-rose-300 text-rose-700 rounded hover:bg-rose-50 whitespace-nowrap"
+                >
+                  Recovery Plan
+                </button>
+              </div>
+            )}
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
@@ -604,17 +921,96 @@ const MarketEvents: React.FC = () => {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
-          <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
+              <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+            </div>
+            {setActivePage && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Wealth Ultra')}
+                  className="text-xs px-2 py-1 border border-violet-300 text-violet-700 rounded hover:bg-violet-50"
+                >
+                  Wealth Ultra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePage('Investments');
+                    if (triggerPageAction) {
+                      setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 border border-rose-300 text-rose-700 rounded hover:bg-rose-50"
+                >
+                  Recovery Plan
+                </button>
+              </div>
+            )}
+          </div>
           <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
             {topFocusEvents.length === 0 && <p className="text-sm text-slate-500">No focus events for current filters.</p>}
-            {topFocusEvents.map(({ event, score, daysUntil }) => (
-              <div key={`focus-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            {topFocusEvents.map(({ event, score, daysUntil, portfolioImpactScore, urgencyScore }) => (
+              <div key={`focus-${event.id}`} className="rounded-lg border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-800">{event.title}</p>
-                  <span className="text-xs text-indigo-700 font-semibold">Priority {score}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      score >= 8 ? 'bg-rose-100 text-rose-700' :
+                      score >= 5 ? 'bg-amber-100 text-amber-700' :
+                      'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      Priority {score}
+                    </span>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">{daysUntil === 0 ? 'Today' : `In ${daysUntil} day${daysUntil === 1 ? '' : 's'}`} • {event.date.toLocaleDateString()}</p>
+                
+                {/* Portfolio Impact Breakdown */}
+                <div className="mt-2 pt-2 border-t border-slate-200">
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Portfolio Impact:</span>
+                      <span className={`font-semibold ${
+                        portfolioImpactScore >= 3 ? 'text-rose-700' :
+                        portfolioImpactScore >= 1 ? 'text-amber-700' :
+                        'text-slate-600'
+                      }`}>
+                        {portfolioImpactScore >= 3 ? 'High' :
+                         portfolioImpactScore >= 1 ? 'Medium' :
+                         'Low'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Urgency:</span>
+                      <span className={`font-semibold ${
+                        urgencyScore >= 2 ? 'text-rose-700' :
+                        urgencyScore >= 1 ? 'text-amber-700' :
+                        'text-slate-600'
+                      }`}>
+                        {urgencyScore >= 2 ? 'High' :
+                         urgencyScore >= 1 ? 'Medium' :
+                         'Low'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {event.symbol && setActivePage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage('Investments');
+                      if (triggerPageAction) {
+                        setTimeout(() => triggerPageAction('Investments', `focus-symbol:${event.symbol}`), 100);
+                      }
+                    }}
+                    className="mt-2 text-xs text-primary hover:underline"
+                  >
+                    View {event.symbol} in Investments →
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -662,10 +1058,159 @@ const MarketEvents: React.FC = () => {
                     </div>
                     <p className="mt-2 text-sm text-slate-600">{event.description}</p>
                     <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
-                    <div className="mt-2">
+                    
+                    {event.detailedInfo && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                          <p className="text-xs font-semibold text-indigo-900 uppercase tracking-wide mb-2">Detailed Event Information</p>
+                          {event.detailedInfo.meetingType && (
+                            <p className="text-xs text-indigo-800 mb-2">
+                              <span className="font-semibold">Meeting Type:</span> {event.detailedInfo.meetingType}
+                            </p>
+                          )}
+                          {event.detailedInfo.historicalContext && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Historical Context:</p>
+                              <p className="text-xs text-indigo-700 leading-relaxed">{event.detailedInfo.historicalContext}</p>
+                            </div>
+                          )}
+                          {event.detailedInfo.keyMetrics && event.detailedInfo.keyMetrics.length > 0 && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Key Metrics to Watch:</p>
+                              <ul className="text-xs text-indigo-700 list-disc list-inside space-y-0.5">
+                                {event.detailedInfo.keyMetrics.map((metric, idx) => (
+                                  <li key={idx}>{metric}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {event.detailedInfo.relatedEvents && event.detailedInfo.relatedEvents.length > 0 && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Related Events:</p>
+                              <div className="flex flex-wrap gap-1">
+                                {event.detailedInfo.relatedEvents.map((related, idx) => (
+                                  <span key={idx} className="text-xs px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded">
+                                    {related}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {event.detailedInfo.marketImpactHistory && (
+                            <div className="mb-2">
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Market Impact History:</p>
+                              <p className="text-xs text-indigo-700 leading-relaxed">{event.detailedInfo.marketImpactHistory}</p>
+                            </div>
+                          )}
+                          {event.detailedInfo.preparationTips && event.detailedInfo.preparationTips.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold text-indigo-900 mb-1">Preparation Tips:</p>
+                              <ul className="text-xs text-indigo-700 list-disc list-inside space-y-0.5">
+                                {event.detailedInfo.preparationTips.map((tip, idx) => (
+                                  <li key={idx}>{tip}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {isAiAvailable && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        {aiInsights[event.id] ? (
+                          <div className="space-y-2">
+                            <div className="flex items-start gap-2">
+                              <SparklesIcon className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs font-semibold text-indigo-900">AI Insight:</p>
+                                <p className="text-xs text-slate-700 mt-0.5">{aiInsights[event.id].insight}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <span className="text-xs text-slate-500 shrink-0">Action:</span>
+                              <p className="text-xs text-slate-700 flex-1">{aiInsights[event.id].action}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">Relevance:</span>
+                              <span className={`text-xs px-2 py-0.5 rounded ${
+                                aiInsights[event.id].relevance.toLowerCase().includes('high') 
+                                  ? 'bg-red-100 text-red-700' 
+                                  : aiInsights[event.id].relevance.toLowerCase().includes('medium')
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}>
+                                {aiInsights[event.id].relevance}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => loadAIInsight(event)}
+                            disabled={loadingInsights.has(event.id)}
+                            className="text-xs px-2 py-1 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {loadingInsights.has(event.id) ? (
+                              <>
+                                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <SparklesIcon className="h-3 w-3" />
+                                Get AI Insight
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
                         {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
                       </button>
+                      {event.symbol && setActivePage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActivePage('Investments');
+                            if (triggerPageAction) {
+                              setTimeout(() => triggerPageAction('Investments', `focus-symbol:${event.symbol}`), 100);
+                            }
+                          }}
+                          className="text-xs px-2 py-1 rounded border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
+                        >
+                          View {event.symbol} in Investments
+                        </button>
+                      )}
+                      {(event.category === 'Macro' && event.impact === 'High') && setActivePage && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setActivePage('Wealth Ultra')}
+                            className="text-xs px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            Review Portfolio Strategy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePage('Investments');
+                              if (triggerPageAction) {
+                                setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                              }
+                            }}
+                            className="text-xs px-2 py-1 rounded border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          >
+                            Check Recovery Plans
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}

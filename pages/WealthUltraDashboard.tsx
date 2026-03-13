@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useEffect } from 'react';
+import React, { useMemo, useContext, useEffect, useState } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -9,9 +9,27 @@ import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import {
+  savePerformanceSnapshot,
+  getPerformanceSnapshots,
+  calculatePerformanceMetrics,
+  getPerformanceTrend,
+  type PerformanceMetrics,
+} from '../services/wealthUltraPerformance';
+import {
+  fetchBenchmarkData,
+  calculateBenchmarkComparison,
+  type BenchmarkComparison,
+} from '../services/benchmarkService';
+import {
+  generatePredictiveAnalytics,
+  type PredictiveInsight,
+} from '../services/wealthUltraPredictive';
+import { loadDemoData } from '../services/demoDataService';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -260,6 +278,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics | null>(null);
+  const [performanceTrend, setPerformanceTrend] = useState<Array<{ date: Date; value: number; returnPct: number }>>([]);
+  const [benchmarkComparison, setBenchmarkComparison] = useState<BenchmarkComparison | null>(null);
+  const [predictiveInsight, setPredictiveInsight] = useState<PredictiveInsight | null>(null);
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
@@ -418,6 +440,97 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       return [];
     }
   }, [alerts]);
+
+  // Save performance snapshot automatically (once per day, or when significant changes occur)
+  useEffect(() => {
+    if (loading || positions.length === 0 || totalPortfolioValue <= 0) return;
+    
+    const now = Date.now();
+    const snapshots = getPerformanceSnapshots();
+    const lastSnapshot = snapshots[0];
+    
+    // Check if we should save a new snapshot
+    let shouldSave = false;
+    
+    if (!lastSnapshot) {
+      // First snapshot - save immediately
+      shouldSave = true;
+    } else {
+      const timeSinceLastSnapshot = now - lastSnapshot.timestamp;
+      const hoursSinceLastSnapshot = timeSinceLastSnapshot / (1000 * 60 * 60);
+      
+      // Save if:
+      // 1. More than 24 hours have passed (daily snapshot)
+      // 2. Portfolio value changed by more than 2% (significant change)
+      const valueChange = Math.abs((totalPortfolioValue - lastSnapshot.totalPortfolioValue) / lastSnapshot.totalPortfolioValue);
+      if (hoursSinceLastSnapshot >= 24 || valueChange > 0.02) {
+        shouldSave = true;
+      }
+    }
+    
+    if (shouldSave) {
+      savePerformanceSnapshot({
+        timestamp: now,
+        totalPortfolioValue,
+        allocations,
+        positions: positions.map(p => ({
+          symbol: p.ticker,
+          marketValue: p.marketValue,
+          plPct: p.plPct,
+          sleeveType: p.sleeveType,
+        })),
+        metrics: {
+          totalReturn: 0, // Will be calculated from snapshots
+          totalReturnPct: 0,
+        },
+      });
+    }
+  }, [totalPortfolioValue, allocations, positions, loading]);
+
+  // Calculate performance metrics dynamically
+  useEffect(() => {
+    const snapshots = getPerformanceSnapshots();
+    if (snapshots.length < 2) {
+      setPerformanceMetrics(null);
+      setPerformanceTrend([]);
+      return;
+    }
+    
+    try {
+      const metrics = calculatePerformanceMetrics(snapshots, totalPortfolioValue);
+      if (metrics) {
+        setPerformanceMetrics(metrics);
+        const trend = getPerformanceTrend(snapshots, 30);
+        setPerformanceTrend(trend);
+        
+        // Fetch and calculate benchmark comparison
+        fetchBenchmarkData().then(benchmarks => {
+          if (benchmarks.length > 0 && trend.length > 0) {
+            const portfolioReturn = trend[trend.length - 1].returnPct;
+            const comparison = calculateBenchmarkComparison(portfolioReturn, benchmarks);
+            setBenchmarkComparison(comparison);
+          }
+        }).catch(error => {
+          console.warn('Failed to fetch benchmark data:', error);
+        });
+        
+        // Generate predictive analytics
+        if (trend.length > 0) {
+          generatePredictiveAnalytics(totalPortfolioValue, allocations, trend).then(insight => {
+            if (insight) {
+              setPredictiveInsight(insight);
+            }
+          }).catch(error => {
+            console.warn('Failed to generate predictive analytics:', error);
+          });
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to calculate performance metrics:', error);
+      setPerformanceMetrics(null);
+      setPerformanceTrend([]);
+    }
+  }, [totalPortfolioValue]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1104,6 +1217,30 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       action={
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
+          {setActivePage && (
+            <>
+              <button
+                type="button"
+                onClick={() => setActivePage('Market Events')}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-indigo-300 text-indigo-700 rounded-xl hover:bg-indigo-50 text-sm font-medium transition-colors"
+              >
+                <CalendarDaysIcon className="h-5 w-5" />
+                Market Events
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePage('Investments');
+                  if (triggerPageAction) {
+                    setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-rose-300 text-rose-700 rounded-xl hover:bg-rose-50 text-sm font-medium transition-colors"
+              >
+                Recovery Plan
+              </button>
+            </>
+          )}
           {triggerPageAction && (
             <button
               type="button"
@@ -1241,6 +1378,346 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             {gridItems.find(item => item.id === 'positions')?.content}
           </div>
         </section>
+
+        {/* Performance Analytics Section */}
+        {performanceMetrics && (
+          <section className="space-y-6">
+            <div className="border-b border-slate-200 pb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Performance Analytics</h2>
+                <p className="text-xs text-slate-500 mt-1">Historical performance metrics and risk analysis (auto-updated daily when portfolio value changes by &gt;2% or every 24 hours)</p>
+              </div>
+              {setActivePage && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActivePage('Market Events')}
+                    className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
+                  >
+                    View Market Events Impact
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePage('Investments');
+                      if (triggerPageAction) {
+                        setTimeout(() => triggerPageAction('Investments', 'focus-recovery-plan'), 100);
+                      }
+                    }}
+                    className="text-xs px-3 py-1.5 border border-rose-300 text-rose-700 rounded-lg hover:bg-rose-50"
+                  >
+                    Check Recovery Plans
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadDemoData({ includeWealthUltra: true });
+                      window.location.reload();
+                    }}
+                    className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                    title="Load demo data for testing"
+                  >
+                    Load Demo Data
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <SectionCard title="Risk-Adjusted Returns" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Sharpe Ratio</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.sharpeRatio.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.sharpeRatio > 1 ? 'Excellent' : performanceMetrics.sharpeRatio > 0.5 ? 'Good' : 'Needs improvement'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Sortino Ratio</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.sortinoRatio.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">Downside risk-adjusted</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Max Drawdown</p>
+                      <p className="text-xl font-black text-rose-700 tabular-nums">{performanceMetrics.maxDrawdownPct.toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">{formatCurrencyString(performanceMetrics.maxDrawdown)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Volatility</p>
+                      <p className="text-xl font-black text-slate-900 tabular-nums">{(performanceMetrics.volatility * 100).toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">Annualized</p>
+                    </div>
+                  </div>
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Trading Performance" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Win Rate</p>
+                      <p className="text-2xl font-black text-emerald-700 tabular-nums">{(performanceMetrics.winRate * 100).toFixed(1)}%</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.winRate > 0.6 ? 'Strong' : performanceMetrics.winRate > 0.5 ? 'Balanced' : 'Review strategy'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Profit Factor</p>
+                      <p className="text-2xl font-black text-slate-900 tabular-nums">{performanceMetrics.profitFactor.toFixed(2)}</p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {performanceMetrics.profitFactor > 2 ? 'Excellent' : performanceMetrics.profitFactor > 1.5 ? 'Good' : 'Needs improvement'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Avg Win</p>
+                      <p className="text-xl font-black text-emerald-700 tabular-nums">+{performanceMetrics.avgWin.toFixed(1)}%</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Avg Loss</p>
+                      <p className="text-xl font-black text-rose-700 tabular-nums">{performanceMetrics.avgLoss.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                </div>
+              </SectionCard>
+            </div>
+
+            <SectionCard title="Sleeve Performance Attribution" className="border-2 border-slate-200 bg-white shadow-md">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Object.entries(performanceMetrics.sleevePerformance).map(([sleeve, perf]) => (
+                  <div key={sleeve} className={`rounded-xl border-2 p-4 ${SLEEVE_BG[sleeve as WealthUltraSleeve]}`}>
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">{sleeve} Sleeve</p>
+                    <p className={`text-2xl font-black tabular-nums ${perf.returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {perf.returnPct >= 0 ? '+' : ''}{perf.returnPct.toFixed(1)}%
+                    </p>
+                    <p className="text-sm text-slate-700 mt-1">{formatCurrencyString(perf.return)}</p>
+                    <p className="text-xs text-slate-600 mt-2">
+                      Contribution: {perf.contribution.toFixed(1)}% of total return
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            {performanceTrend.length > 0 && (
+              <SectionCard title="30-Day Performance Trend" className="border-2 border-slate-200 bg-white shadow-md">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Portfolio Value Trend</p>
+                      <p className="text-sm text-slate-700 mt-1">
+                        {performanceTrend.length > 0 && (
+                          <>
+                            {performanceTrend[0].date.toLocaleDateString()} → {performanceTrend[performanceTrend.length - 1].date.toLocaleDateString()}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    {performanceTrend.length > 0 && (
+                      <div className="text-right">
+                        <p className={`text-xl font-black tabular-nums ${performanceTrend[performanceTrend.length - 1].returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {performanceTrend[performanceTrend.length - 1].returnPct >= 0 ? '+' : ''}{performanceTrend[performanceTrend.length - 1].returnPct.toFixed(2)}%
+                        </p>
+                        <p className="text-xs text-slate-500">30-day return</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-48 bg-slate-50 rounded-lg border border-slate-200 p-4 flex items-end justify-between gap-1">
+                    {performanceTrend.map((point, idx) => {
+                      const maxValue = Math.max(...performanceTrend.map(p => p.value));
+                      const minValue = Math.min(...performanceTrend.map(p => p.value));
+                      const range = maxValue - minValue || 1;
+                      const height = ((point.value - minValue) / range) * 100;
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex-1 rounded-t transition-all ${
+                            point.returnPct >= 0 ? 'bg-emerald-500' : 'bg-rose-500'
+                          }`}
+                          style={{ height: `${Math.max(5, height)}%` }}
+                          title={`${point.date.toLocaleDateString()}: ${formatCurrencyString(point.value)} (${point.returnPct >= 0 ? '+' : ''}${point.returnPct.toFixed(1)}%)`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </SectionCard>
+            )}
+
+            {benchmarkComparison && benchmarkComparison.benchmarks.length > 0 && (
+              <SectionCard title="Benchmark Comparison" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white shadow-md">
+                <div className="space-y-4">
+                  <div className="rounded-lg border-2 border-indigo-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Your Portfolio</p>
+                      <p className={`text-2xl font-black tabular-nums ${benchmarkComparison.portfolioReturn >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {benchmarkComparison.portfolioReturn >= 0 ? '+' : ''}{benchmarkComparison.portfolioReturn.toFixed(2)}%
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500">30-day return</p>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {benchmarkComparison.benchmarks.map((benchmark) => {
+                      const outperformance = benchmarkComparison.outperformance[benchmark.symbol];
+                      const isOutperforming = outperformance > 0;
+                      return (
+                        <div
+                          key={benchmark.symbol}
+                          className={`rounded-lg border-2 p-4 ${
+                            isOutperforming
+                              ? 'border-emerald-200 bg-emerald-50/50'
+                              : 'border-slate-200 bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">{benchmark.name}</p>
+                              <p className="text-xs text-slate-500">{benchmark.symbol}</p>
+                            </div>
+                            <p className={`text-xl font-black tabular-nums ${benchmark.returnPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {benchmark.returnPct >= 0 ? '+' : ''}{benchmark.returnPct.toFixed(2)}%
+                            </p>
+                          </div>
+                          <div className="mt-3 pt-3 border-t border-slate-200">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-semibold text-slate-600">Outperformance</p>
+                              <p className={`text-lg font-black tabular-nums ${isOutperforming ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                {isOutperforming ? '+' : ''}{outperformance.toFixed(2)}%
+                              </p>
+                            </div>
+                            <p className={`text-xs mt-1 ${isOutperforming ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {isOutperforming
+                                ? `Your portfolio is outperforming ${benchmark.name}`
+                                : `${benchmark.name} is outperforming your portfolio`}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+                    <p className="text-xs text-indigo-800">
+                      <span className="font-semibold">Note:</span> Benchmark data is simulated for demonstration. In production, this would fetch real-time data from market APIs.
+                    </p>
+                  </div>
+                </div>
+              </SectionCard>
+            )}
+
+            {predictiveInsight && (
+              <SectionCard title="AI-Powered Predictive Analytics" className="border-2 border-violet-200 bg-gradient-to-br from-violet-50/50 to-white shadow-md">
+                <div className="space-y-4">
+                  <div className="rounded-lg border-2 border-violet-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Market Forecast</p>
+                        <p className="text-sm text-slate-700 mt-1">{predictiveInsight.marketForecast.timeframe} outlook</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-xl font-black tabular-nums ${
+                          predictiveInsight.marketForecast.outlook === 'bullish' ? 'text-emerald-700' :
+                          predictiveInsight.marketForecast.outlook === 'bearish' ? 'text-rose-700' : 'text-slate-700'
+                        }`}>
+                          {predictiveInsight.marketForecast.outlook.toUpperCase()}
+                        </p>
+                        <p className={`text-xs ${
+                          predictiveInsight.marketForecast.confidence === 'high' ? 'text-emerald-600' :
+                          predictiveInsight.marketForecast.confidence === 'medium' ? 'text-amber-600' : 'text-rose-600'
+                        }`}>
+                          {predictiveInsight.marketForecast.confidence.toUpperCase()} CONFIDENCE
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-700 mt-2">{predictiveInsight.marketForecast.recommendedAction}</p>
+                  </div>
+
+                  {predictiveInsight.marketForecast.allocationAdjustment && (
+                    <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-4">
+                      <p className="text-xs font-semibold text-violet-900 uppercase tracking-wide mb-2">Recommended Allocation Adjustments</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Core</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Upside</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Spec</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.specAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.specAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.specAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Portfolio Recommendation</p>
+                    <p className="text-sm text-slate-700">{predictiveInsight.portfolioRecommendation}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4">
+                    <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide mb-2">Risk Assessment</p>
+                    <p className="text-sm text-amber-800">{predictiveInsight.riskAssessment}</p>
+                  </div>
+
+                  {predictiveInsight.opportunities.length > 0 && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+                      <p className="text-xs font-semibold text-emerald-900 uppercase tracking-wide mb-2">Opportunities</p>
+                      <ul className="text-sm text-emerald-800 space-y-1">
+                        {predictiveInsight.opportunities.map((opp, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-emerald-600 mt-0.5">•</span>
+                            <span>{opp}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {predictiveInsight.warnings.length > 0 && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-4">
+                      <p className="text-xs font-semibold text-rose-900 uppercase tracking-wide mb-2">Warnings</p>
+                      <ul className="text-sm text-rose-800 space-y-1">
+                        {predictiveInsight.warnings.map((warning, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-rose-600 mt-0.5">⚠</span>
+                            <span>{warning}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {predictiveInsight.marketForecast.keyFactors.length > 0 && (
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Key Factors</p>
+                      <div className="flex flex-wrap gap-2">
+                        {predictiveInsight.marketForecast.keyFactors.map((factor, idx) => (
+                          <span key={idx} className="text-xs px-2 py-1 bg-slate-100 text-slate-700 rounded">
+                            {factor}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </SectionCard>
+            )}
+          </section>
+        )}
 
         {/* History & Monitoring Section */}
         <section className="space-y-6">

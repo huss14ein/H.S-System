@@ -18,10 +18,22 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
+import {
+  saveRecoveryExecution,
+  getRecoveryExecutionsBySymbol,
+  calculateRecoveryStatistics,
+  updateRecoveryExecutionOutcome,
+  projectRecoveryTimeline,
+  type RecoveryPlanStatistics,
+  type RecoveryTimelineProjection,
+} from '../services/recoveryPlanPerformance';
+import { loadDemoData } from '../services/demoDataService';
+import type { Page } from '../types';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
   onOpenWealthUltra?: () => void;
+  setActivePage?: (page: Page) => void;
 }
 
 const inferMarketCurrencyFromSymbol = (symbol?: string): TradeCurrency | null => {
@@ -62,7 +74,7 @@ const deriveDynamicPositionConfig = (
     cashCap: Number(cashCap.toFixed(2)),
   };
 };
-function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: RecoveryPlanViewProps) {
+function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
@@ -165,6 +177,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const [isAiRecoveryLoading, setIsAiRecoveryLoading] = useState(false);
   const [isBulkAiRecoveryLoading, setIsBulkAiRecoveryLoading] = useState(false);
   const [aiRecoveryError, setAiRecoveryError] = useState<string | null>(null);
+  const [recoveryStats, setRecoveryStats] = useState<RecoveryPlanStatistics | null>(null);
+  const [showStats, setShowStats] = useState(false);
+  const [recoveryTimeline, setRecoveryTimeline] = useState<RecoveryTimelineProjection | null>(null);
 
   const positionsWithRecovery = useMemo(() => {
     return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
@@ -217,14 +232,102 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
 
+  // Load recovery statistics dynamically
+  useEffect(() => {
+    try {
+      const stats = calculateRecoveryStatistics();
+      setRecoveryStats(stats);
+    } catch (error) {
+      console.warn('Failed to calculate recovery statistics:', error);
+      setRecoveryStats(null);
+    }
+  }, [selectedHoldingId, losingPositions.length, qualifiedPositions.length]);
 
+  // Track recovery plan when generated
+  const handleGenerateRecoveryPlan = useCallback((holding: Holding, plan: any, positionConfig: RecoveryPositionConfig) => {
+    try {
+      const executionId = `recovery-${holding.id}-${Date.now()}`;
+      saveRecoveryExecution({
+        id: executionId,
+        symbol: holding.symbol,
+        timestamp: Date.now(),
+        initialPlPct: plan.plPct,
+        initialPrice: plan.currentPrice,
+        initialShares: holding.quantity,
+        initialAvgCost: holding.avgCost ?? 0,
+        recoveryConfig: {
+          lossTriggerPct: positionConfig.lossTriggerPct,
+          cashCap: positionConfig.cashCap,
+          ladderLevels: plan.ladder.length,
+          totalPlannedCost: plan.totalPlannedCost,
+        },
+        executionStatus: 'planned',
+      });
+      
+      // Refresh statistics after saving
+      const stats = calculateRecoveryStatistics();
+      setRecoveryStats(stats);
+    } catch (error) {
+      console.warn('Failed to save recovery execution:', error);
+    }
+  }, []);
+
+  // Selected holding & plan, derived after initial selection
+  const selected = selectedHoldingId
+    ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId)
+    : null;
+  const selectedPlan = selected?.plan;
 
   useEffect(() => {
     if (selectedHoldingId || qualifiedPositions.length === 0) return;
     setSelectedHoldingId(qualifiedPositions[0].holding.id);
   }, [qualifiedPositions, selectedHoldingId]);
-  const selected = selectedHoldingId ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId) : null;
-  const selectedPlan = selected?.plan;
+
+  // Auto-update recovery execution outcomes when positions change
+  useEffect(() => {
+    if (!selected || !selectedPlan) return;
+    
+    const symbolExecutions = getRecoveryExecutionsBySymbol(selected.holding.symbol);
+    const activeExecutions = symbolExecutions.filter(e => 
+      e.executionStatus === 'planned' || e.executionStatus === 'partial'
+    );
+    
+    activeExecutions.forEach(execution => {
+      try {
+        updateRecoveryExecutionOutcome(execution.id, {
+          shares: selectedPlan.newShares || selected.holding.quantity,
+          avgCost: (selectedPlan.newAvgCost ?? selected.holding.avgCost) ?? 0,
+          currentPrice: selectedPlan.currentPrice,
+          plPct: selectedPlan.plPct,
+        });
+      } catch (error) {
+        console.warn('Failed to update recovery execution outcome:', error);
+      }
+    });
+    
+    if (activeExecutions.length > 0) {
+      const stats = calculateRecoveryStatistics();
+      setRecoveryStats(stats);
+    }
+    
+    // Calculate recovery timeline projection
+    try {
+      if (selectedPlan.plPct < 0) {
+        const timeline = projectRecoveryTimeline(
+          selected.holding.symbol,
+          selectedPlan.plPct,
+          selectedPlan.plPct,
+          selected.positionConfig.lossTriggerPct
+        );
+        setRecoveryTimeline(timeline);
+      } else {
+        setRecoveryTimeline(null);
+      }
+    } catch (error) {
+      console.warn('Failed to project recovery timeline:', error);
+      setRecoveryTimeline(null);
+    }
+  }, [selected, selectedPlan]);
   const selectedCurrencyDeployableCash = selected
     ? (selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR)
     : deployableCashSAR;
@@ -343,9 +446,31 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
               Recovery Plan (Averaging / Correction Engine)
               <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
             </h2>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-              {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  loadDemoData({ includeRecoveryPlan: true });
+                  window.location.reload();
+                }}
+                className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                title="Load demo data for testing"
+              >
+                Load Demo Data
+              </button>
+            </div>
+            {recoveryStats && recoveryStats.totalExecutions > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowStats(!showStats)}
+                className="ml-auto text-xs px-3 py-1.5 rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
+              >
+                {showStats ? 'Hide' : 'Show'} Performance Stats
+              </button>
+            )}
           </div>
           <p className="text-sm text-slate-600 max-w-2xl">
             Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
@@ -383,6 +508,54 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
           </ul>
         </details>
       </section>
+
+      {/* Performance Statistics */}
+      {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
+        <SectionCard title="Recovery Plan Performance Statistics" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-white">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <div className="rounded-lg border border-indigo-200 bg-white p-4">
+              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-1">Success Rate</p>
+              <p className="text-2xl font-black text-indigo-900 tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
+              <p className="text-xs text-slate-600 mt-1">{recoveryStats.totalExecutions} total executions</p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-white p-4">
+              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Avg Recovery Time</p>
+              <p className="text-2xl font-black text-emerald-900 tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
+              <p className="text-xs text-slate-600 mt-1">days</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-white p-4">
+              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">Avg ROI</p>
+              <p className={`text-2xl font-black tabular-nums ${recoveryStats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {recoveryStats.avgRoi >= 0 ? '+' : ''}{(recoveryStats.avgRoi * 100).toFixed(1)}%
+              </p>
+              <p className="text-xs text-slate-600 mt-1">on recovery capital</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Capital Deployed</p>
+              <p className="text-xl font-black text-slate-900 tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
+              <p className="text-xs text-slate-600 mt-1">Total recovered: {formatCurrencyString(recoveryStats.totalRecovered)}</p>
+            </div>
+          </div>
+          {Object.keys(recoveryStats.bySymbol).length > 0 && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Performance by Symbol</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {Object.entries(recoveryStats.bySymbol).slice(0, 6).map(([symbol, stats]) => (
+                  <div key={symbol} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-sm font-bold text-slate-900">{symbol}</p>
+                    <p className="text-xs text-slate-600 mt-1">
+                      {stats.count} execution{stats.count !== 1 ? 's' : ''} • {(stats.successRate * 100).toFixed(0)}% success
+                    </p>
+                    <p className={`text-xs font-semibold mt-1 ${stats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      Avg ROI: {stats.avgRoi >= 0 ? '+' : ''}{(stats.avgRoi * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -466,6 +639,50 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
 
       {selected && selectedPlan && (
         <SectionCard title={`${selected.holding.symbol} — Recovery Plan`} className="space-y-5">
+          {(() => {
+            const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol);
+            if (symbolHistory.length > 0) {
+              const lastExecution = symbolHistory[0];
+              const completed = symbolHistory.filter(e => e.executionStatus === 'complete' && e.outcome);
+              const successRate = completed.length > 0
+                ? (completed.filter(e => e.outcome?.recovered).length / completed.length) * 100
+                : 0;
+              return (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 mb-4">
+                  <p className="text-xs font-semibold text-indigo-900 uppercase tracking-wide mb-2">Historical Performance for {selected.holding.symbol}</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <p className="text-indigo-700 font-medium">{symbolHistory.length} previous recovery{symbolHistory.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    {completed.length > 0 && (
+                      <>
+                        <div>
+                          <p className="text-indigo-700 font-medium">Success rate: {successRate.toFixed(0)}%</p>
+                        </div>
+                        {lastExecution.outcome && (
+                          <>
+                            <div>
+                              <p className="text-indigo-700 font-medium">
+                                Last recovery: {lastExecution.outcome.recovered ? 'Success' : 'In progress'}
+                              </p>
+                            </div>
+                            {lastExecution.outcome.recoveryTimeDays && (
+                              <div>
+                                <p className="text-indigo-700 font-medium">
+                                  Recovery time: {lastExecution.outcome.recoveryTimeDays} days
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-slate-600">
               Portfolio: {selected.portfolioName}{' '}
@@ -699,14 +916,96 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra }: Recover
             </div>
           </div>
 
+          {recoveryTimeline && (
+            <div className="rounded-lg border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white p-4">
+              <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                Recovery Timeline Projection
+                <InfoHint text="Estimated time to recovery based on historical data and current progress." />
+              </h4>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-indigo-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Estimated Days</p>
+                    <p className="text-2xl font-black text-indigo-700 tabular-nums">{recoveryTimeline.estimatedDaysToRecovery}</p>
+                  </div>
+                  <div className="rounded-lg border border-indigo-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Confidence</p>
+                    <p className={`text-lg font-bold tabular-nums ${
+                      recoveryTimeline.confidence === 'high' ? 'text-emerald-700' :
+                      recoveryTimeline.confidence === 'medium' ? 'text-amber-700' : 'text-rose-700'
+                    }`}>
+                      {recoveryTimeline.confidence.toUpperCase()}
+                    </p>
+                  </div>
+                </div>
+                {recoveryTimeline.projectedRecoveryDate && (
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-1">Projected Recovery Date</p>
+                    <p className="text-sm font-bold text-indigo-900">
+                      {recoveryTimeline.projectedRecoveryDate.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                    </p>
+                  </div>
+                )}
+                {recoveryTimeline.historicalAverageDays && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Historical Average</p>
+                    <p className="text-sm text-slate-700">
+                      {recoveryTimeline.historicalAverageDays.toFixed(0)} days (based on past recoveries)
+                    </p>
+                  </div>
+                )}
+                {recoveryTimeline.factors.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Key Factors</p>
+                    <ul className="text-xs text-slate-700 space-y-1">
+                      {recoveryTimeline.factors.map((factor, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-indigo-500 mt-0.5">•</span>
+                          <span>{factor}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3 pt-2">
             <button
               type="button"
-              onClick={handleGenerateDraft}
+              onClick={() => {
+                if (!selectedPlan) return;
+                handleGenerateRecoveryPlan(selected.holding, selectedPlan, selected.positionConfig);
+                handleGenerateDraft();
+              }}
               className="px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-secondary font-medium text-sm"
             >
-              Create Draft Orders
+              Create Draft Orders & Track Recovery
             </button>
+            {setActivePage && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Market Events')}
+                  className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
+                >
+                  Check Market Events for {selected.holding.symbol}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Wealth Ultra')}
+                  className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
+                >
+                  View in Wealth Ultra
+                </button>
+              </>
+            )}
           </div>
         </SectionCard>
       )}

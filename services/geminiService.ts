@@ -1582,6 +1582,112 @@ export type SuggestedAnalystEligibility = {
 };
 
 /** Suggest analyst & eligibility parameters from AI based on universe and context. Use to auto-fill the plan; no manual entry required. */
+export const getAIMarketEventInsight = async (
+    event: {
+        title: string;
+        description: string;
+        category: string;
+        impact: string;
+        symbol?: string;
+        date: string;
+        id?: string;
+        detailedInfo?: {
+            meetingType?: string;
+            historicalContext?: string;
+            keyMetrics?: string[];
+            marketImpactHistory?: string;
+            preparationTips?: string[];
+        };
+    },
+    portfolio: { holdings: Array<{ symbol: string; quantity: number; currentValue: number }>; watchlist: string[] }
+): Promise<{ insight: string; action: string; relevance: string }> => {
+    const eventId = event.id || `${event.title}-${event.date}-${event.symbol || 'general'}`;
+    const cacheKey = `marketEventInsight:${eventId}:${new Date().toISOString().slice(0, 10)}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) return cached;
+
+    const holdingsSummary = portfolio.holdings.length > 0
+        ? portfolio.holdings.slice(0, 5).map(h => `${h.symbol} (${h.quantity} shares)`).join(', ')
+        : 'No holdings';
+    const watchlistSummary = portfolio.watchlist.length > 0
+        ? portfolio.watchlist.slice(0, 5).join(', ')
+        : 'No watchlist';
+
+    const detailedContext = event.detailedInfo ? `
+**Detailed Event Information:**
+${event.detailedInfo.meetingType ? `- Meeting Type: ${event.detailedInfo.meetingType}` : ''}
+${event.detailedInfo.historicalContext ? `- Historical Context: ${event.detailedInfo.historicalContext}` : ''}
+${event.detailedInfo.keyMetrics && event.detailedInfo.keyMetrics.length > 0 ? `- Key Metrics: ${event.detailedInfo.keyMetrics.join(', ')}` : ''}
+${event.detailedInfo.marketImpactHistory ? `- Market Impact History: ${event.detailedInfo.marketImpactHistory}` : ''}
+${event.detailedInfo.preparationTips && event.detailedInfo.preparationTips.length > 0 ? `- Preparation Tips: ${event.detailedInfo.preparationTips.join('; ')}` : ''}
+` : '';
+
+    const prompt = `${EXPERT_ADVISOR_PERSONA}
+
+Analyze this market event and provide personalized insights:
+
+**Event:** ${event.title}
+**Date:** ${event.date}
+**Category:** ${event.category}
+**Impact:** ${event.impact}
+**Description:** ${event.description}
+${event.symbol ? `**Symbol:** ${event.symbol}` : ''}
+${detailedContext}
+**Your Portfolio Context:**
+- Holdings: ${holdingsSummary}
+- Watchlist: ${watchlistSummary}
+
+Provide a comprehensive analysis in JSON format:
+{
+  "insight": "One clear, detailed sentence explaining how this event impacts your portfolio specifically, considering the historical context and market impact patterns",
+  "action": "One specific, actionable step you should take (e.g., 'Review AAPL position before earnings', 'Reduce leverage before FOMC meeting', 'Consider tax-loss harvesting before year-end tax policy changes'). Reference the preparation tips if applicable.",
+  "relevance": "Brief explanation of why this matters to your investments (High/Medium/Low relevance). Consider both direct portfolio impact and broader market implications."
+}
+
+Be specific, actionable, and leverage the detailed event information provided. If the event doesn't directly impact the portfolio, explain general market implications and how they might affect your holdings indirectly.`;
+
+    try {
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        insight: { type: Type.STRING },
+                        action: { type: Type.STRING },
+                        relevance: { type: Type.STRING },
+                    },
+                    required: ['insight', 'action', 'relevance'],
+                },
+            },
+        });
+
+        const parsed = robustJsonParse(response?.text) || {
+            insight: 'Market event may impact broader market sentiment and your portfolio indirectly.',
+            action: 'Monitor market reaction and review your positions if volatility increases.',
+            relevance: 'Medium',
+        };
+
+        const result = {
+            insight: parsed.insight || 'Market event may impact broader market sentiment.',
+            action: parsed.action || 'Monitor market reaction.',
+            relevance: parsed.relevance || 'Medium',
+        };
+
+        setToCache(cacheKey, result);
+        return result;
+    } catch (error) {
+        console.warn('AI market event insight failed:', error);
+        return {
+            insight: `${event.category} event with ${event.impact.toLowerCase()} impact. ${event.symbol ? `Directly affects ${event.symbol}.` : 'May impact broader market.'}`,
+            action: event.impact === 'High' ? 'Monitor closely and be prepared for volatility.' : 'Stay informed about market developments.',
+            relevance: event.symbol && portfolio.watchlist.includes(event.symbol) ? 'High' : event.impact === 'High' ? 'Medium' : 'Low',
+        };
+    }
+};
+
 export async function getSuggestedAnalystEligibility(
     universe: UniverseTicker[],
     currentPlan?: Partial<InvestmentPlanSettings>

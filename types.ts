@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings' | 'Wealth Ultra' | 'Market Events';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -27,6 +27,8 @@ export interface Account {
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
   owner?: string;
+  /** For Investment accounts: linked cash account IDs that can fund this platform */
+  linkedAccountIds?: string[];
   platformDetails?: {
     features: string[];
     assetTypes: string[];
@@ -152,6 +154,8 @@ export interface InvestmentTransaction {
   total: number;
   /** Currency the trade was recorded in (display & reporting). */
   currency?: TradeCurrency;
+  /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
+  linkedCashAccountId?: string;
 }
 
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */

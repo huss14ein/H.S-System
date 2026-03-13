@@ -103,7 +103,7 @@ const App: React.FC = () => {
     const actionProps = { pageAction, clearPageAction };
     switch (activePage) {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
-      case 'Summary': return <Summary />;
+      case 'Summary': return <Summary setActivePage={setActivePage} />;
       case 'Accounts': return <Accounts setActivePage={setActivePage} />;
       case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Assets': return <Assets {...actionProps} />;
@@ -119,7 +119,7 @@ const App: React.FC = () => {
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Market Events': return <MarketEvents />;
+      case 'Market Events': return <MarketEvents setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };

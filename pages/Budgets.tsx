@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext } from 'react';
+import React, { useMemo, useState, useContext, useEffect } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -25,6 +25,17 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import {
+    predictFutureMonths,
+    generateCommonScenarios,
+    detectAnomalies,
+    detectSeasonality,
+    type PredictiveForecast,
+    type ScenarioAnalysis,
+    type BudgetAnomaly,
+    type SeasonalityPattern,
+} from '../services/householdBudgetAnalytics';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 
 
@@ -175,6 +186,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const HISTORY_PAGE_SIZE = 15;
 
     const [currentDate, setCurrentDate] = useState(new Date());
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
@@ -190,12 +203,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
+    const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    
+    // Update shared transaction month filter when current month changes
+    useEffect(() => {
+        setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    }, [currentYear, currentMonth]);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
     const [selectedScenario, setSelectedScenario] = useState('custom');
+    const [showPredictiveAnalytics, setShowPredictiveAnalytics] = useState(false);
+    const [showScenarioPlanning, setShowScenarioPlanning] = useState(false);
+    const [showSeasonality, setShowSeasonality] = useState(false);
+    const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
+    const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
+    const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
+    const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -212,9 +238,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         budgetTier?: BudgetTier;
         utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
     };
-
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth() + 1;
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
     const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
@@ -339,7 +362,37 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 monthlyOverrides: householdOverrides,
             }
         );
-        return buildHouseholdBudgetPlan(input);
+        const result = buildHouseholdBudgetPlan(input);
+        
+        // Calculate predictive analytics dynamically
+        try {
+            if (result.months.length >= 3) {
+                const forecasts = predictFutureMonths(result.months, 3);
+                setPredictiveForecasts(forecasts);
+                
+                const commonScenarios = generateCommonScenarios(result, input.goals);
+                setScenarios(commonScenarios);
+                
+                       const detectedAnomalies = detectAnomalies(result.months);
+                       setAnomalies(detectedAnomalies);
+
+                       const seasonality = detectSeasonality(result.months);
+                       setSeasonalityPatterns(seasonality);
+                   } else {
+                       setPredictiveForecasts([]);
+                       setScenarios([]);
+                       setAnomalies([]);
+                       setSeasonalityPatterns([]);
+                   }
+               } catch (error) {
+                   console.warn('Failed to calculate household budget analytics:', error);
+                   setPredictiveForecasts([]);
+                   setScenarios([]);
+                   setAnomalies([]);
+                   setSeasonalityPatterns([]);
+               }
+        
+        return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const suggestedMonthlySalary = useMemo(() => {
@@ -1184,6 +1237,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
+        
+        // Refresh budgets data to show newly created budgets from finalized requests
+        // The DataContext will automatically refresh when budgets are added/updated via addBudget/updateBudget
     };
 
     const rejectBudgetRequest = async (requestId: string) => {
@@ -1222,7 +1278,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, governanceCategories]);
 
     const pendingRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status === 'Pending'), [sortedFilteredRequests]);
-    const respondedRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status !== 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
@@ -1259,6 +1314,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
+                    <DemoDataButton page="Budgets" options={{ includeBudgets: true }} />
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history
@@ -1412,25 +1468,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             )}
 
 
-            {isAdmin && respondedRequests.length > 0 && (
-                <div className="bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow p-5 border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-3">Reviewed Requests</h2>
-                    <div className="space-y-2">
-                        {respondedRequests.map((r) => (
-                            <div key={r.id} className="p-3 border rounded flex items-center justify-between">
-                                <div>
-                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Amount (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
-                                </div>
-                                <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
             {isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-amber-50 to-orange-50 rounded-lg shadow p-5 border border-amber-200">
                     <h2 className="text-lg font-semibold mb-3 flex items-center">Budget Request Review <InfoHint text="Finalize directly or adjust amount before finalizing. Rejections remain in history timeline." /></h2>
@@ -1475,55 +1512,109 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 </div>
             )}
 
-            {isAdmin && allRespondedRequests.length > 0 && (
+            {isAdmin && (pendingRequests.length > 0 || allRespondedRequests.length > 0) && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
-                    <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
-                        <div>
-                            <h2 className="text-lg font-semibold">Request History</h2>
-                            <p className="text-xs text-gray-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h2 className="text-lg font-semibold">Budget Request Review & History</h2>
+                        <div className="flex items-center gap-2">
+                            <select value={requestStatusFilter} onChange={(e) => setRequestStatusFilter(e.target.value as any)} className="p-2 border rounded text-sm">
+                                <option value="All">All statuses</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Finalized">Finalized</option>
+                                <option value="Rejected">Rejected</option>
+                            </select>
                         </div>
-                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded shrink-0">{allRespondedRequests.length} total</span>
-                        <span className="text-violet-600 shrink-0">{historyCollapsed ? '▼ Expand' : '▲ Collapse'}</span>
-                    </button>
-                    {!historyCollapsed && (
-                        <>
-                            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                                <table className="w-full text-sm border-collapse">
-                                    <thead className="sticky top-0 bg-violet-50/95 z-10">
-                                        <tr className="border-b border-violet-200">
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
-                                            <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {visibleHistoryRequests.map((r) => (
-                                            <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
-                                                <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
-                                                <td className="py-2 px-2">{r.request_type}</td>
-                                                <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
-                                                <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
-                                                <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                                <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
-                                                    <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                    </div>
+                    {pendingRequests.length > 0 && requestStatusFilter === 'All' && (
+                        <div className="mb-4 space-y-3">
+                            <h3 className="text-sm font-semibold text-amber-800">Pending Review</h3>
+                            {pendingRequests.map((r) => (
+                                <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2 bg-white">
+                                    <div>
+                                        <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                        <p className="text-xs text-gray-500">
+                                            {(() => {
+                                                const meta = parseRequestedAmountMeta(r);
+                                                if (meta.rawAmount && meta.rawPeriod) {
+                                                    return <>Requested: {formatCurrencyString(meta.rawAmount, { digits: 0 })} ({meta.rawPeriod}) · Monthly equivalent: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                                }
+                                                return <>Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                            })()}
+                                        </p>
+                                        {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                        <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
+                                        <button onClick={() => {
+                                            const requestedMeta = parseRequestedAmountMeta(r);
+                                            const suggestedAmount = requestedMeta.rawAmount && requestedMeta.rawPeriod
+                                                ? normalizeToMonthly(requestedMeta.rawAmount, requestedMeta.rawPeriod)
+                                                : Number(r.amount || 0);
+                                            const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(suggestedAmount || ''));
+                                            if (nextAmount == null) return;
+                                            const parsed = Number(nextAmount);
+                                            if (!Number.isFinite(parsed) || parsed <= 0) {
+                                                alert('Please enter a valid amount greater than 0.');
+                                                return;
+                                            }
+                                            finalizeBudgetRequest(r, parsed);
+                                        }} className="px-3 py-1 text-xs rounded bg-emerald-700 text-white">Adjust & Finalize</button>
+                                        <button onClick={() => rejectBudgetRequest(r.id)} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {allRespondedRequests.length > 0 && (requestStatusFilter === 'All' || requestStatusFilter === 'Finalized' || requestStatusFilter === 'Rejected') && (
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-sm font-semibold text-violet-800">Request History</h3>
+                                <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="text-xs text-violet-600 hover:text-violet-800">
+                                    {historyCollapsed ? '▼ Expand' : '▲ Collapse'}
+                                </button>
                             </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                                {hasMoreHistory && (
-                                    <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
-                                )}
-                                {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
-                                    <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
-                                )}
-                            </div>
-                        </>
+                            {!historyCollapsed && (
+                                <>
+                                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                                        <table className="w-full text-sm border-collapse">
+                                            <thead className="sticky top-0 bg-violet-50/95 z-10">
+                                                <tr className="border-b border-violet-200">
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
+                                                    <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {visibleHistoryRequests.filter((r) => requestStatusFilter === 'All' || r.status === requestStatusFilter).map((r) => (
+                                                    <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
+                                                        <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                                        <td className="py-2 px-2">{r.request_type}</td>
+                                                        <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
+                                                        <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
+                                                        <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
+                                                        <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
+                                                            <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        {hasMoreHistory && (
+                                            <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
+                                        )}
+                                        {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
+                                            <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -1538,9 +1629,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Household Budget Engine">
-                <p className="text-sm text-slate-700 font-medium">
-                    Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
-                </p>
+                <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-slate-700 font-medium">
+                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
+                    </p>
+                    {triggerPageAction && (
+                        <button
+                            type="button"
+                            onClick={() => triggerPageAction('Market Events', 'focus-macro')}
+                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
+                        >
+                            Check Market Events
+                        </button>
+                    )}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
@@ -1618,6 +1720,349 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         </ul>
                     </div>
                 )}
+                <div className="mt-4 flex items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            if (!isAdmin) {
+                                alert('Only admins can create budgets from household engine.');
+                                return;
+                            }
+                            if (!window.confirm(`This will create/update budgets for ${currentYear}-${currentMonth} based on the household engine output. Existing budgets for this month will be updated. Continue?`)) {
+                                return;
+                            }
+                            const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
+                            if (!currentMonthPlan) {
+                                alert('No household engine plan available for current month.');
+                                return;
+                            }
+                            const buckets = currentMonthPlan.buckets || {};
+                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                            const categoryMap: Record<string, string> = {
+                                'Fixed Obligations': 'Housing',
+                                'Household Essentials': 'Food',
+                                'Household Operations': 'Utilities',
+                                'Transport': 'Transportation',
+                                'Personal Support': 'Personal Care',
+                                'Reserve Savings': 'Savings & Investments',
+                                'Emergency Savings': 'Savings & Investments',
+                                'Goal Savings': 'Savings & Investments',
+                                'Kids Future Savings': 'Education',
+                                'Retirement Savings': 'Savings & Investments',
+                                'Investing': 'Savings & Investments',
+                            };
+                            let created = 0;
+                            let updated = 0;
+                            for (const [bucketName, amount] of Object.entries(buckets)) {
+                                if (!amount || amount <= 0) continue;
+                                const category = categoryMap[bucketName] || bucketName;
+                                const existing = existingBudgets.find((b) => b.category === category);
+                                if (existing) {
+                                    updateBudget({ ...existing, limit: amount });
+                                    updated++;
+                                } else {
+                                    addBudget({
+                                        category,
+                                        limit: amount,
+                                        month: currentMonth,
+                                        year: currentYear,
+                                        period: 'monthly',
+                                        tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
+                                    });
+                                    created++;
+                                }
+                            }
+                            alert(`Household engine budgets applied: ${created} created, ${updated} updated.`);
+                        }}
+                        className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!isAdmin}
+                    >
+                        Apply Household Engine Budgets to Current Month
+                    </button>
+                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
+                </div>
+
+                {/* Predictive Analytics Section */}
+                {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Predictive Analytics (Next 3 Months)</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowPredictiveAnalytics(false)}
+                                className="text-xs text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {predictiveForecasts.map((forecast) => (
+                                <div key={forecast.month} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                                        Month {forecast.month} ({MONTHS[(forecast.month - 1) % 12]})
+                                    </p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Predicted Income:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedIncome)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Predicted Expense:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedExpense)}</span>
+                                        </div>
+                                        <div className="flex justify-between pt-2 border-t border-slate-200">
+                                            <span className="text-slate-700 font-medium">Net:</span>
+                                            <span className={`font-bold ${forecast.predictedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                {forecast.predictedNet >= 0 ? '+' : ''}{formatCurrencyString(forecast.predictedNet)}
+                                            </span>
+                                        </div>
+                                        <div className="pt-2 border-t border-slate-200">
+                                            <span className={`text-xs px-2 py-1 rounded ${
+                                                forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                                forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                'bg-rose-100 text-rose-700'
+                                            }`}>
+                                                {forecast.confidence.charAt(0).toUpperCase() + forecast.confidence.slice(1)} confidence
+                                            </span>
+                                            {forecast.factors.length > 0 && (
+                                                <ul className="mt-2 text-xs text-slate-600 list-disc list-inside space-y-0.5">
+                                                    {forecast.factors.map((factor, idx) => (
+                                                        <li key={idx}>{factor}</li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Scenario Planning Section */}
+                {showScenarioPlanning && scenarios.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Scenario Planning</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowScenarioPlanning(false)}
+                                className="text-xs text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {scenarios.map((scenario, idx) => (
+                                <div key={idx} className={`rounded-lg border-2 p-4 ${
+                                    scenario.riskLevel === 'high' ? 'border-rose-200 bg-rose-50' :
+                                    scenario.riskLevel === 'medium' ? 'border-amber-200 bg-amber-50' :
+                                    'border-emerald-200 bg-emerald-50'
+                                }`}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <p className="text-sm font-bold text-slate-900">{scenario.name}</p>
+                                        <span className={`text-xs px-2 py-1 rounded ${
+                                            scenario.riskLevel === 'high' ? 'bg-rose-100 text-rose-700' :
+                                            scenario.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                            'bg-emerald-100 text-emerald-700'
+                                        }`}>
+                                            {scenario.riskLevel.toUpperCase()} RISK
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 mb-3">{scenario.description}</p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Projected Year-End Balance:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(scenario.projectedYearEndBalance)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Change from Baseline:</span>
+                                            <span className={`font-bold ${scenario.projectedYearEndBalanceChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange)}
+                                            </span>
+                                        </div>
+                                        {scenario.goalAchievementImpact.length > 0 && (
+                                            <div className="pt-2 border-t border-slate-200">
+                                                <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
+                                                {scenario.goalAchievementImpact.map((impact, i) => (
+                                                    <p key={i} className="text-xs text-slate-600">
+                                                        {impact.goalName}: {impact.achievementDelayMonths >= 0 ? '+' : ''}{impact.achievementDelayMonths.toFixed(1)} months
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Anomaly Detection */}
+                {anomalies.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <h4 className="text-sm font-bold text-slate-900 mb-3">Spending Anomalies Detected</h4>
+                        <div className="space-y-2">
+                            {anomalies.slice(0, 5).map((anomaly, idx) => (
+                                <div key={idx} className={`rounded-lg border p-3 ${
+                                    anomaly.severity === 'high' ? 'border-rose-200 bg-rose-50' :
+                                    anomaly.severity === 'medium' ? 'border-amber-200 bg-amber-50' :
+                                    'border-slate-200 bg-slate-50'
+                                }`}>
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-900">
+                                                {MONTHS[anomaly.month - 1]} - {anomaly.category}
+                                            </p>
+                                            <p className="text-xs text-slate-600 mt-1">{anomaly.explanation}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-bold text-slate-900">{formatCurrencyString(anomaly.actualAmount)}</p>
+                                            <p className="text-xs text-slate-500">Expected: {formatCurrencyString(anomaly.expectedAmount)}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Spending Trends Visualization */}
+                {householdBudgetEngine.months.length >= 3 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <h4 className="text-sm font-bold text-slate-900 mb-4">Spending Trends (Last 6 Months)</h4>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                            <div className="h-48 flex items-end justify-between gap-1">
+                                {householdBudgetEngine.months.slice(-6).map((month, idx) => {
+                                    const maxExpense = Math.max(...householdBudgetEngine.months.slice(-6).map(m => 
+                                        m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow
+                                    ));
+                                    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
+                                    const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
+                                    const income = month.incomeActual > 0 ? month.incomeActual : month.incomePlanned;
+                                    const net = income - expense;
+                                    
+                                    return (
+                                        <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                                            <div className="w-full flex flex-col items-center gap-0.5" style={{ height: '180px' }}>
+                                                {/* Income bar */}
+                                                <div
+                                                    className="w-full rounded-t bg-emerald-500 transition-all"
+                                                    style={{ height: `${maxExpense > 0 ? (income / maxExpense) * 100 : 0}%`, minHeight: income > 0 ? '2px' : '0' }}
+                                                    title={`${MONTHS[(month.month - 1) % 12]}: Income ${formatCurrencyString(income)}`}
+                                                />
+                                                {/* Expense bar */}
+                                                <div
+                                                    className={`w-full rounded-b transition-all ${
+                                                        net >= 0 ? 'bg-rose-400' : 'bg-rose-600'
+                                                    }`}
+                                                    style={{ height: `${height}%`, minHeight: expense > 0 ? '2px' : '0' }}
+                                                    title={`${MONTHS[(month.month - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
+                                                />
+                                            </div>
+                                            <p className="text-[10px] text-slate-600 font-medium mt-1">
+                                                {MONTHS[(month.month - 1) % 12].substring(0, 3)}
+                                            </p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 bg-emerald-500 rounded"></div>
+                                    <span className="text-slate-600">Income</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 bg-rose-400 rounded"></div>
+                                    <span className="text-slate-600">Expense</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Seasonality Detection */}
+                {showSeasonality && seasonalityPatterns.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Seasonal Spending Patterns</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowSeasonality(false)}
+                                className="text-xs px-2 py-1 text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            {seasonalityPatterns.slice(0, 10).map((pattern, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`rounded-lg border p-3 ${
+                                        pattern.pattern === 'peak' ? 'border-rose-200 bg-rose-50' :
+                                        pattern.pattern === 'trough' ? 'border-emerald-200 bg-emerald-50' :
+                                        'border-slate-200 bg-slate-50'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-900">
+                                                {pattern.monthName} - {pattern.category}
+                                            </p>
+                                            <p className="text-xs text-slate-600 mt-1">
+                                                {pattern.pattern === 'peak' ? 'Peak spending month' :
+                                                 pattern.pattern === 'trough' ? 'Low spending month' :
+                                                 'Normal spending'}
+                                                {' '}
+                                                ({pattern.confidence} confidence)
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-bold text-slate-900">
+                                                {formatCurrencyString(pattern.averageAmount)}
+                                            </p>
+                                            <p className={`text-xs ${pattern.deviationPct >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {pattern.deviationPct >= 0 ? '+' : ''}{pattern.deviationPct.toFixed(1)}% from average
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
+                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowPredictiveAnalytics(true)}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                        >
+                            Show Predictive Analytics
+                        </button>
+                    )}
+                    {!showScenarioPlanning && scenarios.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowScenarioPlanning(true)}
+                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
+                        >
+                            Show Scenario Planning
+                        </button>
+                    )}
+                    {!showSeasonality && seasonalityPatterns.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowSeasonality(true)}
+                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
+                        >
+                            Show Seasonality Patterns
+                        </button>
+                    )}
+                </div>
+
                 <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
                     <summary className="p-3 cursor-pointer text-sm font-medium text-slate-600">Advanced: monthly overrides & scenarios</summary>
                     <div className="p-3 pt-0 space-y-3">
@@ -1766,41 +2211,112 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 )}
             </SectionCard>
 
+            {isAdmin && (
+                <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
+                    <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
+                        <h3 className="text-sm font-semibold text-indigo-900 mb-2">Approved Budgets Overview</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                            <div>
+                                <span className="text-indigo-600">Total Approved Budgets:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{budgetData.filter(b => b.spent > 0 || b.monthlyLimit > 0).length}</span>
+                            </div>
+                            <div>
+                                <span className="text-indigo-600">Total Budget Limit:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</span>
+                            </div>
+                            <div>
+                                <span className="text-indigo-600">Total Spent:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+                        <h3 className="text-sm font-semibold text-emerald-900 mb-2">Shared Account Transaction Tracking</h3>
+                        <p className="text-xs text-emerald-700 mb-2">
+                            Transactions from shared accounts that affect shared budgets are tracked below. Only approved transactions are counted in budget totals.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                            <div>
+                                <span className="text-emerald-600">Shared Transactions (Owner View):</span>
+                                <span className="font-semibold text-emerald-900 ml-2">{ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Approved').length}</span>
+                            </div>
+                            <div>
+                                <span className="text-emerald-600">Total from Shared Accounts:</span>
+                                <span className="font-semibold text-emerald-900 ml-2">
+                                    {formatCurrencyString(
+                                        ownerSharedTransactions
+                                            .filter(tx => (tx.status ?? 'Approved') === 'Approved')
+                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
+                                        { digits: 0 }
+                                    )}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </SectionCard>
+            )}
+
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
                 <SectionCard title="Shared-budget transaction visibility">
-                    <p className="text-xs text-slate-500 mb-3">
-                        Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
-                    </p>
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Date</th>
-                                    <th className="px-3 py-2 text-left">Category</th>
-                                    <th className="px-3 py-2 text-left">Contributor</th>
-                                    <th className="px-3 py-2 text-left">Description</th>
-                                    <th className="px-3 py-2 text-left">Status</th>
-                                    <th className="px-3 py-2 text-right">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
-                                    <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
-                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
-                                        <td className="px-3 py-2">{tx.budget_category}</td>
-                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
-                                        <td className="px-3 py-2">{tx.description || '—'}</td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                {tx.status ?? 'Approved'}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <p className="text-xs text-slate-500">
+                            Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-600 font-medium">Filter by month:</label>
+                            <input
+                                type="month"
+                                value={sharedTxMonthFilter}
+                                onChange={(e) => setSharedTxMonthFilter(e.target.value)}
+                                className="p-1.5 border border-slate-300 rounded text-sm"
+                            />
+                        </div>
                     </div>
+                    {(() => {
+                        const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
+                        const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
+                            const txDate = new Date(tx.transaction_date || tx.date);
+                            return txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
+                        });
+                        return (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                <table className="min-w-full text-sm">
+                                    <thead className="bg-slate-50">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Date</th>
+                                            <th className="px-3 py-2 text-left">Category</th>
+                                            <th className="px-3 py-2 text-left">Contributor</th>
+                                            <th className="px-3 py-2 text-left">Description</th>
+                                            <th className="px-3 py-2 text-left">Status</th>
+                                            <th className="px-3 py-2 text-right">Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredTxs.length > 0 ? (
+                                            filteredTxs.map((tx, idx) => (
+                                                <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
+                                                    <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                                    <td className="px-3 py-2">{tx.budget_category}</td>
+                                                    <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                                    <td className="px-3 py-2">{tx.description || '—'}</td>
+                                                    <td className="px-3 py-2">
+                                                        <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                            {tx.status ?? 'Approved'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            <tr>
+                                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">No transactions found for selected month</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    })()}
                 </SectionCard>
             )}
 

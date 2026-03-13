@@ -20,6 +20,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
+import type { Page } from '../types';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -53,7 +55,11 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
   </svg>
 );
 
-const Summary: React.FC = () => {
+interface SummaryProps {
+  setActivePage?: (page: Page) => void;
+}
+
+const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
@@ -170,7 +176,45 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <PageLayout title="Financial Summary" description="Key metrics and AI-generated financial persona with report card and suggestions.">
+        <PageLayout 
+            title="Financial Summary" 
+            description="Key metrics and AI-generated financial persona with report card and suggestions."
+            action={
+                setActivePage && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <DemoDataButton page="Summary" />
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Wealth Ultra')}
+                            className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
+                        >
+                            Wealth Ultra
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Market Events')}
+                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
+                        >
+                            Market Events
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Investments')}
+                            className="text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5"
+                        >
+                            Investments
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Budgets')}
+                            className="text-xs px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50"
+                        >
+                            Budgets
+                        </button>
+                    </div>
+                )
+            }
+        >
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                 {isAdmin ? (
                     <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">

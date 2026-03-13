@@ -38,6 +38,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -209,6 +210,7 @@ const RecordTradeModal: React.FC<{
     onSave: (trade: any, executedPlanId?: string) => void;
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
+    allAccounts?: Account[];
     initialData?: Partial<{
         tradeType: 'buy' | 'sell';
         symbol: string;
@@ -222,7 +224,7 @@ const RecordTradeModal: React.FC<{
         portfolioId: string;
         reason?: string;
     }> | null;
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, allAccounts = [], initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { currency: appCurrency } = useCurrency();
     const [accountId, setAccountId] = useState('');
@@ -240,6 +242,7 @@ const RecordTradeModal: React.FC<{
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [linkedCashAccountId, setLinkedCashAccountId] = useState('');
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data.goals || [], [data.goals]);
@@ -251,6 +254,21 @@ const RecordTradeModal: React.FC<{
     const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
+    
+    const selectedInvestmentAccount = useMemo(() => 
+        accountId ? investmentAccounts.find(acc => acc.id === accountId) : null,
+        [accountId, investmentAccounts]
+    );
+    
+    const linkedCashAccounts = useMemo(() => {
+        if (!selectedInvestmentAccount?.linkedAccountIds || selectedInvestmentAccount.linkedAccountIds.length === 0) {
+            return [];
+        }
+        return allAccounts.filter(acc => 
+            selectedInvestmentAccount.linkedAccountIds!.includes(acc.id) && 
+            (acc.type === 'Checking' || acc.type === 'Savings')
+        );
+    }, [selectedInvestmentAccount, allAccounts]);
     
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
@@ -270,6 +288,7 @@ const RecordTradeModal: React.FC<{
         setSubmitError(null);
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
+        setLinkedCashAccountId('');
     };
     const isCashFlow = type === 'deposit' || type === 'withdrawal';
 
@@ -303,8 +322,26 @@ const RecordTradeModal: React.FC<{
             }
         }
     }, [isOpen, initialData, investmentAccounts, appCurrency]);
+    
+    useEffect(() => {
+        // Reset linked cash account when account or type changes
+        if (linkedCashAccounts.length > 0 && !linkedCashAccounts.some(acc => acc.id === linkedCashAccountId)) {
+            setLinkedCashAccountId(linkedCashAccounts[0]?.id || '');
+        } else if (linkedCashAccounts.length === 0) {
+            setLinkedCashAccountId('');
+        }
+    }, [accountId, type, linkedCashAccounts, linkedCashAccountId]);
 
     useEffect(() => {
+        // When account changes, ensure portfolio belongs to that account
+        if (accountId && portfolioId) {
+            const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+            if (!portfolioBelongsToAccount) {
+                // Portfolio doesn't belong to selected account, clear it
+                setPortfolioId('');
+            }
+        }
+        
         if (initialData?.portfolioId && portfoliosForAccount.some((p) => p.id === initialData.portfolioId)) {
             setPortfolioId(initialData.portfolioId);
             return;
@@ -314,7 +351,7 @@ const RecordTradeModal: React.FC<{
         } else {
             setPortfolioId('');
         }
-    }, [portfoliosForAccount, initialData?.portfolioId]);
+    }, [accountId, portfoliosForAccount, initialData?.portfolioId, portfolioId]);
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
@@ -356,9 +393,24 @@ const RecordTradeModal: React.FC<{
             if (!accountId) return 'Please select a platform.';
             const amt = parseFloat(cashAmount);
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
+            if (selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0) {
+                if (!linkedCashAccountId) {
+                    return type === 'deposit' 
+                        ? 'Please select the cash account this deposit came from.'
+                        : 'Please select the cash account this withdrawal goes to.';
+                }
+            }
             return null;
         }
+        if (!accountId) return 'Please select a platform.';
         if (!portfolioId) return 'Please select a portfolio.';
+        
+        // Ensure portfolio belongs to selected account
+        const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+        if (!portfolioBelongsToAccount) {
+            return 'Selected portfolio does not belong to the selected platform. Please select a portfolio from this platform.';
+        }
+        
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return 'Symbol is required.';
@@ -366,14 +418,14 @@ const RecordTradeModal: React.FC<{
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
         if (type === 'sell' && portfolioId) {
-            const portfolio = portfolios.find(p => p.id === portfolioId);
+            const portfolio = portfoliosForAccount.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
             const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
         return null;
-    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfoliosForAccount]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -395,8 +447,17 @@ const RecordTradeModal: React.FC<{
                     price: 0,
                     total: parseFloat(cashAmount) || 0,
                     currency: tradeCurrency,
+                    linkedCashAccountId: linkedCashAccountId || undefined,
                 }, undefined);
             } else {
+                // Final validation: ensure portfolio belongs to account before saving
+                const portfolioBelongsToAccount = portfoliosForAccount.some(p => p.id === portfolioId);
+                if (!portfolioBelongsToAccount) {
+                    setSubmitError('Selected portfolio does not belong to the selected platform. Please select a portfolio from this platform.');
+                    setIsSubmitting(false);
+                    return;
+                }
+                
                 await onSave({
                     accountId, portfolioId, type,
                     symbol: symbol.toUpperCase().trim(),
@@ -456,10 +517,22 @@ const RecordTradeModal: React.FC<{
                     {!isCashFlow && (
                     <div>
                         <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
-                        <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
-                             <option value="" disabled>Select Portfolio</option>
+                        <select 
+                            id="portfolio-id" 
+                            value={portfolioId} 
+                            onChange={e => setPortfolioId(e.target.value)} 
+                            required 
+                            disabled={!accountId || portfoliosForAccount.length === 0} 
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100"
+                        >
+                            <option value="" disabled>
+                                {!accountId ? 'Select platform first' : portfoliosForAccount.length === 0 ? 'No portfolios in this platform' : 'Select Portfolio'}
+                            </option>
                             {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
+                        {accountId && portfoliosForAccount.length === 0 && (
+                            <p className="text-xs text-amber-600 mt-1">Create a portfolio for this platform first from the Portfolios tab.</p>
+                        )}
                     </div>
                     )}
                 </div>
@@ -480,6 +553,37 @@ const RecordTradeModal: React.FC<{
                 </div>
                 {isCashFlow ? (
                     <>
+                        {selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0 ? (
+                            <div>
+                                <label htmlFor="linked-cash-account" className="block text-sm font-medium text-gray-700">
+                                    {type === 'deposit' ? 'Source Cash Account' : 'Destination Cash Account'}
+                                </label>
+                                <select
+                                    id="linked-cash-account"
+                                    value={linkedCashAccountId}
+                                    onChange={e => setLinkedCashAccountId(e.target.value)}
+                                    required
+                                    className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary"
+                                >
+                                    <option value="" disabled>Select cash account</option>
+                                    {linkedCashAccounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>
+                                            {acc.name} ({formatCurrencyString(acc.balance)})
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    {type === 'deposit' 
+                                        ? 'Select the cash account where this deposit came from.'
+                                        : 'Select the cash account where this withdrawal will go.'}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
+                                <p className="font-medium">No linked cash accounts</p>
+                                <p className="mt-1">This platform doesn't have any linked cash accounts. Edit the platform in Accounts to link cash accounts for deposits/withdrawals.</p>
+                            </div>
+                        )}
                         <div>
                             <label htmlFor="cash-amount" className="block text-sm font-medium text-gray-700">Amount</label>
                             <input type="number" id="cash-amount" value={cashAmount} onChange={e => setCashAmount(e.target.value)} required min="0.01" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g. 50000" />
@@ -673,7 +777,12 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`${holding.symbol} — Share details`}
+            maxWidthClass="max-w-4xl"
+        >
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
@@ -1498,7 +1607,7 @@ const PlatformView: React.FC<{
                     <div>
                         <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-bold text-slate-800">Portfolios</h2><span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">Integrated with plan + execution</span></div>
                         <p className="text-sm text-slate-600 mt-0.5 max-w-2xl">
-                            Manage platforms and portfolios. Each portfolio has a base currency (SAR or USD). Record trades in that currency. Click a share for full details. Integrated with Investment Plan, Recovery Plan, and Wealth Ultra.
+                            Manage platforms and portfolios. Each portfolio has a base currency (SAR or USD). Record trades in that currency. Click a share for full details. Integrated with Investment Plan, Recovery Plan, Wealth Ultra, and Market Events.
                         </p>
                         {(setActiveTab || setActivePage) && (
                             <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -1512,7 +1621,14 @@ const PlatformView: React.FC<{
                                         <button type="button" onClick={() => setActiveTab('Watchlist')} className="text-sm font-medium text-primary hover:underline">Watchlist</button>
                                     </>
                                 )}
-                                {setActivePage && <>{setActiveTab && <span className="text-slate-300">·</span>}<button type="button" onClick={() => setActivePage('Wealth Ultra')} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button></>}
+                                {setActivePage && (
+                                    <>
+                                        {setActiveTab && <span className="text-slate-300">·</span>}
+                                        <button type="button" onClick={() => setActivePage('Wealth Ultra')} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button>
+                                        <span className="text-slate-300">·</span>
+                                        <button type="button" onClick={() => setActivePage('Market Events')} className="text-sm font-medium text-primary hover:underline">Market Events</button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
@@ -3146,7 +3262,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView />;
-      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} setActivePage={setActivePage} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
       default: return null;
@@ -3171,6 +3287,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                    <DemoDataButton 
+                        page="Investments" 
+                        options={{ includeInvestments: true, includeWealthUltra: true, includeRecoveryPlan: true }}
+                        className="text-xs px-3 py-1.5 border border-white/30 text-white rounded-lg hover:bg-white/20"
+                    />
                     <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
                         <SparklesIcon className="h-4 w-4" /> Smart Plan
                     </button>
@@ -3267,6 +3388,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         onSave={recordTrade} 
         investmentAccounts={investmentAccounts} 
         portfolios={data.investments}
+        allAccounts={data.accounts}
         initialData={tradeInitialData}
       />
     </div>

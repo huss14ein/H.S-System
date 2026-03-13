@@ -206,6 +206,7 @@ function normalizeAccount(raw: any): Account {
     const name = String(raw.name ?? '');
     const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
     const balance = Number(raw.balance ?? 0);
+    const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
     return {
         ...(raw as Record<string, unknown>),
         id,
@@ -214,6 +215,7 @@ function normalizeAccount(raw: any): Account {
         type,
         balance,
         owner: raw.owner,
+        linkedAccountIds: Array.isArray(linkedAccountIds) ? linkedAccountIds.filter((id: any): id is string => typeof id === 'string') : undefined,
         platformDetails: raw.platformDetails ?? raw.platform_details,
     };
 }
@@ -367,6 +369,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ...transaction,
         accountId: transaction.accountId || transaction.account_id,
         currency: transaction.currency ?? undefined,
+        linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
     });
 
     const normalizeCommodityHolding = (holding: any): CommodityHolding => {
@@ -1217,20 +1220,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const { data: newPlatform, error } = await db.from('accounts').insert(withUser({ ...platform, balance: 0 })).select().single();
+        const payload: any = { ...platform, balance: 0 };
+        if (platform.linkedAccountIds && Array.isArray(platform.linkedAccountIds)) {
+            payload.linked_account_ids = platform.linkedAccountIds;
+        }
+        const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
         if(error) {
             console.error("Error adding platform:", error);
             alert(`Failed to add platform: ${error.message}`);
             throw error;
         }
-        if (newPlatform) setData(prev => ({ ...prev, accounts: [...prev.accounts, newPlatform] }));
+        if (newPlatform) {
+            const normalized = normalizeAccount(newPlatform);
+            setData(prev => ({ ...prev, accounts: [...prev.accounts, normalized] }));
+        }
     };
     const updatePlatform = async (platform: Account) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const { error } = await db.from('accounts').update(platform).match({ id: platform.id, user_id: auth.user.id });
+        const payload: any = { ...platform };
+        if (platform.linkedAccountIds && Array.isArray(platform.linkedAccountIds)) {
+            payload.linked_account_ids = platform.linkedAccountIds;
+        }
+        const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
         if(error) console.error("Error updating platform:", error);
-        else setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? platform : a) }));
+        else {
+            const normalized = normalizeAccount({ ...platform, ...payload });
+            setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
+        }
     };
     const deletePlatform = async (platformId: string) => {
         if(!supabase || !auth?.user) return;
@@ -1337,22 +1354,47 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let existingHolding: Holding | undefined;
         let normalizedSymbol: string;
 
+        let investmentAccount: Account | undefined;
         if (isCashFlow) {
             accountIdForInsert = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
             if (!accountIdForInsert) throw new Error("Please select the platform (account).");
-            const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
-            if (!accountExists) throw new Error("Selected account is not in the system.");
+            investmentAccount = data.accounts.find((a: Account) => a.id === accountIdForInsert);
+            if (!investmentAccount) throw new Error("Selected account is not in the system.");
+            if (investmentAccount.type !== 'Investment') throw new Error("Selected account must be an Investment platform.");
+            
+            // Validate linked cash account if platform has linked accounts
+            const linkedCashAccountId = (trade as any).linkedCashAccountId;
+            if (investmentAccount.linkedAccountIds && investmentAccount.linkedAccountIds.length > 0) {
+                if (!linkedCashAccountId) {
+                    throw new Error(trade.type === 'deposit' 
+                        ? "Please select the cash account this deposit came from."
+                        : "Please select the cash account this withdrawal goes to.");
+                }
+                if (!investmentAccount.linkedAccountIds.includes(linkedCashAccountId)) {
+                    throw new Error("Selected cash account is not linked to this platform. Please select a linked account or update the platform's linked accounts.");
+                }
+            }
+            
             normalizedSymbol = 'CASH';
         } else {
             portfolio = data.investments.find(p => p.id === portfolioId);
             if (!portfolio) throw new Error("Portfolio not found");
+            
+            // Validate that portfolio belongs to the selected account
+            const portfolioAccountId = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts);
+            const tradeAccountId = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            
+            if (tradeAccountId && portfolioAccountId && tradeAccountId !== portfolioAccountId) {
+                throw new Error(`Portfolio "${portfolio.name}" belongs to a different platform. Please select the correct platform for this portfolio.`);
+            }
+            
             normalizedSymbol = (tradeData.symbol || '').trim().toUpperCase();
             existingHolding = portfolio.holdings.find((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
             if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
             }
-            accountIdForInsert = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts) ?? resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            accountIdForInsert = portfolioAccountId ?? tradeAccountId;
             if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
             const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
             if (!accountExists) throw new Error("Selected account is not in the system (or portfolio points to a deleted account).");
@@ -1362,7 +1404,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const tradeTotal = isCashFlow ? (trade.total ?? 0) : (tradeData.quantity * tradeData.price);
         let newTransaction: any = null;
         let txError: any = null;
-        const tradePayload = { ...tradeData, accountId: accountIdForInsert, symbol: normalizedSymbol, quantity: isCashFlow ? 0 : tradeData.quantity, price: isCashFlow ? 0 : tradeData.price, total: tradeTotal };
+        const linkedCashAccountId = (trade as any).linkedCashAccountId;
+        const tradePayload: any = { 
+            ...tradeData, 
+            accountId: accountIdForInsert, 
+            symbol: normalizedSymbol, 
+            quantity: isCashFlow ? 0 : tradeData.quantity, 
+            price: isCashFlow ? 0 : tradeData.price, 
+            total: tradeTotal 
+        };
+        if (linkedCashAccountId) {
+            tradePayload.linked_cash_account_id = linkedCashAccountId;
+        }
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
@@ -1373,6 +1426,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
             setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
+        }
+        
+        // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
+        if (isCashFlow && linkedCashAccountId && investmentAccount) {
+            try {
+                const cashAccount = data.accounts.find((a: Account) => a.id === linkedCashAccountId);
+                if (cashAccount) {
+                    const description = trade.type === 'deposit' 
+                        ? `Deposit to ${investmentAccount.name}`
+                        : `Withdrawal from ${investmentAccount.name}`;
+                    const amount = trade.type === 'deposit' 
+                        ? -Math.abs(tradeTotal) // Negative (expense from cash account)
+                        : Math.abs(tradeTotal); // Positive (income to cash account)
+                    
+                    await addTransaction({
+                        date: trade.date,
+                        description,
+                        amount,
+                        category: 'Transfers',
+                        type: trade.type === 'deposit' ? 'expense' : 'income',
+                        accountId: linkedCashAccountId,
+                    });
+                }
+            } catch (cashTxError) {
+                console.warn("Failed to create corresponding cash account transaction:", cashTxError);
+                // Don't fail the investment transaction if cash transaction fails
+            }
         }
 
         // 3. Process trade logic (skip for deposit/withdrawal)
