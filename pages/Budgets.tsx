@@ -358,7 +358,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 monthlyOverrides: householdOverrides,
             }
         );
-        return buildHouseholdBudgetPlan(input);
+        const result = buildHouseholdBudgetPlan(input);
+        
+        // Calculate predictive analytics
+        if (result.months.length >= 3) {
+            const forecasts = predictFutureMonths(result.months, 3);
+            setPredictiveForecasts(forecasts);
+            
+            const commonScenarios = generateCommonScenarios(result, input.goals);
+            setScenarios(commonScenarios);
+            
+            const detectedAnomalies = detectAnomalies(result.months);
+            setAnomalies(detectedAnomalies);
+        } else {
+            setPredictiveForecasts([]);
+            setScenarios([]);
+            setAnomalies([]);
+        }
+        
+        return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const suggestedMonthlySalary = useMemo(() => {
@@ -1735,6 +1753,174 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     </button>
                     <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
                 </div>
+
+                {/* Predictive Analytics Section */}
+                {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Predictive Analytics (Next 3 Months)</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowPredictiveAnalytics(false)}
+                                className="text-xs text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {predictiveForecasts.map((forecast) => (
+                                <div key={forecast.month} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                                        Month {forecast.month} ({MONTHS[(forecast.month - 1) % 12]})
+                                    </p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Predicted Income:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedIncome)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Predicted Expense:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedExpense)}</span>
+                                        </div>
+                                        <div className="flex justify-between pt-2 border-t border-slate-200">
+                                            <span className="text-slate-700 font-medium">Net:</span>
+                                            <span className={`font-bold ${forecast.predictedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                {forecast.predictedNet >= 0 ? '+' : ''}{formatCurrencyString(forecast.predictedNet)}
+                                            </span>
+                                        </div>
+                                        <div className="pt-2 border-t border-slate-200">
+                                            <span className={`text-xs px-2 py-1 rounded ${
+                                                forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                                forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                'bg-rose-100 text-rose-700'
+                                            }`}>
+                                                {forecast.confidence.charAt(0).toUpperCase() + forecast.confidence.slice(1)} confidence
+                                            </span>
+                                            {forecast.factors.length > 0 && (
+                                                <ul className="mt-2 text-xs text-slate-600 list-disc list-inside space-y-0.5">
+                                                    {forecast.factors.map((factor, idx) => (
+                                                        <li key={idx}>{factor}</li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Scenario Planning Section */}
+                {showScenarioPlanning && scenarios.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Scenario Planning</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowScenarioPlanning(false)}
+                                className="text-xs text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {scenarios.map((scenario, idx) => (
+                                <div key={idx} className={`rounded-lg border-2 p-4 ${
+                                    scenario.riskLevel === 'high' ? 'border-rose-200 bg-rose-50' :
+                                    scenario.riskLevel === 'medium' ? 'border-amber-200 bg-amber-50' :
+                                    'border-emerald-200 bg-emerald-50'
+                                }`}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <p className="text-sm font-bold text-slate-900">{scenario.name}</p>
+                                        <span className={`text-xs px-2 py-1 rounded ${
+                                            scenario.riskLevel === 'high' ? 'bg-rose-100 text-rose-700' :
+                                            scenario.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                            'bg-emerald-100 text-emerald-700'
+                                        }`}>
+                                            {scenario.riskLevel.toUpperCase()} RISK
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 mb-3">{scenario.description}</p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Projected Year-End Balance:</span>
+                                            <span className="font-semibold text-slate-900">{formatCurrencyString(scenario.projectedYearEndBalance)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-600">Change from Baseline:</span>
+                                            <span className={`font-bold ${scenario.projectedYearEndBalanceChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange)}
+                                            </span>
+                                        </div>
+                                        {scenario.goalAchievementImpact.length > 0 && (
+                                            <div className="pt-2 border-t border-slate-200">
+                                                <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
+                                                {scenario.goalAchievementImpact.map((impact, i) => (
+                                                    <p key={i} className="text-xs text-slate-600">
+                                                        {impact.goalName}: {impact.achievementDelayMonths >= 0 ? '+' : ''}{impact.achievementDelayMonths.toFixed(1)} months
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Anomaly Detection */}
+                {anomalies.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <h4 className="text-sm font-bold text-slate-900 mb-3">Spending Anomalies Detected</h4>
+                        <div className="space-y-2">
+                            {anomalies.slice(0, 5).map((anomaly, idx) => (
+                                <div key={idx} className={`rounded-lg border p-3 ${
+                                    anomaly.severity === 'high' ? 'border-rose-200 bg-rose-50' :
+                                    anomaly.severity === 'medium' ? 'border-amber-200 bg-amber-50' :
+                                    'border-slate-200 bg-slate-50'
+                                }`}>
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-900">
+                                                {MONTHS[anomaly.month - 1]} - {anomaly.category}
+                                            </p>
+                                            <p className="text-xs text-slate-600 mt-1">{anomaly.explanation}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-bold text-slate-900">{formatCurrencyString(anomaly.actualAmount)}</p>
+                                            <p className="text-xs text-slate-500">Expected: {formatCurrencyString(anomaly.expectedAmount)}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
+                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowPredictiveAnalytics(true)}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                        >
+                            Show Predictive Analytics
+                        </button>
+                    )}
+                    {!showScenarioPlanning && scenarios.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowScenarioPlanning(true)}
+                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
+                        >
+                            Show Scenario Planning
+                        </button>
+                    )}
+                </div>
+
                 <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
                     <summary className="p-3 cursor-pointer text-sm font-medium text-slate-600">Advanced: monthly overrides & scenarios</summary>
                     <div className="p-3 pt-0 space-y-3">
