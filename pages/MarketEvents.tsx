@@ -5,6 +5,7 @@ import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoa
 import { getAIMarketEventInsight } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { useAI } from '../context/AiContext';
+import { loadDemoData } from '../services/demoDataService';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -833,6 +834,17 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
             <option value="Medium">Medium</option>
             <option value="Low">Low</option>
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              loadDemoData({ includeMarketEvents: true });
+              window.location.reload();
+            }}
+            className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+            title="Load demo data for testing"
+          >
+            Load Demo Data
+          </button>
         </div>
       }
     >

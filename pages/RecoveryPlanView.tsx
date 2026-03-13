@@ -27,6 +27,7 @@ import {
   type RecoveryPlanStatistics,
   type RecoveryTimelineProjection,
 } from '../services/recoveryPlanPerformance';
+import { loadDemoData } from '../services/demoDataService';
 import type { Page } from '../types';
 
 interface RecoveryPlanViewProps {
@@ -445,9 +446,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               Recovery Plan (Averaging / Correction Engine)
               <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
             </h2>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-              {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  loadDemoData({ includeRecoveryPlan: true });
+                  window.location.reload();
+                }}
+                className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                title="Load demo data for testing"
+              >
+                Load Demo Data
+              </button>
+            </div>
             {recoveryStats && recoveryStats.totalExecutions > 0 && (
               <button
                 type="button"

@@ -26,6 +26,11 @@ import {
   calculateBenchmarkComparison,
   type BenchmarkComparison,
 } from '../services/benchmarkService';
+import {
+  generatePredictiveAnalytics,
+  type PredictiveInsight,
+} from '../services/wealthUltraPredictive';
+import { loadDemoData } from '../services/demoDataService';
 import { getRelatedPages } from '../services/crossPageIntegration';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
@@ -278,6 +283,8 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics | null>(null);
   const [performanceTrend, setPerformanceTrend] = useState<Array<{ date: Date; value: number; returnPct: number }>>([]);
   const [benchmarkComparison, setBenchmarkComparison] = useState<BenchmarkComparison | null>(null);
+  const [predictiveInsight, setPredictiveInsight] = useState<PredictiveInsight | null>(null);
+  const [showDemoData, setShowDemoData] = useState(false);
 
   const engineState = useMemo(() => {
     const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
@@ -509,6 +516,17 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         }).catch(error => {
           console.warn('Failed to fetch benchmark data:', error);
         });
+        
+        // Generate predictive analytics
+        if (trend.length > 0) {
+          generatePredictiveAnalytics(totalPortfolioValue, allocations, trend).then(insight => {
+            if (insight) {
+              setPredictiveInsight(insight);
+            }
+          }).catch(error => {
+            console.warn('Failed to generate predictive analytics:', error);
+          });
+        }
       }
     } catch (error) {
       console.warn('Failed to calculate performance metrics:', error);
@@ -1393,6 +1411,17 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   >
                     Check Recovery Plans
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadDemoData({ includeWealthUltra: true });
+                      window.location.reload();
+                    }}
+                    className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                    title="Load demo data for testing"
+                  >
+                    Load Demo Data
+                  </button>
                 </div>
               )}
             </div>
@@ -1577,6 +1606,116 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                       <span className="font-semibold">Note:</span> Benchmark data is simulated for demonstration. In production, this would fetch real-time data from market APIs.
                     </p>
                   </div>
+                </div>
+              </SectionCard>
+            )}
+
+            {predictiveInsight && (
+              <SectionCard title="AI-Powered Predictive Analytics" className="border-2 border-violet-200 bg-gradient-to-br from-violet-50/50 to-white shadow-md">
+                <div className="space-y-4">
+                  <div className="rounded-lg border-2 border-violet-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Market Forecast</p>
+                        <p className="text-sm text-slate-700 mt-1">{predictiveInsight.marketForecast.timeframe} outlook</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-xl font-black tabular-nums ${
+                          predictiveInsight.marketForecast.outlook === 'bullish' ? 'text-emerald-700' :
+                          predictiveInsight.marketForecast.outlook === 'bearish' ? 'text-rose-700' : 'text-slate-700'
+                        }`}>
+                          {predictiveInsight.marketForecast.outlook.toUpperCase()}
+                        </p>
+                        <p className={`text-xs ${
+                          predictiveInsight.marketForecast.confidence === 'high' ? 'text-emerald-600' :
+                          predictiveInsight.marketForecast.confidence === 'medium' ? 'text-amber-600' : 'text-rose-600'
+                        }`}>
+                          {predictiveInsight.marketForecast.confidence.toUpperCase()} CONFIDENCE
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-700 mt-2">{predictiveInsight.marketForecast.recommendedAction}</p>
+                  </div>
+
+                  {predictiveInsight.marketForecast.allocationAdjustment && (
+                    <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-4">
+                      <p className="text-xs font-semibold text-violet-900 uppercase tracking-wide mb-2">Recommended Allocation Adjustments</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Core</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.coreAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Upside</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.upsideAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-slate-600">Spec</p>
+                          <p className={`text-lg font-black ${predictiveInsight.marketForecast.allocationAdjustment.specAdjustment >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {predictiveInsight.marketForecast.allocationAdjustment.specAdjustment >= 0 ? '+' : ''}
+                            {predictiveInsight.marketForecast.allocationAdjustment.specAdjustment.toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Portfolio Recommendation</p>
+                    <p className="text-sm text-slate-700">{predictiveInsight.portfolioRecommendation}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4">
+                    <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide mb-2">Risk Assessment</p>
+                    <p className="text-sm text-amber-800">{predictiveInsight.riskAssessment}</p>
+                  </div>
+
+                  {predictiveInsight.opportunities.length > 0 && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+                      <p className="text-xs font-semibold text-emerald-900 uppercase tracking-wide mb-2">Opportunities</p>
+                      <ul className="text-sm text-emerald-800 space-y-1">
+                        {predictiveInsight.opportunities.map((opp, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-emerald-600 mt-0.5">•</span>
+                            <span>{opp}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {predictiveInsight.warnings.length > 0 && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-4">
+                      <p className="text-xs font-semibold text-rose-900 uppercase tracking-wide mb-2">Warnings</p>
+                      <ul className="text-sm text-rose-800 space-y-1">
+                        {predictiveInsight.warnings.map((warning, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-rose-600 mt-0.5">⚠</span>
+                            <span>{warning}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {predictiveInsight.marketForecast.keyFactors.length > 0 && (
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Key Factors</p>
+                      <div className="flex flex-wrap gap-2">
+                        {predictiveInsight.marketForecast.keyFactors.map((factor, idx) => (
+                          <span key={idx} className="text-xs px-2 py-1 bg-slate-100 text-slate-700 rounded">
+                            {factor}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </SectionCard>
             )}

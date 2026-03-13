@@ -299,3 +299,125 @@ export function generateCommonScenarios(
   
   return scenarios;
 }
+
+export interface SeasonalityPattern {
+  category: string;
+  month: number;
+  monthName: string;
+  averageAmount: number;
+  deviationFromAverage: number;
+  deviationPct: number;
+  pattern: 'peak' | 'trough' | 'normal';
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Detect seasonal spending patterns in budget data
+ */
+export function detectSeasonality(
+  months: HouseholdMonthPlan[]
+): SeasonalityPattern[] {
+  const patterns: SeasonalityPattern[] = [];
+  
+  if (months.length < 12) return patterns; // Need at least a year of data
+  
+  // Group by month (1-12)
+  const byMonth: Record<number, number[]> = {};
+  const categoryTotals: Record<string, Record<number, number[]>> = {};
+  
+  months.forEach(month => {
+    const monthNum = month.month;
+    if (!byMonth[monthNum]) {
+      byMonth[monthNum] = [];
+    }
+    
+    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
+    byMonth[monthNum].push(expense);
+    
+    // Track by category
+    Object.keys(month.buckets || {}).forEach(category => {
+      if (!categoryTotals[category]) {
+        categoryTotals[category] = {};
+      }
+      if (!categoryTotals[category][monthNum]) {
+        categoryTotals[category][monthNum] = [];
+      }
+      const amount = (month.buckets as any)[category] || 0;
+      categoryTotals[category][monthNum].push(amount);
+    });
+  });
+  
+  // Calculate overall monthly averages
+  const monthlyAverages: Record<number, number> = {};
+  const overallAverage = months.reduce((sum, m) => {
+    const expense = m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow;
+    return sum + expense;
+  }, 0) / months.length;
+  
+  Object.keys(byMonth).forEach(monthStr => {
+    const monthNum = Number(monthStr);
+    const monthValues = byMonth[monthNum];
+    monthlyAverages[monthNum] = monthValues.reduce((a, b) => a + b, 0) / monthValues.length;
+  });
+  
+  // Detect patterns for each month
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  Object.keys(monthlyAverages).forEach(monthStr => {
+    const monthNum = Number(monthStr);
+    const avg = monthlyAverages[monthNum];
+    const deviation = avg - overallAverage;
+    const deviationPct = overallAverage > 0 ? (deviation / overallAverage) * 100 : 0;
+    
+    let pattern: 'peak' | 'trough' | 'normal' = 'normal';
+    let confidence: 'high' | 'medium' | 'low' = 'low';
+    
+    if (Math.abs(deviationPct) > 15) {
+      pattern = deviationPct > 0 ? 'peak' : 'trough';
+      confidence = Math.abs(deviationPct) > 25 ? 'high' : 'medium';
+    }
+    
+    patterns.push({
+      category: 'Total Expenses',
+      month: monthNum,
+      monthName: monthNames[monthNum - 1],
+      averageAmount: avg,
+      deviationFromAverage: deviation,
+      deviationPct,
+      pattern,
+      confidence,
+    });
+  });
+  
+  // Detect patterns by category
+  Object.keys(categoryTotals).forEach(category => {
+    const categoryData = categoryTotals[category];
+    const categoryOverallAvg = Object.values(categoryData).flat().reduce((a, b) => a + b, 0) / Object.values(categoryData).flat().length;
+    
+    Object.keys(categoryData).forEach(monthStr => {
+      const monthNum = Number(monthStr);
+      const monthValues = categoryData[monthNum];
+      const avg = monthValues.reduce((a, b) => a + b, 0) / monthValues.length;
+      const deviation = avg - categoryOverallAvg;
+      const deviationPct = categoryOverallAvg > 0 ? (deviation / categoryOverallAvg) * 100 : 0;
+      
+      if (Math.abs(deviationPct) > 20) {
+        let pattern: 'peak' | 'trough' | 'normal' = deviationPct > 0 ? 'peak' : 'trough';
+        let confidence: 'high' | 'medium' | 'low' = Math.abs(deviationPct) > 30 ? 'high' : 'medium';
+        
+        patterns.push({
+          category,
+          month: monthNum,
+          monthName: monthNames[monthNum - 1],
+          averageAmount: avg,
+          deviationFromAverage: deviation,
+          deviationPct,
+          pattern,
+          confidence,
+        });
+      }
+    });
+  });
+  
+  return patterns.sort((a, b) => Math.abs(b.deviationPct) - Math.abs(a.deviationPct));
+}

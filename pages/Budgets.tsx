@@ -30,10 +30,13 @@ import {
     analyzeScenario,
     generateCommonScenarios,
     detectAnomalies,
+    detectSeasonality,
     type PredictiveForecast,
     type ScenarioAnalysis,
     type BudgetAnomaly,
+    type SeasonalityPattern,
 } from '../services/householdBudgetAnalytics';
+import { loadDemoData } from '../services/demoDataService';
 
 
 
@@ -215,9 +218,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [selectedScenario, setSelectedScenario] = useState('custom');
     const [showPredictiveAnalytics, setShowPredictiveAnalytics] = useState(false);
     const [showScenarioPlanning, setShowScenarioPlanning] = useState(false);
+    const [showSeasonality, setShowSeasonality] = useState(false);
     const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
     const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
+    const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -369,19 +374,24 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 const commonScenarios = generateCommonScenarios(result, input.goals);
                 setScenarios(commonScenarios);
                 
-                const detectedAnomalies = detectAnomalies(result.months);
-                setAnomalies(detectedAnomalies);
-            } else {
-                setPredictiveForecasts([]);
-                setScenarios([]);
-                setAnomalies([]);
-            }
-        } catch (error) {
-            console.warn('Failed to calculate household budget analytics:', error);
-            setPredictiveForecasts([]);
-            setScenarios([]);
-            setAnomalies([]);
-        }
+                       const detectedAnomalies = detectAnomalies(result.months);
+                       setAnomalies(detectedAnomalies);
+
+                       const seasonality = detectSeasonality(result.months);
+                       setSeasonalityPatterns(seasonality);
+                   } else {
+                       setPredictiveForecasts([]);
+                       setScenarios([]);
+                       setAnomalies([]);
+                       setSeasonalityPatterns([]);
+                   }
+               } catch (error) {
+                   console.warn('Failed to calculate household budget analytics:', error);
+                   setPredictiveForecasts([]);
+                   setScenarios([]);
+                   setAnomalies([]);
+                   setSeasonalityPatterns([]);
+               }
         
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
@@ -1283,6 +1293,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
     return (
         <PageLayout
+            action={
+                <button
+                    type="button"
+                    onClick={() => {
+                        loadDemoData({ includeBudgets: true });
+                        window.location.reload();
+                    }}
+                    className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                    title="Load demo data for testing"
+                >
+                    Load Demo Data
+                </button>
+            }
             title={`Budgets (${budgetView})`}
             description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
             action={
@@ -1305,6 +1328,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            loadDemoData({ includeBudgets: true });
+                            window.location.reload();
+                        }}
+                        className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                        title="Load demo data for testing"
+                    >
+                        Load Demo Data
+                    </button>
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history
@@ -1971,6 +2005,57 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     </div>
                 )}
 
+                {/* Seasonality Detection */}
+                {showSeasonality && seasonalityPatterns.length > 0 && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-bold text-slate-900">Seasonal Spending Patterns</h4>
+                            <button
+                                type="button"
+                                onClick={() => setShowSeasonality(false)}
+                                className="text-xs px-2 py-1 text-slate-500 hover:text-slate-700"
+                            >
+                                Hide
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            {seasonalityPatterns.slice(0, 10).map((pattern, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`rounded-lg border p-3 ${
+                                        pattern.pattern === 'peak' ? 'border-rose-200 bg-rose-50' :
+                                        pattern.pattern === 'trough' ? 'border-emerald-200 bg-emerald-50' :
+                                        'border-slate-200 bg-slate-50'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-900">
+                                                {pattern.monthName} - {pattern.category}
+                                            </p>
+                                            <p className="text-xs text-slate-600 mt-1">
+                                                {pattern.pattern === 'peak' ? 'Peak spending month' :
+                                                 pattern.pattern === 'trough' ? 'Low spending month' :
+                                                 'Normal spending'}
+                                                {' '}
+                                                ({pattern.confidence} confidence)
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-bold text-slate-900">
+                                                {formatCurrencyString(pattern.averageAmount)}
+                                            </p>
+                                            <p className={`text-xs ${pattern.deviationPct >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {pattern.deviationPct >= 0 ? '+' : ''}{pattern.deviationPct.toFixed(1)}% from average
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 {/* Action Buttons */}
                 <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
                     {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
@@ -1989,6 +2074,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
                         >
                             Show Scenario Planning
+                        </button>
+                    )}
+                    {!showSeasonality && seasonalityPatterns.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowSeasonality(true)}
+                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
+                        >
+                            Show Seasonality Patterns
                         </button>
                     )}
                 </div>
