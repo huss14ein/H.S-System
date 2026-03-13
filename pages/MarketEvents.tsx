@@ -920,13 +920,51 @@ const MarketEvents: React.FC<MarketEventsProps> = ({ setActivePage, triggerPageA
           </div>
           <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
             {topFocusEvents.length === 0 && <p className="text-sm text-slate-500">No focus events for current filters.</p>}
-            {topFocusEvents.map(({ event, score, daysUntil }) => (
-              <div key={`focus-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            {topFocusEvents.map(({ event, score, daysUntil, portfolioImpactScore, urgencyScore }) => (
+              <div key={`focus-${event.id}`} className="rounded-lg border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-800">{event.title}</p>
-                  <span className="text-xs text-indigo-700 font-semibold">Priority {score}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      score >= 8 ? 'bg-rose-100 text-rose-700' :
+                      score >= 5 ? 'bg-amber-100 text-amber-700' :
+                      'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      Priority {score}
+                    </span>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">{daysUntil === 0 ? 'Today' : `In ${daysUntil} day${daysUntil === 1 ? '' : 's'}`} • {event.date.toLocaleDateString()}</p>
+                
+                {/* Portfolio Impact Breakdown */}
+                <div className="mt-2 pt-2 border-t border-slate-200">
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Portfolio Impact:</span>
+                      <span className={`font-semibold ${
+                        portfolioImpactScore >= 3 ? 'text-rose-700' :
+                        portfolioImpactScore >= 1 ? 'text-amber-700' :
+                        'text-slate-600'
+                      }`}>
+                        {portfolioImpactScore >= 3 ? 'High' :
+                         portfolioImpactScore >= 1 ? 'Medium' :
+                         'Low'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Urgency:</span>
+                      <span className={`font-semibold ${
+                        urgencyScore >= 2 ? 'text-rose-700' :
+                        urgencyScore >= 1 ? 'text-amber-700' :
+                        'text-slate-600'
+                      }`}>
+                        {urgencyScore >= 2 ? 'High' :
+                         urgencyScore >= 1 ? 'Medium' :
+                         'Low'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 {event.symbol && setActivePage && (
                   <button
                     type="button"
