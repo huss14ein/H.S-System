@@ -334,7 +334,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     orders,
     portfolioHealth,
     autoPilotMeta,
-  } = engineState as typeof engineState & { autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number } };
+    diversificationSummary,
+    rebalancePolicy,
+  } = engineState as typeof engineState & {
+    autoPilotMeta: { regime: string; confidence: string; monthlyDepositSource: string; volatilityScore: number; downsidePressure: number };
+    diversificationSummary: { uniqueTickers: number; topConcentrationPct: number; topTickers: string[] };
+    rebalancePolicy: { mode: 'ON_TRACK' | 'MINOR_ADJUST' | 'REBALANCE' | 'DE_RISK'; reasons: string[] };
+  };
 
   const totalSAR = totalPortfolioValue / config.fxRate;
   const positions = engineState.positions || [];
@@ -590,6 +596,22 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"><p className="text-[11px] text-emerald-600">Downside pressure</p><p className="text-sm font-semibold text-emerald-800">{(autoPilotMeta.downsidePressure * 100).toFixed(0)}%</p></div>
                 <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2"><p className="text-[11px] text-amber-600">Volatility score</p><p className="text-sm font-semibold text-amber-800">{(autoPilotMeta.volatilityScore * 100).toFixed(1)}</p></div>
                 <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2"><p className="text-[11px] text-violet-600">Deposit source</p><p className="text-sm font-semibold text-violet-800">{autoPilotMeta.monthlyDepositSource}</p></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Rebalance policy</p>
+                  <p className="text-sm font-semibold text-slate-900">{rebalancePolicy.mode.replace('_', ' ')}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Top 3 concentration</p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {diversificationSummary.topConcentrationPct.toFixed(0)}% • {diversificationSummary.topTickers.join(', ') || '—'}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] text-slate-600">Distinct tickers</p>
+                  <p className="text-sm font-semibold text-slate-900">{diversificationSummary.uniqueTickers}</p>
+                </div>
               </div>
               {positionCount > 0 && (
                 <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-slate-200">

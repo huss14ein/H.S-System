@@ -11,6 +11,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useMarketData } from '../context/MarketDataContext';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
 
 
 const PlanTradeModal: React.FC<{
@@ -121,6 +122,11 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     const [planToDelete, setPlanToDelete] = useState<PlannedTrade | null>(null);
     const [alignmentFilter, setAlignmentFilter] = useState<'All' | 'Aligned' | 'Conflict' | 'Needs mapping'>('All');
     const [symbolFocus, setSymbolFocus] = useState<string>('');
+
+    const householdStress = React.useMemo(
+        () => computeHouseholdStressFromData(data),
+        [data]
+    );
 
     const handleSave = (planData: Omit<PlannedTrade, 'id' | 'user_id'> | PlannedTrade) => {
         if ('id' in planData) {
@@ -369,6 +375,16 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 <button onClick={() => { setPlanToEdit(null); setIsModalOpen(true); }} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary transition-colors text-sm flex items-center gap-2"><PlusIcon className="h-5 w-5"/>Add Plan</button>
             </div>
             
+            {householdStress && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs mb-2">
+                    <p className="font-semibold text-emerald-900">
+                        Household cashflow stress: <span className="uppercase">{householdStress.level}</span>
+                    </p>
+                    <p className="text-emerald-800 mt-0.5">
+                        {householdStress.summary}
+                    </p>
+                </div>
+            )}
 
             <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
                 <h3 className="text-base font-semibold text-indigo-900 mb-2">How this plan works (and how to use it with AI rebalance)</h3>
