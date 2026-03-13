@@ -13,6 +13,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -84,6 +85,7 @@ const Forecast: React.FC = () => {
         Base: null,
         Aggressive: null,
     });
+    const [timeline, setTimeline] = useState<{ horizonYears: number; events: { yearOffset: number; label: string; narrative: string }[] } | null>(null);
 
 
     React.useEffect(() => {
@@ -197,6 +199,7 @@ const Forecast: React.FC = () => {
                     low: Math.max(0, Math.round(computedSummary.projectedNetWorth - spread)),
                     high: Math.max(0, Math.round(computedSummary.projectedNetWorth + spread)),
                 });
+                setTimeline(buildBaselineScenarioTimeline(data, horizon, computedSummary.projectedNetWorth));
             }
             
             setGoalProjections(goalsWithProjections.map(g => {
@@ -405,6 +408,21 @@ const Forecast: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            {timeline && (
+                <SectionCard title="Scenario Timeline" className="mt-6">
+                    <p className="text-xs text-gray-600 mb-3">
+                        Narrative view of your baseline forecast over the next {timeline.horizonYears} year(s).
+                    </p>
+                    <ol className="space-y-2 text-sm text-slate-700 list-decimal pl-5">
+                        {timeline.events.map(e => (
+                            <li key={`${e.yearOffset}-${e.label}`}>
+                                <span className="font-semibold">{e.label}:</span> {e.narrative}
+                            </li>
+                        ))}
+                    </ol>
+                </SectionCard>
+            )}
         </PageLayout>
     );
 };
