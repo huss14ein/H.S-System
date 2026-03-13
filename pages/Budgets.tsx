@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -9,6 +9,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -95,7 +96,11 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const rawLimit = parseFloat(limit) || 0;
+        const rawLimit = Number(limit) || 0;
+        if (!Number.isFinite(rawLimit) || rawLimit < 0) {
+            alert('Please enter a valid budget amount greater than or equal to 0.');
+            return;
+        }
         const isYearly = limitPeriod === 'Yearly';
         const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
@@ -161,9 +166,10 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
 interface BudgetsProps {
     triggerPageAction?: (page: Page, action: string) => void;
+    setActivePage?: (page: Page) => void;
 }
 
-const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
+const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
@@ -605,25 +611,36 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         (data?.transactions ?? [])
             .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t) => {
-                const txDate = new Date(t.date);
-                const amount = Math.abs(t.amount);
-                if (txDate >= rangeStart && txDate <= rangeEnd) {
-                    spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
-                }
-                if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
-                    previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
+                try {
+                    const txDate = new Date(t.date);
+                    if (!Number.isFinite(txDate.getTime())) return;
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    if (txDate >= rangeStart && txDate <= rangeEnd) {
+                        spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
+                    }
+                    if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                        previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
+                    }
+                } catch (error) {
+                    console.warn('Error processing transaction for budget calculation:', error, t);
                 }
             });
 
         // Reflect collaborator spending into owner budget totals for shared categories.
         ownerSharedTransactions.forEach((tx) => {
-            if ((tx.status ?? 'Approved') !== 'Approved') return;
-            const d = new Date(tx.transaction_date || tx.date);
-            if (!(d >= rangeStart && d <= rangeEnd)) return;
-            const cat = String(tx.budget_category || '').trim();
-            if (!cat) return;
-            const amount = Math.abs(Number(tx.amount) || 0);
-            spending.set(cat, (spending.get(cat) || 0) + amount);
+            try {
+                if ((tx.status ?? 'Approved') !== 'Approved') return;
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                const cat = String(tx.budget_category || '').trim();
+                if (!cat) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                if (!Number.isFinite(amount)) return;
+                spending.set(cat, (spending.get(cat) || 0) + amount);
+            } catch (error) {
+                console.warn('Error processing shared transaction for budget calculation:', error, tx);
+            }
         });
 
         const ownScopedBudgets = (data?.budgets ?? [])
@@ -636,12 +653,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 .filter((cat) => !ownScopedBudgets.some((b) => b.category === cat))
                 .map((cat) => {
                     const meta = governanceCategories.find((g) => g.name === cat);
-                    const fallbackLimit = Number(meta?.monthly_limit) || 0;
+                    const fallbackLimit = Math.max(0, Number(meta?.monthly_limit) || 0);
                     return {
                         id: `synthetic-${cat}-${currentYear}-${currentMonth}`,
                         user_id: auth?.user?.id,
                         category: cat,
-                        limit: fallbackLimit,
+                        limit: Number.isFinite(fallbackLimit) ? fallbackLimit : 0,
                         month: currentMonth,
                         year: currentYear,
                         period: 'monthly',
@@ -654,13 +671,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
-            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
+            const toYearly = (b: Budget) => {
+                const limit = Math.max(0, Number(b.limit) || 0);
+                if (!Number.isFinite(limit)) return 0;
+                if (b.period === 'yearly') return limit;
+                if (b.period === 'weekly') return limit * 52;
+                if (b.period === 'daily') return limit * 365;
+                return limit * 12;
+            };
+            scopedBudgets.forEach((b) => {
+                const yearly = toYearly(b);
+                if (Number.isFinite(yearly)) {
+                    yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + yearly);
+                }
+            });
 
             return Array.from(yearlyLimitByCategory.entries())
                 .map(([category, yearlyLimit]) => {
-                    const spent = spending.get(category) || 0;
-                    const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
+                    const spent = Math.max(0, spending.get(category) || 0);
+                    const safeLimit = Math.max(0, Number.isFinite(yearlyLimit) ? yearlyLimit : 0);
+                    const percentage = safeLimit > 0 ? Math.min(1000, (spent / safeLimit) * 100) : 0;
                     let colorClass = 'bg-primary';
                     if (percentage > 100) colorClass = 'bg-danger';
                     else if (percentage > 90) colorClass = 'bg-warning';
@@ -670,9 +700,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         month: currentMonth,
                         year: currentYear,
                         spent,
-                        limit: yearlyLimit,
-                        displayLimit: yearlyLimit,
-                        monthlyLimit: yearlyLimit / 12,
+                        limit: safeLimit,
+                        displayLimit: safeLimit,
+                        monthlyLimit: safeLimit / 12,
                         percentage,
                         colorClass,
                     };
@@ -681,14 +711,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
-                const spent = spending.get(budget.category) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const limit = Math.max(0, Number(budget.limit) || 0);
+                if (!Number.isFinite(limit)) {
+                    return {
+                        ...budget,
+                        spent: 0,
+                        displayLimit: 0,
+                        monthlyLimit: 0,
+                        percentage: 0,
+                        colorClass: 'bg-primary',
+                        previousPeriodSpent: 0,
+                        trendDelta: 0,
+                        trendDirection: 'flat' as const,
+                        budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
+                        utilizationLabel: 'Healthy' as const,
+                    };
+                }
+                const monthlyEquivalent = budget.period === 'yearly' ? limit / 12 : budget.period === 'weekly' ? limit * (52 / 12) : budget.period === 'daily' ? limit * (365 / 12) : limit;
+                const safeMonthlyLimit = Math.max(0, Number.isFinite(monthlyEquivalent) ? monthlyEquivalent : 0);
+                const spent = Math.max(0, spending.get(budget.category) || 0);
+                const percentage = safeMonthlyLimit > 0 ? Math.min(1000, (spent / safeMonthlyLimit) * 100) : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
-                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
+                return { ...budget, spent, displayLimit: limit, monthlyLimit: safeMonthlyLimit, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
     }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
 
@@ -737,39 +784,61 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         mySharedBudgetTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
-                if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                try {
+                    const d = new Date(tx.transaction_date || tx.date);
+                    if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                    const category = String(tx.budget_category || '').trim();
+                    if (!category) return;
+                    const amount = Math.abs(Number(tx.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
+                    spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                } catch (error) {
+                    console.warn('Error processing shared budget transaction:', error, tx);
+                }
             });
 
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
-                if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                try {
+                    const d = new Date(tx.transaction_date || tx.date);
+                    if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                    const category = String(tx.budget_category || '').trim();
+                    if (!category) return;
+                    const amount = Math.abs(Number(tx.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                    spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                } catch (error) {
+                    console.warn('Error processing owner shared transaction:', error, tx);
+                }
             });
 
         const rowsForYear = (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+            .filter((b) => {
+                const year = Number((b as any).year) || currentYear;
+                return Number.isFinite(year) && year === currentYear;
+            });
 
-        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+        const toYearly = (b: Budget) => {
+            const limit = Math.max(0, Number(b.limit) || 0);
+            if (!Number.isFinite(limit)) return 0;
+            if (b.period === 'yearly') return limit;
+            if (b.period === 'weekly') return limit * 52;
+            if (b.period === 'daily') return limit * 365;
+            return limit * 12;
+        };
 
         if (budgetView === 'Yearly') {
             const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
             rowsForYear.forEach((b) => {
+                const yearly = toYearly(b);
+                if (!Number.isFinite(yearly)) return;
                 const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const key = `${ownerKey}::${b.category}`;
                 const existing = yearlyByOwnerCategory.get(key);
-                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
+                const yearlyLimit = Math.max(0, (existing?.yearlyLimit || 0) + yearly);
                 yearlyByOwnerCategory.set(key, {
                     ...(existing || b),
                     category: b.category,
@@ -782,8 +851,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
-                    const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
-                    const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
+                    const spent = Math.max(0, sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0);
+                    const safeLimit = Math.max(0, Number.isFinite(entry.yearlyLimit) ? entry.yearlyLimit : 0);
+                    const percentage = safeLimit > 0 ? Math.min(1000, (spent / safeLimit) * 100) : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                     let colorClass = 'bg-primary';
                     if (percentage > 100) colorClass = 'bg-danger';
@@ -793,9 +863,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         id: `shared-${entry.ownerKey}-${entry.category}-${currentYear}`,
                         month: currentMonth,
                         year: currentYear,
-                        limit: entry.yearlyLimit,
-                        displayLimit: entry.yearlyLimit,
-                        monthlyLimit: entry.yearlyLimit / 12,
+                        limit: safeLimit,
+                        displayLimit: safeLimit,
+                        monthlyLimit: safeLimit / 12,
                         spent,
                         percentage,
                         colorClass,
@@ -813,13 +883,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             .filter((b) => {
                 const month = Number((b as any).month) || currentMonth;
                 const year = Number((b as any).year) || currentYear;
-                return month === currentMonth || (b.period === 'yearly' && year === currentYear);
+                return Number.isFinite(month) && Number.isFinite(year) && (month === currentMonth || (b.period === 'yearly' && year === currentYear));
             })
             .map((b) => {
-                const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+                const limit = Math.max(0, Number(b.limit) || 0);
+                if (!Number.isFinite(limit)) {
+                    return {
+                        ...b,
+                        id: `shared-${String((b as any).owner_user_id || b.user_id || 'owner')}-${b.id}`,
+                        spent: 0,
+                        percentage: 0,
+                        colorClass: 'bg-primary',
+                        displayLimit: 0,
+                        monthlyLimit: 0,
+                        previousPeriodSpent: 0,
+                        trendDelta: 0,
+                        trendDirection: 'flat' as const,
+                        budgetTier: (b.tier ?? 'Optional') as BudgetTier,
+                        utilizationLabel: 'Healthy' as const,
+                    };
+                }
+                const monthlyEquivalent = b.period === 'yearly' ? limit / 12 : b.period === 'weekly' ? limit * (52 / 12) : b.period === 'daily' ? limit * (365 / 12) : limit;
+                const safeMonthlyLimit = Math.max(0, Number.isFinite(monthlyEquivalent) ? monthlyEquivalent : 0);
                 const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const spent = sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const spent = Math.max(0, sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0);
+                const percentage = safeMonthlyLimit > 0 ? Math.min(1000, (spent / safeMonthlyLimit) * 100) : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
@@ -830,8 +918,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     spent,
                     percentage,
                     colorClass,
-                    displayLimit: b.limit,
-                    monthlyLimit: monthlyEquivalent,
+                    displayLimit: limit,
+                    monthlyLimit: safeMonthlyLimit,
                     previousPeriodSpent: 0,
                     trendDelta: 0,
                     trendDirection: 'flat' as const,
@@ -868,8 +956,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
-        const totalLimit = budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0);
-        const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
+        const totalLimit = budgetData.reduce((sum, b) => {
+            const limit = Math.max(0, Number(b.monthlyLimit) || 0);
+            return sum + (Number.isFinite(limit) ? limit : 0);
+        }, 0);
+        const totalSpent = budgetData.reduce((sum, b) => {
+            const spent = Math.max(0, Number(b.spent) || 0);
+            return sum + (Number.isFinite(spent) ? spent : 0);
+        }, 0);
         /** Money saved from budget = sum of (limit - spent) for categories where we're under. Same as max(0, totalLimit - totalSpent) when no category is over. */
         const totalSavedFromBudget = Math.max(0, totalLimit - totalSpent);
         const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
@@ -879,6 +973,60 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
+
+    const handleExportBudgets = useCallback(() => {
+        try {
+            const exportData = {
+                summary: {
+                    view: budgetView,
+                    currentMonth,
+                    currentYear,
+                    totalLimit: budgetInsights.totalLimit,
+                    totalSpent: budgetInsights.totalSpent,
+                    totalSaved: budgetInsights.totalSavedFromBudget,
+                    healthyCount: budgetInsights.healthyCount,
+                    watchCount: budgetInsights.watchCount,
+                    criticalCount: budgetInsights.criticalCount,
+                },
+                budgets: budgetData.map(b => ({
+                    category: b.category,
+                    limit: b.displayLimit,
+                    monthlyLimit: b.monthlyLimit,
+                    spent: b.spent,
+                    percentage: b.percentage,
+                    utilizationLabel: b.utilizationLabel,
+                    budgetTier: b.budgetTier,
+                    period: b.period,
+                    month: b.month,
+                    year: b.year,
+                })),
+                sharedBudgets: sharedBudgetCards.map(b => ({
+                    category: b.category,
+                    limit: b.displayLimit,
+                    monthlyLimit: b.monthlyLimit,
+                    spent: b.spent,
+                    percentage: b.percentage,
+                    utilizationLabel: b.utilizationLabel,
+                    budgetTier: b.budgetTier,
+                    period: b.period,
+                    month: b.month,
+                    year: b.year,
+                    ownerEmail: (b as any).ownerEmail || 'Unknown',
+                })),
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `budgets-${currentYear}-${String(currentMonth).padStart(2, '0')}-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting budgets:', error);
+            alert('Failed to export budgets. Please try again.');
+        }
+    }, [budgetData, sharedBudgetCards, budgetInsights, budgetView, currentMonth, currentYear]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -1313,6 +1461,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
+                    <button type="button" onClick={handleExportBudgets} className="btn-ghost flex items-center gap-2" title="Export budgets data">
+                        <ArrowDownTrayIcon className="h-5 w-5" />
+                        Export
+                    </button>
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history
@@ -2109,17 +2261,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             </div>
 
             {budgetData.length > 0 && (
-                <div className="section-card border-l-4 border-emerald-500/60">
-                    <h3 className="section-title text-base">Money saved from budget</h3>
-                    <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
-                    <p className="text-sm text-slate-600 mt-1">
-                        {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
-                        {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
+                <SectionCard>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div>
+                            <h3 className="text-base font-semibold text-slate-900 mb-1">Money saved from budget</h3>
+                            <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
+                            <p className="text-sm text-slate-600 mt-1">
+                                {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
+                                {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
                         {budgetView === 'Daily' && 'Today you stayed under your daily budget by this amount. '}
                         {budgetView === 'Yearly' && `So far in ${currentYear} you are under your yearly budget by this amount. `}
                         This money remains in your accounts; it is part of your actual cash flow and can go toward goals, investments, or savings.
                     </p>
-                </div>
+                        </div>
+                        {setActivePage && (
+                            <div className="flex flex-wrap gap-2">
+                                <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost text-sm">
+                                    View Transactions →
+                                </button>
+                                <button type="button" onClick={() => setActivePage('Summary')} className="btn-ghost text-sm">
+                                    View Summary →
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </SectionCard>
             )}
 
             <SectionCard title="Budget sharing">
@@ -2220,11 +2386,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             </div>
                             <div>
                                 <span className="text-indigo-600">Total Budget Limit:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => {
+                                    const limit = Math.max(0, Number(b.monthlyLimit) || 0);
+                                    return sum + (Number.isFinite(limit) ? limit : 0);
+                                }, 0), { digits: 0 })}</span>
                             </div>
                             <div>
                                 <span className="text-indigo-600">Total Spent:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => {
+                                    const spent = Math.max(0, Number(b.spent) || 0);
+                                    return sum + (Number.isFinite(spent) ? spent : 0);
+                                }, 0), { digits: 0 })}</span>
                             </div>
                         </div>
                     </div>
@@ -2244,7 +2416,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                     {formatCurrencyString(
                                         ownerSharedTransactions
                                             .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
+                                            .reduce((sum, tx) => {
+                                                const amount = Math.abs(Number(tx.amount) || 0);
+                                                return sum + (Number.isFinite(amount) ? amount : 0);
+                                            }, 0),
                                         { digits: 0 }
                                     )}
                                 </span>
@@ -2387,9 +2562,34 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 ))}
             </div>
              {budgetData.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-lg shadow">
-                    <p className="text-gray-500">No budgets set for this month.</p>
-                </div>
+                <SectionCard>
+                    <div className="text-center py-12">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 mb-4">
+                            <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-900 mb-2">No budgets set for this {budgetView.toLowerCase()}</h3>
+                        <p className="text-gray-500 mb-6">Create budgets to track your spending by category and stay on top of your finances.</p>
+                        {isAdmin && (
+                            <div className="flex flex-wrap items-center justify-center gap-3">
+                                <button type="button" onClick={() => handleOpenModal()} className="btn-primary">
+                                    Add Your First Budget
+                                </button>
+                                {setActivePage && (
+                                    <>
+                                        <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost">
+                                            View Transactions
+                                        </button>
+                                        <button type="button" onClick={() => setActivePage('Summary')} className="btn-ghost">
+                                            View Summary
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </SectionCard>
             )}
 
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
