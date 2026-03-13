@@ -272,6 +272,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
 
+  // Selected holding & plan, derived after initial selection
+  const selected = selectedHoldingId
+    ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId)
+    : null;
+  const selectedPlan = selected?.plan;
+
+  useEffect(() => {
+    if (selectedHoldingId || qualifiedPositions.length === 0) return;
+    setSelectedHoldingId(qualifiedPositions[0].holding.id);
+  }, [qualifiedPositions, selectedHoldingId]);
+
   // Auto-update recovery execution outcomes when positions change
   useEffect(() => {
     if (!selected || !selectedPlan) return;
@@ -317,15 +328,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       setRecoveryTimeline(null);
     }
   }, [selected, selectedPlan]);
-
-
-
-  useEffect(() => {
-    if (selectedHoldingId || qualifiedPositions.length === 0) return;
-    setSelectedHoldingId(qualifiedPositions[0].holding.id);
-  }, [qualifiedPositions, selectedHoldingId]);
-  const selected = selectedHoldingId ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId) : null;
-  const selectedPlan = selected?.plan;
   const selectedCurrencyDeployableCash = selected
     ? (selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR)
     : deployableCashSAR;
