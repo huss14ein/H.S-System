@@ -1871,6 +1871,51 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 )}
             </SectionCard>
 
+            {isAdmin && (
+                <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
+                    <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
+                        <h3 className="text-sm font-semibold text-indigo-900 mb-2">Approved Budgets Overview</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                            <div>
+                                <span className="text-indigo-600">Total Approved Budgets:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{budgetData.filter(b => b.spent > 0 || b.monthlyLimit > 0).length}</span>
+                            </div>
+                            <div>
+                                <span className="text-indigo-600">Total Budget Limit:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</span>
+                            </div>
+                            <div>
+                                <span className="text-indigo-600">Total Spent:</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+                        <h3 className="text-sm font-semibold text-emerald-900 mb-2">Shared Account Transaction Tracking</h3>
+                        <p className="text-xs text-emerald-700 mb-2">
+                            Transactions from shared accounts that affect shared budgets are tracked below. Only approved transactions are counted in budget totals.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                            <div>
+                                <span className="text-emerald-600">Shared Transactions (Owner View):</span>
+                                <span className="font-semibold text-emerald-900 ml-2">{ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Approved').length}</span>
+                            </div>
+                            <div>
+                                <span className="text-emerald-600">Total from Shared Accounts:</span>
+                                <span className="font-semibold text-emerald-900 ml-2">
+                                    {formatCurrencyString(
+                                        ownerSharedTransactions
+                                            .filter(tx => (tx.status ?? 'Approved') === 'Approved')
+                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
+                                        { digits: 0 }
+                                    )}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </SectionCard>
+            )}
+
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
                 <SectionCard title="Shared-budget transaction visibility">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
