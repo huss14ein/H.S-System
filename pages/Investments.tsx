@@ -38,7 +38,6 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -3327,11 +3326,6 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                    <DemoDataButton 
-                        page="Investments" 
-                        options={{ includeInvestments: true, includeWealthUltra: true, includeRecoveryPlan: true }}
-                        className="text-xs px-3 py-1.5 border border-white/30 text-white rounded-lg hover:bg-white/20"
-                    />
                     <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
                         <SparklesIcon className="h-4 w-4" /> Smart Plan
                     </button>

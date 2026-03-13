@@ -11,7 +11,6 @@ import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocument
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 function formatRelativeTime(dateStr: string): string {
   const d = new Date(dateStr);
@@ -90,7 +89,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
   if (!ctx) {
     return (
-      <PageLayout title="Notifications" action={<DemoDataButton page="Notifications" />}>
+      <PageLayout title="Notifications">
         <LoadingSpinner message="Loading…" />
       </PageLayout>
     );
@@ -101,12 +100,9 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
       title="Notifications"
       description={ctx.unreadCount > 0 ? `${ctx.unreadCount} unread • Smart automated feed` : 'All caught up'}
       action={
-        <div className="flex flex-wrap items-center gap-2">
-          <DemoDataButton page="Notifications" />
-          {ctx.unreadCount > 0 && (
-            <button type="button" onClick={ctx.markAllAsRead} className="btn-outline text-sm">Mark all as read</button>
-          )}
-        </div>
+        ctx.unreadCount > 0 && (
+          <button type="button" onClick={ctx.markAllAsRead} className="btn-outline text-sm">Mark all as read</button>
+        )
       }
     >
       <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-4 mb-4">

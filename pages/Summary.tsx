@@ -21,7 +21,6 @@ import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
-import { DemoDataButton } from '../components/DemoDataButton';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
 import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
 import { computeRiskLaneFromData } from '../services/riskLaneEngine';
@@ -227,11 +226,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             description="Key metrics and AI-generated financial persona with report card and suggestions."
             action={
                 setActivePage && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        <DemoDataButton page="Summary" />
-                        <button
-                            type="button"
-                            onClick={() => setActivePage('Wealth Ultra')}
+                    <button
+                        type="button"
+                        onClick={() => setActivePage('Wealth Ultra')}
                             className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
                         >
                             Wealth Ultra

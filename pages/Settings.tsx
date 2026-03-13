@@ -6,15 +6,32 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
+import { loadDemoData as loadDemoDataService, DemoDataOptions } from '../services/demoDataService';
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, updateSettings, loadDemoData, resetData } = useContext(DataContext)!;
     const auth = useContext(AuthContext)!;
     const [localSettings, setLocalSettings] = useState(data.settings);
+    const [demoOptions, setDemoOptions] = useState<DemoDataOptions>({
+        includeAccounts: true,
+        includeAssets: true,
+        includeLiabilities: true,
+        includeGoals: true,
+        includeBudgets: true,
+        includeTransactions: true,
+        includeWealthUltra: true,
+        includeRecoveryPlan: true,
+        includeMarketEvents: true,
+    });
 
     useEffect(() => {
         setLocalSettings(data.settings);
     }, [data.settings]);
+
+    const handleLoadDemoData = () => {
+        loadDemoDataService(demoOptions);
+        window.location.reload();
+    };
 
     const handleSettingChange = <K extends keyof typeof localSettings>(key: K, value: (typeof localSettings)[K]) => {
         const newSettings = { ...localSettings, [key]: value };
@@ -124,6 +141,102 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </label>
             </SectionCard>
 
+            <SectionCard title="Demo Data Management">
+                <p className="text-sm text-gray-600 mb-4">
+                    Load demonstration data to explore the app. Select which types of data you want to load, then click "Load Selected Demo Data".
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                    <DemoOptionCheckbox
+                        label="Accounts"
+                        checked={demoOptions.includeAccounts ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeAccounts: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Assets"
+                        checked={demoOptions.includeAssets ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeAssets: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Liabilities"
+                        checked={demoOptions.includeLiabilities ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeLiabilities: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Goals"
+                        checked={demoOptions.includeGoals ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeGoals: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Budgets"
+                        checked={demoOptions.includeBudgets ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeBudgets: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Transactions"
+                        checked={demoOptions.includeTransactions ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeTransactions: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Wealth Ultra"
+                        checked={demoOptions.includeWealthUltra ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeWealthUltra: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Recovery Plan"
+                        checked={demoOptions.includeRecoveryPlan ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeRecoveryPlan: checked })}
+                    />
+                    <DemoOptionCheckbox
+                        label="Market Events"
+                        checked={demoOptions.includeMarketEvents ?? false}
+                        onChange={(checked) => setDemoOptions({ ...demoOptions, includeMarketEvents: checked })}
+                    />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setDemoOptions({
+                            includeAccounts: true,
+                            includeAssets: true,
+                            includeLiabilities: true,
+                            includeGoals: true,
+                            includeBudgets: true,
+                            includeTransactions: true,
+                            includeWealthUltra: true,
+                            includeRecoveryPlan: true,
+                            includeMarketEvents: true,
+                        })}
+                        className="btn-outline text-xs"
+                    >
+                        Select All
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setDemoOptions({
+                            includeAccounts: false,
+                            includeAssets: false,
+                            includeLiabilities: false,
+                            includeGoals: false,
+                            includeBudgets: false,
+                            includeTransactions: false,
+                            includeWealthUltra: false,
+                            includeRecoveryPlan: false,
+                            includeMarketEvents: false,
+                        })}
+                        className="btn-outline text-xs"
+                    >
+                        Deselect All
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleLoadDemoData}
+                        className="btn-primary"
+                    >
+                        Load Selected Demo Data
+                    </button>
+                </div>
+            </SectionCard>
+
             <SectionCard title="Data Management">
                  <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     {hasData ? (
@@ -149,9 +262,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         </>
                     ) : (
                          <>
-                            <p className="text-sm text-gray-600">Your account is empty. Load a complete set of demonstration data to explore the app: accounts, assets, liabilities, goals, budgets, transactions, investments, portfolios, watchlist, price alerts, commodity holdings, and planned trades.</p>
+                            <p className="text-sm text-gray-600">Your account is empty. Use the Demo Data Management section above to load demonstration data, or use the button below to load all demo data at once.</p>
                             <button type="button" onClick={loadDemoData} className="btn-primary w-full md:w-auto flex-shrink-0">
-                                Load Demo Data
+                                Load All Demo Data
                             </button>
                         </>
                     )}
@@ -177,6 +290,20 @@ function ParamCard({ label, value, hint }: { label: string; value: string; hint:
             <p className="text-base font-semibold text-slate-800 w-full mt-1">{value}</p>
             <p className="text-xs text-slate-500 mt-1">{hint}</p>
         </div>
+    );
+}
+
+function DemoOptionCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+    return (
+        <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 hover:bg-slate-50">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
+            />
+            <span className="text-sm text-gray-700">{label}</span>
+        </label>
     );
 }
 
