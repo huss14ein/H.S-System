@@ -27,6 +27,8 @@ export interface Account {
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
   owner?: string;
+  /** For Investment accounts: linked cash account IDs that can fund this platform */
+  linkedAccountIds?: string[];
   platformDetails?: {
     features: string[];
     assetTypes: string[];
@@ -152,6 +154,8 @@ export interface InvestmentTransaction {
   total: number;
   /** Currency the trade was recorded in (display & reporting). */
   currency?: TradeCurrency;
+  /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
+  linkedCashAccountId?: string;
 }
 
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */

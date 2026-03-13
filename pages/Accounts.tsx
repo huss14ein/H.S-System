@@ -32,26 +32,35 @@ const AccountModal: React.FC<{
     onClose: () => void;
     onSave: (account: Omit<Account, 'id' | 'balance'> | Account) => void;
     accountToEdit: Account | null;
-}> = ({ isOpen, onClose, onSave, accountToEdit }) => {
+    allAccounts?: Account[];
+}> = ({ isOpen, onClose, onSave, accountToEdit, allAccounts = [] }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<Account['type']>('Checking');
     const [owner, setOwner] = useState('');
+    const [linkedAccountIds, setLinkedAccountIds] = useState<string[]>([]);
 
     useEffect(() => {
         if (accountToEdit) {
             setName(accountToEdit.name);
             setType(accountToEdit.type);
             setOwner(accountToEdit.owner || '');
+            setLinkedAccountIds(accountToEdit.linkedAccountIds || []);
         } else {
             setName('');
             setType('Checking');
             setOwner('');
+            setLinkedAccountIds([]);
         }
     }, [accountToEdit, isOpen]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const accountData = { name, type, owner: owner || undefined };
+        const accountData: any = { 
+            name, 
+            type, 
+            owner: owner || undefined,
+            ...(type === 'Investment' && linkedAccountIds.length > 0 ? { linkedAccountIds } : {})
+        };
 
         try {
             if (accountToEdit) {
@@ -64,6 +73,11 @@ const AccountModal: React.FC<{
             // Error handled in DataContext
         }
     };
+    
+    const availableCashAccounts = useMemo(() => 
+        allAccounts.filter(acc => (acc.type === 'Checking' || acc.type === 'Savings') && acc.id !== accountToEdit?.id),
+        [allAccounts, accountToEdit]
+    );
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={accountToEdit ? 'Edit Account' : 'Add New Account'}>
@@ -85,6 +99,46 @@ const AccountModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Useful for shared/family tracking (e.g. self, spouse)." /></label>
                     <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
+                {type === 'Investment' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Linked Cash Accounts (Optional) 
+                            <InfoHint text="Select cash accounts (Checking/Savings) that can fund this investment platform. Only these accounts will appear when making deposits to this platform." />
+                        </label>
+                        {availableCashAccounts.length === 0 ? (
+                            <p className="text-xs text-slate-500 p-2 bg-slate-50 rounded border border-slate-200">
+                                No cash accounts available. Create Checking or Savings accounts first to link them to this platform.
+                            </p>
+                        ) : (
+                            <div className="space-y-2 max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-3">
+                                {availableCashAccounts.map(acc => (
+                                    <label key={acc.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={linkedAccountIds.includes(acc.id)}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setLinkedAccountIds([...linkedAccountIds, acc.id]);
+                                                } else {
+                                                    setLinkedAccountIds(linkedAccountIds.filter(id => id !== acc.id));
+                                                }
+                                            }}
+                                            className="h-4 w-4 text-primary focus:ring-primary"
+                                        />
+                                        <span className="text-sm text-slate-700 flex-1">
+                                            {acc.name} ({acc.type})
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                        {linkedAccountIds.length > 0 && (
+                            <p className="text-xs text-emerald-600 mt-1">
+                                {linkedAccountIds.length} account{linkedAccountIds.length > 1 ? 's' : ''} linked. Only these accounts can be used for deposits/withdrawals to this platform.
+                            </p>
+                        )}
+                    </div>
+                )}
                 <button type="submit" className="w-full btn-primary">Save Account</button>
             </form>
         </Modal>
@@ -143,6 +197,11 @@ const AccountCardComponent: React.FC<{
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
                 })()}
+                {account.type === 'Investment' && account.linkedAccountIds && account.linkedAccountIds.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-1">
+                        Linked to {account.linkedAccountIds.length} cash account{account.linkedAccountIds.length > 1 ? 's' : ''}
+                    </p>
+                )}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
             </div>
         </div>
@@ -452,7 +511,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 </section>
             )}
 
-            <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
+            <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} allAccounts={data.accounts} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             
             <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">

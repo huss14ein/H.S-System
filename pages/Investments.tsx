@@ -209,6 +209,7 @@ const RecordTradeModal: React.FC<{
     onSave: (trade: any, executedPlanId?: string) => void;
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
+    allAccounts?: Account[];
     initialData?: Partial<{
         tradeType: 'buy' | 'sell';
         symbol: string;
@@ -222,7 +223,7 @@ const RecordTradeModal: React.FC<{
         portfolioId: string;
         reason?: string;
     }> | null;
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, allAccounts = [], initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { currency: appCurrency } = useCurrency();
     const [accountId, setAccountId] = useState('');
@@ -240,6 +241,7 @@ const RecordTradeModal: React.FC<{
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [linkedCashAccountId, setLinkedCashAccountId] = useState('');
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data.goals || [], [data.goals]);
@@ -251,6 +253,21 @@ const RecordTradeModal: React.FC<{
     const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
+    
+    const selectedInvestmentAccount = useMemo(() => 
+        accountId ? investmentAccounts.find(acc => acc.id === accountId) : null,
+        [accountId, investmentAccounts]
+    );
+    
+    const linkedCashAccounts = useMemo(() => {
+        if (!selectedInvestmentAccount?.linkedAccountIds || selectedInvestmentAccount.linkedAccountIds.length === 0) {
+            return [];
+        }
+        return allAccounts.filter(acc => 
+            selectedInvestmentAccount.linkedAccountIds!.includes(acc.id) && 
+            (acc.type === 'Checking' || acc.type === 'Savings')
+        );
+    }, [selectedInvestmentAccount, allAccounts]);
     
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
@@ -270,6 +287,7 @@ const RecordTradeModal: React.FC<{
         setSubmitError(null);
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
+        setLinkedCashAccountId('');
     };
     const isCashFlow = type === 'deposit' || type === 'withdrawal';
 
@@ -303,6 +321,15 @@ const RecordTradeModal: React.FC<{
             }
         }
     }, [isOpen, initialData, investmentAccounts, appCurrency]);
+    
+    useEffect(() => {
+        // Reset linked cash account when account or type changes
+        if (linkedCashAccounts.length > 0 && !linkedCashAccounts.some(acc => acc.id === linkedCashAccountId)) {
+            setLinkedCashAccountId(linkedCashAccounts[0]?.id || '');
+        } else if (linkedCashAccounts.length === 0) {
+            setLinkedCashAccountId('');
+        }
+    }, [accountId, type, linkedCashAccounts, linkedCashAccountId]);
 
     useEffect(() => {
         // When account changes, ensure portfolio belongs to that account
@@ -365,6 +392,13 @@ const RecordTradeModal: React.FC<{
             if (!accountId) return 'Please select a platform.';
             const amt = parseFloat(cashAmount);
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
+            if (selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0) {
+                if (!linkedCashAccountId) {
+                    return type === 'deposit' 
+                        ? 'Please select the cash account this deposit came from.'
+                        : 'Please select the cash account this withdrawal goes to.';
+                }
+            }
             return null;
         }
         if (!accountId) return 'Please select a platform.';
@@ -412,6 +446,7 @@ const RecordTradeModal: React.FC<{
                     price: 0,
                     total: parseFloat(cashAmount) || 0,
                     currency: tradeCurrency,
+                    linkedCashAccountId: linkedCashAccountId || undefined,
                 }, undefined);
             } else {
                 // Final validation: ensure portfolio belongs to account before saving
@@ -517,6 +552,37 @@ const RecordTradeModal: React.FC<{
                 </div>
                 {isCashFlow ? (
                     <>
+                        {selectedInvestmentAccount?.linkedAccountIds && selectedInvestmentAccount.linkedAccountIds.length > 0 ? (
+                            <div>
+                                <label htmlFor="linked-cash-account" className="block text-sm font-medium text-gray-700">
+                                    {type === 'deposit' ? 'Source Cash Account' : 'Destination Cash Account'}
+                                </label>
+                                <select
+                                    id="linked-cash-account"
+                                    value={linkedCashAccountId}
+                                    onChange={e => setLinkedCashAccountId(e.target.value)}
+                                    required
+                                    className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary"
+                                >
+                                    <option value="" disabled>Select cash account</option>
+                                    {linkedCashAccounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>
+                                            {acc.name} ({formatCurrencyString(acc.balance)})
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    {type === 'deposit' 
+                                        ? 'Select the cash account where this deposit came from.'
+                                        : 'Select the cash account where this withdrawal will go.'}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
+                                <p className="font-medium">No linked cash accounts</p>
+                                <p className="mt-1">This platform doesn't have any linked cash accounts. Edit the platform in Accounts to link cash accounts for deposits/withdrawals.</p>
+                            </div>
+                        )}
                         <div>
                             <label htmlFor="cash-amount" className="block text-sm font-medium text-gray-700">Amount</label>
                             <input type="number" id="cash-amount" value={cashAmount} onChange={e => setCashAmount(e.target.value)} required min="0.01" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g. 50000" />
@@ -3309,6 +3375,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         onSave={recordTrade} 
         investmentAccounts={investmentAccounts} 
         portfolios={data.investments}
+        allAccounts={data.accounts}
         initialData={tradeInitialData}
       />
     </div>
