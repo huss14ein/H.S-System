@@ -22,7 +22,6 @@ import AddMenu from '../components/AddMenu';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -495,10 +494,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             title="Assets" 
             description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." 
             action={
-                <div className="flex flex-wrap items-center gap-2">
-                    <DemoDataButton page="Assets" options={{ includeAssets: true }} />
-                    <AddMenu actions={addActions} />
-                </div>
+                <AddMenu actions={addActions} />
             }
         >
 

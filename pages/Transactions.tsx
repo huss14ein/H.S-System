@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Transaction, Account, Page, UserRole, RecurringTransaction } from '../types';
 import Card from '../components/Card';
@@ -17,7 +17,8 @@ import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
-import { DemoDataButton } from '../components/DemoDataButton';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import { MagnifyingGlassIcon } from '../components/icons/MagnifyingGlassIcon';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -93,18 +94,24 @@ const TransactionModal: React.FC<{
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
-    const buildTransactionData = (): Omit<Transaction, 'id'> => ({
-        date,
-        description,
-        amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
-        category,
-        subcategory: subcategory || undefined,
-        budgetCategory: type === 'expense' ? budgetCategory : undefined,
-        type,
-        accountId,
-        transactionNature: type === 'expense' ? transactionNature : undefined,
-        expenseType: type === 'expense' ? expenseType : undefined,
-    });
+    const buildTransactionData = (): Omit<Transaction, 'id'> => {
+        const amountValue = Number(amount) || 0;
+        if (!Number.isFinite(amountValue) || amountValue <= 0) {
+            throw new Error('Amount must be a positive number');
+        }
+        return {
+            date,
+            description,
+            amount: type === 'expense' ? -Math.abs(amountValue) : Math.abs(amountValue),
+            category,
+            subcategory: subcategory || undefined,
+            budgetCategory: type === 'expense' ? budgetCategory : undefined,
+            type,
+            accountId,
+            transactionNature: type === 'expense' ? transactionNature : undefined,
+            expenseType: type === 'expense' ? expenseType : undefined,
+        };
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -261,6 +268,7 @@ interface TransactionsProps {
   pageAction?: string | null;
   clearPageAction?: () => void;
   triggerPageAction: (page: Page, action: string) => void;
+  setActivePage?: (page: Page) => void;
 }
 
 const RecurringModal: React.FC<{
@@ -393,7 +401,7 @@ const RecurringModal: React.FC<{
     );
 };
 
-const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
+const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction, setActivePage }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
@@ -421,6 +429,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
         budgetCategory: 'all' as 'all' | string,
+        searchQuery: '',
     });
 
     useEffect(() => {
@@ -556,40 +565,84 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [userRole, data?.transactions, pendingRefreshKey]);
 
     const filteredTransactions = useMemo(() => {
-        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
-        const [year, month] = filters.month.split('-').map(Number);
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 0, 23, 59, 59);
+        try {
+            const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+            const [year, month] = filters.month.split('-').map(Number);
+            if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+                return [];
+            }
+            const startDate = new Date(year, month - 1, 1);
+            const endDate = new Date(year, month, 0, 23, 59, 59);
 
-        return (data?.transactions ?? []).filter(t => {
-            const transactionDate = new Date(t.date);
-            const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
-            const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
-            const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
-            const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
-            const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
-        });
+            return (data?.transactions ?? []).filter(t => {
+                try {
+                    const transactionDate = new Date(t.date);
+                    if (!Number.isFinite(transactionDate.getTime())) return false;
+                    const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
+                    const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
+                    const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
+                    const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
+                    const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
+                    const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
+                    const searchLower = filters.searchQuery.toLowerCase();
+                    const isSearchMatch = !searchLower || 
+                        t.description.toLowerCase().includes(searchLower) ||
+                        t.category.toLowerCase().includes(searchLower) ||
+                        (t.budgetCategory && t.budgetCategory.toLowerCase().includes(searchLower)) ||
+                        (t.subcategory && t.subcategory.toLowerCase().includes(searchLower));
+                    return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted && isSearchMatch;
+                } catch {
+                    return false;
+                }
+            });
+        } catch (error) {
+            console.error('Error filtering transactions:', error);
+            return [];
+        }
     }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
-        const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
-        const netCashflow = monthlyIncome - monthlyExpenses;
-        
-        const spending = new Map<string, number>();
-        approvedTransactions
-            .filter(t => t.type === 'expense' && t.budgetCategory)
-            .forEach(t => {
-                const currentSpend = spending.get(t.budgetCategory!) || 0;
-                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
-            });
-        
-        const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+        try {
+            const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
+            const monthlyIncome = Math.max(0, approvedTransactions
+                .filter(t => t.type === 'income')
+                .reduce((sum, t) => {
+                    const amount = Number(t.amount) || 0;
+                    return sum + (Number.isFinite(amount) ? amount : 0);
+                }, 0));
+            const monthlyExpenses = Math.max(0, approvedTransactions
+                .filter(t => t.type === 'expense')
+                .reduce((sum, t) => {
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    return sum + (Number.isFinite(amount) ? amount : 0);
+                }, 0));
+            const netCashflow = monthlyIncome - monthlyExpenses;
+            
+            const spending = new Map<string, number>();
+            approvedTransactions
+                .filter(t => t.type === 'expense' && t.budgetCategory)
+                .forEach(t => {
+                    try {
+                        const amount = Math.abs(Number(t.amount) || 0);
+                        if (Number.isFinite(amount) && amount > 0) {
+                            const currentSpend = spending.get(t.budgetCategory!) || 0;
+                            spending.set(t.budgetCategory!, currentSpend + amount);
+                        }
+                    } catch {
+                        // Skip invalid transactions
+                    }
+                });
+            
+            const expenseBreakdown = Array.from(spending, ([name, value]) => ({ 
+                name, 
+                value: Math.max(0, Number.isFinite(value) ? value : 0) 
+            })).sort((a, b) => b.value - a.value);
 
-        return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
+            return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
+        } catch (error) {
+            console.error('Error calculating monthly summary:', error);
+            return { monthlyIncome: 0, monthlyExpenses: 0, netCashflow: 0, expenseBreakdown: [] };
+        }
     }, [filteredTransactions]);
     
     const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
@@ -820,12 +873,98 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         setIsBulkReviewing(false);
     };
 
+    const handleExportTransactions = useCallback(() => {
+        try {
+            const exportData = {
+                period: filters.month,
+                summary: {
+                    income: monthlyIncome,
+                    expenses: monthlyExpenses,
+                    netCashflow,
+                    transactionCount: filteredTransactions.length,
+                },
+                transactions: filteredTransactions.map(t => ({
+                    date: t.date,
+                    description: t.description,
+                    amount: t.amount,
+                    type: t.type,
+                    category: t.category,
+                    subcategory: t.subcategory,
+                    budgetCategory: t.budgetCategory,
+                    account: (data?.accounts ?? []).find(a => a.id === t.accountId)?.name || t.accountId,
+                    status: t.status || 'Approved',
+                    transactionNature: t.transactionNature,
+                    expenseType: t.expenseType,
+                })),
+                expenseBreakdown,
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transactions-${filters.month}-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting transactions:', error);
+            alert('Failed to export transactions. Please try again.');
+        }
+    }, [filteredTransactions, filters.month, monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown, data?.accounts]);
+
+    // Calculate previous month for comparison
+    const previousMonthData = useMemo(() => {
+        try {
+            const [year, month] = filters.month.split('-').map(Number);
+            const prevMonth = month === 1 ? 12 : month - 1;
+            const prevYear = month === 1 ? year - 1 : year;
+            const prevMonthIso = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+            const prevStartDate = new Date(prevYear, prevMonth - 1, 1);
+            const prevEndDate = new Date(prevYear, prevMonth, 0, 23, 59, 59);
+            
+            const prevTransactions = (data?.transactions ?? []).filter(t => {
+                try {
+                    const transactionDate = new Date(t.date);
+                    if (!Number.isFinite(transactionDate.getTime())) return false;
+                    return transactionDate >= prevStartDate && transactionDate <= prevEndDate && (t.status ?? 'Approved') === 'Approved';
+                } catch {
+                    return false;
+                }
+            });
+            
+            const prevIncome = Math.max(0, prevTransactions
+                .filter(t => t.type === 'income')
+                .reduce((sum, t) => {
+                    const amount = Number(t.amount) || 0;
+                    return sum + (Number.isFinite(amount) ? amount : 0);
+                }, 0));
+            const prevExpenses = Math.max(0, prevTransactions
+                .filter(t => t.type === 'expense')
+                .reduce((sum, t) => {
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    return sum + (Number.isFinite(amount) ? amount : 0);
+                }, 0));
+            
+            return { income: prevIncome, expenses: prevExpenses, netCashflow: prevIncome - prevExpenses };
+        } catch {
+            return { income: 0, expenses: 0, netCashflow: 0 };
+        }
+    }, [filters.month, data?.transactions]);
+
     return (
         <PageLayout
             title="Cash Flow"
             action={
                 <div className="flex flex-wrap items-center gap-2">
-                    <DemoDataButton page="Transactions" options={{ includeTransactions: true }} />
+                    <button 
+                        type="button" 
+                        onClick={handleExportTransactions} 
+                        className="btn-outline flex items-center gap-1.5"
+                        title="Export transactions data"
+                    >
+                        <ArrowDownTrayIcon className="h-4 w-4" />
+                        Export
+                    </button>
                     <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
                 </div>
             }
@@ -920,9 +1059,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             )}
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
-                <Card title="Income" value={formatCurrencyString(monthlyIncome)} />
-                <Card title="Expenses" value={formatCurrencyString(monthlyExpenses)} />
-                <Card title="Net Flow" value={formatCurrency(netCashflow, { colorize: true })} trend={netCashflow >= 0 ? 'SURPLUS' : 'DEFICIT'} />
+                <Card 
+                    title="Income" 
+                    value={formatCurrencyString(monthlyIncome)} 
+                    trend={previousMonthData.income > 0 ? `${previousMonthData.income > 0 ? (((monthlyIncome - previousMonthData.income) / previousMonthData.income) * 100).toFixed(1) : '0.0'}% vs last month` : undefined}
+                    indicatorColor={previousMonthData.income > 0 && monthlyIncome >= previousMonthData.income ? 'green' : previousMonthData.income > 0 ? 'red' : undefined}
+                    onClick={setActivePage ? () => setActivePage('Summary') : undefined}
+                />
+                <Card 
+                    title="Expenses" 
+                    value={formatCurrencyString(monthlyExpenses)} 
+                    trend={previousMonthData.expenses > 0 ? `${previousMonthData.expenses > 0 ? (((monthlyExpenses - previousMonthData.expenses) / previousMonthData.expenses) * 100).toFixed(1) : '0.0'}% vs last month` : undefined}
+                    indicatorColor={previousMonthData.expenses > 0 && monthlyExpenses <= previousMonthData.expenses ? 'green' : previousMonthData.expenses > 0 ? 'red' : undefined}
+                    onClick={setActivePage ? () => setActivePage('Budgets') : undefined}
+                />
+                <Card 
+                    title="Net Flow" 
+                    value={formatCurrency(netCashflow, { colorize: true })} 
+                    trend={netCashflow >= 0 ? 'SURPLUS' : 'DEFICIT'}
+                    indicatorColor={netCashflow >= 0 ? 'green' : 'red'}
+                    onClick={setActivePage ? () => setActivePage('Summary') : undefined}
+                />
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
@@ -934,11 +1091,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
             <SectionCard title="Transaction History">
                 <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
+                    <div className="relative flex-1 min-w-[200px]">
+                        <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <input 
+                            type="text" 
+                            placeholder="Search transactions..." 
+                            value={filters.searchQuery} 
+                            onChange={(e) => setFilters({...filters, searchQuery: e.target.value})} 
+                            className="input-base pl-10 w-full" 
+                        />
+                    </div>
                     <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
                         <option value="all">All Accounts</option>
                         {(data?.accounts ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
+                    {budgetCategories.length > 0 && (
+                        <select value={filters.budgetCategory} onChange={(e) => setFilters({...filters, budgetCategory: e.target.value})} className="select-base w-auto min-w-[160px]">
+                            <option value="all">All Budget Categories</option>
+                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    )}
                     <div className="flex items-center gap-1">
                         <span className="text-xs font-medium text-slate-500 mr-1">Nature:</span>
                         <FilterButton label="All" value="all" current={filters.nature} onClick={(v) => setFilters(f => ({...f, nature: v as any}))} />
@@ -959,7 +1132,23 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <p className="font-semibold text-dark">{transaction.description}</p>
                                 <div className="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                                     <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
+                                    {setActivePage && transaction.accountId && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setActivePage('Accounts')}
+                                            className="text-primary hover:underline"
+                                            title="View account details"
+                                        >
+                                            {(data?.accounts ?? []).find(a => a.id === transaction.accountId)?.name || transaction.accountId}
+                                        </button>
+                                    )}
+                                    {!setActivePage && transaction.accountId && (
+                                        <span>{(data?.accounts ?? []).find(a => a.id === transaction.accountId)?.name || transaction.accountId}</span>
+                                    )}
                                     <span className="badge-neutral">{transaction.category}</span>
+                                    {transaction.budgetCategory && (
+                                        <span className="badge-neutral bg-blue-100 text-blue-700">{transaction.budgetCategory}</span>
+                                    )}
                                     {transaction.status && (
                                         <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
                                     )}

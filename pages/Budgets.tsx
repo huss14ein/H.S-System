@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -9,6 +9,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -25,6 +26,7 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import { getAISummary } from '../services/geminiService';
 import {
     predictFutureMonths,
     generateCommonScenarios,
@@ -35,7 +37,6 @@ import {
     type BudgetAnomaly,
     type SeasonalityPattern,
 } from '../services/householdBudgetAnalytics';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 
 
@@ -62,23 +63,224 @@ interface BudgetModalProps {
     budgetToEdit: Budget | null;
     currentMonth: number;
     currentYear: number;
+    householdAdults?: number;
+    householdKids?: number;
 }
 
-const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
+const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear, householdAdults = 2, householdKids = 3 }) => {
     const { data } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
+    const [isLoadingAI, setIsLoadingAI] = useState(false);
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
+    // Calculate dynamic amounts based on family size
+    const calculateFamilyAdjustedAmount = useCallback((baseAmount: number, perAdult: number, perKid: number, adults: number, kids: number): number => {
+        return baseAmount + (perAdult * adults) + (perKid * kids);
+    }, []);
+
+    // Saudi Arabia-specific budget categories with dynamic amounts based on family size
+    const saudiBudgetCategories = useMemo(() => {
+        const adults = householdAdults || 2;
+        const kids = householdKids || 0;
+        
+        // Base amounts are for a family of 2 adults, scaled by family size
+        const categories = [
+            { 
+                name: 'Housing & Rent', 
+                baseAmount: 5000, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Core' as const, 
+                description: 'Monthly rent or mortgage payment (typically fixed regardless of family size)' 
+            },
+            { 
+                name: 'Groceries & Food', 
+                baseAmount: 1500, 
+                perAdult: 800, 
+                perKid: 500, 
+                tier: 'Core' as const, 
+                description: 'Monthly groceries and household food items' 
+            },
+            { 
+                name: 'Utilities', 
+                baseAmount: 600, 
+                perAdult: 150, 
+                perKid: 50, 
+                tier: 'Core' as const, 
+                description: 'Electricity, water, gas, internet, and phone bills' 
+            },
+            { 
+                name: 'Transportation', 
+                baseAmount: 1200, 
+                perAdult: 400, 
+                perKid: 200, 
+                tier: 'Core' as const, 
+                description: 'Car payments, fuel, maintenance, and public transport' 
+            },
+            { 
+                name: 'Education', 
+                baseAmount: 0, 
+                perAdult: 0, 
+                perKid: 2000, 
+                tier: 'Core' as const, 
+                description: 'School fees, tuition, books, and educational materials per child' 
+            },
+            { 
+                name: 'Healthcare & Medical', 
+                baseAmount: 600, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Core' as const, 
+                description: 'Medical insurance, doctor visits, medications' 
+            },
+            { 
+                name: 'Insurance', 
+                baseAmount: 600, 
+                perAdult: 200, 
+                perKid: 100, 
+                tier: 'Core' as const, 
+                description: 'Health, car, life, and property insurance' 
+            },
+            { 
+                name: 'Personal Care', 
+                baseAmount: 400, 
+                perAdult: 150, 
+                perKid: 80, 
+                tier: 'Supporting' as const, 
+                description: 'Haircuts, cosmetics, toiletries, and personal hygiene' 
+            },
+            { 
+                name: 'Clothing & Apparel', 
+                baseAmount: 500, 
+                perAdult: 200, 
+                perKid: 150, 
+                tier: 'Supporting' as const, 
+                description: 'Clothing, shoes, and accessories for family' 
+            },
+            { 
+                name: 'Entertainment & Recreation', 
+                baseAmount: 600, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Optional' as const, 
+                description: 'Movies, restaurants, outings, and leisure activities' 
+            },
+            { 
+                name: 'Dining Out', 
+                baseAmount: 800, 
+                perAdult: 300, 
+                perKid: 150, 
+                tier: 'Optional' as const, 
+                description: 'Restaurant meals and takeout' 
+            },
+            { 
+                name: 'Shopping & Retail', 
+                baseAmount: 600, 
+                perAdult: 250, 
+                perKid: 150, 
+                tier: 'Optional' as const, 
+                description: 'General shopping and retail purchases' 
+            },
+            { 
+                name: 'Savings & Investments', 
+                baseAmount: 2000, 
+                perAdult: 500, 
+                perKid: 300, 
+                tier: 'Core' as const, 
+                description: 'Emergency fund, savings, and investment contributions' 
+            },
+            { 
+                name: 'Charity & Zakat', 
+                baseAmount: 500, 
+                perAdult: 100, 
+                perKid: 50, 
+                tier: 'Core' as const, 
+                description: 'Monthly charity and Zakat contributions' 
+            },
+            { 
+                name: 'Home Maintenance', 
+                baseAmount: 500, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Supporting' as const, 
+                description: 'Repairs, maintenance, and home improvements' 
+            },
+            { 
+                name: 'Children Activities', 
+                baseAmount: 0, 
+                perAdult: 0, 
+                perKid: 600, 
+                tier: 'Supporting' as const, 
+                description: 'Extracurricular activities, sports, and hobbies per child' 
+            },
+            { 
+                name: 'Gifts & Celebrations', 
+                baseAmount: 300, 
+                perAdult: 50, 
+                perKid: 50, 
+                tier: 'Optional' as const, 
+                description: 'Birthdays, weddings, and special occasions' 
+            },
+            { 
+                name: 'Travel & Vacations', 
+                baseAmount: 1000, 
+                perAdult: 300, 
+                perKid: 200, 
+                tier: 'Optional' as const, 
+                description: 'Travel expenses and vacation planning' 
+            },
+            { 
+                name: 'Subscriptions & Memberships', 
+                baseAmount: 200, 
+                perAdult: 80, 
+                perKid: 30, 
+                tier: 'Optional' as const, 
+                description: 'Streaming services, gym memberships, and subscriptions' 
+            },
+            { 
+                name: 'Pet Care', 
+                baseAmount: 300, 
+                perAdult: 0, 
+                perKid: 0, 
+                tier: 'Supporting' as const, 
+                description: 'Pet food, veterinary care, and pet supplies' 
+            },
+            { 
+                name: 'Miscellaneous', 
+                baseAmount: 400, 
+                perAdult: 100, 
+                perKid: 50, 
+                tier: 'Optional' as const, 
+                description: 'Other expenses not covered above' 
+            },
+        ];
+        return categories.map(cat => {
+            const suggestedAmount = calculateFamilyAdjustedAmount(cat.baseAmount, cat.perAdult, cat.perKid, adults, kids);
+            return {
+                name: cat.name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' '),
+                suggestedAmount: Math.round(suggestedAmount),
+                tier: cat.tier,
+                description: cat.description,
+            };
+        });
+    }, [householdAdults, householdKids, calculateFamilyAdjustedAmount]);
+
     const availableCategories = useMemo(() => {
-        const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
+        const allPossible = saudiBudgetCategories.map(c => c.name);
         if (budgetToEdit) return allPossible;
         return allPossible.filter(c => !existingCategories.has(c));
-    }, [existingCategories, budgetToEdit]);
+    }, [existingCategories, budgetToEdit, saudiBudgetCategories]);
 
+
+    const selectedCategoryInfo = useMemo(() => {
+        if (!category) return null;
+        return saudiBudgetCategories.find(c => c.name === category);
+    }, [category, saudiBudgetCategories]);
 
     React.useEffect(() => {
         if (budgetToEdit) {
@@ -94,16 +296,74 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         }
     }, [budgetToEdit, isOpen]);
 
+
+    const handleAISuggestBudget = useCallback(async () => {
+        if (!category || !auth?.user?.id) return;
+        setIsLoadingAI(true);
+        try {
+            const householdInfo = {
+                adults: householdAdults,
+                kids: householdKids,
+                monthlyIncome: (data?.transactions ?? [])
+                    .filter(t => t.type === 'income')
+                    .reduce((sum, t) => {
+                        const amount = Math.max(0, Number(t.amount) || 0);
+                        return sum + (Number.isFinite(amount) ? amount : 0);
+                    }, 0) / 12,
+            };
+            const prompt = `As a financial advisor for a family living in Saudi Arabia, suggest an appropriate monthly budget amount for "${category}" category. 
+            
+Family composition: ${householdInfo.adults} adult${householdInfo.adults !== 1 ? 's' : ''}, ${householdInfo.kids} child${householdInfo.kids !== 1 ? 'ren' : ''}
+Estimated monthly income: ${householdInfo.monthlyIncome.toFixed(0)} SAR
+Total family members: ${householdInfo.adults + householdInfo.kids}
+
+Consider:
+- Typical living costs in Saudi Arabia for a family of ${householdInfo.adults + householdInfo.kids} members
+- Family size impact: each additional adult typically adds 30-50% to variable expenses, each child adds 20-40%
+- Current suggested amount (already adjusted for family size): ${selectedCategoryInfo?.suggestedAmount || 0} SAR
+- Category type: ${selectedCategoryInfo?.tier || 'Optional'}
+- Income level and financial capacity
+
+Provide a realistic, practical amount that accounts for the family size. Respond with ONLY a JSON object: {"suggestedAmount": number, "reasoning": "brief explanation"}`;
+
+            const response = await getAISummary(prompt, 'budgets');
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.suggestedAmount && Number.isFinite(parsed.suggestedAmount)) {
+                        setLimit(String(Math.max(0, Math.round(parsed.suggestedAmount))));
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse AI response:', e);
+                }
+            }
+        } catch (error) {
+            console.error('AI suggestion failed:', error);
+        } finally {
+            setIsLoadingAI(false);
+        }
+    }, [category, auth?.user?.id, data?.transactions, selectedCategoryInfo, householdAdults, householdKids]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const rawLimit = parseFloat(limit) || 0;
+        const rawLimit = Number(limit) || 0;
+        if (!Number.isFinite(rawLimit) || rawLimit < 0) {
+            alert('Please enter a valid budget amount greater than or equal to 0.');
+            return;
+        }
         const isYearly = limitPeriod === 'Yearly';
         const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
+        // Ensure proper capitalization: First letter of each word capitalized
+        const formattedCategory = category.split(' ').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+        
         onSave({
-            category,
+            category: formattedCategory,
             limit: rawLimit,
             month,
             year,
@@ -119,17 +379,67 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
+                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Select a budget category tailored for Saudi Arabia family living expenses. Each category includes suggested amounts based on typical costs." /></label>
                     {budgetToEdit ? (
                         <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
                     ) : (
-                        <div className="mt-1">
+                        <div className="mt-1 space-y-2">
                             <Combobox 
                                 items={availableCategories}
                                 selectedItem={category}
-                                onSelectItem={setCategory}
-                                placeholder="Select or create a category..."
+                                onSelectItem={(selected) => {
+                                    // Ensure proper capitalization: First letter of each word capitalized
+                                    const formatted = selected.trim().split(' ').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                                    ).join(' ');
+                                    setCategory(formatted);
+                                    // Auto-fill suggested amount and tier when category is selected
+                                    const categoryInfo = saudiBudgetCategories.find(c => c.name === formatted);
+                                    if (categoryInfo && !budgetToEdit) {
+                                        setLimit(String(categoryInfo.suggestedAmount));
+                                        setTier(categoryInfo.tier);
+                                    }
+                                }}
+                                placeholder="Select a category or type a new one..."
                             />
+                            {selectedCategoryInfo && (
+                                <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                    <div className="flex items-start justify-between">
+                                        <div className="flex-1">
+                                            <p className="text-xs font-semibold text-blue-900 mb-1">{selectedCategoryInfo.description}</p>
+                                            <p className="text-xs text-blue-700">
+                                                Suggested amount: <span className="font-bold">{selectedCategoryInfo.suggestedAmount.toLocaleString()} SAR/month</span>
+                                                {householdAdults > 2 || householdKids > 0 && (
+                                                    <span className="text-blue-600 ml-2">(adjusted for {householdAdults} adult{householdAdults !== 1 ? 's' : ''}{householdKids > 0 ? `, ${householdKids} child${householdKids !== 1 ? 'ren' : ''}` : ''})</span>
+                                                )}
+                                            </p>
+                                            <p className="text-xs text-blue-600 mt-1">Type: <span className="font-medium">{selectedCategoryInfo.tier}</span></p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleAISuggestBudget}
+                                            disabled={isLoadingAI}
+                                            className="ml-2 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                            title="Get AI-powered budget suggestion based on your household"
+                                        >
+                                            {isLoadingAI ? (
+                                                <>
+                                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                    Analyzing...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <SparklesIcon className="h-3 w-3" />
+                                                    AI Suggest
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -162,9 +472,10 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
 interface BudgetsProps {
     triggerPageAction?: (page: Page, action: string) => void;
+    setActivePage?: (page: Page) => void;
 }
 
-const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
+const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
@@ -210,7 +521,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     }, [currentYear, currentMonth]);
     const [householdAdults, setHouseholdAdults] = useState(2);
-    const [householdKids, setHouseholdKids] = useState(0);
+    const [householdKids, setHouseholdKids] = useState(3);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
@@ -222,6 +533,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
     const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
+    const [isLoadingAIBudgets, setIsLoadingAIBudgets] = useState(false);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -250,6 +562,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 const parsed = JSON.parse(raw);
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
+                // If no saved data, use default: 2 adults, 3 kids
+                if (!parsed?.adults && !parsed?.kids) {
+                    setHouseholdAdults(2);
+                    setHouseholdKids(3);
+                }
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
                 if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
                     setEngineProfile(parsed.profile as HouseholdEngineProfile);
@@ -284,6 +601,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 if (!profile || typeof profile !== 'object') return;
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
+                // If no saved profile, use default: 2 adults, 3 kids
+                if (!profile?.adults && !profile?.kids) {
+                    setHouseholdAdults(2);
+                    setHouseholdKids(3);
+                }
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
                 if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
                     setEngineProfile(profile.profile as HouseholdEngineProfile);
@@ -606,25 +928,36 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         (data?.transactions ?? [])
             .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t) => {
-                const txDate = new Date(t.date);
-                const amount = Math.abs(t.amount);
-                if (txDate >= rangeStart && txDate <= rangeEnd) {
-                    spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
-                }
-                if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
-                    previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
+                try {
+                    const txDate = new Date(t.date);
+                    if (!Number.isFinite(txDate.getTime())) return;
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    if (txDate >= rangeStart && txDate <= rangeEnd) {
+                        spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
+                    }
+                    if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                        previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
+                    }
+                } catch (error) {
+                    console.warn('Error processing transaction for budget calculation:', error, t);
                 }
             });
 
         // Reflect collaborator spending into owner budget totals for shared categories.
         ownerSharedTransactions.forEach((tx) => {
-            if ((tx.status ?? 'Approved') !== 'Approved') return;
-            const d = new Date(tx.transaction_date || tx.date);
-            if (!(d >= rangeStart && d <= rangeEnd)) return;
-            const cat = String(tx.budget_category || '').trim();
-            if (!cat) return;
-            const amount = Math.abs(Number(tx.amount) || 0);
-            spending.set(cat, (spending.get(cat) || 0) + amount);
+            try {
+                if ((tx.status ?? 'Approved') !== 'Approved') return;
+                const d = new Date(tx.transaction_date || tx.date);
+                if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                const cat = String(tx.budget_category || '').trim();
+                if (!cat) return;
+                const amount = Math.abs(Number(tx.amount) || 0);
+                if (!Number.isFinite(amount)) return;
+                spending.set(cat, (spending.get(cat) || 0) + amount);
+            } catch (error) {
+                console.warn('Error processing shared transaction for budget calculation:', error, tx);
+            }
         });
 
         const ownScopedBudgets = (data?.budgets ?? [])
@@ -637,12 +970,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 .filter((cat) => !ownScopedBudgets.some((b) => b.category === cat))
                 .map((cat) => {
                     const meta = governanceCategories.find((g) => g.name === cat);
-                    const fallbackLimit = Number(meta?.monthly_limit) || 0;
+                    const fallbackLimit = Math.max(0, Number(meta?.monthly_limit) || 0);
                     return {
                         id: `synthetic-${cat}-${currentYear}-${currentMonth}`,
                         user_id: auth?.user?.id,
                         category: cat,
-                        limit: fallbackLimit,
+                        limit: Number.isFinite(fallbackLimit) ? fallbackLimit : 0,
                         month: currentMonth,
                         year: currentYear,
                         period: 'monthly',
@@ -655,13 +988,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
-            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
+            const toYearly = (b: Budget) => {
+                const limit = Math.max(0, Number(b.limit) || 0);
+                if (!Number.isFinite(limit)) return 0;
+                if (b.period === 'yearly') return limit;
+                if (b.period === 'weekly') return limit * 52;
+                if (b.period === 'daily') return limit * 365;
+                return limit * 12;
+            };
+            scopedBudgets.forEach((b) => {
+                const yearly = toYearly(b);
+                if (Number.isFinite(yearly)) {
+                    yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + yearly);
+                }
+            });
 
             return Array.from(yearlyLimitByCategory.entries())
                 .map(([category, yearlyLimit]) => {
-                    const spent = spending.get(category) || 0;
-                    const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
+                    const spent = Math.max(0, spending.get(category) || 0);
+                    const safeLimit = Math.max(0, Number.isFinite(yearlyLimit) ? yearlyLimit : 0);
+                    const percentage = safeLimit > 0 ? Math.min(1000, (spent / safeLimit) * 100) : 0;
                     let colorClass = 'bg-primary';
                     if (percentage > 100) colorClass = 'bg-danger';
                     else if (percentage > 90) colorClass = 'bg-warning';
@@ -671,9 +1017,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         month: currentMonth,
                         year: currentYear,
                         spent,
-                        limit: yearlyLimit,
-                        displayLimit: yearlyLimit,
-                        monthlyLimit: yearlyLimit / 12,
+                        limit: safeLimit,
+                        displayLimit: safeLimit,
+                        monthlyLimit: safeLimit / 12,
                         percentage,
                         colorClass,
                     };
@@ -682,14 +1028,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
-                const spent = spending.get(budget.category) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const limit = Math.max(0, Number(budget.limit) || 0);
+                if (!Number.isFinite(limit)) {
+                    return {
+                        ...budget,
+                        spent: 0,
+                        displayLimit: 0,
+                        monthlyLimit: 0,
+                        percentage: 0,
+                        colorClass: 'bg-primary',
+                        previousPeriodSpent: 0,
+                        trendDelta: 0,
+                        trendDirection: 'flat' as const,
+                        budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
+                        utilizationLabel: 'Healthy' as const,
+                    };
+                }
+                const monthlyEquivalent = budget.period === 'yearly' ? limit / 12 : budget.period === 'weekly' ? limit * (52 / 12) : budget.period === 'daily' ? limit * (365 / 12) : limit;
+                const safeMonthlyLimit = Math.max(0, Number.isFinite(monthlyEquivalent) ? monthlyEquivalent : 0);
+                const spent = Math.max(0, spending.get(budget.category) || 0);
+                const percentage = safeMonthlyLimit > 0 ? Math.min(1000, (spent / safeMonthlyLimit) * 100) : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
                 else if (percentage > 90) colorClass = 'bg-warning';
-                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
+                return { ...budget, spent, displayLimit: limit, monthlyLimit: safeMonthlyLimit, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
     }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
 
@@ -738,39 +1101,61 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         mySharedBudgetTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
-                if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                try {
+                    const d = new Date(tx.transaction_date || tx.date);
+                    if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                    const category = String(tx.budget_category || '').trim();
+                    if (!category) return;
+                    const amount = Math.abs(Number(tx.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
+                    spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                } catch (error) {
+                    console.warn('Error processing shared budget transaction:', error, tx);
+                }
             });
 
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
-                if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                try {
+                    const d = new Date(tx.transaction_date || tx.date);
+                    if (!Number.isFinite(d.getTime()) || !(d >= rangeStart && d <= rangeEnd)) return;
+                    const category = String(tx.budget_category || '').trim();
+                    if (!category) return;
+                    const amount = Math.abs(Number(tx.amount) || 0);
+                    if (!Number.isFinite(amount)) return;
+                    const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                    spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                } catch (error) {
+                    console.warn('Error processing owner shared transaction:', error, tx);
+                }
             });
 
         const rowsForYear = (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+            .filter((b) => {
+                const year = Number((b as any).year) || currentYear;
+                return Number.isFinite(year) && year === currentYear;
+            });
 
-        const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+        const toYearly = (b: Budget) => {
+            const limit = Math.max(0, Number(b.limit) || 0);
+            if (!Number.isFinite(limit)) return 0;
+            if (b.period === 'yearly') return limit;
+            if (b.period === 'weekly') return limit * 52;
+            if (b.period === 'daily') return limit * 365;
+            return limit * 12;
+        };
 
         if (budgetView === 'Yearly') {
             const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
             rowsForYear.forEach((b) => {
+                const yearly = toYearly(b);
+                if (!Number.isFinite(yearly)) return;
                 const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const key = `${ownerKey}::${b.category}`;
                 const existing = yearlyByOwnerCategory.get(key);
-                const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
+                const yearlyLimit = Math.max(0, (existing?.yearlyLimit || 0) + yearly);
                 yearlyByOwnerCategory.set(key, {
                     ...(existing || b),
                     category: b.category,
@@ -783,8 +1168,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
-                    const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
-                    const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
+                    const spent = Math.max(0, sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0);
+                    const safeLimit = Math.max(0, Number.isFinite(entry.yearlyLimit) ? entry.yearlyLimit : 0);
+                    const percentage = safeLimit > 0 ? Math.min(1000, (spent / safeLimit) * 100) : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                     let colorClass = 'bg-primary';
                     if (percentage > 100) colorClass = 'bg-danger';
@@ -794,9 +1180,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         id: `shared-${entry.ownerKey}-${entry.category}-${currentYear}`,
                         month: currentMonth,
                         year: currentYear,
-                        limit: entry.yearlyLimit,
-                        displayLimit: entry.yearlyLimit,
-                        monthlyLimit: entry.yearlyLimit / 12,
+                        limit: safeLimit,
+                        displayLimit: safeLimit,
+                        monthlyLimit: safeLimit / 12,
                         spent,
                         percentage,
                         colorClass,
@@ -814,13 +1200,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             .filter((b) => {
                 const month = Number((b as any).month) || currentMonth;
                 const year = Number((b as any).year) || currentYear;
-                return month === currentMonth || (b.period === 'yearly' && year === currentYear);
+                return Number.isFinite(month) && Number.isFinite(year) && (month === currentMonth || (b.period === 'yearly' && year === currentYear));
             })
             .map((b) => {
-                const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+                const limit = Math.max(0, Number(b.limit) || 0);
+                if (!Number.isFinite(limit)) {
+                    return {
+                        ...b,
+                        id: `shared-${String((b as any).owner_user_id || b.user_id || 'owner')}-${b.id}`,
+                        spent: 0,
+                        percentage: 0,
+                        colorClass: 'bg-primary',
+                        displayLimit: 0,
+                        monthlyLimit: 0,
+                        previousPeriodSpent: 0,
+                        trendDelta: 0,
+                        trendDirection: 'flat' as const,
+                        budgetTier: (b.tier ?? 'Optional') as BudgetTier,
+                        utilizationLabel: 'Healthy' as const,
+                    };
+                }
+                const monthlyEquivalent = b.period === 'yearly' ? limit / 12 : b.period === 'weekly' ? limit * (52 / 12) : b.period === 'daily' ? limit * (365 / 12) : limit;
+                const safeMonthlyLimit = Math.max(0, Number.isFinite(monthlyEquivalent) ? monthlyEquivalent : 0);
                 const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const spent = sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+                const spent = Math.max(0, sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0);
+                const percentage = safeMonthlyLimit > 0 ? Math.min(1000, (spent / safeMonthlyLimit) * 100) : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
                 if (percentage > 100) colorClass = 'bg-danger';
@@ -831,8 +1235,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     spent,
                     percentage,
                     colorClass,
-                    displayLimit: b.limit,
-                    monthlyLimit: monthlyEquivalent,
+                    displayLimit: limit,
+                    monthlyLimit: safeMonthlyLimit,
                     previousPeriodSpent: 0,
                     trendDelta: 0,
                     trendDirection: 'flat' as const,
@@ -869,8 +1273,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
-        const totalLimit = budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0);
-        const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
+        const totalLimit = budgetData.reduce((sum, b) => {
+            const limit = Math.max(0, Number(b.monthlyLimit) || 0);
+            return sum + (Number.isFinite(limit) ? limit : 0);
+        }, 0);
+        const totalSpent = budgetData.reduce((sum, b) => {
+            const spent = Math.max(0, Number(b.spent) || 0);
+            return sum + (Number.isFinite(spent) ? spent : 0);
+        }, 0);
         /** Money saved from budget = sum of (limit - spent) for categories where we're under. Same as max(0, totalLimit - totalSpent) when no category is over. */
         const totalSavedFromBudget = Math.max(0, totalLimit - totalSpent);
         const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
@@ -880,6 +1290,60 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
+
+    const handleExportBudgets = useCallback(() => {
+        try {
+            const exportData = {
+                summary: {
+                    view: budgetView,
+                    currentMonth,
+                    currentYear,
+                    totalLimit: budgetInsights.totalLimit,
+                    totalSpent: budgetInsights.totalSpent,
+                    totalSaved: budgetInsights.totalSavedFromBudget,
+                    healthyCount: budgetInsights.healthyCount,
+                    watchCount: budgetInsights.watchCount,
+                    criticalCount: budgetInsights.criticalCount,
+                },
+                budgets: budgetData.map(b => ({
+                    category: b.category,
+                    limit: b.displayLimit,
+                    monthlyLimit: b.monthlyLimit,
+                    spent: b.spent,
+                    percentage: b.percentage,
+                    utilizationLabel: b.utilizationLabel,
+                    budgetTier: b.budgetTier,
+                    period: b.period,
+                    month: b.month,
+                    year: b.year,
+                })),
+                sharedBudgets: sharedBudgetCards.map(b => ({
+                    category: b.category,
+                    limit: b.displayLimit,
+                    monthlyLimit: b.monthlyLimit,
+                    spent: b.spent,
+                    percentage: b.percentage,
+                    utilizationLabel: b.utilizationLabel,
+                    budgetTier: b.budgetTier,
+                    period: b.period,
+                    month: b.month,
+                    year: b.year,
+                    ownerEmail: (b as any).ownerEmail || 'Unknown',
+                })),
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `budgets-${currentYear}-${String(currentMonth).padStart(2, '0')}-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting budgets:', error);
+            alert('Failed to export budgets. Please try again.');
+        }
+    }, [budgetData, sharedBudgetCards, budgetInsights, budgetView, currentMonth, currentYear]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -1314,7 +1778,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    <DemoDataButton page="Budgets" options={{ includeBudgets: true }} />
+                    <button type="button" onClick={handleExportBudgets} className="btn-ghost flex items-center gap-2" title="Export budgets data">
+                        <ArrowDownTrayIcon className="h-5 w-5" />
+                        Export
+                    </button>
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history
@@ -1628,20 +2095,28 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
-            <SectionCard title="Household Budget Engine">
-                <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm text-slate-700 font-medium">
-                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
-                    </p>
-                    {triggerPageAction && (
-                        <button
-                            type="button"
-                            onClick={() => triggerPageAction('Market Events', 'focus-macro')}
-                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
-                        >
-                            Check Market Events
-                        </button>
-                    )}
+            <SectionCard title="Household Budget Engine - AI-Powered Smart Budgeting">
+                <div className="mb-4 p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 rounded-lg border border-indigo-200">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                            <h3 className="text-sm font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                                <SparklesIcon className="h-4 w-4" />
+                                Ultra-Smart Automated Budget Planning
+                            </h3>
+                            <p className="text-xs text-slate-700 leading-relaxed">
+                                This AI-enhanced engine automatically analyzes your transactions, accounts, goals, and household composition to create intelligent budget recommendations tailored for Saudi Arabia family living. It learns from your spending patterns and suggests optimal allocations across all essential categories.
+                            </p>
+                        </div>
+                        {triggerPageAction && (
+                            <button
+                                type="button"
+                                onClick={() => triggerPageAction('Market Events', 'focus-macro')}
+                                className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex-shrink-0"
+                            >
+                                Check Market Events
+                            </button>
+                        )}
+                    </div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
@@ -1738,9 +2213,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             }
                             const buckets = currentMonthPlan.buckets || {};
                             const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                            // Enhanced mapping to Saudi Arabia-specific categories
                             const categoryMap: Record<string, string> = {
-                                'Fixed Obligations': 'Housing',
-                                'Household Essentials': 'Food',
+                                'Fixed Obligations': 'Housing & Rent',
+                                'Household Essentials': 'Groceries & Food',
                                 'Household Operations': 'Utilities',
                                 'Transport': 'Transportation',
                                 'Personal Support': 'Personal Care',
@@ -1761,8 +2237,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                     updateBudget({ ...existing, limit: amount });
                                     updated++;
                                 } else {
+                                    // Ensure proper capitalization: First letter of each word capitalized
+                                    const formattedCategory = category.split(' ').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                                    ).join(' ');
                                     addBudget({
-                                        category,
+                                        category: formattedCategory,
                                         limit: amount,
                                         month: currentMonth,
                                         year: currentYear,
@@ -1777,9 +2257,146 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={!isAdmin}
                     >
-                        Apply Household Engine Budgets to Current Month
+                        Apply Smart Budgets To Current Month
                     </button>
-                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
+                    <InfoHint text="AI-powered: Creates or updates budgets using Saudi Arabia-specific categories with intelligent amounts based on your household composition, income, and spending patterns. Only admins can trigger this." />
+                </div>
+                
+                {/* AI-Powered Budget Suggestions */}
+                <div className="mt-6 pt-6 border-t border-slate-200">
+                    <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                            <SparklesIcon className="h-4 w-4 text-indigo-600" />
+                            AI Budget Recommendations
+                        </h4>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (!isAdmin) {
+                                    alert('Only admins can generate AI budget suggestions.');
+                                    return;
+                                }
+                                setIsLoadingAIBudgets(true);
+                                try {
+                                    const monthlyIncome = expectedMonthlySalary || suggestedMonthlySalary || 15000;
+                                    const totalFamilyMembers = householdAdults + householdKids;
+                                    const prompt = `As a financial advisor for a family in Saudi Arabia, suggest comprehensive monthly budget allocations.
+
+Family Composition: ${householdAdults} adult${householdAdults !== 1 ? 's' : ''}, ${householdKids} child${householdKids !== 1 ? 'ren' : ''} (Total: ${totalFamilyMembers} members)
+Monthly Income: ${monthlyIncome.toLocaleString()} SAR
+
+CRITICAL: All amounts MUST be adjusted for family size:
+- Base amounts are for 2 adults
+- Each additional adult adds 30-50% to variable expenses (food, utilities, personal care, etc.)
+- Each child adds 20-40% to variable expenses
+- Fixed costs (housing, insurance base) remain relatively constant
+- Education costs scale directly with number of children
+- Transportation costs increase with more drivers/adults
+
+Provide a JSON response with budget categories and suggested monthly amounts in SAR:
+{
+  "budgets": [
+    {"category": "Category Name", "amount": number, "tier": "Core|Supporting|Optional", "reasoning": "brief explanation including family size adjustment"}
+  ],
+  "totalAllocated": number,
+  "remainingForSavings": number,
+  "recommendations": ["insight1", "insight2"]
+}
+
+Use Saudi Arabia-specific categories with proper capitalization (Title Case):
+- Housing & Rent (fixed, ~5000-8000 SAR)
+- Groceries & Food (scales with family: base 1500 + 800/adult + 500/child)
+- Utilities (scales: base 600 + 150/adult + 50/child)
+- Transportation (scales: base 1200 + 400/adult + 200/child)
+- Education (2000 SAR per child)
+- Healthcare & Medical (scales: base 600 + 300/adult + 200/child)
+- Insurance (scales: base 600 + 200/adult + 100/child)
+- Personal Care (scales: base 400 + 150/adult + 80/child)
+- Clothing & Apparel (scales: base 500 + 200/adult + 150/child)
+- Entertainment & Recreation (scales: base 600 + 300/adult + 200/child)
+- Dining Out (scales: base 800 + 300/adult + 150/child)
+- Shopping & Retail (scales: base 600 + 250/adult + 150/child)
+- Savings & Investments (scales: base 2000 + 500/adult + 300/child)
+- Charity & Zakat (scales: base 500 + 100/adult + 50/child)
+- Home Maintenance (fixed ~500 SAR)
+- Children Activities (600 SAR per child)
+- Gifts & Celebrations (scales: base 300 + 50/adult + 50/child)
+- Travel & Vacations (scales: base 1000 + 300/adult + 200/child)
+- Subscriptions & Memberships (scales: base 200 + 80/adult + 30/child)
+- Pet Care (fixed ~300 SAR)
+- Miscellaneous (scales: base 400 + 100/adult + 50/child)
+
+Ensure total allocated is reasonable (typically 70-85% of income, leaving 15-30% for savings).`;
+
+                                    const response = await getAISummary(prompt, 'budgets');
+                                    const jsonMatch = response.match(/\{[\s\S]*\}/);
+                                    if (jsonMatch) {
+                                        try {
+                                            const parsed = JSON.parse(jsonMatch[0]);
+                                            if (parsed.budgets && Array.isArray(parsed.budgets)) {
+                                                const suggestedBudgets = parsed.budgets.slice(0, 10); // Limit to top 10
+                                                const message = `AI Suggested ${suggestedBudgets.length} budgets:\n\n${suggestedBudgets.map((b: any) => `• ${b.category}: ${b.amount?.toLocaleString() || 0} SAR (${b.tier || 'Optional'})\n  ${b.reasoning || ''}`).join('\n\n')}\n\n${parsed.recommendations ? '\nRecommendations:\n' + parsed.recommendations.map((r: string) => `• ${r}`).join('\n') : ''}\n\nWould you like to apply these budgets?`;
+                                                if (window.confirm(message)) {
+                                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                                                    let created = 0;
+                                                    let updated = 0;
+                                                    for (const suggestion of suggestedBudgets) {
+                                                        const category = suggestion.category.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+                                                        const amount = Math.max(0, Number(suggestion.amount) || 0);
+                                                        if (!Number.isFinite(amount) || amount <= 0) continue;
+                                                        const existing = existingBudgets.find((b) => b.category === category);
+                                                        if (existing) {
+                                                            updateBudget({ ...existing, limit: amount, tier: suggestion.tier || 'Optional' });
+                                                            updated++;
+                                                        } else {
+                                                            addBudget({
+                                                                category,
+                                                                limit: amount,
+                                                                month: currentMonth,
+                                                                year: currentYear,
+                                                                period: 'monthly',
+                                                                tier: (suggestion.tier || 'Optional') as 'Core' | 'Supporting' | 'Optional',
+                                                            });
+                                                            created++;
+                                                        }
+                                                    }
+                                                    alert(`AI budgets applied: ${created} created, ${updated} updated.`);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn('Failed to parse AI response:', e);
+                                            alert('AI suggestion generated, but format was unexpected. Please review the response manually.');
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('AI suggestion failed:', error);
+                                    alert('Failed to generate AI suggestions. Please try again later.');
+                                } finally {
+                                    setIsLoadingAIBudgets(false);
+                                }
+                            }}
+                            disabled={isLoadingAIBudgets || !isAdmin}
+                            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
+                        >
+                            {isLoadingAI ? (
+                                <>
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Generating AI Suggestions...
+                                </>
+                            ) : (
+                                <>
+                                    <SparklesIcon className="h-4 w-4" />
+                                    Generate AI Budget Suggestions
+                                </>
+                            )}
+                        </button>
+                    </div>
+                    <p className="text-xs text-slate-600 mb-3">
+                        Get intelligent budget recommendations tailored to your household size, income, and location in Saudi Arabia. The AI analyzes your financial patterns and suggests optimal allocations across all essential living expense categories.
+                    </p>
                 </div>
 
                 {/* Predictive Analytics Section */}
@@ -2111,17 +2728,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             </div>
 
             {budgetData.length > 0 && (
-                <div className="section-card border-l-4 border-emerald-500/60">
-                    <h3 className="section-title text-base">Money saved from budget</h3>
-                    <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
-                    <p className="text-sm text-slate-600 mt-1">
-                        {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
-                        {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
+                <SectionCard>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div>
+                            <h3 className="text-base font-semibold text-slate-900 mb-1">Money saved from budget</h3>
+                            <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
+                            <p className="text-sm text-slate-600 mt-1">
+                                {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
+                                {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
                         {budgetView === 'Daily' && 'Today you stayed under your daily budget by this amount. '}
                         {budgetView === 'Yearly' && `So far in ${currentYear} you are under your yearly budget by this amount. `}
                         This money remains in your accounts; it is part of your actual cash flow and can go toward goals, investments, or savings.
                     </p>
-                </div>
+                        </div>
+                        {setActivePage && (
+                            <div className="flex flex-wrap gap-2">
+                                <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost text-sm">
+                                    View Transactions →
+                                </button>
+                                <button type="button" onClick={() => setActivePage('Summary')} className="btn-ghost text-sm">
+                                    View Summary →
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </SectionCard>
             )}
 
             <SectionCard title="Budget sharing">
@@ -2222,11 +2853,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             </div>
                             <div>
                                 <span className="text-indigo-600">Total Budget Limit:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => {
+                                    const limit = Math.max(0, Number(b.monthlyLimit) || 0);
+                                    return sum + (Number.isFinite(limit) ? limit : 0);
+                                }, 0), { digits: 0 })}</span>
                             </div>
                             <div>
                                 <span className="text-indigo-600">Total Spent:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</span>
+                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => {
+                                    const spent = Math.max(0, Number(b.spent) || 0);
+                                    return sum + (Number.isFinite(spent) ? spent : 0);
+                                }, 0), { digits: 0 })}</span>
                             </div>
                         </div>
                     </div>
@@ -2246,7 +2883,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                     {formatCurrencyString(
                                         ownerSharedTransactions
                                             .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
+                                            .reduce((sum, tx) => {
+                                                const amount = Math.abs(Number(tx.amount) || 0);
+                                                return sum + (Number.isFinite(amount) ? amount : 0);
+                                            }, 0),
                                         { digits: 0 }
                                     )}
                                 </span>
@@ -2389,12 +3029,37 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 ))}
             </div>
              {budgetData.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-lg shadow">
-                    <p className="text-gray-500">No budgets set for this month.</p>
-                </div>
+                <SectionCard>
+                    <div className="text-center py-12">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 mb-4">
+                            <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-900 mb-2">No budgets set for this {budgetView.toLowerCase()}</h3>
+                        <p className="text-gray-500 mb-6">Create budgets to track your spending by category and stay on top of your finances.</p>
+                        {isAdmin && (
+                            <div className="flex flex-wrap items-center justify-center gap-3">
+                                <button type="button" onClick={() => handleOpenModal()} className="btn-primary">
+                                    Add Your First Budget
+                                </button>
+                                {setActivePage && (
+                                    <>
+                                        <button type="button" onClick={() => setActivePage('Transactions')} className="btn-ghost">
+                                            View Transactions
+                                        </button>
+                                        <button type="button" onClick={() => setActivePage('Summary')} className="btn-ghost">
+                                            View Summary
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </SectionCard>
             )}
 
-            <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
+            <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} householdAdults={householdAdults} householdKids={householdKids} />
         </PageLayout>
     );
 };
