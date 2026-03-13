@@ -490,12 +490,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const recurringPromise = db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
                 .then((r: any) => r, () => ({ data: [] as any[], error: { code: 'PGRST205', message: 'Table not found' } }));
 
+            // Fetch transactions with fallback if recurring_id column doesn't exist
+            const transactionsPromise = db.from('transactions').select('*').eq('user_id', auth.user.id)
+                .then((r: any) => r, async (err: any) => {
+                    // If error is about missing recurring_id column, try without it
+                    if (err?.code === 'PGRST204' && err?.message?.includes('recurringId') || err?.message?.includes('recurring_id')) {
+                        try {
+                            // Try selecting specific columns excluding recurring_id
+                            const result = await db.from('transactions')
+                                .select('id, user_id, date, description, amount, category, subcategory, budget_category, type, account_id, status, rejection_reason, transaction_nature, expense_type')
+                                .eq('user_id', auth.user.id);
+                            return result;
+                        } catch (fallbackErr) {
+                            console.warn('Fallback transaction fetch also failed:', fallbackErr);
+                            return { data: [], error: err };
+                        }
+                    }
+                    return { data: [], error: err };
+                });
+
             const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
                 db.from('assets').select('*').eq('user_id', auth.user.id),
                 db.from('liabilities').select('*').eq('user_id', auth.user.id),
                 db.from('goals').select('*').eq('user_id', auth.user.id),
-                db.from('transactions').select('*').eq('user_id', auth.user.id),
+                transactionsPromise,
                 db.from('investment_portfolios').select('*, holdings(*)').eq('user_id', auth.user.id),
                 db.from('investment_transactions').select('*').eq('user_id', auth.user.id),
                 db.from('budgets').select('*').eq('user_id', auth.user.id),
