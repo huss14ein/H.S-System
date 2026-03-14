@@ -131,11 +131,15 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
     const loadStatements = async () => {
       // Try to load from database first
       if (supabase && auth?.user) {
+        const supabaseClient = supabase; // Type narrowing
+        const user = auth.user;
+        if (!user) return;
+        
         try {
-          const { data: dbStatements, error } = await supabase
+          const { data: dbStatements, error } = await supabaseClient
             .from('financial_statements')
             .select('*')
-            .eq('user_id', auth.user.id)
+            .eq('user_id', user.id)
             .order('uploaded_at', { ascending: false });
 
           if (!error && dbStatements) {
@@ -214,11 +218,13 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
     // Save to database if available
     if (supabase && auth?.user) {
       const user = auth.user;
-      if (!user) return;
+      if (!user || !supabase) return;
+      
+      const supabaseClient = supabase; // Type narrowing
       
       statements.forEach(async (statement) => {
         try {
-          const { error } = await supabase
+          const { error } = await supabaseClient
             .from('financial_statements')
             .upsert({
               id: statement.id,
