@@ -39,7 +39,6 @@ const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
 const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
 const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
 const WatchlistView = lazy(() => import('./pages/WatchlistView'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 
 // Financial Planning Pages
 const Plan = lazy(() => import('./pages/Plan'));
