@@ -516,7 +516,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
                 recurringPromise,
-                budgetRequestsPromise
+                db.from('budget_requests').select('*').eq('user_id', auth.user.id)
             ];
             const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests'] as const;
             const settled = await Promise.allSettled(fetchPromises);
