@@ -610,7 +610,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const filteredWatchlist = useMemo(() => {
         const q = searchQuery.trim().toUpperCase();
         const bucketSymbolSet = activeBucket ? new Set((activeBucket.symbols || []).map((s) => s.toUpperCase())) : null;
-        return (data?.watchlist ?? []).filter((item) => {
+        const filtered = (data?.watchlist ?? []).filter((item) => {
             const symbol = (item.symbol || '').toUpperCase();
             const name = (item.name || '').toUpperCase();
             const market = getExchangeAndCurrencyForSymbol(symbol);
@@ -619,6 +619,12 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             const queryOk = !q || symbol.includes(q) || name.includes(q);
             const bucketOk = !bucketSymbolSet || bucketSymbolSet.has(symbol);
             return marketOk && queryOk && bucketOk;
+        });
+        // Sort by symbol name for consistent display
+        return filtered.sort((a, b) => {
+            const symbolA = (a.symbol || '').toUpperCase();
+            const symbolB = (b.symbol || '').toUpperCase();
+            return symbolA.localeCompare(symbolB);
         });
     }, [data?.watchlist, searchQuery, marketFilter, activeBucket]);
 

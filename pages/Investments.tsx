@@ -1253,7 +1253,7 @@ const PlatformCard: React.FC<{
         const priceInfo = sym ? simulatedPrices[sym] : undefined;
         const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
         const liveValue = currentMktPrice * h.quantity;
-        const totalCost = h.avgCost * h.quantity;
+        const totalCost = (h.avgCost ?? 0) * h.quantity;
         const gainLoss = liveValue - totalCost;
         return { ...h, currentValue: liveValue, totalCost, gainLoss };
     }).sort((a,b) => b.currentValue - a.currentValue);

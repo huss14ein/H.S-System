@@ -54,7 +54,13 @@ const DividendTrackerView: React.FC = () => {
             "Dividend Income": value 
         }));
 
-        const recentDividendTransactions = dividendTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
+        const recentDividendTransactions = dividendTransactions
+            .filter(t => {
+                const txDate = new Date(t.date);
+                return !isNaN(txDate.getTime());
+            })
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .slice(0, 10);
 
         const allHoldings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
         const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate), 0);
