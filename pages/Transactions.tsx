@@ -398,7 +398,7 @@ const RecurringModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
                     <select value={accountId} onChange={e => setAccountId(e.target.value)} className="select-base" required>
                         <option value="">Select account</option>
-                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                        {accounts.filter(a => a.type !== 'Investment').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                     </select>
                 </div>
                 {type === 'expense' && budgetCategories.length > 0 && (
@@ -437,7 +437,7 @@ const RecurringModal: React.FC<{
 };
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
@@ -615,8 +615,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
+            const isBudgetCategoryMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetCategoryMatch && isPermitted;
         });
     }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
@@ -842,6 +843,19 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         setIsBulkReviewing(false);
     };
 
+    if (loading || !data) {
+        return (
+            <PageLayout title="Cash Flow">
+                <div className="flex items-center justify-center min-h-[24rem]">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-sm text-slate-600">Loading transaction data...</p>
+                    </div>
+                </div>
+            </PageLayout>
+        );
+    }
+
     return (
         <PageLayout
             title="Cash Flow"
@@ -1013,6 +1027,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <FilterButton label="All" value="all" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                         <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                         <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-slate-500 mr-1">Budget:</span>
+                        <select value={filters.budgetCategory} onChange={(e) => setFilters({...filters, budgetCategory: e.target.value})} className="select-base w-auto min-w-[140px]">
+                            <option value="all">All Categories</option>
+                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                     </div>
                 </div>
                 <ul className="divide-y divide-slate-100">

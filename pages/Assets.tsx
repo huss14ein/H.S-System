@@ -580,15 +580,48 @@ const AssetForm: React.FC<{ asset: Asset | null; onSave: (data: Partial<Asset>) 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSave({
-      name,
-      type,
-      value: parseFloat(value) || 0,
-      purchaseValue: parseFloat(purchaseValue) || 0,
-      purchaseDate,
-      description,
-      currency: 'SAR'
-    });
+    
+    // Validation
+    const valueNum = parseFloat(value);
+    const purchaseValueNum = parseFloat(purchaseValue);
+    
+    if (!name || name.trim().length < 2) {
+      alert('Asset name must be at least 2 characters.');
+      return;
+    }
+    
+    if (!Number.isFinite(valueNum) || valueNum <= 0) {
+      alert('Current value must be a positive number.');
+      return;
+    }
+    
+    if (!Number.isFinite(purchaseValueNum) || purchaseValueNum < 0) {
+      alert('Purchase value must be a non-negative number.');
+      return;
+    }
+    
+    const purchaseDateObj = new Date(purchaseDate);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (purchaseDateObj > today) {
+      if (!confirm('Purchase date is in the future. Continue anyway?')) {
+        return;
+      }
+    }
+    
+    try {
+      await onSave({
+        name: name.trim(),
+        type,
+        value: valueNum,
+        purchaseValue: purchaseValueNum,
+        purchaseDate,
+        description: description?.trim(),
+        currency: 'SAR'
+      });
+    } catch (error) {
+      alert(`Failed to save asset: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   return (
@@ -637,17 +670,46 @@ const CommodityForm: React.FC<{ commodity: CommodityHolding | null; onSave: (dat
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const qty = parseFloat(quantity) || 0;
-    const price = parseFloat(currentPrice) || parseFloat(purchasePrice) || 0;
-    await onSave({
-      symbol: symbol.toUpperCase(),
-      name: name || symbol.toUpperCase(),
-      quantity: qty,
-      purchasePrice: parseFloat(purchasePrice) || 0,
-      currentPrice: price,
-      currency: 'SAR',
-      currentValue: qty * price
-    });
+    
+    // Validation
+    if (!symbol || symbol.trim().length < 1 || symbol.trim().length > 10) {
+      alert('Symbol must be between 1 and 10 characters.');
+      return;
+    }
+    
+    const qty = parseFloat(quantity);
+    const purchasePriceNum = parseFloat(purchasePrice);
+    const currentPriceNum = parseFloat(currentPrice);
+    
+    if (!Number.isFinite(qty) || qty <= 0) {
+      alert('Quantity must be a positive number.');
+      return;
+    }
+    
+    if (!Number.isFinite(purchasePriceNum) || purchasePriceNum < 0) {
+      alert('Purchase price must be a non-negative number.');
+      return;
+    }
+    
+    const price = Number.isFinite(currentPriceNum) && currentPriceNum > 0 ? currentPriceNum : purchasePriceNum;
+    if (!Number.isFinite(price) || price <= 0) {
+      alert('Current price must be a positive number.');
+      return;
+    }
+    
+    try {
+      await onSave({
+        symbol: symbol.trim().toUpperCase(),
+        name: (name || symbol.trim()).toUpperCase(),
+        quantity: qty,
+        purchasePrice: purchasePriceNum,
+        currentPrice: price,
+        currency: 'SAR',
+        currentValue: qty * price
+      });
+    } catch (error) {
+      alert(`Failed to save commodity: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   return (
