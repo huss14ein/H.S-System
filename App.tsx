@@ -2,7 +2,8 @@ import React, { useState, useContext, useCallback, Suspense, lazy, startTransiti
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
-import { AuthContext } from './context/AuthContext';
+import { AuthContext, AuthProvider } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { MarketDataProvider } from './context/MarketDataContext';
@@ -12,27 +13,50 @@ import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
 import AppErrorBoundary from './components/AppErrorBoundary';
 
+import { StatementProcessingProvider } from './context/StatementProcessingContext';
+import { AIProvider } from './context/TransactionAIContext';
+import { ReconciliationProvider } from './context/ReconciliationContext';
+import { MultiBankProvider } from './context/MultiBankContext';
+
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Summary = lazy(() => import('./pages/Summary'));
 const Accounts = lazy(() => import('./pages/Accounts'));
-const Investments = lazy(() => import('./pages/Investments'));
-const Assets = lazy(() => import('./pages/Assets'));
 const Liabilities = lazy(() => import('./pages/Liabilities'));
 const Transactions = lazy(() => import('./pages/Transactions'));
 const Budgets = lazy(() => import('./pages/Budgets'));
 const Goals = lazy(() => import('./pages/Goals'));
-const Plan = lazy(() => import('./pages/Plan'));
 const Forecast = lazy(() => import('./pages/Forecast'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const Zakat = lazy(() => import('./pages/Zakat'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
-const SystemHealth = lazy(() => import('./pages/SystemHealth'));
-const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
-const MarketEvents = lazy(() => import('./pages/MarketEvents'));
 
-const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Investments', 'Assets', 'Liabilities', 'Transactions', 'Budgets', 'Plan', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'System & APIs Health', 'Settings', 'Wealth Ultra', 'Market Events'];
+// Investment & Strategy Pages
+const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
+const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
+const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
+const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
+const WatchlistView = lazy(() => import('./pages/WatchlistView'));
+const Commodities = lazy(() => import('./pages/Commodities'));
+
+// Financial Planning Pages
+const Plan = lazy(() => import('./pages/Plan'));
+
+// Asset Management Pages
+const Assets = lazy(() => import('./pages/Assets'));
+
+// System & Market Pages
+const MarketEvents = lazy(() => import('./pages/MarketEvents'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+
+const VALID_PAGES: Page[] = [
+  'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
+  'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
+  'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
+  'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
+  'Assets', 'System Health'
+];
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -105,48 +129,80 @@ const App: React.FC = () => {
       case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
       case 'Summary': return <Summary setActivePage={setActivePage} />;
       case 'Accounts': return <Accounts setActivePage={setActivePage} />;
-      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Assets': return <Assets {...actionProps} />;
       case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
       case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets triggerPageAction={triggerPageAction} />;
       case 'Goals': return <Goals setActivePage={setActivePage} />;
-      case 'Plan': return <Plan setActivePage={setActivePage} />;
       case 'Forecast': return <Forecast />;
       case 'Analysis': return <Analysis />;
       case 'Zakat': return <Zakat />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings setActivePage={setActivePage} />;
-      case 'System & APIs Health': return <SystemHealth />;
-      case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Market Events': return <MarketEvents setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      
+      // Investment & Strategy Pages
+      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} />;
+      case 'Recovery Plan': return <RecoveryPlanView />;
+      case 'AI Rebalancer': return <AIRebalancerView />;
+      case 'Dividend Tracker': return <DividendTrackerView />;
+      case 'Watchlist': return <WatchlistView />;
+      case 'Investments': return <Commodities />;
+      
+      // Financial Planning Pages
+      case 'Plan': return <Plan />;
+      
+      // Asset Management Pages
+      case 'Assets': return <Assets />;
+      
+      // System & Market Pages
+      case 'Market Events': return <MarketEvents />;
+      case 'System Health': return <SystemHealth />;
+      case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
+      
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };
   
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </ThemeProvider>
+    );
   }
 
   return (
-    <AiProvider>
-      <DataProvider>
-        <CurrencyProvider>
-          <MarketDataProvider>
-            <NotificationsProvider>
-              <MarketSimulator />
-              <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-              <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
-                <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                  {renderPage()}
-                </Suspense>
-              </AppErrorBoundary>
-              </Layout>
-            </NotificationsProvider>
-          </MarketDataProvider>
-        </CurrencyProvider>
-      </DataProvider>
-    </AiProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <AiProvider>
+          <DataProvider>
+            <CurrencyProvider>
+              <MarketDataProvider>
+                <NotificationsProvider>
+                  <StatementProcessingProvider>
+                    <AIProvider>
+                      <ReconciliationProvider>
+                        <MultiBankProvider>
+                          <MarketSimulator />
+                          <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+                          <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
+                            <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
+                              {renderPage()}
+                            </Suspense>
+                          </AppErrorBoundary>
+                          </Layout>
+                        </MultiBankProvider>
+                      </ReconciliationProvider>
+                    </AIProvider>
+                  </StatementProcessingProvider>
+                </NotificationsProvider>
+              </MarketDataProvider>
+            </CurrencyProvider>
+          </DataProvider>
+        </AiProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 };
 

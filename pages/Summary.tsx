@@ -231,21 +231,21 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         <DemoDataButton page="Summary" />
                         <button
                             type="button"
-                            onClick={() => setActivePage('Wealth Ultra')}
+                            onClick={() => setActivePage('Dashboard')}
                             className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
                         >
                             Wealth Ultra
                         </button>
                         <button
                             type="button"
-                            onClick={() => setActivePage('Market Events')}
+                            onClick={() => setActivePage('Dashboard')}
                             className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
                         >
                             Market Events
                         </button>
                         <button
                             type="button"
-                            onClick={() => setActivePage('Investments')}
+                            onClick={() => setActivePage('Dashboard')}
                             className="text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5"
                         >
                             Investments

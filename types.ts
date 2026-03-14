@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System Health';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -325,6 +325,10 @@ export interface FinancialData {
   statusChangeLog: StatusChangeLog[];
   executionLogs: InvestmentPlanExecutionLog[];
   notifications: Notification[];
+  /** Admin-only: All users' transactions for approval notifications */
+  allTransactions?: Transaction[];
+  /** Admin-only: All users' budgets for tracking */
+  allBudgets?: Budget[];
 }
 
 export interface KPISummary {

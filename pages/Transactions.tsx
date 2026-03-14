@@ -628,7 +628,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
         addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
-        triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
+        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
     const handleConfirmDelete = () => {

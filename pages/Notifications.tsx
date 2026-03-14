@@ -97,18 +97,102 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
   }
 
   return (
-    <PageLayout
-      title="Notifications"
-      description={ctx.unreadCount > 0 ? `${ctx.unreadCount} unread • Smart automated feed` : 'All caught up'}
-      action={
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      {/* Enhanced Hero Section */}
+      <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">🔔</span>
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">Notifications</h2>
+              <p className="text-lg text-slate-600 mt-2">
+                {ctx.unreadCount > 0 ? `${ctx.unreadCount} unread • Smart automated feed` : 'All caught up'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">Smart Feed</span>
+          </div>
+        </div>
+        <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
+          <p className="text-slate-700 leading-relaxed">
+            Stay informed with intelligent notifications about your finances. Get alerts for budget limits, 
+            goal milestones, investment opportunities, and important transactions.
+          </p>
+        </div>
+      </div>
+
+      {/* Enhanced Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-6 mb-8">
+        <div className="bg-gradient-to-br from-rose-50 to-red-50 border-2 border-rose-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">📬</span>
+            </div>
+            <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-rose-800 uppercase tracking-wider mb-2">Unread</p>
+          <p className="text-4xl font-black text-rose-900 tabular-nums">{insights.unread}</p>
+          <p className="text-sm text-rose-600 mt-2">Pending alerts</p>
+        </div>
+        <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">⚠️</span>
+            </div>
+            <div className="w-3 h-3 bg-amber-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2">Urgent</p>
+          <p className="text-4xl font-black text-amber-900 tabular-nums">{insights.urgent}</p>
+          <p className="text-sm text-amber-600 mt-2">Immediate action</p>
+        </div>
+        <div className="bg-gradient-to-br from-orange-50 to-orange-50 border-2 border-orange-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">🔶</span>
+            </div>
+            <div className="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-orange-800 uppercase tracking-wider mb-2">Warning</p>
+          <p className="text-4xl font-black text-orange-900 tabular-nums">{insights.warning}</p>
+          <p className="text-sm text-orange-600 mt-2">Attention needed</p>
+        </div>
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">📊</span>
+            </div>
+            <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-2">Filtered</p>
+          <p className="text-4xl font-black text-blue-900 tabular-nums">{filtered.length}</p>
+          <p className="text-sm text-blue-600 mt-2">Total visible</p>
+        </div>
+      </div>
+
+      {/* Enhanced Action Controls */}
+      <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-8 shadow-lg mb-8">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center shadow-lg">
+            <span className="text-white font-bold text-lg">🎯</span>
+          </div>
+          <h3 className="text-xl font-bold text-slate-900">Quick Actions</h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
           <DemoDataButton page="Notifications" />
           {ctx.unreadCount > 0 && (
-            <button type="button" onClick={ctx.markAllAsRead} className="btn-outline text-sm">Mark all as read</button>
+            <button type="button" onClick={ctx.markAllAsRead} className="h-12 px-6 text-sm border-2 border-indigo-300 text-indigo-700 rounded-xl hover:bg-indigo-50 transition-all duration-200 font-medium">
+              Mark all as read
+            </button>
           )}
         </div>
-      }
-    >
+      </div>
+
+      {/* Enhanced Main Content */}
+      <div className="space-y-8">
       <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-4 mb-4">
         <p className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">Smart notification center</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
@@ -198,7 +282,8 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
           </div>
         )}
       </SectionCard>
-    </PageLayout>
+      </div>
+    </div>
   );
 };
 

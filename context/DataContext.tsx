@@ -13,29 +13,14 @@ const initialData: FinancialData = {
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
-        monthlyBudget: 6000,
-        budgetCurrency: 'SAR',
-        executionCurrency: 'USD',
-        fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
-        coreAllocation: 0.7,
-        upsideAllocation: 0.3,
-        minimumUpsidePercentage: 25,
-        stale_days: 30,
-        min_coverage_threshold: 3,
-        redirect_policy: 'pro-rata',
-        target_provider: 'Default',
-        corePortfolio: [],
-        upsideSleeve: [],
-        brokerConstraints: {
-            allowFractionalShares: true,
-            minimumOrderSize: 100,
-            roundingRule: 'round',
-            leftoverCashRule: 'reinvest_core'
+        monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
+        coreAllocation: 0.7, upsideAllocation: 0.3, minimumUpsidePercentage: 25,
+        stale_days: 5, min_coverage_threshold: 0.8, redirect_policy: 'priority', target_provider: 'Finnhub',
+        corePortfolio: [], upsideSleeve: [], brokerConstraints: {
+            allowFractionalShares: false, minimumOrderSize: 1, roundingRule: 'round', leftoverCashRule: 'hold'
         }
     },
-    portfolioUniverse: [],
-    statusChangeLog: [],
-    executionLogs: [],
+    portfolioUniverse: [], statusChangeLog: [], executionLogs: [], allTransactions: [], allBudgets: [],
     wealthUltraConfig: getDefaultWealthUltraSystemConfig()
 };
 
@@ -98,8 +83,10 @@ interface DataContextType {
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
   /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). Returns by currency so SAR and USD are not mixed. */
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
-  /** Total deployable = Checking + Savings balances + sum of available cash in each Investment platform. */
-  totalDeployableCash: number;
+  /** Admin-only: All users' transactions for approval notifications */
+  allTransactions: Transaction[];
+  /** Admin-only: All users' budgets for tracking */
+  allBudgets: any[];
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
@@ -530,6 +517,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
                 ((rows || []) as T[]).filter((r) => r?.user_id === ownerId);
 
+            // Check if user is admin (has special email or role)
+            const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
+                           auth.user.email?.toLowerCase().includes('hussein') ||
+                           (auth.user.user_metadata?.role === 'admin');
+
+            // Fetch admin data if user is admin
+            let allTransactionsData: any[] = [];
+            let allBudgetsData: any[] = [];
+            if (isAdmin && supabase) {
+                try {
+                    const [allTxResult, allBudgetsResult] = await Promise.allSettled([
+                        supabase.from('transactions').select('*').eq('status', 'Pending'),
+                        supabase.from('budgets').select('*')
+                    ]);
+                    allTransactionsData = (allTxResult.status === 'fulfilled' ? (allTxResult.value.data || []) : []) as any[];
+                    allBudgetsData = (allBudgetsResult.status === 'fulfilled' ? (allBudgetsResult.value.data || []) : []) as any[];
+                } catch (e) {
+                    console.error('Error fetching admin data:', e);
+                }
+            }
+
             setData({
                 accounts: filterOwnedRows(normalizedAccounts),
                 assets: filterOwnedRows(assets.data as any[]),
@@ -567,7 +575,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
                 recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
                     normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
-                )
+                ),
+                allTransactions: allTransactionsData.map(normalizeTransaction),
+                allBudgets: allBudgetsData,
             });
         } catch (error) {
             console.error("Error fetching financial data:", error);
@@ -1241,18 +1251,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePlatform = async (platform: Account) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const payload: any = { ...platform };
+        
+        // Build payload with proper snake_case for DB
+        const payload: any = {
+            name: platform.name,
+            type: platform.type,
+            owner: platform.owner,
+            balance: platform.balance,
+        };
+        
+        // Always sync linkedAccountIds to linked_account_ids in DB
         if (Array.isArray(platform.linkedAccountIds)) {
-            // Keep platform.linkedAccountIds as the single source of truth and always sync it to DB.
-            // When empty, this explicitly clears previously linked cash accounts.
             payload.linked_account_ids = platform.linkedAccountIds;
+        } else {
+            payload.linked_account_ids = [];
         }
-        // In all cases, strip camelCase field so PostgREST only sees snake_case.
-        delete (payload as any).linkedAccountIds;
+        
+        // Handle platform details if present
+        if (platform.platformDetails) {
+            payload.platform_details = platform.platformDetails;
+        }
+        
         const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
-        if(error) console.error("Error updating platform:", error);
-        else {
-            const normalized = normalizeAccount({ ...platform, ...payload });
+        if(error) {
+            console.error("Error updating platform:", error);
+            alert(`Failed to update platform: ${error.message}`);
+        } else {
+            const normalized = normalizeAccount({ ...platform, ...payload, linkedAccountIds: payload.linked_account_ids });
             setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
         }
     };
@@ -1441,12 +1466,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const cashAccount = data.accounts.find((a: Account) => a.id === linkedCashAccountId);
                 if (cashAccount) {
                     const description = trade.type === 'deposit' 
-                        ? `Deposit to ${investmentAccount.name}`
-                        : `Withdrawal from ${investmentAccount.name}`;
+                        ? `Transfer to ${investmentAccount.name}`
+                        : `Transfer from ${investmentAccount.name}`;
                     const amount = trade.type === 'deposit' 
                         ? -Math.abs(tradeTotal) // Negative (expense from cash account)
                         : Math.abs(tradeTotal); // Positive (income to cash account)
                     
+                    // Create the transaction in the cash account
                     await addTransaction({
                         date: trade.date,
                         description,
@@ -1455,6 +1481,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         type: trade.type === 'deposit' ? 'expense' : 'income',
                         accountId: linkedCashAccountId,
                     });
+                    
+                    // Update the cash account balance
+                    const newBalance = cashAccount.balance + amount;
+                    await updatePlatform({ ...cashAccount, balance: newBalance });
                 }
             } catch (cashTxError) {
                 console.warn("Failed to create corresponding cash account transaction:", cashTxError);
@@ -1470,27 +1500,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         try {
             if (!portfolio) throw new Error('Portfolio not found');
+            
             if (tradeData.type === 'buy') {
-                const inferredAssetClass: Holding['assetClass'] = /(^|\W)(sukuk|suk|صكوك)(\W|$)/i.test(`${tradeData.symbol} ${name || ''}`) ? 'Sukuk' : 'Stock';
-                if (existingHolding) {
-                    const newTotalValue = (existingHolding.avgCost * existingHolding.quantity) + (tradeData.price * tradeData.quantity);
-                    const newQuantity = existingHolding.quantity + tradeData.quantity;
-                    const newAvgCost = newTotalValue / newQuantity;
-                    await updateHolding({ ...existingHolding, quantity: newQuantity, avgCost: newAvgCost });
-                } else {
-                    const newHoldingData = {
-                        portfolio_id: portfolioId,
-                        symbol: normalizedSymbol,
-                        name: name || tradeData.symbol,
-                        quantity: tradeData.quantity,
-                        avgCost: tradeData.price,
-                        currentValue: tradeData.price * tradeData.quantity,
-                        assetClass: inferredAssetClass,
-                        zakahClass: 'Zakatable' as const,
-                        realizedPnL: 0,
-                    };
-                    await addHolding(newHoldingData);
-                }
+                const newHoldingData = {
+                    portfolioId: portfolio.id,
+                    symbol: tradeData.symbol,
+                    name: name || tradeData.symbol,
+                    quantity: tradeData.quantity,
+                    avgCost: tradeData.price,
+                    currentValue: tradeData.price * tradeData.quantity,
+                    assetClass: 'equity' as any, // Type assertion to bypass strict typing
+                    zakahClass: 'Zakatable' as const,
+                    realizedPnL: 0,
+                };
+                await addHolding(newHoldingData);
             } else { // 'sell'
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 const holdingForSell = existingHolding;
@@ -1830,7 +1853,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return bank + platformCash;
     }, [data.accounts, getAvailableCashForAccount]);
 
-    const value = { data, loading, dataResetKey, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data, loading, dataResetKey, allTransactions: data.transactions, allBudgets: data.budgets, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

@@ -22,6 +22,7 @@ import {
     buildHouseholdEngineInputFromData,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
+    generateSaudiBudgetCategories,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
@@ -181,6 +182,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [requestSearch, setRequestSearch] = useState('');
     const [requestSort, setRequestSort] = useState<'Newest' | 'Oldest' | 'AmountHigh' | 'AmountLow'>('Newest');
     const [requestStatusFilter, setRequestStatusFilter] = useState<'All' | 'Pending' | 'Finalized' | 'Rejected'>('All');
+    const [requestMonthFilter, setRequestMonthFilter] = useState<string>('');
     const [historyItemsToShow, setHistoryItemsToShow] = useState(10);
     const [historyCollapsed, setHistoryCollapsed] = useState(true);
     const HISTORY_PAGE_SIZE = 15;
@@ -204,6 +206,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
     const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
+    const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     
     // Update shared transaction month filter when current month changes
     useEffect(() => {
@@ -1238,8 +1242,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
         
-        // Refresh budgets data to show newly created budgets from finalized requests
-        // The DataContext will automatically refresh when budgets are added/updated via addBudget/updateBudget
+        // Refresh data context to show newly created budgets
+        // Note: DataContext automatically refreshes when dataResetKey changes
     };
 
     const rejectBudgetRequest = async (requestId: string) => {
@@ -1262,6 +1266,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         const filtered = budgetRequests.filter((r) => {
             const matchesStatus = requestStatusFilter === 'All' || r.status === requestStatusFilter;
             if (!matchesStatus) return false;
+            
+            // Month filter
+            if (requestMonthFilter) {
+                const [filterYear, filterMonth] = requestMonthFilter.split('-').map(Number);
+                const requestDate = new Date(r.created_at || 0);
+                const matchesMonth = requestDate.getFullYear() === filterYear && requestDate.getMonth() + 1 === filterMonth;
+                if (!matchesMonth) return false;
+            }
+            
             if (!normalizedQuery) return true;
             const combinedText = `${r.request_type} ${resolveRequestCategory(r)} ${r.note || ''} ${r.request_note || ''}`.toLowerCase();
             return combinedText.includes(normalizedQuery);
@@ -1275,7 +1288,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         });
 
         return sorted;
-    }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, governanceCategories]);
+    }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, requestMonthFilter, governanceCategories]);
 
     const pendingRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status === 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
@@ -1339,6 +1352,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <option value="Finalized">Finalized</option>
                         <option value="Rejected">Rejected</option>
                     </select>
+                    <input
+                        type="month"
+                        value={requestMonthFilter}
+                        onChange={(e) => setRequestMonthFilter(e.target.value)}
+                        placeholder="Filter by month"
+                        className="p-2 border rounded text-sm"
+                    />
+                    {requestMonthFilter && (
+                        <button
+                            type="button"
+                            onClick={() => setRequestMonthFilter('')}
+                            className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600"
+                        >
+                            Clear month
+                        </button>
+                    )}
                     <select value={requestSort} onChange={(e) => setRequestSort(e.target.value as any)} className="p-2 border rounded">
                         <option value="Newest">Newest first</option>
                         <option value="Oldest">Oldest first</option>
@@ -1782,6 +1811,61 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
                 </div>
 
+                <div className="mt-4 flex items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            if (!isAdmin) {
+                                alert('Only admins can create budgets from household engine.');
+                                return;
+                            }
+                            
+                            // Use the expected monthly salary or auto-detect from transactions
+                            const monthlySalary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 
+                                ? expectedMonthlySalary 
+                                : suggestedMonthlySalary;
+                                
+                            if (!monthlySalary || monthlySalary <= 0) {
+                                alert('Please enter an expected monthly salary to generate budget categories.');
+                                return;
+                            }
+                            
+                            if (!window.confirm(`This will create budget categories for a Saudi household with ${householdAdults} adult(s) and ${householdKids} kid(s) based on ${formatCurrencyString(monthlySalary)} monthly salary. Existing budgets for ${currentYear}-${currentMonth} will be updated. Continue?`)) {
+                                return;
+                            }
+                            
+                            const categories = generateSaudiBudgetCategories(householdAdults, householdKids, monthlySalary, engineProfile);
+                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                            
+                            let created = 0;
+                            let updated = 0;
+                            for (const cat of categories) {
+                                const existing = existingBudgets.find((b) => b.category === cat.category);
+                                if (existing) {
+                                    updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
+                                    updated++;
+                                } else {
+                                    addBudget({
+                                        category: cat.category,
+                                        limit: cat.limit,
+                                        month: currentMonth,
+                                        year: currentYear,
+                                        period: cat.period,
+                                        tier: cat.tier,
+                                    });
+                                    created++;
+                                }
+                            }
+                            alert(`Saudi household budgets created: ${created} created, ${updated} updated.`);
+                        }}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!isAdmin}
+                    >
+                        Auto-Create Saudi Household Budgets
+                    </button>
+                    <InfoHint text="Generates budget categories for Saudi households based on family size (adults/kids) and monthly salary. Considers realistic Saudi living costs including utilities, transport, and spouse allowance." />
+                </div>
+
                 {/* Predictive Analytics Section */}
                 {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
                     <div className="mt-6 pt-6 border-t border-slate-200">
@@ -2214,109 +2298,300 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             {isAdmin && (
                 <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
                     <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
-                        <h3 className="text-sm font-semibold text-indigo-900 mb-2">Approved Budgets Overview</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                            <div>
-                                <span className="text-indigo-600">Total Approved Budgets:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{budgetData.filter(b => b.spent > 0 || b.monthlyLimit > 0).length}</span>
+                        <h3 className="text-sm font-semibold text-indigo-900 mb-3">Approved Budgets Overview</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm mb-4">
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Categories</span>
+                                <p className="font-bold text-indigo-900 text-lg">{budgetData.length}</p>
                             </div>
-                            <div>
-                                <span className="text-indigo-600">Total Budget Limit:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</span>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Budget Limit</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</p>
                             </div>
-                            <div>
-                                <span className="text-indigo-600">Total Spent:</span>
-                                <span className="font-semibold text-indigo-900 ml-2">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</span>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Spent</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + (b.monthlyLimit - b.spent), 0), { digits: 0 })}</p>
                             </div>
                         </div>
+
+                        {budgetData.length > 0 && (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                                <table className="min-w-full text-sm">
+                                    <thead className="bg-slate-50">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Tier</th>
+                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Monthly Limit</th>
+                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Spent</th>
+                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Remaining</th>
+                                            <th className="px-3 py-2 text-center font-medium text-slate-700">Utilization</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {budgetData.map((b) => {
+                                            const remaining = b.monthlyLimit - b.spent;
+                                            const percentage = b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0;
+                                            return (
+                                                <tr key={`admin-budget-${b.id}`} className="border-t border-slate-100">
+                                                    <td className="px-3 py-2 font-medium text-slate-900">{b.category}</td>
+                                                    <td className="px-3 py-2">
+                                                        <span className={`text-xs px-2 py-0.5 rounded ${b.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : b.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>
+                                                            {b.budgetTier}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.monthlyLimit, { digits: 0 })}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.spent, { digits: 0 })}</td>
+                                                    <td className={`px-3 py-2 text-right tabular-nums ${remaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                        {remaining >= 0 ? formatCurrencyString(remaining, { digits: 0 }) : `-${formatCurrencyString(Math.abs(remaining), { digits: 0 })}`}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-center">
+                                                        <div className="flex items-center justify-center gap-2">
+                                                            <div className="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                                                <div className={`h-full ${percentage > 100 ? 'bg-rose-500' : percentage > 90 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(percentage, 100)}%` }} />
+                                                            </div>
+                                                            <span className={`text-xs ${percentage > 100 ? 'text-rose-600 font-medium' : percentage > 90 ? 'text-amber-600' : 'text-slate-600'}`}>
+                                                                {percentage.toFixed(0)}%
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
+
                     <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
                         <h3 className="text-sm font-semibold text-emerald-900 mb-2">Shared Account Transaction Tracking</h3>
-                        <p className="text-xs text-emerald-700 mb-2">
-                            Transactions from shared accounts that affect shared budgets are tracked below. Only approved transactions are counted in budget totals.
+                        <p className="text-xs text-emerald-700 mb-3">
+                            Transactions from shared accounts that affect shared budgets are tracked below. Approved transactions are deducted from budget totals.
                         </p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                            <div>
-                                <span className="text-emerald-600">Shared Transactions (Owner View):</span>
-                                <span className="font-semibold text-emerald-900 ml-2">{ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Approved').length}</span>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-4">
+                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Approved Shared Tx</span>
+                                <p className="font-bold text-emerald-900 text-lg">
+                                    {ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Approved').length}
+                                </p>
                             </div>
-                            <div>
-                                <span className="text-emerald-600">Total from Shared Accounts:</span>
-                                <span className="font-semibold text-emerald-900 ml-2">
+                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Pending Shared Tx</span>
+                                <p className="font-bold text-emerald-900 text-lg">
+                                    {ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Pending').length}
+                                </p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Total from Shared</span>
+                                <p className="font-bold text-emerald-900 text-lg">
                                     {formatCurrencyString(
                                         ownerSharedTransactions
                                             .filter(tx => (tx.status ?? 'Approved') === 'Approved')
                                             .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
                                         { digits: 0 }
                                     )}
-                                </span>
+                                </p>
                             </div>
                         </div>
+
+                        {ownerSharedTransactions.length > 0 && (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                                <table className="min-w-full text-sm">
+                                    <thead className="bg-slate-50">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Date</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Contributor</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
+                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Amount</th>
+                                            <th className="px-3 py-2 text-center font-medium text-slate-700">Deducted</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ownerSharedTransactions
+                                            .sort((a, b) => new Date(b.transaction_date || b.date).getTime() - new Date(a.transaction_date || a.date).getTime())
+                                            .map((tx, idx) => {
+                                                const isApproved = (tx.status ?? 'Approved') === 'Approved';
+                                                const isPending = (tx.status ?? 'Approved') === 'Pending';
+                                                return (
+                                                    <tr key={`shared-tx-${tx.id || idx}`} className="border-t border-slate-100">
+                                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                                        <td className="px-3 py-2 font-medium text-slate-900">{tx.budget_category}</td>
+                                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                                        <td className="px-3 py-2">
+                                                            <span className={`text-xs px-2 py-0.5 rounded ${isApproved ? 'bg-emerald-100 text-emerald-700' : isPending ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                                {tx.status ?? 'Approved'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                        <td className="px-3 py-2 text-center">
+                                                            <span className={`text-xs ${isApproved ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
+                                                                {isApproved ? 'Yes' : 'No'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 </SectionCard>
             )}
 
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
-                <SectionCard title="Shared-budget transaction visibility">
-                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                        <p className="text-xs text-slate-500">
-                            Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
+                <SectionCard title="Shared Budget Transactions">
+                    <div className="mb-4">
+                        <p className="text-xs text-slate-500 mb-3">
+                            Track all transactions from shared accounts affecting your budgets. Approved transactions are deducted from budget totals.
                         </p>
-                        <div className="flex items-center gap-2">
-                            <label className="text-xs text-slate-600 font-medium">Filter by month:</label>
-                            <input
-                                type="month"
-                                value={sharedTxMonthFilter}
-                                onChange={(e) => setSharedTxMonthFilter(e.target.value)}
-                                className="p-1.5 border border-slate-300 rounded text-sm"
-                            />
-                        </div>
-                    </div>
-                    {(() => {
-                        const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
-                        const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
-                            const txDate = new Date(tx.transaction_date || tx.date);
-                            return txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
-                        });
-                        return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-200">
-                                <table className="min-w-full text-sm">
-                                    <thead className="bg-slate-50">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left">Date</th>
-                                            <th className="px-3 py-2 text-left">Category</th>
-                                            <th className="px-3 py-2 text-left">Contributor</th>
-                                            <th className="px-3 py-2 text-left">Description</th>
-                                            <th className="px-3 py-2 text-left">Status</th>
-                                            <th className="px-3 py-2 text-right">Amount</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {filteredTxs.length > 0 ? (
-                                            filteredTxs.map((tx, idx) => (
-                                                <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
-                                                    <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
-                                                    <td className="px-3 py-2">{tx.budget_category}</td>
-                                                    <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
-                                                    <td className="px-3 py-2">{tx.description || '—'}</td>
-                                                    <td className="px-3 py-2">
-                                                        <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                            {tx.status ?? 'Approved'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
-                                                </tr>
-                                            ))
-                                        ) : (
-                                            <tr>
-                                                <td colSpan={6} className="px-3 py-4 text-center text-slate-500">No transactions found for selected month</td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
+                        
+                        {/* Filters */}
+                        <div className="flex flex-wrap items-center gap-3 mb-3">
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Month:</label>
+                                <input
+                                    type="month"
+                                    value={sharedTxMonthFilter}
+                                    onChange={(e) => setSharedTxMonthFilter(e.target.value)}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`)}
+                                    className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600"
+                                >
+                                    Current
+                                </button>
                             </div>
-                        );
-                    })()}
+                            
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Status:</label>
+                                <select
+                                    value={sharedTxStatusFilter}
+                                    onChange={(e) => setSharedTxStatusFilter(e.target.value as 'All' | 'Approved' | 'Pending' | 'Rejected')}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                >
+                                    <option value="All">All</option>
+                                    <option value="Approved">Approved</option>
+                                    <option value="Pending">Pending</option>
+                                    <option value="Rejected">Rejected</option>
+                                </select>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Category:</label>
+                                <select
+                                    value={sharedTxCategoryFilter}
+                                    onChange={(e) => setSharedTxCategoryFilter(e.target.value)}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                >
+                                    <option value="All">All Categories</option>
+                                    {[...new Set([...ownerSharedTransactions, ...mySharedBudgetTransactions].map(tx => tx.budget_category).filter(Boolean))].sort().map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        {/* Stats Cards */}
+                        {(() => {
+                            const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
+                            const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
+                                const txDate = new Date(tx.transaction_date || tx.date);
+                                const matchesMonth = txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
+                                const matchesStatus = sharedTxStatusFilter === 'All' || (tx.status ?? 'Approved') === sharedTxStatusFilter;
+                                const matchesCategory = sharedTxCategoryFilter === 'All' || tx.budget_category === sharedTxCategoryFilter;
+                                return matchesMonth && matchesStatus && matchesCategory;
+                            });
+                            
+                            const approvedTotal = filteredTxs
+                                .filter(tx => (tx.status ?? 'Approved') === 'Approved')
+                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+                            const pendingTotal = filteredTxs
+                                .filter(tx => (tx.status ?? 'Approved') === 'Pending')
+                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+                            
+                            return (
+                                <>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+                                        <div className="bg-emerald-50 rounded-lg p-2 border border-emerald-100">
+                                            <span className="text-emerald-600 text-xs uppercase tracking-wide">Approved</span>
+                                            <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(approvedTotal, { digits: 0 })}</p>
+                                            <span className="text-xs text-emerald-600">{filteredTxs.filter(tx => (tx.status ?? 'Approved') === 'Approved').length} transactions</span>
+                                        </div>
+                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-100">
+                                            <span className="text-amber-600 text-xs uppercase tracking-wide">Pending</span>
+                                            <p className="font-bold text-amber-900 text-lg">{formatCurrencyString(pendingTotal, { digits: 0 })}</p>
+                                            <span className="text-xs text-amber-600">{filteredTxs.filter(tx => (tx.status ?? 'Approved') === 'Pending').length} transactions</span>
+                                        </div>
+                                        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                            <span className="text-slate-600 text-xs uppercase tracking-wide">Total Transactions</span>
+                                            <p className="font-bold text-slate-900 text-lg">{filteredTxs.length}</p>
+                                            <span className="text-xs text-slate-600">Showing filtered</span>
+                                        </div>
+                                        <div className="bg-primary/5 rounded-lg p-2 border border-primary/10">
+                                            <span className="text-primary text-xs uppercase tracking-wide">Deducted from Budget</span>
+                                            <p className="font-bold text-primary text-lg">{formatCurrencyString(approvedTotal, { digits: 0 })}</p>
+                                            <span className="text-xs text-primary/80">Approved only</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                        <table className="min-w-full text-sm">
+                                            <thead className="bg-slate-50">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Date</th>
+                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
+                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Contributor</th>
+                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Description</th>
+                                                    <th className="px-3 py-2 text-center font-medium text-slate-700">Status</th>
+                                                    <th className="px-3 py-2 text-center font-medium text-slate-700">Deducted</th>
+                                                    <th className="px-3 py-2 text-right font-medium text-slate-700">Amount</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {filteredTxs.length > 0 ? (
+                                                    filteredTxs.sort((a, b) => new Date(b.transaction_date || b.date).getTime() - new Date(a.transaction_date || a.date).getTime()).map((tx, idx) => {
+                                                        const isApproved = (tx.status ?? 'Approved') === 'Approved';
+                                                        const isPending = (tx.status ?? 'Approved') === 'Pending';
+                                                        return (
+                                                            <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100 hover:bg-slate-50">
+                                                                <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                                                <td className="px-3 py-2 font-medium text-slate-900">{tx.budget_category}</td>
+                                                                <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                                                <td className="px-3 py-2 text-slate-500">{tx.description || '—'}</td>
+                                                                <td className="px-3 py-2 text-center">
+                                                                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${isApproved ? 'bg-emerald-100 text-emerald-700' : isPending ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                                        {tx.status ?? 'Approved'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-center">
+                                                                    <span className={`text-xs ${isApproved ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
+                                                                        {isApproved ? 'Yes' : 'No'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                            </tr>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan={7} className="px-3 py-4 text-center text-slate-500">No transactions found for selected filters</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
                 </SectionCard>
             )}
 
