@@ -132,6 +132,8 @@ const TransactionModal: React.FC<{
         };
     };
 
+    const { data: contextData } = useContext(DataContext)!;
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
@@ -139,7 +141,7 @@ const TransactionModal: React.FC<{
             
             // Check for potential duplicates (same date, amount, description)
             if (!transactionToEdit) {
-                const existing = (data?.transactions ?? []).find(t => 
+                const existing = (contextData?.transactions ?? []).find(t => 
                     t.date === transactionData.date &&
                     Math.abs(t.amount) === Math.abs(transactionData.amount) &&
                     t.description.toLowerCase() === transactionData.description.toLowerCase()
@@ -952,7 +954,48 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 </SectionCard>
             </div>
 
-            <SectionCard title="Transaction History">
+            <SectionCard 
+                title="Transaction History"
+                headerAction={
+                    filteredTransactions.length > 0 ? (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const csv = [
+                                    ['Date', 'Description', 'Amount', 'Type', 'Category', 'Budget Category', 'Account', 'Nature', 'Expense Type', 'Status'].join(','),
+                                    ...filteredTransactions.map(t => {
+                                        const account = (data?.accounts ?? []).find(a => a.id === t.accountId);
+                                        return [
+                                            t.date,
+                                            `"${(t.description || '').replace(/"/g, '""')}"`,
+                                            t.amount ?? 0,
+                                            t.type,
+                                            t.category || '',
+                                            t.budgetCategory || '',
+                                            account?.name || t.accountId || '',
+                                            t.transactionNature || '',
+                                            t.expenseType || '',
+                                            t.status || 'Approved'
+                                        ].join(',');
+                                    })
+                                ].join('\n');
+                                const blob = new Blob([csv], { type: 'text/csv' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `transactions-${filters.month}-${new Date().toISOString().split('T')[0]}.csv`;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                URL.revokeObjectURL(url);
+                            }}
+                            className="text-xs font-medium text-primary hover:underline"
+                        >
+                            Export CSV
+                        </button>
+                    ) : null
+                }
+            >
                 <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
                     <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">

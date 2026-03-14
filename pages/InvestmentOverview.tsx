@@ -161,7 +161,8 @@ const InvestmentOverview: React.FC = () => {
                     ...portfolios.map(p => {
                       const portfolioCurrency = (p.currency ?? 'USD') as 'USD' | 'SAR';
                       const portValue = (p.holdings ?? []).reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
-                      const portValueInSAR = portfolioCurrency === 'SAR' ? portValue : portValue * exchangeRate;
+                      const safeExchangeRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+                      const portValueInSAR = portfolioCurrency === 'SAR' ? portValue : portValue * safeExchangeRate;
                       const percentage = metrics.totalValueInSAR > 0 ? (portValueInSAR / metrics.totalValueInSAR) * 100 : 0;
                       return [
                         p.name,

@@ -87,7 +87,7 @@ const Assets: React.FC = () => {
     });
   }, [data?.commodityHoldings]);
 
-  const calculations = useMemo(() => {
+    const calculations = useMemo(() => {
     const assets = realAssets || [];
     const commodities = realCommodities || [];
 
@@ -99,17 +99,9 @@ const Assets: React.FC = () => {
       sum + (commodity.totalValue ?? 0), 0
     );
 
-    const totalGainLoss = commodities.reduce((sum, commodity) => 
+    const commodityGainLoss = commodities.reduce((sum, commodity) => 
       sum + (commodity.gainLoss ?? 0), 0
     );
-
-    const totalPurchaseValue = assets.reduce((sum, asset) => 
-      sum + (asset.purchaseValue ?? 0), 0
-    );
-
-    const totalGainLossPercent = totalPurchaseValue > 0 
-      ? ((totalPhysicalAssets - totalPurchaseValue) / totalPurchaseValue) * 100 
-      : 0;
 
     // Calculate gain/loss for physical assets
     const physicalGainLoss = assets.reduce((sum, asset) => {
@@ -118,7 +110,7 @@ const Assets: React.FC = () => {
     }, 0);
     
     const totalPurchaseValue = assets.reduce((sum, asset) => sum + (asset.purchaseValue ?? 0), 0);
-    const totalGainLossAll = physicalGainLoss + totalGainLoss;
+    const totalGainLossAll = physicalGainLoss + commodityGainLoss;
     const totalGainLossPercent = totalPurchaseValue > 0 
       ? ((totalPhysicalAssets - totalPurchaseValue) / totalPurchaseValue) * 100 
       : 0;
@@ -132,7 +124,7 @@ const Assets: React.FC = () => {
       assetCount: assets.length,
       commodityCount: commodities.length,
       physicalGainLoss,
-      commodityGainLoss: totalGainLoss
+      commodityGainLoss
     };
   }, [realAssets, realCommodities]);
 
@@ -271,10 +263,22 @@ const Assets: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex space-x-2">
-                          <button className="text-gray-400 hover:text-gray-600">
+                          <button 
+                            onClick={() => { setAssetToEdit(asset); setIsAssetModalOpen(true); }}
+                            className="text-gray-400 hover:text-gray-600"
+                            aria-label="Edit asset"
+                          >
                             <PencilIcon className="h-4 w-4" />
                           </button>
-                          <button className="text-gray-400 hover:text-red-600">
+                          <button 
+                            onClick={() => {
+                              if (confirm(`Delete ${asset.name}?`)) {
+                                deleteAsset(asset.id);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-red-600"
+                            aria-label="Delete asset"
+                          >
                             <TrashIcon className="h-4 w-4" />
                           </button>
                         </div>
@@ -296,13 +300,18 @@ const Assets: React.FC = () => {
                             <p className="text-xs text-gray-500">
                               {new Date(asset.purchaseDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
                             </p>
-                            {(asset.value - asset.purchaseValue) !== 0 && (
+                            {(asset.value - asset.purchaseValue) !== 0 && asset.purchaseValue > 0 && (
                               <p className={`text-xs font-medium mt-1 ${
                                 (asset.value - asset.purchaseValue) >= 0 ? 'text-green-600' : 'text-red-600'
                               }`}>
                                 {(asset.value - asset.purchaseValue) >= 0 ? '+' : ''}
                                 {formatCurrencyString(asset.value - asset.purchaseValue)}
                                 ({((asset.value - asset.purchaseValue) / asset.purchaseValue * 100).toFixed(1)}%)
+                              </p>
+                            )}
+                            {asset.purchaseValue === 0 && asset.value !== 0 && (
+                              <p className="text-xs font-medium mt-1 text-slate-500">
+                                {formatCurrencyString(asset.value - asset.purchaseValue)} (N/A %)
                               </p>
                             )}
                           </div>

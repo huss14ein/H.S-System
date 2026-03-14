@@ -757,6 +757,47 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
         handleAddToActiveBucket(item.symbol);
     };
 
+    const handleExportWatchlist = () => {
+        const csv = [
+            ['Symbol', 'Name', 'Price', 'Change', 'Change %', 'Target Price', 'Status'].join(','),
+            ...filteredWatchlist.map(item => {
+                const priceInfo = simulatedPrices[item.symbol ?? ''] || { price: 0, change: 0, changePercent: 0 };
+                const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
+                const targetPrice = activeAlerts.length > 0 ? (activeAlerts[0].targetPrice ?? 0) : 0;
+                const market = getExchangeAndCurrencyForSymbol(item.symbol ?? '');
+                const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
+                const displayCurrency: 'USD' | 'SAR' = activeBucket?.currency || priceCurrency;
+                const convertCurrency = (value: number, from: 'USD' | 'SAR', to: 'USD' | 'SAR') => {
+                    if (!Number.isFinite(value)) return 0;
+                    if (from === to) return value;
+                    if (from === 'USD' && to === 'SAR') return value * exchangeRate;
+                    if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+                    return value;
+                };
+                const displayPrice = convertCurrency(priceInfo.price, priceCurrency, displayCurrency);
+                const displayChange = convertCurrency(priceInfo.change, priceCurrency, displayCurrency);
+                return [
+                    item.symbol ?? '',
+                    item.name ?? '',
+                    displayPrice.toFixed(2),
+                    displayChange.toFixed(2),
+                    priceInfo.changePercent.toFixed(2),
+                    targetPrice > 0 ? targetPrice.toFixed(2) : '',
+                    activeAlerts.length > 0 ? 'Has Alert' : 'No Alert'
+                ].join(',');
+            })
+        ].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `watchlist-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div className="mt-6 space-y-6">
             {/* Hero */}

@@ -46,8 +46,15 @@ const Forecast: React.FC = () => {
         });
 
         const values = Array.from(monthlyNet.values());
-        if (values.length === 0) {
-            return { averageMonthlySavings: 7500, medianMonthlySavings: 7500, monthlyStdDev: 0, consistencyScore: 0, incomeGrowthSuggestion: 3 };
+        if (values.length === 0 || values.every(v => v === 0)) {
+            // No transaction data available - return neutral defaults with a note
+            return { 
+                averageMonthlySavings: 0, 
+                medianMonthlySavings: 0, 
+                monthlyStdDev: 0, 
+                consistencyScore: 0, 
+                incomeGrowthSuggestion: 3 
+            };
         }
 
         const averageMonthlySavings = values.reduce((sum, v) => sum + v, 0) / values.length;
