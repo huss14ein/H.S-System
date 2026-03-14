@@ -352,6 +352,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
+                config: { ...engineConfig, profile: engineProfile },
             }
         );
         const result = buildHouseholdBudgetPlan(input);
@@ -865,6 +866,87 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         } else {
             addBudget(budget);
         }
+    };
+
+    const handleSyncHouseholdBudgets = () => {
+        const currentMonthIndex = currentMonth - 1;
+        const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
+        
+        if (!currentMonthResult || !currentMonthResult.buckets) {
+            alert('No budget buckets available for the current month from the household engine.');
+            return;
+        }
+
+        // Map household engine bucket names to budget categories
+        const bucketToCategoryMap: Record<string, string> = {
+            'emergencySavings': 'Savings & Investments',
+            'reserveSavings': 'Savings & Investments',
+            'goalSavings': 'Savings & Investments',
+            'kidsFutureSavings': 'Education',
+            'retirementSavings': 'Savings & Investments',
+            'investing': 'Savings & Investments',
+            'housing': 'Housing',
+            'utilities': 'Utilities',
+            'food': 'Food',
+            'transportation': 'Transportation',
+            'health': 'Health',
+            'personalCare': 'Personal Care',
+            'entertainment': 'Entertainment',
+            'shopping': 'Shopping',
+            'miscellaneous': 'Miscellaneous',
+        };
+
+        const buckets = currentMonthResult.buckets;
+        const existingBudgets = (data?.budgets ?? []).filter(
+            b => b.year === currentYear && b.month === currentMonth
+        );
+        const existingCategories = new Set(existingBudgets.map(b => b.category));
+
+        let syncedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+
+        Object.entries(buckets).forEach(([bucketKey, amount]) => {
+            if (!amount || amount <= 0) return; // Skip zero or negative amounts
+
+            const category = bucketToCategoryMap[bucketKey] || 'Miscellaneous';
+            const existingBudget = existingBudgets.find(b => b.category === category);
+
+            if (existingBudget) {
+                // Update existing budget if amount is different
+                if (Math.abs(existingBudget.limit - amount) > 0.01) {
+                    updateBudget({
+                        ...existingBudget,
+                        limit: amount,
+                        tier: bucketKey.includes('Savings') || bucketKey === 'investing' ? 'Core' : 
+                              bucketKey === 'housing' || bucketKey === 'utilities' || bucketKey === 'food' ? 'Core' : 
+                              'Supporting',
+                    });
+                    updatedCount++;
+                } else {
+                    skippedCount++;
+                }
+            } else {
+                // Create new budget entry
+                addBudget({
+                    category,
+                    limit: amount,
+                    month: currentMonth,
+                    year: currentYear,
+                    period: 'monthly',
+                    tier: bucketKey.includes('Savings') || bucketKey === 'investing' ? 'Core' : 
+                          bucketKey === 'housing' || bucketKey === 'utilities' || bucketKey === 'food' ? 'Core' : 
+                          'Supporting',
+                });
+                syncedCount++;
+            }
+        });
+
+        const message = `Synced household engine budgets:\n` +
+            `• ${syncedCount} new budgets created\n` +
+            `• ${updatedCount} budgets updated\n` +
+            `• ${skippedCount} budgets unchanged`;
+        alert(message);
     };
 
     const handleShareBudget = async () => {
@@ -1628,6 +1710,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             </select>
                         </label>
                         <button type="button" className="btn-outline text-xs" onClick={copyPriorMonthDefaults}>Copy prior month defaults</button>
+                        <button 
+                            type="button" 
+                            className="btn-primary text-xs" 
+                            onClick={handleSyncHouseholdBudgets}
+                            title="Sync calculated budget buckets from household engine to actual budget entries for the current month"
+                        >
+                            Apply Engine Budgets to {MONTHS[currentMonth - 1]} {currentYear}
+                        </button>
                     </div>
                 </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1636,6 +1726,65 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m: HouseholdMonthResult) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
+                {(() => {
+                    const currentMonthIndex = currentMonth - 1;
+                    const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
+                    const buckets = currentMonthResult?.buckets ?? {};
+                    const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
+                    
+                    if (!hasBuckets) return null;
+                    
+                    return (
+                        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                            <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                                    {MONTHS[currentMonth - 1]} {currentYear} Budget Buckets
+                                </p>
+                                <button 
+                                    type="button" 
+                                    className="btn-primary text-xs px-3 py-1.5" 
+                                    onClick={handleSyncHouseholdBudgets}
+                                    title="Create or update budget entries from these calculated buckets"
+                                >
+                                    Apply to Budgets
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mt-2">
+                                {Object.entries(buckets)
+                                    .filter(([_, amount]) => (amount as number) > 0)
+                                    .map(([bucketKey, amount]) => {
+                                        const bucketToCategoryMap: Record<string, string> = {
+                                            'emergencySavings': 'Emergency Savings',
+                                            'reserveSavings': 'Reserve Savings',
+                                            'goalSavings': 'Goal Savings',
+                                            'kidsFutureSavings': 'Kids Future',
+                                            'retirementSavings': 'Retirement',
+                                            'investing': 'Investing',
+                                            'housing': 'Housing',
+                                            'utilities': 'Utilities',
+                                            'food': 'Food',
+                                            'transportation': 'Transportation',
+                                            'health': 'Health',
+                                            'personalCare': 'Personal Care',
+                                            'entertainment': 'Entertainment',
+                                            'shopping': 'Shopping',
+                                            'miscellaneous': 'Miscellaneous',
+                                        };
+                                        const displayName = bucketToCategoryMap[bucketKey] || bucketKey;
+                                        return (
+                                            <div key={bucketKey} className="rounded border bg-white p-2">
+                                                <p className="text-[10px] uppercase tracking-wide text-slate-500 truncate">{displayName}</p>
+                                                <p className="font-semibold text-slate-900 text-sm">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                            <p className="text-xs text-blue-600 mt-2">
+                                These are the calculated budget allocations from the household engine. Click "Apply to Budgets" to sync them to your actual budget entries.
+                            </p>
+                        </div>
+                    );
+                })()}
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
                     <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
