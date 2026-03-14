@@ -32,7 +32,31 @@ const Zakat = lazy(() => import('./pages/Zakat'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 
-const VALID_PAGES: Page[] = ['Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings'];
+// Investment & Strategy Pages
+const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
+const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
+const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
+const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
+const WatchlistView = lazy(() => import('./pages/WatchlistView'));
+const Commodities = lazy(() => import('./pages/Commodities'));
+
+// Financial Planning Pages
+const Plan = lazy(() => import('./pages/Plan'));
+
+// Asset Management Pages
+const Assets = lazy(() => import('./pages/Assets'));
+
+// System & Market Pages
+const MarketEvents = lazy(() => import('./pages/MarketEvents'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+
+const VALID_PAGES: Page[] = [
+  'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
+  'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
+  'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
+  'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
+  'Assets', 'System Health'
+];
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -114,6 +138,26 @@ const App: React.FC = () => {
       case 'Zakat': return <Zakat />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings setActivePage={setActivePage} />;
+      
+      // Investment & Strategy Pages
+      case 'Investment Plan': return <InvestmentPlanView setActivePage={setActivePage} />;
+      case 'Recovery Plan': return <RecoveryPlanView setActivePage={setActivePage} />;
+      case 'AI Rebalancer': return <AIRebalancerView setActivePage={setActivePage} />;
+      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
+      case 'Watchlist': return <WatchlistView setActivePage={setActivePage} />;
+      case 'Investments': return <Commodities setActivePage={setActivePage} />;
+      
+      // Financial Planning Pages
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
+      
+      // Asset Management Pages
+      case 'Assets': return <Assets setActivePage={setActivePage} />;
+      
+      // System & Market Pages
+      case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
+      case 'System Health': return <SystemHealth setActivePage={setActivePage} />;
+      case 'Wealth Ultra': return <InvestmentPlanView setActivePage={setActivePage} />; // Temporary mapping
+      
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };
