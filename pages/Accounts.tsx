@@ -24,6 +24,7 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -404,6 +405,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             description="Track checking, savings, credit, and investment accounts."
             action={
                 <div className="flex flex-wrap items-center gap-2">
+                    <DemoDataButton page="Accounts" options={{ includeAccounts: true }} />
                     <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
                 </div>
             }

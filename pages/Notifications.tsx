@@ -11,6 +11,7 @@ import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocument
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 function formatRelativeTime(dateStr: string): string {
   const d = new Date(dateStr);
@@ -89,7 +90,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
   if (!ctx) {
     return (
-      <PageLayout title="Notifications">
+      <PageLayout title="Notifications" action={<DemoDataButton page="Notifications" />}>
         <LoadingSpinner message="Loading…" />
       </PageLayout>
     );
@@ -181,6 +182,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
           <h3 className="text-xl font-bold text-slate-900">Quick Actions</h3>
         </div>
         <div className="flex flex-wrap items-center gap-4">
+          <DemoDataButton page="Notifications" />
           {ctx.unreadCount > 0 && (
             <button type="button" onClick={ctx.markAllAsRead} className="h-12 px-6 text-sm border-2 border-indigo-300 text-indigo-700 rounded-xl hover:bg-indigo-50 transition-all duration-200 font-medium">
               Mark all as read

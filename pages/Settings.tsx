@@ -7,7 +7,7 @@ import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, updateSettings, resetData } = useContext(DataContext)!;
+    const { data, updateSettings, loadDemoData, resetData } = useContext(DataContext)!;
     const auth = useContext(AuthContext)!;
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
 
@@ -172,7 +172,10 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         </>
                     ) : (
                          <>
-                            <p className="text-sm text-gray-600">Your account is empty. Start by adding your accounts, assets, liabilities, goals, budgets, transactions, investments, portfolios, watchlist, price alerts, commodity holdings, and planned trades.</p>
+                            <p className="text-sm text-gray-600">Your account is empty. Load a complete set of demonstration data to explore the app: accounts, assets, liabilities, goals, budgets, transactions, investments, portfolios, watchlist, price alerts, commodity holdings, and planned trades.</p>
+                            <button type="button" onClick={loadDemoData} className="btn-primary w-full md:w-auto flex-shrink-0">
+                                Load Demo Data
+                            </button>
                         </>
                     )}
                  </div>

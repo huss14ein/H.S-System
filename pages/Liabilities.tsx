@@ -6,6 +6,7 @@ import { HomeIcon, BanknotesIcon, PencilIcon, CheckCircleIcon, ShieldCheckIcon }
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
+import { DemoDataButton } from '../components/DemoDataButton';
 import Modal from '../components/Modal';
 
 // Define Liability type locally since it's missing
@@ -341,6 +342,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     <button type="button" onClick={() => handleOpenModal(null)} className="h-12 px-6 text-sm border-2 border-rose-300 text-rose-700 rounded-xl hover:bg-rose-50 transition-all duration-200 font-medium flex items-center gap-2">
                         <CreditCardIcon className="h-4 w-4" /> Add Liabilities
                     </button>
+                    <DemoDataButton page="Liabilities" options={{ includeLiabilities: true }} />
                 </div>
             </div>
 

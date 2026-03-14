@@ -21,6 +21,7 @@ import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
+import { DemoDataButton } from '../components/DemoDataButton';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
 import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
 import { computeRiskLaneFromData } from '../services/riskLaneEngine';
@@ -226,6 +227,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             action={
                 setActivePage && (
                     <div className="flex flex-wrap items-center gap-2">
+                        <DemoDataButton page="Summary" />
                         <button
                             type="button"
                             onClick={() => setActivePage('Wealth Ultra')}
