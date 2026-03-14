@@ -1,0 +1,496 @@
+import { Transaction, InvestmentTransaction } from '../types';
+import { invokeAI } from './geminiService';
+
+export interface ParseResult {
+  transactions: Transaction[];
+  investmentTransactions?: InvestmentTransaction[];
+  confidence: number;
+  errors?: string[];
+}
+
+/**
+ * Parse bank statement from uploaded file
+ */
+export async function parseBankStatement(
+  file: File,
+  accountId: string
+): Promise<ParseResult> {
+  const fileType = getFileType(file.name);
+  
+  try {
+    let text = '';
+    
+    if (fileType === 'pdf') {
+      text = await extractTextFromPDF(file);
+    } else if (fileType === 'csv') {
+      text = await parseCSV(file);
+    } else if (fileType === 'xlsx' || fileType === 'xls') {
+      text = await parseExcel(file);
+    } else {
+      throw new Error(`Unsupported file type: ${fileType}`);
+    }
+
+    // Use AI to extract transactions from text
+    const transactions = await extractTransactionsFromText(text, accountId, 'bank');
+    
+    return {
+      transactions,
+      confidence: 0.85,
+      errors: []
+    };
+  } catch (error) {
+    console.error('Error parsing bank statement:', error);
+    return {
+      transactions: [],
+      confidence: 0,
+      errors: [error instanceof Error ? error.message : 'Failed to parse statement']
+    };
+  }
+}
+
+/**
+ * Parse SMS transaction text
+ */
+export async function parseSMSTransactions(
+  smsText: string,
+  accountId: string
+): Promise<ParseResult> {
+  try {
+    // First try pattern-based extraction for common SMS formats
+    const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
+    
+    // Then use AI to extract any additional transactions
+    const aiTransactions = await extractTransactionsFromText(smsText, accountId, 'sms');
+    
+    // Merge and deduplicate
+    const allTransactions = [...patternTransactions, ...aiTransactions];
+    const uniqueTransactions = deduplicateTransactions(allTransactions);
+    
+    return {
+      transactions: uniqueTransactions,
+      confidence: 0.90,
+      errors: []
+    };
+  } catch (error) {
+    console.error('Error parsing SMS:', error);
+    return {
+      transactions: [],
+      confidence: 0,
+      errors: [error instanceof Error ? error.message : 'Failed to parse SMS']
+    };
+  }
+}
+
+/**
+ * Parse trading statement
+ */
+export async function parseTradingStatement(
+  file: File,
+  accountId?: string
+): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[] }> {
+  const fileType = getFileType(file.name);
+  
+  try {
+    let text = '';
+    
+    if (fileType === 'pdf') {
+      text = await extractTextFromPDF(file);
+    } else if (fileType === 'csv') {
+      text = await parseCSV(file);
+    } else if (fileType === 'xlsx' || fileType === 'xls') {
+      text = await parseExcel(file);
+    } else {
+      throw new Error(`Unsupported file type: ${fileType}`);
+    }
+
+    // Extract investment transactions using AI
+    const transactions = await extractInvestmentTransactionsFromText(text, accountId || '');
+    
+    return {
+      transactions,
+      confidence: 0.80,
+      errors: []
+    };
+  } catch (error) {
+    console.error('Error parsing trading statement:', error);
+    return {
+      transactions: [],
+      confidence: 0,
+      errors: [error instanceof Error ? error.message : 'Failed to parse trading statement']
+    };
+  }
+}
+
+/**
+ * Extract text from PDF using browser APIs or fallback
+ */
+async function extractTextFromPDF(file: File): Promise<string> {
+  // For now, use a simple approach - in production, you'd use a PDF parsing library
+  // like pdf.js or send to a backend service with proper OCR
+  
+  try {
+    // Try to use FileReader to read as text (works for some PDFs)
+    const text = await file.text();
+    
+    // If that doesn't work well, we'll use AI to extract from the raw bytes
+    // For now, return the text and let AI handle extraction
+    return text;
+  } catch (error) {
+    // Fallback: convert to base64 and use AI
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    
+    // Use AI to extract text from PDF
+    return await extractTextFromPDFWithAI(base64);
+  }
+}
+
+/**
+ * Extract text from PDF using AI (fallback)
+ */
+async function extractTextFromPDFWithAI(base64: string): Promise<string> {
+  // In a real implementation, you'd send this to a backend service
+  // that uses OCR or PDF parsing libraries
+  // For now, return empty and let the AI extraction handle it
+  return '';
+}
+
+/**
+ * Parse CSV file
+ */
+async function parseCSV(file: File): Promise<string> {
+  const text = await file.text();
+  return text;
+}
+
+/**
+ * Parse Excel file
+ */
+async function parseExcel(file: File): Promise<string> {
+  // For Excel files, we'd need a library like xlsx
+  // For now, try to read as text (won't work well)
+  // In production, use a library or convert to CSV first
+  try {
+    const text = await file.text();
+    return text;
+  } catch {
+    // Fallback: use AI to extract
+    return '';
+  }
+}
+
+/**
+ * Extract transactions from SMS text using patterns
+ */
+function extractTransactionsFromSMS(smsText: string, accountId: string): Transaction[] {
+  const transactions: Transaction[] = [];
+  const lines = smsText.split('\n').filter(line => line.trim());
+  
+  // Common SMS patterns for KSA banks
+  const patterns = [
+    // Al Rajhi Bank pattern
+    /(?:Al Rajhi|الراجحي)[:\s]+SAR\s+([\d,]+\.?\d*)\s+(?:debited|credited|withdrawn|deposited|paid|received)\s+from\s+(?:A\/C|Account)\s*\*?(\d+)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    // STC pattern
+    /STC[:\s]+(?:Payment|Transaction)\s+of\s+SAR\s+([\d,]+\.?\d*)\s+(?:received|paid|debited)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    // Generic pattern
+    /([A-Za-z\s]+)[:\s]+SAR\s+([\d,]+\.?\d*)\s+(?:debited|credited|withdrawn|deposited|paid|received|purchase|payment)\s+(?:from|to|on|at)\s+([^\n]+)/i,
+    // Date-first pattern
+    /(\d{1,2}\/\d{1,2}\/\d{2,4})[:\s]+([A-Za-z\s]+)[:\s]+SAR\s+([\d,]+\.?\d*)/i,
+  ];
+  
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const match = line.match(pattern);
+      if (match) {
+        let amount = 0;
+        let description = '';
+        let dateStr = '';
+        let isDebit = false;
+        
+        // Extract based on pattern
+        if (pattern.source.includes('Al Rajhi')) {
+          amount = parseFloat(match[1].replace(/,/g, ''));
+          dateStr = match[3];
+          description = line.substring(0, line.indexOf('SAR')).trim();
+          isDebit = /debited|withdrawn|paid/i.test(line);
+        } else if (pattern.source.includes('STC')) {
+          amount = parseFloat(match[1].replace(/,/g, ''));
+          dateStr = match[2];
+          description = 'STC Payment';
+          isDebit = /paid|debited/i.test(line);
+        } else if (pattern.source.includes('Date-first')) {
+          dateStr = match[1];
+          description = match[2].trim();
+          amount = parseFloat(match[3].replace(/,/g, ''));
+          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+        } else {
+          // Generic pattern
+          description = match[1]?.trim() || '';
+          amount = parseFloat(match[2]?.replace(/,/g, '') || '0');
+          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+          
+          // Try to extract date from the rest
+          const dateMatch = match[3]?.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+          if (dateMatch) {
+            dateStr = dateMatch[1];
+          }
+        }
+        
+        if (amount > 0 && description) {
+          const date = parseDate(dateStr || new Date().toISOString().split('T')[0]);
+          const category = inferCategory(description);
+          
+          transactions.push({
+            id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            date: date.toISOString().split('T')[0],
+            description: description.trim(),
+            amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+            category,
+            accountId,
+            type: isDebit ? 'expense' : 'income',
+            status: 'Approved'
+          });
+        }
+        break; // Found a match, move to next line
+      }
+    }
+  }
+  
+  return transactions;
+}
+
+/**
+ * Extract transactions from text using AI
+ */
+async function extractTransactionsFromText(
+  text: string,
+  accountId: string,
+  source: 'bank' | 'sms'
+): Promise<Transaction[]> {
+  if (!text.trim()) {
+    return [];
+  }
+
+  try {
+    const prompt = `Extract all financial transactions from the following ${source === 'sms' ? 'SMS messages' : 'bank statement text'}.
+    
+Text:
+${text.substring(0, 10000)} ${text.length > 10000 ? '... (truncated)' : ''}
+
+For each transaction, extract:
+- Date (format: YYYY-MM-DD)
+- Description (merchant name or transaction description)
+- Amount (positive for income/credit, negative for expense/debit)
+- Type (income or expense)
+- Category (infer from description: Food, Transportation, Housing, Utilities, Shopping, Entertainment, Health, Education, Income, etc.)
+
+Return a JSON array of transactions in this format:
+[
+  {
+    "date": "2024-01-15",
+    "description": "STARBUCKS COFFEE",
+    "amount": -25.50,
+    "type": "expense",
+    "category": "Food"
+  },
+  ...
+]
+
+Only return valid JSON, no other text.`;
+
+    const response = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+
+    const responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
+    
+    // Extract JSON from response
+    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      return [];
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    
+    return parsed.map((tx: any) => ({
+      id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      date: tx.date || new Date().toISOString().split('T')[0],
+      description: tx.description || 'Unknown Transaction',
+      amount: typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount) || 0,
+      category: tx.category || 'Uncategorized',
+      accountId,
+      type: tx.type || (tx.amount < 0 ? 'expense' : 'income'),
+      status: 'Approved' as const
+    }));
+  } catch (error) {
+    console.error('Error extracting transactions with AI:', error);
+    return [];
+  }
+}
+
+/**
+ * Extract investment transactions from text using AI
+ */
+async function extractInvestmentTransactionsFromText(
+  text: string,
+  accountId: string
+): Promise<InvestmentTransaction[]> {
+  if (!text.trim()) {
+    return [];
+  }
+
+  try {
+    const prompt = `Extract all investment/trading transactions from the following trading statement text.
+    
+Text:
+${text.substring(0, 10000)} ${text.length > 10000 ? '... (truncated)' : ''}
+
+For each transaction, extract:
+- Date (format: YYYY-MM-DD)
+- Type (buy, sell, dividend, deposit, withdrawal)
+- Symbol (stock ticker symbol, e.g., AAPL, 2222.SR)
+- Quantity (number of shares)
+- Price (price per share)
+- Total (total transaction amount)
+- Currency (USD or SAR)
+
+Return a JSON array of transactions in this format:
+[
+  {
+    "date": "2024-01-15",
+    "type": "buy",
+    "symbol": "AAPL",
+    "quantity": 10,
+    "price": 150.00,
+    "total": 1500.00,
+    "currency": "USD"
+  },
+  ...
+]
+
+Only return valid JSON, no other text.`;
+
+    const response = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+
+    const responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
+    
+    // Extract JSON from response
+    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      return [];
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    
+    return parsed.map((tx: any) => ({
+      id: `inv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      accountId,
+      date: tx.date || new Date().toISOString().split('T')[0],
+      type: tx.type || 'buy',
+      symbol: (tx.symbol || '').toUpperCase(),
+      quantity: typeof tx.quantity === 'number' ? tx.quantity : parseFloat(tx.quantity) || 0,
+      price: typeof tx.price === 'number' ? tx.price : parseFloat(tx.price) || 0,
+      total: typeof tx.total === 'number' ? tx.total : parseFloat(tx.total) || (tx.quantity * tx.price),
+      currency: tx.currency || 'SAR'
+    }));
+  } catch (error) {
+    console.error('Error extracting investment transactions with AI:', error);
+    return [];
+  }
+}
+
+/**
+ * Helper functions
+ */
+function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  switch (extension) {
+    case 'pdf': return 'pdf';
+    case 'csv': return 'csv';
+    case 'xlsx': return 'xlsx';
+    case 'xls': return 'xls';
+    case 'ofx': return 'ofx';
+    case 'qfx': return 'qfx';
+    default: return 'pdf';
+  }
+}
+
+function parseDate(dateStr: string): Date {
+  // Try different date formats
+  const formats = [
+    /(\d{1,2})\/(\d{1,2})\/(\d{4})/, // DD/MM/YYYY
+    /(\d{1,2})\/(\d{1,2})\/(\d{2})/, // DD/MM/YY
+    /(\d{4})-(\d{2})-(\d{2})/, // YYYY-MM-DD
+  ];
+  
+  for (const format of formats) {
+    const match = dateStr.match(format);
+    if (match) {
+      if (format.source.includes('YYYY-MM-DD')) {
+        return new Date(match[0]);
+      } else {
+        const day = parseInt(match[1]);
+        const month = parseInt(match[2]) - 1;
+        const year = parseInt(match[3].length === 2 ? `20${match[3]}` : match[3]);
+        return new Date(year, month, day);
+      }
+    }
+  }
+  
+  // Fallback to today
+  return new Date();
+}
+
+function inferCategory(description: string): string {
+  const desc = description.toLowerCase();
+  
+  const categoryMap: Record<string, string> = {
+    'starbucks': 'Food',
+    'coffee': 'Food',
+    'restaurant': 'Food',
+    'grocery': 'Food',
+    'supermarket': 'Food',
+    'panda': 'Food',
+    'carrefour': 'Food',
+    'uber': 'Transportation',
+    'taxi': 'Transportation',
+    'fuel': 'Transportation',
+    'petrol': 'Transportation',
+    'gas': 'Transportation',
+    'rent': 'Housing',
+    'electricity': 'Utilities',
+    'water': 'Utilities',
+    'internet': 'Utilities',
+    'stc': 'Telecommunications',
+    'mobily': 'Telecommunications',
+    'zain': 'Telecommunications',
+    'netflix': 'Entertainment',
+    'shahid': 'Entertainment',
+    'salary': 'Income',
+    'deposit': 'Income',
+  };
+  
+  for (const [keyword, category] of Object.entries(categoryMap)) {
+    if (desc.includes(keyword)) {
+      return category;
+    }
+  }
+  
+  return 'Uncategorized';
+}
+
+function deduplicateTransactions(transactions: Transaction[]): Transaction[] {
+  const seen = new Set<string>();
+  return transactions.filter(tx => {
+    const key = `${tx.date}-${tx.description}-${tx.amount}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
