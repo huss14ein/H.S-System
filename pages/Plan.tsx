@@ -19,6 +19,15 @@ import {
     sumLiquidCash,
     HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import InfoHint from '../components/InfoHint';
+import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
+import { PlusIcon } from '../components/icons/PlusIcon';
+import { ChartBarIcon } from '../components/icons/ChartBarIcon';
+import { AcademicCapIcon } from '../components/icons/AcademicCapIcon';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import AIAdvisor from '../components/AIAdvisor';
+import SinkingFunds from './SinkingFunds';
 
 interface Scenario {
   id: string;
@@ -30,22 +39,73 @@ interface Scenario {
   color: string;
 }
 
-const Plan: React.FC = () => {
-  const { data, loading } = useContext(DataContext)!;
-  const { formatCurrencyString } = useFormatCurrency();
+export interface PlanRow {
+  type: 'income' | 'expense';
+  category: string;
+  monthly_planned: number[];
+  monthly_actual: number[];
+}
 
-  const [selectedScenario, setSelectedScenario] = useState<string>('none');
+export interface LifeEvent {
+  id: string;
+  name: string;
+  month: number;
+  amount: number;
+  type?: 'income' | 'expense';
+}
 
-  const scenarios: Scenario[] = [
-    { id: 'none', name: 'None', description: 'Current financial situation', incomeMultiplier: 1, expenseMultiplier: 1, duration: 0, color: 'gray' },
-    { id: 'recession', name: 'Recession', description: '20% income reduction, 10% expense increase', incomeMultiplier: 0.8, expenseMultiplier: 1.1, duration: 12, color: 'red' },
-    { id: 'jobLoss', name: 'Job Loss', description: '60% income reduction for 6 months', incomeMultiplier: 0.4, expenseMultiplier: 1, duration: 6, color: 'orange' },
-    { id: 'promotion', name: 'Promotion', description: '25% income increase', incomeMultiplier: 1.25, expenseMultiplier: 1, duration: 0, color: 'green' }
-  ];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  const currentScenario = scenarios.find(s => s.id === selectedScenario) || scenarios[0];
+const EVENT_MODAL_MONTHS = MONTHS.map((name, i) => ({ value: i + 1, name }));
 
-  return null;
+const EventModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (event: Omit<LifeEvent, 'id'>) => void;
+}> = ({ isOpen, onClose, onSave }) => {
+  const [name, setName] = useState('');
+  const [month, setMonth] = useState(1);
+  const [amount, setAmount] = useState('');
+  const [type, setType] = useState<'income' | 'expense'>('expense');
+  useEffect(() => {
+    if (!isOpen) {
+      setName('');
+      setMonth(1);
+      setAmount('');
+      setType('expense');
+    }
+  }, [isOpen]);
+  if (!isOpen) return null;
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave({ name: name.trim() || 'Event', month, amount: parseFloat(amount) || 0, type });
+    setName('');
+    setMonth(1);
+    setAmount('');
+    onClose();
+  };
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white p-4 rounded-lg shadow-lg max-w-sm w-full" onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold mb-3">Add life event</h3>
+        <form onSubmit={handleSubmit}>
+          <input placeholder="Event name" value={name} onChange={e => setName(e.target.value)} className="p-2 border rounded w-full mb-2" />
+          <select value={type} onChange={e => setType(e.target.value as 'income' | 'expense')} className="p-2 border rounded w-full mb-2" aria-label="Event type">
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+          </select>
+          <select value={month} onChange={e => setMonth(Number(e.target.value))} className="p-2 border rounded w-full mb-2">
+            {EVENT_MODAL_MONTHS.map(m => <option key={m.value} value={m.value}>{m.name}</option>)}
+          </select>
+          <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} className="p-2 border rounded w-full mb-3" />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 bg-gray-200 rounded">Cancel</button>
+            <button type="submit" className="px-3 py-1.5 bg-primary text-white rounded">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 };
 
 const SCENARIO_PRESETS = [
@@ -55,8 +115,17 @@ const SCENARIO_PRESETS = [
     { name: 'Expense spike', income: 0, expense: 20, startMonth: 1, duration: 1, label: 'All expenses +20%' },
 ];
 
+const PLAN_SCENARIOS: Scenario[] = [
+  { id: 'none', name: 'None', description: 'Current financial situation', incomeMultiplier: 1, expenseMultiplier: 1, duration: 0, color: 'gray' },
+  { id: 'recession', name: 'Recession', description: '20% income reduction, 10% expense increase', incomeMultiplier: 0.8, expenseMultiplier: 1.1, duration: 12, color: 'red' },
+  { id: 'jobLoss', name: 'Job Loss', description: '60% income reduction for 6 months', incomeMultiplier: 0.4, expenseMultiplier: 1, duration: 6, color: 'orange' },
+  { id: 'promotion', name: 'Promotion', description: '25% income increase', incomeMultiplier: 1.25, expenseMultiplier: 1, duration: 0, color: 'green' },
+];
+
+const formatPlanDate = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [year, setYear] = useState(new Date().getFullYear());
@@ -64,7 +133,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
-    
+    const [selectedScenario, setSelectedScenario] = useState<string>('none');
+    const scenarios = PLAN_SCENARIOS;
+    const currentScenario = scenarios.find(s => s.id === selectedScenario) || scenarios[0];
+
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
     const [expenseStress, setExpenseStress] = useState({ category: 'All', percent: 0 });
@@ -368,8 +440,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             });
         });
         const currentMonth = new Date().getMonth();
-        const ytdPlannedIncome = income?.monthly_planned.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
-        const ytdActualIncome = income?.monthly_actual.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
+        const ytdPlannedIncome = income?.monthly_planned.slice(0, currentMonth + 1).reduce((a: number, b: number) => a + b, 0) ?? 0;
+        const ytdActualIncome = income?.monthly_actual.slice(0, currentMonth + 1).reduce((a: number, b: number) => a + b, 0) ?? 0;
         return { monthsOverBudget, worst, ytdPlannedIncome, ytdActualIncome };
     }, [processedPlanData]);
 
@@ -414,15 +486,15 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [goals, totals, processedPlanData]);
 
     const householdBudgetEngine = useMemo(() => {
-        const monthlyIncomePlanned = MONTHS.map((_, i) => {
+        const monthlyIncomePlanned = MONTHS.map((_: string, i: number) => {
             const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
             return Number(incomeRow?.monthly_planned?.[i] || 0);
         });
-        const monthlyIncomeActual = MONTHS.map((_, i) => {
+        const monthlyIncomeActual = MONTHS.map((_: string, i: number) => {
             const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
             return Number(incomeRow?.monthly_actual?.[i] || 0);
         });
-        const monthlyExpenseActual = MONTHS.map((_, i) => processedPlanData
+        const monthlyExpenseActual = MONTHS.map((_: string, i: number) => processedPlanData
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
@@ -444,7 +516,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [processedPlanData, accounts, goals, householdAdults, householdKids, householdOverrides, engineConfig]);
 
      const planChartData = useMemo(() => {
-        return MONTHS.map((month, index) => {
+        return MONTHS.map((month: string, index: number) => {
             const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
             const expenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, r: PlanRow) => sum + r.monthly_planned[index], 0);
             return { name: month, Income: income, Expenses: expenses, "Net Savings": income - expenses };
@@ -987,7 +1059,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
           <h2 className="text-xl font-semibold text-gray-900 mb-6">Scenario Analysis</h2>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {scenarios.map(scenario => (
+            {scenarios.map((scenario: Scenario) => (
               <button
                 key={scenario.id}
                 onClick={() => setSelectedScenario(scenario.id)}
@@ -1107,7 +1179,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 <div className="flex-1">
                   <h3 className="font-medium text-gray-900">{goal.name}</h3>
                   <p className="text-sm text-gray-600">
-                    Target: {formatCurrencyString(goal.targetAmount)} by {format(new Date(goal.deadline), 'MMM yyyy')}
+                    Target: {formatCurrencyString(goal.targetAmount)} by {goal.deadline ? formatPlanDate(new Date(goal.deadline)) : '—'}
                   </p>
                 </div>
                 <div className="text-right">
