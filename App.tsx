@@ -56,7 +56,7 @@ const VALID_PAGES: Page[] = [
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System Health'
+  'Assets', 'System & APIs Health'
 ];
 
 function getPageFromHash(): Page | null {
@@ -149,14 +149,14 @@ const App: React.FC = () => {
       case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages
-      case 'Plan': return <Plan />;
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
       
       // Asset Management Pages
-      case 'Assets': return <Assets />;
+      case 'Assets': return <Assets {...actionProps} />;
       
       // System & Market Pages
       case 'Market Events': return <MarketEvents />;
-      case 'System Health': return <SystemHealth />;
+      case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
       
       default: return <Dashboard setActivePage={setActivePage} />;

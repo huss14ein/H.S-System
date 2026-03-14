@@ -97,7 +97,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
     { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Assets', 'Liabilities'] },
-    { name: 'System', items: ['Notifications', 'Settings', 'System Health'] }
+    { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
   const investmentProgress = useMemo(() => {

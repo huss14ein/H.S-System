@@ -34,7 +34,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Forecast', icon: AcademicCapIcon },
   { name: 'Analysis', icon: ChartBarIcon },
-  { name: 'System Health', icon: ServerStackIcon },
+  { name: 'System & APIs Health', icon: ServerStackIcon },
   { name: 'Notifications', icon: BellIcon },
   { name: 'Settings', icon: Cog6ToothIcon },
 ];
