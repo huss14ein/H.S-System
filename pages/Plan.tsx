@@ -913,6 +913,74 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
              <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
 
+             {/* Household Engine Buckets Summary */}
+             {(() => {
+                 const currentMonthIndex = new Date().getMonth();
+                 const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
+                 const buckets = currentMonthResult?.buckets ?? {};
+                 const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
+                 
+                 if (!hasBuckets) return null;
+                 
+                 const bucketToCategoryMap: Record<string, string> = {
+                     'emergencySavings': 'Emergency Savings',
+                     'reserveSavings': 'Reserve Savings',
+                     'goalSavings': 'Goal Savings',
+                     'kidsFutureSavings': 'Kids Future',
+                     'retirementSavings': 'Retirement',
+                     'investing': 'Investing',
+                     'housing': 'Housing',
+                     'utilities': 'Utilities',
+                     'food': 'Food',
+                     'transportation': 'Transportation',
+                     'health': 'Health',
+                     'personalCare': 'Personal Care',
+                     'entertainment': 'Entertainment',
+                     'shopping': 'Shopping',
+                     'miscellaneous': 'Miscellaneous',
+                 };
+                 
+                 const savingsTotal = (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0);
+                 const expensesTotal = (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0);
+                 
+                 return (
+                     <div className="bg-white shadow rounded-lg p-4 mb-4">
+                         <h3 className="text-lg font-bold text-slate-900 mb-3">Current Month Budget Allocations</h3>
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                             <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                                 <p className="text-xs uppercase text-emerald-600 mb-1">Total Savings</p>
+                                 <p className="text-2xl font-bold text-emerald-900">{formatCurrencyString(savingsTotal, { digits: 0 })}</p>
+                             </div>
+                             <div className="bg-rose-50 rounded-lg p-3 border border-rose-200">
+                                 <p className="text-xs uppercase text-rose-600 mb-1">Total Expenses</p>
+                                 <p className="text-2xl font-bold text-rose-900">{formatCurrencyString(expensesTotal, { digits: 0 })}</p>
+                             </div>
+                             <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                                 <p className="text-xs uppercase text-blue-600 mb-1">Income</p>
+                                 <p className="text-2xl font-bold text-blue-900">{formatCurrencyString(currentMonthResult?.incomePlanned ?? 0, { digits: 0 })}</p>
+                             </div>
+                         </div>
+                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                             {Object.entries(buckets)
+                                 .filter(([_, amount]) => (amount as number) > 0)
+                                 .map(([bucketKey, amount]) => {
+                                     const displayName = bucketToCategoryMap[bucketKey] || bucketKey;
+                                     const isSavings = bucketKey.includes('Savings') || bucketKey === 'investing';
+                                     return (
+                                         <div key={bucketKey} className={`rounded-lg border p-2 ${isSavings ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                                             <p className="text-[10px] uppercase text-slate-600 truncate">{displayName}</p>
+                                             <p className="font-bold text-slate-900 text-sm mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                         </div>
+                                     );
+                                 })}
+                         </div>
+                         <p className="text-xs text-slate-500 mt-3">
+                             These allocations are calculated by the household budget engine based on your income, expenses, goals, and profile settings.
+                         </p>
+                     </div>
+                 );
+             })()}
+
              <SinkingFunds />
             
             {/* Plan Grid: actuals from Transactions, planned from Budgets + recurring; investment from Investment Plan */}

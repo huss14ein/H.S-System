@@ -190,7 +190,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
-    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true });
+    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true, buckets: true, bucketComparison: false });
+    const [selectedBucketMonth, setSelectedBucketMonth] = useState<number | null>(currentMonth);
+    const [bucketViewMode, setBucketViewMode] = useState<'current' | 'all' | 'comparison'>('current');
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -868,12 +870,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
     };
 
-    const handleSyncHouseholdBudgets = () => {
-        const currentMonthIndex = currentMonth - 1;
-        const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
+    const handleSyncHouseholdBudgets = (targetMonth?: number) => {
+        const monthToSync = targetMonth ?? currentMonth;
+        const monthIndex = monthToSync - 1;
+        const monthResult = householdBudgetEngine.months[monthIndex];
         
-        if (!currentMonthResult || !currentMonthResult.buckets) {
-            alert('No budget buckets available for the current month from the household engine.');
+        if (!monthResult || !monthResult.buckets) {
+            alert(`No budget buckets available for ${MONTHS[monthIndex]} ${currentYear} from the household engine.`);
             return;
         }
 
@@ -896,24 +899,58 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             'miscellaneous': 'Miscellaneous',
         };
 
-        const buckets = currentMonthResult.buckets;
+        const buckets = monthResult.buckets;
         const existingBudgets = (data?.budgets ?? []).filter(
-            b => b.year === currentYear && b.month === currentMonth
+            b => b.year === currentYear && b.month === monthToSync
         );
-        const existingCategories = new Set(existingBudgets.map(b => b.category));
 
-        let syncedCount = 0;
-        let updatedCount = 0;
-        let skippedCount = 0;
-
+        // Preview changes
+        const changes: Array<{ action: 'create' | 'update' | 'skip'; category: string; amount: number; existing?: number }> = [];
+        
         Object.entries(buckets).forEach(([bucketKey, amount]) => {
-            if (!amount || amount <= 0) return; // Skip zero or negative amounts
+            if (!amount || amount <= 0) return;
 
             const category = bucketToCategoryMap[bucketKey] || 'Miscellaneous';
             const existingBudget = existingBudgets.find(b => b.category === category);
 
             if (existingBudget) {
-                // Update existing budget if amount is different
+                if (Math.abs(existingBudget.limit - amount) > 0.01) {
+                    changes.push({ action: 'update', category, amount, existing: existingBudget.limit });
+                } else {
+                    changes.push({ action: 'skip', category, amount, existing: existingBudget.limit });
+                }
+            } else {
+                changes.push({ action: 'create', category, amount });
+            }
+        });
+
+        // Show preview and confirm
+        const createCount = changes.filter(c => c.action === 'create').length;
+        const updateCount = changes.filter(c => c.action === 'update').length;
+        const skipCount = changes.filter(c => c.action === 'skip').length;
+
+        const previewMessage = `Preview for ${MONTHS[monthIndex]} ${currentYear}:\n\n` +
+            `• ${createCount} new budgets will be created\n` +
+            `• ${updateCount} budgets will be updated\n` +
+            `• ${skipCount} budgets will remain unchanged\n\n` +
+            `Proceed with sync?`;
+
+        if (!confirm(previewMessage)) {
+            return;
+        }
+
+        // Apply changes
+        let syncedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+
+        Object.entries(buckets).forEach(([bucketKey, amount]) => {
+            if (!amount || amount <= 0) return;
+
+            const category = bucketToCategoryMap[bucketKey] || 'Miscellaneous';
+            const existingBudget = existingBudgets.find(b => b.category === category);
+
+            if (existingBudget) {
                 if (Math.abs(existingBudget.limit - amount) > 0.01) {
                     updateBudget({
                         ...existingBudget,
@@ -927,11 +964,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     skippedCount++;
                 }
             } else {
-                // Create new budget entry
                 addBudget({
                     category,
                     limit: amount,
-                    month: currentMonth,
+                    month: monthToSync,
                     year: currentYear,
                     period: 'monthly',
                     tier: bucketKey.includes('Savings') || bucketKey === 'investing' ? 'Core' : 
@@ -942,11 +978,54 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             }
         });
 
-        const message = `Synced household engine budgets:\n` +
+        const message = `Successfully synced household engine budgets for ${MONTHS[monthIndex]} ${currentYear}:\n` +
             `• ${syncedCount} new budgets created\n` +
             `• ${updatedCount} budgets updated\n` +
             `• ${skippedCount} budgets unchanged`;
         alert(message);
+    };
+
+    const handleExportBuckets = () => {
+        const bucketData = householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => {
+            const buckets = month.buckets ?? {};
+            return {
+                month: MONTHS[idx],
+                monthNumber: idx + 1,
+                income: month.incomePlanned,
+                ...buckets,
+                totalSavings: (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0),
+                totalExpenses: (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0),
+            };
+        });
+
+        const csv = [
+            ['Month', 'Income', 'Emergency Savings', 'Reserve Savings', 'Goal Savings', 'Retirement', 'Investing', 'Housing', 'Food', 'Transportation', 'Health', 'Total Savings', 'Total Expenses'].join(','),
+            ...bucketData.map(row => [
+                row.month,
+                row.income,
+                row.emergencySavings ?? 0,
+                row.reserveSavings ?? 0,
+                row.goalSavings ?? 0,
+                row.retirementSavings ?? 0,
+                row.investing ?? 0,
+                row.housing ?? 0,
+                row.food ?? 0,
+                row.transportation ?? 0,
+                row.health ?? 0,
+                row.totalSavings,
+                row.totalExpenses,
+            ].join(','))
+        ].join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `household-budget-buckets-${currentYear}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
     };
 
     const handleShareBudget = async () => {
@@ -1726,67 +1805,379 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m: HouseholdMonthResult) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
-                {(() => {
-                    const currentMonthIndex = currentMonth - 1;
-                    const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
-                    const buckets = currentMonthResult?.buckets ?? {};
-                    const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
-                    
-                    if (!hasBuckets) return null;
-                    
-                    return (
-                        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                            <div className="flex items-center justify-between mb-2">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-                                    {MONTHS[currentMonth - 1]} {currentYear} Budget Buckets
-                                </p>
-                                <button 
-                                    type="button" 
-                                    className="btn-primary text-xs px-3 py-1.5" 
-                                    onClick={handleSyncHouseholdBudgets}
-                                    title="Create or update budget entries from these calculated buckets"
-                                >
-                                    Apply to Budgets
-                                </button>
-                            </div>
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mt-2">
-                                {Object.entries(buckets)
-                                    .filter(([_, amount]) => (amount as number) > 0)
-                                    .map(([bucketKey, amount]) => {
-                                        const bucketToCategoryMap: Record<string, string> = {
-                                            'emergencySavings': 'Emergency Savings',
-                                            'reserveSavings': 'Reserve Savings',
-                                            'goalSavings': 'Goal Savings',
-                                            'kidsFutureSavings': 'Kids Future',
-                                            'retirementSavings': 'Retirement',
-                                            'investing': 'Investing',
-                                            'housing': 'Housing',
-                                            'utilities': 'Utilities',
-                                            'food': 'Food',
-                                            'transportation': 'Transportation',
-                                            'health': 'Health',
-                                            'personalCare': 'Personal Care',
-                                            'entertainment': 'Entertainment',
-                                            'shopping': 'Shopping',
-                                            'miscellaneous': 'Miscellaneous',
-                                        };
-                                        const displayName = bucketToCategoryMap[bucketKey] || bucketKey;
-                                        return (
-                                            <div key={bucketKey} className="rounded border bg-white p-2">
-                                                <p className="text-[10px] uppercase tracking-wide text-slate-500 truncate">{displayName}</p>
-                                                <p className="font-semibold text-slate-900 text-sm">{formatCurrencyString(amount as number, { digits: 0 })}</p>
-                                            </div>
-                                        );
-                                    })}
-                            </div>
-                            <p className="text-xs text-blue-600 mt-2">
-                                These are the calculated budget allocations from the household engine. Click "Apply to Budgets" to sync them to your actual budget entries.
-                            </p>
-                        </div>
-                    );
-                })()}
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
+                    <button 
+                        type="button" 
+                        onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, buckets: !prev.buckets }))} 
+                        className="w-full flex items-center justify-between text-left"
+                    >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Budget Buckets & Allocations</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.buckets ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.buckets && (
+                        <div className="mt-3 space-y-4">
+                            {/* View Mode Selector */}
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => { setBucketViewMode('current'); setSelectedBucketMonth(currentMonth); }}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'current' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    Current Month
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketViewMode('all')}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'all' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    All Months
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketViewMode('comparison')}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'comparison' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    Comparison View
+                                </button>
+                                {bucketViewMode === 'current' && (
+                                    <>
+                                        <button 
+                                            type="button" 
+                                            className="btn-primary text-xs px-3 py-1.5 ml-auto" 
+                                            onClick={() => handleSyncHouseholdBudgets(selectedBucketMonth ?? currentMonth)}
+                                            title="Create or update budget entries from these calculated buckets"
+                                        >
+                                            Apply to Budgets
+                                        </button>
+                                        <button 
+                                            type="button" 
+                                            className="btn-outline text-xs px-3 py-1.5" 
+                                            onClick={handleExportBuckets}
+                                            title="Export all bucket data to CSV"
+                                        >
+                                            Export CSV
+                                        </button>
+                                    </>
+                                )}
+                                {bucketViewMode === 'all' && (
+                                    <button 
+                                        type="button" 
+                                        className="btn-outline text-xs px-3 py-1.5 ml-auto" 
+                                        onClick={handleExportBuckets}
+                                        title="Export all bucket data to CSV"
+                                    >
+                                        Export CSV
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Current Month View */}
+                            {bucketViewMode === 'current' && (() => {
+                                const monthIndex = (selectedBucketMonth ?? currentMonth) - 1;
+                                const monthResult = householdBudgetEngine.months[monthIndex];
+                                const buckets = monthResult?.buckets ?? {};
+                                const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
+                                
+                                if (!hasBuckets) {
+                                    return (
+                                        <div className="text-center py-8 text-slate-500">
+                                            <p>No bucket data available for {MONTHS[monthIndex]} {currentYear}</p>
+                                        </div>
+                                    );
+                                }
+
+                                const bucketToCategoryMap: Record<string, { name: string; type: 'savings' | 'expense'; color: string }> = {
+                                    'emergencySavings': { name: 'Emergency Savings', type: 'savings', color: 'bg-amber-100 border-amber-300 text-amber-800' },
+                                    'reserveSavings': { name: 'Reserve Savings', type: 'savings', color: 'bg-blue-100 border-blue-300 text-blue-800' },
+                                    'goalSavings': { name: 'Goal Savings', type: 'savings', color: 'bg-indigo-100 border-indigo-300 text-indigo-800' },
+                                    'kidsFutureSavings': { name: 'Kids Future', type: 'savings', color: 'bg-purple-100 border-purple-300 text-purple-800' },
+                                    'retirementSavings': { name: 'Retirement', type: 'savings', color: 'bg-emerald-100 border-emerald-300 text-emerald-800' },
+                                    'investing': { name: 'Investing', type: 'savings', color: 'bg-teal-100 border-teal-300 text-teal-800' },
+                                    'housing': { name: 'Housing', type: 'expense', color: 'bg-rose-100 border-rose-300 text-rose-800' },
+                                    'utilities': { name: 'Utilities', type: 'expense', color: 'bg-orange-100 border-orange-300 text-orange-800' },
+                                    'food': { name: 'Food', type: 'expense', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
+                                    'transportation': { name: 'Transportation', type: 'expense', color: 'bg-cyan-100 border-cyan-300 text-cyan-800' },
+                                    'health': { name: 'Health', type: 'expense', color: 'bg-red-100 border-red-300 text-red-800' },
+                                    'personalCare': { name: 'Personal Care', type: 'expense', color: 'bg-pink-100 border-pink-300 text-pink-800' },
+                                    'entertainment': { name: 'Entertainment', type: 'expense', color: 'bg-violet-100 border-violet-300 text-violet-800' },
+                                    'shopping': { name: 'Shopping', type: 'expense', color: 'bg-slate-100 border-slate-300 text-slate-800' },
+                                    'miscellaneous': { name: 'Miscellaneous', type: 'expense', color: 'bg-gray-100 border-gray-300 text-gray-800' },
+                                };
+
+                                const savingsBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'savings');
+                                const expenseBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'expense');
+                                const totalSavings = savingsBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
+                                const totalExpenses = expenseBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
+                                const income = monthResult?.incomePlanned ?? 0;
+                                const totalAllocated = totalSavings + totalExpenses;
+
+                                return (
+                                    <div className="space-y-4">
+                                        {/* Month Selector */}
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs text-slate-600">View Month:</label>
+                                            <select 
+                                                value={selectedBucketMonth ?? currentMonth} 
+                                                onChange={(e) => setSelectedBucketMonth(Number(e.target.value))}
+                                                className="text-xs border rounded px-2 py-1"
+                                            >
+                                                {MONTHS.map((name, idx) => (
+                                                    <option key={idx} value={idx + 1}>{name} {currentYear}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Summary Cards */}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div className="rounded-lg border p-3 bg-slate-50">
+                                                <p className="text-[10px] uppercase text-slate-500">Income</p>
+                                                <p className="font-bold text-slate-900 text-lg">{formatCurrencyString(income, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-rose-50">
+                                                <p className="text-[10px] uppercase text-rose-600">Expenses</p>
+                                                <p className="font-bold text-rose-900 text-lg">{formatCurrencyString(totalExpenses, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-emerald-50">
+                                                <p className="text-[10px] uppercase text-emerald-600">Savings</p>
+                                                <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(totalSavings, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-blue-50">
+                                                <p className="text-[10px] uppercase text-blue-600">Remaining</p>
+                                                <p className="font-bold text-blue-900 text-lg">{formatCurrencyString(income - totalAllocated, { digits: 0 })}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Savings Buckets */}
+                                        {savingsBuckets.length > 0 && (
+                                            <div>
+                                                <h4 className="text-sm font-semibold text-emerald-700 mb-2">Savings & Investments</h4>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                    {savingsBuckets
+                                                        .filter(([_, amount]) => (amount as number) > 0)
+                                                        .map(([bucketKey, amount]) => {
+                                                            const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100 border-slate-300 text-slate-800' };
+                                                            const pct = income > 0 ? ((amount as number) / income * 100).toFixed(1) : '0';
+                                                            return (
+                                                                <div key={bucketKey} className={`rounded-lg border-2 p-3 ${info.color}`}>
+                                                                    <p className="text-[10px] uppercase tracking-wide font-medium truncate">{info.name}</p>
+                                                                    <p className="font-bold text-lg mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                                                    <p className="text-[10px] mt-1 opacity-75">{pct}% of income</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Expense Buckets */}
+                                        {expenseBuckets.length > 0 && (
+                                            <div>
+                                                <h4 className="text-sm font-semibold text-rose-700 mb-2">Expenses</h4>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                    {expenseBuckets
+                                                        .filter(([_, amount]) => (amount as number) > 0)
+                                                        .map(([bucketKey, amount]) => {
+                                                            const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100 border-slate-300 text-slate-800' };
+                                                            const pct = income > 0 ? ((amount as number) / income * 100).toFixed(1) : '0';
+                                                            return (
+                                                                <div key={bucketKey} className={`rounded-lg border-2 p-3 ${info.color}`}>
+                                                                    <p className="text-[10px] uppercase tracking-wide font-medium truncate">{info.name}</p>
+                                                                    <p className="font-bold text-lg mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                                                    <p className="text-[10px] mt-1 opacity-75">{pct}% of income</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Visual Breakdown */}
+                                        <div className="mt-4 p-4 bg-slate-50 rounded-lg">
+                                            <h4 className="text-sm font-semibold text-slate-700 mb-3">Allocation Breakdown</h4>
+                                            <div className="space-y-2">
+                                                {Object.entries(buckets)
+                                                    .filter(([_, amount]) => (amount as number) > 0)
+                                                    .sort(([_, a], [__, b]) => (b as number) - (a as number))
+                                                    .map(([bucketKey, amount]) => {
+                                                        const info = bucketToCategoryMap[bucketKey] || { name: bucketKey };
+                                                        const pct = totalAllocated > 0 ? ((amount as number) / totalAllocated * 100) : 0;
+                                                        return (
+                                                            <div key={bucketKey} className="flex items-center gap-2">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center justify-between mb-1">
+                                                                        <span className="text-xs font-medium text-slate-700 truncate">{info.name}</span>
+                                                                        <span className="text-xs text-slate-600 ml-2">{formatCurrencyString(amount as number, { digits: 0 })}</span>
+                                                                    </div>
+                                                                    <div className="w-full bg-slate-200 rounded-full h-2">
+                                                                        <div 
+                                                                            className={`h-2 rounded-full ${info.color.split(' ')[0]}`}
+                                                                            style={{ width: `${pct}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* All Months View */}
+                            {bucketViewMode === 'all' && (
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-xs border-collapse">
+                                        <thead className="bg-slate-100 sticky top-0">
+                                            <tr>
+                                                <th className="text-left py-2 px-2 border-b font-semibold text-slate-700">Month</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Income</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Emergency</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Reserve</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Goals</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Retirement</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Investing</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Housing</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Food</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Total Savings</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Total Expenses</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => {
+                                                const buckets = month.buckets ?? {};
+                                                const totalSavings = (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0);
+                                                const totalExpenses = (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0);
+                                                return (
+                                                    <tr key={idx} className="border-b hover:bg-slate-50">
+                                                        <td className="py-2 px-2 font-medium">{MONTHS[idx]}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(month.incomePlanned, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.emergencySavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.reserveSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.goalSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.retirementSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.investing ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.housing ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.food ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right font-semibold text-emerald-700">{formatCurrencyString(totalSavings, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right font-semibold text-rose-700">{formatCurrencyString(totalExpenses, { digits: 0 })}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {/* Comparison View */}
+                            {bucketViewMode === 'comparison' && (
+                                <div className="space-y-4">
+                                    <p className="text-sm text-slate-600">Compare planned bucket allocations vs actual spending by category.</p>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-xs border-collapse">
+                                            <thead className="bg-slate-100">
+                                                <tr>
+                                                    <th className="text-left py-2 px-2 border-b font-semibold text-slate-700">Category</th>
+                                                    {MONTHS.map((month, idx) => (
+                                                        <th key={idx} className="text-right py-2 px-2 border-b font-semibold text-slate-700">{month}</th>
+                                                    ))}
+                                                    <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Annual Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {['emergencySavings', 'reserveSavings', 'goalSavings', 'housing', 'food', 'transportation'].map((bucketKey) => {
+                                                    const bucketToCategoryMap: Record<string, string> = {
+                                                        'emergencySavings': 'Emergency Savings',
+                                                        'reserveSavings': 'Reserve Savings',
+                                                        'goalSavings': 'Goal Savings',
+                                                        'housing': 'Housing',
+                                                        'food': 'Food',
+                                                        'transportation': 'Transportation',
+                                                    };
+                                                    const annualTotal = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.[bucketKey] as number) ?? 0), 0);
+                                                    return (
+                                                        <tr key={bucketKey} className="border-b hover:bg-slate-50">
+                                                            <td className="py-2 px-2 font-medium">{bucketToCategoryMap[bucketKey] || bucketKey}</td>
+                                                            {householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => (
+                                                                <td key={idx} className="py-2 px-2 text-right">
+                                                                    {formatCurrencyString((month.buckets?.[bucketKey] as number) ?? 0, { digits: 0 })}
+                                                                </td>
+                                                            ))}
+                                                            <td className="py-2 px-2 text-right font-semibold">{formatCurrencyString(annualTotal, { digits: 0 })}</td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                {/* Annual Summary */}
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                    <h4 className="text-sm font-semibold text-emerald-800 mb-3">Annual Budget Summary</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {(() => {
+                            const annualIncome = householdBudgetEngine.months.reduce((sum, m) => sum + (m.incomePlanned ?? 0), 0);
+                            const annualEmergency = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.emergencySavings as number) ?? 0), 0);
+                            const annualReserve = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.reserveSavings as number) ?? 0), 0);
+                            const annualGoals = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.goalSavings as number) ?? 0), 0);
+                            const annualRetirement = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.retirementSavings as number) ?? 0), 0);
+                            const annualInvesting = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.investing as number) ?? 0), 0);
+                            const annualTotalSavings = annualEmergency + annualReserve + annualGoals + annualRetirement + annualInvesting;
+                            const annualHousing = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.housing as number) ?? 0), 0);
+                            const annualFood = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.food as number) ?? 0), 0);
+                            const annualTotalExpenses = householdBudgetEngine.months.reduce((sum, m) => {
+                                const buckets = m.buckets ?? {};
+                                return sum + ((buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0));
+                            }, 0);
+                            
+                            return (
+                                <>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-slate-500">Annual Income</p>
+                                        <p className="font-bold text-slate-900 text-lg">{formatCurrencyString(annualIncome, { digits: 0 })}</p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-emerald-600">Total Savings</p>
+                                        <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(annualTotalSavings, { digits: 0 })}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            {annualIncome > 0 ? ((annualTotalSavings / annualIncome) * 100).toFixed(1) : '0'}% of income
+                                        </p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-rose-600">Total Expenses</p>
+                                        <p className="font-bold text-rose-900 text-lg">{formatCurrencyString(annualTotalExpenses, { digits: 0 })}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            {annualIncome > 0 ? ((annualTotalExpenses / annualIncome) * 100).toFixed(1) : '0'}% of income
+                                        </p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-blue-600">Net Surplus</p>
+                                        <p className="font-bold text-blue-900 text-lg">{formatCurrencyString(annualIncome - annualTotalExpenses - annualTotalSavings, { digits: 0 })}</p>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
                     </button>
