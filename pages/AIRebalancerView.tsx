@@ -2,7 +2,6 @@ import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIRebalancingPlan, formatAiError } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
-import SectionCard from '../components/SectionCard';
 import InfoHint from '../components/InfoHint';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';

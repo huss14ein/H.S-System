@@ -1,15 +1,27 @@
-import React, { useState, useMemo } from 'react';
-import { useData } from '../context/DataContext';
+import React, { useState, useMemo, useContext } from 'react';
+import { DataContext } from '../context/DataContext';
 import { Page } from '../types';
-import { CreditCardIcon } from '../components/icons/CreditCardIcon';
-import { HomeIcon } from '../components/icons/HomeIcon';
-import { BanknotesIcon } from '../components/icons/BanknotesIcon';
-import { PencilIcon } from '../components/icons/PencilIcon';
-import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { CreditCardIcon } from '../components/icons';
+import { HomeIcon, BanknotesIcon, PencilIcon, CheckCircleIcon, ShieldCheckIcon } from '../components/icons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
 import { DemoDataButton } from '../components/DemoDataButton';
+import Modal from '../components/Modal';
+
+// Define Liability type locally since it's missing
+interface Liability {
+  id: string;
+  name: string;
+  type: 'Credit Card' | 'Loan' | 'Personal Loan' | 'Mortgage' | 'Receivable';
+  amount: number;
+  status: 'Active' | 'Paid';
+  interestRate?: number;
+  monthlyPayment?: number;
+  dueDate?: string;
+  description?: string;
+  goalId?: string;
+}
 
 type StatusFilter = 'active' | 'paid' | 'all';
 

@@ -223,7 +223,7 @@ export const BiometricProvider: React.FC<BiometricProviderProps> = ({ children }
     }
   };
 
-  const authenticate = async (prompt: string = 'Authenticate to continue'): Promise<boolean> => {
+  const authenticate = async (): Promise<boolean> => {
     if (!isEnabled || !isAvailable || biometricCredentials.length === 0) {
       return false;
     }

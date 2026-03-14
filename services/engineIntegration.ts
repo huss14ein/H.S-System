@@ -6,6 +6,51 @@
 import { Transaction, Account, Budget, Goal } from '../types';
 import { generateCashflowStressSignals, calculateDynamicBaselines } from './enhancedBudgetEngine';
 
+// Define missing types locally
+interface Investment {
+  id: string;
+  symbol: string;
+  quantity: number;
+  shares: number; // alias for quantity
+  averageCost: number;
+  avgCost: number; // alias for averageCost
+  currentPrice: number;
+  type: 'stock' | 'bond' | 'etf' | 'crypto';
+}
+
+interface RiskMetrics {
+  volatility: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  valueAtRisk: number;
+  overallRiskScore?: number;
+  beta?: number;
+  alpha?: number;
+  currentDrawdown?: number;
+  var95?: number;
+  var99?: number;
+  cvar95?: number;
+  sortinoRatio?: number;
+  treynorRatio?: number;
+  calmarRatio?: number;
+}
+
+// Mock function for missing detectRecurringBillPatterns
+function detectRecurringBillPatterns(transactions: Transaction[], minOccurrences: number) {
+  return transactions
+    .filter(t => t.type === 'expense')
+    .reduce((patterns: any[], transaction) => {
+      const existing = patterns.find(p => p.description === transaction.description);
+      if (existing) {
+        existing.count++;
+      } else {
+        patterns.push({ description: transaction.description, count: 1, amount: transaction.amount, frequency: 'monthly' });
+      }
+      return patterns;
+    }, [])
+    .filter(p => p.count >= minOccurrences);
+}
+
 // Constraint interfaces for cross-engine communication
 export interface CashConstraints {
   availableCash: number;

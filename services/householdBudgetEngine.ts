@@ -374,7 +374,7 @@ export function generateSaudiBudgetCategories(
   const reserveMonthly = (config.obligations.annual / 12) + (config.obligations.semiAnnual / 6);
   const annualReserveMonthly = config.requiredExpenses.annualReserveEnabled ? config.requiredExpenses.annualReserveAmount / 12 : 0;
   const semiAnnualReserveMonthly = config.requiredExpenses.semiAnnualReserveEnabled ? config.requiredExpenses.semiAnnualReserveAmount / 6 : 0;
-  const monthlyRequired = config.requiredExpenses.monthlyRequiredEnabled ? config.requiredExpenses.monthlyRequiredAmount : 0;
+  // const monthlyRequired = config.requiredExpenses.monthlyRequiredEnabled ? config.requiredExpenses.monthlyRequiredAmount : 0; // Calculated but not used in current implementation
   
   // Essentials calculation (food, household items)
   const essentialsBase = 2000 + adults * 1200 + kids * 700;

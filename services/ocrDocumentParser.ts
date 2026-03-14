@@ -199,7 +199,7 @@ class OCRDocumentParser {
     }
   }
 
-  private async extractTextFromPDF(file: File): Promise<string> {
+  private async extractTextFromPDF(_file: File): Promise<string> {
     // Simulated PDF text extraction
     // In a real implementation, you would use pdf-parse or pdf.js
     return `
@@ -225,7 +225,7 @@ Total Debits: $1,451.41
     `.trim();
   }
 
-  private async extractTextFromCSV(file: File): Promise<string> {
+  private async extractTextFromCSV(_file: File): Promise<string> {
     // Simulated CSV text extraction
     return `
 Date,Description,Amount,Balance
@@ -292,12 +292,12 @@ Date,Description,Amount,Balance
     return this.templates.get('generic')!;
   }
 
-  private extractAccountNumber(text: string, template: BankTemplate): string | undefined {
+  private extractAccountNumber(text: string, _template: BankTemplate): string | undefined {
     const accountMatch = text.match(/Account[:\s*]+(\*{4,}\d+)/i);
     return accountMatch ? accountMatch[1] : undefined;
   }
 
-  private extractAccountType(text: string, template: BankTemplate): 'checking' | 'savings' | 'credit' | 'investment' | undefined {
+  private extractAccountType(text: string, _template: BankTemplate): 'checking' | 'savings' | 'credit' | 'investment' | undefined {
     const lowerText = text.toLowerCase();
     
     if (lowerText.includes('checking')) return 'checking';
@@ -430,7 +430,7 @@ Date,Description,Amount,Balance
     return new Date(dateString);
   }
 
-  private parseAmount(amountString: string, format: 'US' | 'EU'): number {
+  private parseAmount(amountString: string, _format: 'US' | 'EU'): number {
     // Remove currency symbols and commas
     const cleanAmount = amountString.replace(/[$,]/g, '');
     return parseFloat(cleanAmount);

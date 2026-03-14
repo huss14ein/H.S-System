@@ -1,9 +1,8 @@
-import React, { useMemo, useContext, useState, useCallback } from 'react';
+import React, { useState, useContext, useMemo, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import ChartContainer from '../components/charts/ChartContainer';
-import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { getAIDividendAnalysis, formatAiError } from '../services/geminiService';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';

@@ -1,7 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
-import { XCircleIcon } from '../components/icons/XCircleIcon';
+import { CheckCircleIcon, XCircleIcon, InformationCircleIcon } from '../components/icons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Modal from '../components/Modal';
 import { ZakatPayment } from '../types';

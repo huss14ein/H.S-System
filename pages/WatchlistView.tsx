@@ -20,7 +20,7 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ArrowLeftIcon, XMarkIcon, PlusIcon } from '../components/icons';
+import { ArrowTrendingDownIcon, XMarkIcon, PlusIcon } from '../components/icons';
 import { toSAR } from '../utils/currencyMath';
 
 

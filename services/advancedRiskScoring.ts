@@ -156,7 +156,7 @@ export function calculatePortfolioRisk(
   });
   
   // Calculate portfolio returns as weighted average
-  const portfolioReturns = calculatePortfolioReturns(positions, totalPortfolioValue);
+  const portfolioReturns = calculatePortfolioReturns(positions);
   
   // Portfolio volatility
   const volatility = portfolioReturns.length > 1

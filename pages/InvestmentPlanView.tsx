@@ -18,9 +18,7 @@ import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocument
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ChartBarIcon } from '../components/icons/ChartBarIcon';
-import { ClockIcon } from '../components/icons/ClockIcon';
-import { TargetIcon } from '../components/icons/TargetIcon';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { ClockIcon, TargetIcon } from '../components/icons';
 import { DemoDataButton } from '../components/DemoDataButton';
 
 
@@ -547,24 +545,24 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 {/* Enhanced Household Stress Indicator */}
                 {householdStress && (
                     <div className={`rounded-3xl border-2 p-8 shadow-xl backdrop-blur-sm ${
-                        householdStress.level === 'healthy' 
+                        householdStress.level === 'low' 
                             ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/90 to-emerald-100/70'
-                            : householdStress.level === 'moderate'
+                            : householdStress.level === 'medium'
                             ? 'border-amber-300 bg-gradient-to-br from-amber-50/90 to-amber-100/70'
                             : 'border-rose-300 bg-gradient-to-br from-rose-50/90 to-rose-100/70'
                     }`}>
                         <div className="flex items-start gap-6">
                             <div className={`rounded-2xl p-4 shadow-lg ${
-                                householdStress.level === 'healthy' 
+                                householdStress.level === 'low' 
                                     ? 'bg-emerald-100'
-                                    : householdStress.level === 'moderate'
+                                    : householdStress.level === 'medium'
                                     ? 'bg-amber-100'
                                     : 'bg-rose-100'
                             }`}>
                                 <ExclamationTriangleIcon className={`h-8 w-8 ${
-                                    householdStress.level === 'healthy' 
+                                    householdStress.level === 'low' 
                                         ? 'text-emerald-600'
-                                        : householdStress.level === 'moderate'
+                                        : householdStress.level === 'medium'
                                         ? 'text-amber-600'
                                         : 'text-rose-600'
                                 }`} />
@@ -572,9 +570,9 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                             <div className="flex-1">
                                 <h3 className="text-2xl font-bold text-slate-900 mb-2">
                                     Household Cashflow Stress: <span className={`uppercase tracking-wider ${
-                                        householdStress.level === 'healthy' 
+                                        householdStress.level === 'low' 
                                             ? 'text-emerald-700'
-                                            : householdStress.level === 'moderate'
+                                            : householdStress.level === 'medium'
                                             ? 'text-amber-700'
                                             : 'text-rose-700'
                                     }`}>{householdStress.level}</span>
@@ -582,9 +580,9 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                                 <p className="text-lg text-slate-700 leading-relaxed">{householdStress.summary}</p>
                                 <div className="mt-4 flex items-center gap-2">
                                     <div className={`w-2 h-2 rounded-full animate-pulse ${
-                                        householdStress.level === 'healthy' 
+                                        householdStress.level === 'low' 
                                             ? 'bg-emerald-500'
-                                            : householdStress.level === 'moderate'
+                                            : householdStress.level === 'medium'
                                             ? 'bg-amber-500'
                                             : 'bg-rose-500'
                                     }`}></div>

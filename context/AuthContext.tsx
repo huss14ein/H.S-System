@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
@@ -809,7 +809,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 return { 
                     error: { name: 'AuthApiError', message: rateCheck.message } as AuthError,
                     user: null,
-                    validation: { rateLimit: rateCheck }
+                    validation: { isValid: false, rateLimit: rateCheck }
                 };
             }
 
@@ -858,8 +858,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                     error: { name: error.name, message: sanitizedError } as AuthError,
                     user: null,
                     validation: {
+                        isValid: false,
                         nameValidation: { isValid: nameValidation.isValid, error: nameValidation.error },
-                        emailValidation,
+                        emailValidation: { isValid: emailValidation.isValid, error: emailValidation.error },
                         passwordValidation
                     }
                 };
@@ -870,10 +871,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             // Clear rate limit on successful signup
             persistentRateLimitStore.delete(rateLimitId);
 
-            return { error: null, user: data?.user || null, validation };
+            return { error: null, user: data?.user || null, validation: { isValid: true } };
         } catch (error) {
             logSecurityEvent('signup_error', { email, error: (error as Error).message }, false);
-            return { error: { name: 'AuthApiError', message: 'An unexpected error occurred' } as AuthError, user: null };
+            return { error: { name: 'AuthApiError', message: 'An unexpected error occurred' } as AuthError, user: null, validation: { isValid: false } };
         }
     };
 

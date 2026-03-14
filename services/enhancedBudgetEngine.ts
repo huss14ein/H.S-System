@@ -70,7 +70,7 @@ export interface SmartBudgetRecommendation {
  */
 export function calculateDynamicBaselines(
   transactions: Transaction[],
-  monthsOfHistory: number = 6
+  _monthsOfHistory: number = 6
 ): DynamicBaseline[] {
   const categoryData: { [category: string]: number[] } = {};
   const categoryDates: { [category: string]: Date[] } = {};
@@ -91,12 +91,12 @@ export function calculateDynamicBaselines(
   return Object.entries(categoryData).map(([category, amounts]) => {
     // Calculate statistics
     const sorted = [...amounts].sort((a, b) => a - b);
-    const mean = amounts.reduce((sum, a) => sum + a, 0) / amounts.length;
+    // const mean = amounts.reduce((sum, a) => sum + a, 0) / amounts.length;
     const median = sorted[Math.floor(sorted.length / 2)];
     
     // Calculate standard deviation
-    const variance = amounts.reduce((sum, a) => sum + Math.pow(a - mean, 2), 0) / amounts.length;
-    const stdDev = Math.sqrt(variance);
+    // const variance = amounts.reduce((sum, a) => sum + Math.pow(a - mean, 2), 0) / amounts.length;
+    // const stdDev = Math.sqrt(variance); // Calculated but not used in current implementation
     
     // Detect trend
     const trend = detectTrend(amounts, categoryDates[category]);
@@ -364,7 +364,7 @@ export function analyzeSpendingPatterns(transactions: Transaction[]): SpendingPa
 export function calculateBudgetHealthMetrics(
   budgets: Array<{ category: string; limit: number; spent: number }>,
   transactions: Transaction[],
-  monthsOfHistory: number = 3
+  _monthsOfHistory: number = 3
 ): BudgetHealthMetrics {
   // Adherence score
   const adherenceScores = budgets.map(b => {
@@ -430,7 +430,7 @@ export function generateSmartBudgetRecommendations(
   currentBudgets: Array<{ category: string; limit: number; spent: number }>,
   baselines: DynamicBaseline[],
   patterns: SpendingPattern[],
-  income: number
+  _income: number
 ): SmartBudgetRecommendation[] {
   const recommendations: SmartBudgetRecommendation[] = [];
   
@@ -496,10 +496,10 @@ function detectTrend(amounts: number[], dates: Date[]): { direction: 'increasing
   
   // Simple linear regression
   const n = amounts.length;
-  const sumX = dates.reduce((sum, d, i) => sum + i, 0);
+  const sumX = dates.reduce((sum, _d, i) => sum + i, 0);
   const sumY = amounts.reduce((sum, a) => sum + a, 0);
-  const sumXY = dates.reduce((sum, d, i) => sum + i * amounts[i], 0);
-  const sumX2 = dates.reduce((sum, d, i) => sum + i * i, 0);
+  const sumXY = dates.reduce((sum, _d, i) => sum + i * amounts[i], 0);
+  const sumX2 = dates.reduce((sum, _d, i) => sum + i * i, 0);
   
   const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
   const avg = sumY / n;
@@ -546,7 +546,7 @@ function identifyRecurringAmounts(amounts: number[]): number {
   return Object.values(amountCounts).filter(c => c > 1).length;
 }
 
-function calculatePriceElasticity(amounts: number[], dates: Date[]): number {
+function calculatePriceElasticity(amounts: number[], _dates: Date[]): number {
   // Simplified elasticity calculation
   if (amounts.length < 6) return 0.5; // Default
   
