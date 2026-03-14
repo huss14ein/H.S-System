@@ -38,7 +38,7 @@ function buildEngineConfigFromSystem(
     wealthUltraConfig?: any;
     accounts?: any[];
     portfolioUniverse?: Array<{ ticker: string; status?: string }>;
-    investments?: Array<{ holdings?: Array<{ symbol: string }> }>;
+    investments?: Array<{ holdings?: Array<{ symbol?: string }> }>;
   },
   totalDeployableCash?: number
 ) {
@@ -53,8 +53,8 @@ function buildEngineConfigFromSystem(
 
   const allHoldingTickers =
     (data.investments || [])
-      .flatMap((p: { holdings?: Array<{ symbol: string }> }) => p.holdings || [])
-      .map((h: { symbol: string }) => (h.symbol || '').toUpperCase())
+      .flatMap((p: { holdings?: Array<{ symbol?: string }> }) => p.holdings || [])
+      .map((h: { symbol?: string }) => (h.symbol || '').toUpperCase())
       .filter(Boolean) || [];
 
   const universe = data.portfolioUniverse || [];

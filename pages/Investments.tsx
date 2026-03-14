@@ -235,7 +235,7 @@ const RecordTradeModal: React.FC<{
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
-            return !portfolio?.holdings.some(h => h.symbol.toLowerCase() === symbol.toLowerCase().trim());
+            return !portfolio?.holdings.some(h => (h.symbol ?? '').toLowerCase() === symbol.toLowerCase().trim());
         }
         return false;
     }, [type, portfolioId, symbol, portfolios]);
@@ -331,7 +331,7 @@ const RecordTradeModal: React.FC<{
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
-            const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
+            const holding = portfolio?.holdings.find(h => (h.symbol ?? '').toUpperCase().trim() === normalized);
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
@@ -547,7 +547,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         let cancelled = false;
         setIsFundamentalsLoading(true);
         setFundamentalsError(null);
-        getHoldingFundamentals(holding.symbol)
+        getHoldingFundamentals(holding.symbol ?? '')
             .then((data) => {
                 if (!cancelled) {
                     setFundamentals(data);
@@ -814,8 +814,9 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             setName(currentName);
             setZakahClass(holding.zakahClass);
             setGoalId(holding.goalId);
-            if (!currentName.trim() && holding.symbol.trim().length >= 2) {
-                fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
+            const sym = holding.symbol ?? '';
+            if (!currentName.trim() && sym.trim().length >= 2) {
+                fetchCompanyNameForSymbol(sym).then((apiName) => {
                     if (apiName) setName(apiName);
                 });
             }
@@ -831,7 +832,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     };
     if (!holding) return null;
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol ?? 'Holding'}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
                 <div><label className="block text-sm font-medium text-gray-700">Holding Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
@@ -1016,7 +1017,10 @@ const PlatformCard: React.FC<{
         let valueSAR = 0, valueUSD = 0;
         portfolios.forEach(p => {
             const cur = (p.currency || 'USD') as TradeCurrency;
-            const v = (p.holdings || []).reduce((s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+            const v = (p.holdings || []).reduce((s, h) => {
+                const sym = h.symbol;
+                return s + (sym != null && simulatedPrices[sym] ? simulatedPrices[sym].price * h.quantity : h.currentValue);
+            }, 0);
             if (cur === 'SAR') valueSAR += v; else valueUSD += v;
         });
         const totalValueInSAR = valueSAR + valueUSD * rate;
@@ -1055,7 +1059,10 @@ const PlatformCard: React.FC<{
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
         const dailyPnL = allHoldings.reduce(
-            (s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].change * h.quantity : 0),
+            (s, h) => {
+                const sym = h.symbol;
+                return s + (sym != null && simulatedPrices[sym] ? simulatedPrices[sym].change * h.quantity : 0);
+            },
             0
         );
 
@@ -1081,7 +1088,8 @@ const PlatformCard: React.FC<{
     }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate, availableCashByCurrency]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
-        const priceInfo = simulatedPrices[h.symbol];
+        const sym = h.symbol ?? '';
+        const priceInfo = sym ? simulatedPrices[sym] : undefined;
         const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
         const liveValue = currentMktPrice * h.quantity;
         const totalCost = h.avgCost * h.quantity;
@@ -1094,7 +1102,8 @@ const PlatformCard: React.FC<{
     const symbolsNeedingName = useMemo(() => {
         const set = new Set<string>();
         portfolios.forEach((p) => (p.holdings || []).forEach((h) => {
-            if (!(h.name || (h as any).name)) set.add(h.symbol.trim().toUpperCase());
+            const sym = h.symbol ?? '';
+            if (!(h.name || (h as any).name) && sym) set.add(sym.trim().toUpperCase());
         }));
         return Array.from(set);
     }, [portfolios]);
@@ -1103,7 +1112,7 @@ const PlatformCard: React.FC<{
     const displayName = (h: Holding) => {
         const n = h.name || (h as any).name;
         if (n) return n;
-        const key = h.symbol.trim().toUpperCase();
+        const key = (h.symbol ?? '').trim().toUpperCase();
         return symbolNames[key] ?? null;
     };
 
@@ -1257,8 +1266,9 @@ const PlatformCard: React.FC<{
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
                                                 {portfolioHoldings.map(h => {
+                                                    const sym = h.symbol ?? '';
                                                     const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
-                                                    const dailyPnL = simulatedPrices[h.symbol]?.change * h.quantity || 0;
+                                                    const dailyPnL = sym && simulatedPrices[sym] ? simulatedPrices[sym].change * h.quantity : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
@@ -1266,11 +1276,11 @@ const PlatformCard: React.FC<{
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: simulatedPrices[h.symbol]?.changePercent ?? 0 }, portfolio)}
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: sym ? (simulatedPrices[sym]?.changePercent ?? 0) : 0 }, portfolio)}
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
-                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={h.symbol}>{h.symbol}</span>
-                                                                        {displayName(h) && displayName(h) !== h.symbol && (
+                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={sym}>{sym || '—'}</span>
+                                                                        {displayName(h) && displayName(h) !== sym && (
                                                                             <span className="metric-value text-xs text-slate-500 block w-full" title={displayName(h)!}>{displayName(h)}</span>
                                                                         )}
                                                                     </button>
@@ -1364,7 +1374,10 @@ const PlatformView: React.FC<{
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
     const aggregateValue = platformsData.reduce((sum, p) => {
         const holdings = p.portfolios.flatMap(port => port.holdings || []);
-        return sum + holdings.reduce((s, h) => s + (props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+        return sum + holdings.reduce((s, h) => {
+            const sym = h.symbol;
+            return s + (sym != null && props.simulatedPrices[sym] ? props.simulatedPrices[sym].price * h.quantity : h.currentValue);
+        }, 0);
     }, 0);
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = totalPortfolios > 0;
@@ -1564,17 +1577,19 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
         // 2. Add holdings
         investments.flatMap(p => p.holdings || []).forEach(h => {
-            if (!universeMap.has(h.symbol)) {
-                universeMap.set(h.symbol, {
+            const sym = h.symbol ?? '';
+            if (!sym) return;
+            if (!universeMap.has(sym)) {
+                universeMap.set(sym, {
                     id: `holding-${h.id}`,
-                    ticker: h.symbol,
-                    name: h.name || h.symbol,
+                    ticker: sym,
+                    name: h.name || sym,
                     status: 'Core',
                     source: 'Holding'
                 });
             } else {
-                const existing = universeMap.get(h.symbol)!;
-                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
+                const existing = universeMap.get(sym)!;
+                universeMap.set(sym, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
             }
         });
 
@@ -2480,12 +2495,18 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     let valueSAR = 0, valueUSD = 0;
     data.investments.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
-        const v = (p.holdings || []).reduce((s: number, h: Holding) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+        const v = (p.holdings || []).reduce((s: number, h: Holding) => {
+            const sym = h.symbol;
+            return s + (sym != null && simulatedPrices[sym] ? simulatedPrices[sym].price * h.quantity : h.currentValue);
+        }, 0);
         if (cur === 'SAR') valueSAR += v; else valueUSD += v;
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
     const allCommodities = data.commodityHoldings || [];
-    const totalCommoditiesValue = allCommodities.reduce((sum, ch) => sum + (simulatedPrices[ch.symbol] ? simulatedPrices[ch.symbol].price * ch.quantity : ch.currentValue), 0);
+    const totalCommoditiesValue = allCommodities.reduce((sum, ch) => {
+        const sym = ch.symbol;
+        return sum + (sym != null && simulatedPrices[sym] ? simulatedPrices[sym].price * ch.quantity : ch.currentValue);
+    }, 0);
     const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
 
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
@@ -2499,7 +2520,10 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
     const allHoldings = data.investments.flatMap((p: InvestmentPortfolio) => p.holdings || []);
-    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => (simulatedPrices[item.symbol] ? sum + simulatedPrices[item.symbol].change * item.quantity : sum), 0);
+    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => {
+        const sym = (item as { symbol?: string }).symbol;
+        return (sym != null && simulatedPrices[sym]) ? sum + simulatedPrices[sym].change * item.quantity : sum;
+    }, 0);
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 

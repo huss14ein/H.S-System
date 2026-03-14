@@ -17,6 +17,7 @@ import InfoHint from '../components/InfoHint';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
+import { DemoDataButton } from '../components/DemoDataButton';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -664,20 +665,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
 
-    const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
-        if (!supabase) return;
-        const { data: verifyRow } = await supabase
-            .from('transactions')
-            .select('id, status')
-            .eq('id', transactionId)
-            .maybeSingle();
-        const status = String((verifyRow as any)?.status || '').toLowerCase();
-        if (status && status !== 'pending') return;
-        const patch: Record<string, unknown> = { status: nextStatus };
-        if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
-        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
-    };
-
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
 
@@ -737,7 +724,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return;
             }
             const rejectionReason = reason || '';
-            const { error: rejectError } = await supabase.rpc('reject_pending_transaction', {
+            const { data: rejected, error: rejectError } = await supabase.rpc('reject_pending_transaction', {
                 p_transaction_id: transactionId,
                 p_reason: rejectionReason,
             });

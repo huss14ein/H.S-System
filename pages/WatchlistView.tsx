@@ -609,13 +609,16 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => { if (!itemToDelete) return; if (activeBucket) { handleRemoveFromActiveBucket(itemToDelete.symbol); } else { deleteWatchlistItem(itemToDelete.symbol); } setIsDeleteModalOpen(false); setItemToDelete(null); };
-    const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
+    const handleOpenAlertModal = (item: WatchlistItem) => { const sym = item.symbol ?? ''; setStockForAlert({ ...item, symbol: sym, price: simulatedPrices[sym]?.price || 0 }); setIsAlertModalOpen(true); };
 
     const recentTransactions = (data.investmentTransactions ?? []).slice(0, 10);
     const analysisContext = useMemo(() => {
         const holdings = (data.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency })));
         const bySymbol = new Map<string, number>();
-        holdings.forEach(h => bySymbol.set(h.symbol, (bySymbol.get(h.symbol) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate)));
+        holdings.forEach(h => {
+        const sym = h.symbol ?? '';
+        if (sym) bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate));
+      });
         const summary = Array.from(bySymbol.entries()).map(([s, v]) => `${s}: ${v.toFixed(0)}`).join('; ') || 'None';
         const watchlistSymbols = (data.watchlist ?? []).map(w => w.symbol);
         const plan = data.investmentPlan;

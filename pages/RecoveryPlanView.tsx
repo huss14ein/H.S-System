@@ -249,7 +249,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const executionId = `recovery-${holding.id}-${Date.now()}`;
       saveRecoveryExecution({
         id: executionId,
-        symbol: holding.symbol,
+        symbol: holding.symbol ?? '',
         timestamp: Date.now(),
         initialPlPct: plan.plPct,
         initialPrice: plan.currentPrice,
@@ -287,7 +287,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   useEffect(() => {
     if (!selected || !selectedPlan) return;
     
-    const symbolExecutions = getRecoveryExecutionsBySymbol(selected.holding.symbol);
+    const symbolExecutions = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
     const activeExecutions = symbolExecutions.filter(e => 
       e.executionStatus === 'planned' || e.executionStatus === 'partial'
     );
@@ -314,7 +314,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     try {
       if (selectedPlan.plPct < 0) {
         const timeline = projectRecoveryTimeline(
-          selected.holding.symbol,
+          selected.holding.symbol ?? '',
           selectedPlan.plPct,
           selectedPlan.plPct,
           selected.positionConfig.lossTriggerPct
@@ -699,10 +699,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-gradient-to-br from-slate-100 to-slate-200 rounded-lg flex items-center justify-center">
-                          <span className="font-bold text-slate-700 text-sm">{holding.symbol.slice(0, 2)}</span>
+                          <span className="font-bold text-slate-700 text-sm">{(holding.symbol ?? '').slice(0, 2)}</span>
                         </div>
                         <div>
-                          <span className="font-bold text-slate-900 text-lg">{holding.symbol}</span>
+                          <span className="font-bold text-slate-900 text-lg">{holding.symbol ?? '—'}</span>
                           <span className="block text-sm text-slate-500">{portfolioName}</span>
                         </div>
                       </div>
@@ -755,9 +755,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </SectionCard>
 
       {selected && selectedPlan && (
-        <SectionCard title={`${selected.holding.symbol} — Recovery Plan`} className="space-y-5">
+        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5">
           {(() => {
-            const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol);
+            const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
             if (symbolHistory.length > 0) {
               const lastExecution = symbolHistory[0];
               const completed = symbolHistory.filter(e => e.executionStatus === 'complete' && e.outcome);
@@ -772,7 +772,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     </div>
                     <div>
                       <p className="text-lg font-bold text-indigo-900 uppercase tracking-wide">Historical Performance</p>
-                      <p className="text-indigo-700 font-medium">{selected.holding.symbol} recovery history</p>
+                      <p className="text-indigo-700 font-medium">{selected.holding.symbol ?? 'Holding'} recovery history</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1255,7 +1255,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   onClick={() => setActivePage('Dashboard')}
                   className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
                 >
-                  Check Market Events for {selected.holding.symbol}
+                  Check Market Events for {selected.holding.symbol ?? 'holding'}
                 </button>
                 <button
                   type="button"
