@@ -20,6 +20,8 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
+import { PlusIcon } from '../components/icons/PlusIcon';
+import { XMarkIcon } from '../components/icons/XMarkIcon';
 import { toSAR } from '../utils/currencyMath';
 
 
@@ -46,9 +48,12 @@ const AddWatchlistItemModal: React.FC<{
     const [setAlert, setSetAlert] = useState(false);
     const [targetPrice, setTargetPrice] = useState('');
     const [alertCurrency, setAlertCurrency] = useState<PriceAlertCurrency>('USD');
+    const [isLoadingName, setIsLoadingName] = useState(false);
+    const [step, setStep] = useState<'symbol' | 'details'>('symbol');
     const nameRef = useRef(name);
     nameRef.current = name;
     const symbolInputRef = useRef<HTMLInputElement | null>(null);
+    const priceInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -57,26 +62,48 @@ const AddWatchlistItemModal: React.FC<{
             setSetAlert(false);
             setTargetPrice('');
             setAlertCurrency('USD');
-            // Focus symbol for faster keyboard-driven entry
-            window.setTimeout(() => {
+            setStep('symbol');
+            setIsLoadingName(false);
+            setTimeout(() => {
                 symbolInputRef.current?.focus();
-            }, 0);
+            }, 100);
         }
     }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
         const sym = symbol.trim().toUpperCase();
-        if (sym.length < 2) return;
+        if (sym.length < 2) {
+            setName('');
+            return;
+        }
+        setIsLoadingName(true);
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((apiName) => {
-                if (apiName && !nameRef.current.trim()) setName(apiName);
-            });
+                if (apiName && !nameRef.current.trim()) {
+                    setName(apiName);
+                }
+                setIsLoadingName(false);
+            }).catch(() => setIsLoadingName(false));
         }, 600);
         return () => clearTimeout(t);
     }, [symbol, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    useEffect(() => {
+        if (setAlert && priceInputRef.current) {
+            setTimeout(() => priceInputRef.current?.focus(), 100);
+        }
+    }, [setAlert]);
+
+    const handleSymbolSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const sym = symbol.toUpperCase().trim();
+        if (!sym) return;
+        if (sym.length < 1) return;
+        setStep('details');
+    };
+
+    const handleFinalSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const sym = symbol.toUpperCase().trim();
         if (!sym) return;
@@ -86,85 +113,175 @@ const AddWatchlistItemModal: React.FC<{
             const price = parseFloat(targetPrice.replace(/,/g, ''));
             if (Number.isFinite(price) && price > 0) onAddAlert(sym, price, alertCurrency);
         }
-        setSymbol('');
-        setName('');
-        setSetAlert(false);
-        setTargetPrice('');
-        setAlertCurrency('USD');
         onClose();
     };
+
     const handleClose = () => {
         setSetAlert(false);
         setTargetPrice('');
         setAlertCurrency('USD');
         onClose();
     };
+
+    const handleBack = () => {
+        setStep('symbol');
+        setSetAlert(false);
+        setTargetPrice('');
+        setTimeout(() => symbolInputRef.current?.focus(), 100);
+    };
+
+    const sym = symbol.toUpperCase().trim();
+    const canProceed = sym.length >= 1;
+
     return (
-        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist">
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <p className="text-xs text-slate-600">
-                    Add a symbol you want to track. We’ll auto-fill the name when possible, and you can optionally attach a price alert in the same step.
-                </p>
-                <div>
-                    <label htmlFor="stock-symbol" className="block text-sm font-medium text-gray-700">Stock Symbol</label>
-                    <input
-                        ref={symbolInputRef}
-                        type="text"
-                        id="stock-symbol"
-                        value={symbol}
-                        onChange={e => setSymbol(e.target.value)}
-                        required
-                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
-                        placeholder="e.g. AAPL or 2222.SR"
-                    />
-                </div>
-                <div>
-                    <label htmlFor="stock-name" className="block text-sm font-medium text-gray-700">Company Name</label>
-                    <input type="text" id="stock-name" value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="Auto-filled from symbol (edit if needed)" />
-                </div>
-                {onAddAlert && (
-                    <div className="space-y-2 pt-2 border-t border-gray-200">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" checked={setAlert} onChange={e => setSetAlert(e.target.checked)} className="rounded border-gray-300 text-primary" />
-                            <span className="text-sm font-medium text-gray-700">Set a price alert</span>
-                            <BellIcon className="h-4 w-4 text-amber-500" />
-                        </label>
-                        {setAlert && (
-                            <div className="space-y-2">
-                                <div className="flex gap-2 items-end">
-                                    <div className="w-24">
-                                        <label htmlFor="add-alert-currency" className="block text-xs font-medium text-gray-500 mb-0.5">Currency</label>
-                                        <select
-                                            id="add-alert-currency"
-                                            value={alertCurrency}
-                                            onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)}
-                                            className="w-full p-2 border border-gray-300 rounded-md text-sm"
-                                        >
-                                            {ALERT_CURRENCY_OPTIONS.map(opt => (
-                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <label htmlFor="add-alert-price" className="block text-xs font-medium text-gray-500 mb-0.5">Notify when price reaches</label>
-                                        <input
-                                            type="number"
-                                            id="add-alert-price"
-                                            value={targetPrice}
-                                            onChange={e => setTargetPrice(e.target.value)}
-                                            min="0.01"
-                                            step="0.01"
-                                            placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'}
-                                            className="w-full p-2 border border-gray-300 rounded-md text-sm"
-                                        />
+        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist" maxWidthClass="max-w-md">
+            {step === 'symbol' ? (
+                <form onSubmit={handleSymbolSubmit} className="space-y-6">
+                    <div className="text-center">
+                        <div className="w-16 h-16 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <PlusIcon className="h-8 w-8 text-white" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-800">Add Stock Symbol</h3>
+                        <p className="text-sm text-slate-500 mt-1">Enter a ticker symbol to start tracking</p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label htmlFor="stock-symbol" className="block text-sm font-medium text-slate-700">Stock Symbol</label>
+                        <div className="relative">
+                            <input
+                                ref={symbolInputRef}
+                                type="text"
+                                id="stock-symbol"
+                                value={symbol}
+                                onChange={e => setSymbol(e.target.value.toUpperCase())}
+                                required
+                                className="w-full p-3 border border-slate-300 rounded-lg text-lg font-semibold tracking-wide uppercase focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                                placeholder="e.g. AAPL"
+                                maxLength={10}
+                            />
+                            {symbol && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setSymbol(''); symbolInputRef.current?.focus(); }}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                >
+                                    <XMarkIcon className="h-5 w-5" />
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-xs text-slate-500">Popular: AAPL, MSFT, GOOGL, 2222.SR</p>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={!canProceed}
+                        className="w-full py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Continue
+                    </button>
+                </form>
+            ) : (
+                <form onSubmit={handleFinalSubmit} className="space-y-5">
+                    <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+                        <button
+                            type="button"
+                            onClick={handleBack}
+                            className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                        >
+                            <ArrowLeftIcon className="h-5 w-5 text-slate-600" />
+                        </button>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl font-bold text-slate-900 tracking-wide">{sym}</span>
+                                {isLoadingName && <div className="w-4 h-4 border-2 border-slate-300 border-t-primary rounded-full animate-spin" />}
+                            </div>
+                            <p className="text-xs text-slate-500">Step 2 of 2 • Confirm details</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label htmlFor="stock-name" className="block text-sm font-medium text-slate-700">Company Name</label>
+                        <input
+                            type="text"
+                            id="stock-name"
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                            placeholder={isLoadingName ? 'Looking up...' : 'Company name (auto-filled)'}
+                        />
+                    </div>
+
+                    {onAddAlert && (
+                        <div className="space-y-3 pt-2">
+                            <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={setAlert}
+                                        onChange={e => setSetAlert(e.target.checked)}
+                                        className="peer sr-only"
+                                    />
+                                    <div className="w-5 h-5 border-2 border-slate-300 rounded peer-checked:bg-primary peer-checked:border-primary transition-all" />
+                                    <BellIcon className="h-3 w-3 text-white absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 peer-checked:opacity-100" />
+                                </div>
+                                <div className="flex-1">
+                                    <span className="text-sm font-medium text-slate-700">Set price alert</span>
+                                    <p className="text-xs text-slate-500">Get notified when price hits your target</p>
+                                </div>
+                                <BellIcon className="h-5 w-5 text-amber-500" />
+                            </label>
+
+                            {setAlert && (
+                                <div className="space-y-3 p-4 bg-slate-50 rounded-lg animate-fadeIn">
+                                    <div className="flex gap-3">
+                                        <div className="w-28">
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
+                                            <select
+                                                value={alertCurrency}
+                                                onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)}
+                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
+                                            >
+                                                {ALERT_CURRENCY_OPTIONS.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Target Price</label>
+                                            <input
+                                                ref={priceInputRef}
+                                                type="number"
+                                                value={targetPrice}
+                                                onChange={e => setTargetPrice(e.target.value)}
+                                                min="0.01"
+                                                step="0.01"
+                                                placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'}
+                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={handleBack}
+                            className="flex-1 py-3 px-4 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+                        >
+                            Back
+                        </button>
+                        <button
+                            type="submit"
+                            className="flex-1 py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary transition-colors"
+                        >
+                            Add to Watchlist
+                        </button>
                     </div>
-                )}
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Add to Watchlist</button>
-            </form>
+                </form>
+            )}
         </Modal>
     );
 };

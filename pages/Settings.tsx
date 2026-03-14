@@ -26,10 +26,34 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data.wealthUltraConfig || {}) }), [data.wealthUltraConfig]);
 
     return (
-        <PageLayout
-            title="Settings"
-            description="Control your profile, automation defaults, notifications, and data management."
-        >
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+            {/* Enhanced Hero Section */}
+            <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+                            <span className="text-white font-bold text-lg">⚙️</span>
+                        </div>
+                        <div>
+                            <h2 className="text-3xl font-bold text-slate-900">Settings</h2>
+                            <p className="text-lg text-slate-600 mt-2">Control your profile, automation defaults, notifications, and data management.</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
+                        <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">System Config</span>
+                    </div>
+                </div>
+                <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
+                    <p className="text-slate-700 leading-relaxed">
+                        Customize your financial experience with personalized settings, risk preferences, and automation controls. 
+                        Manage your profile, configure notifications, and control data management options.
+                    </p>
+                </div>
+            </div>
+
+            {/* Enhanced Main Content */}
+            <div className="space-y-8">
             <SectionCard title="Settings Snapshot" className="border-2 border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <SnapCard label="Risk profile" value={localSettings.riskProfile} />
@@ -157,7 +181,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
                  </div>
             </SectionCard>
-        </PageLayout>
+            </div>
+        </div>
     );
 };
 

@@ -4,6 +4,7 @@ export default {
     "./index.html",
     "./{components,pages,hooks,App,context}/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: 'class', // Enable dark mode class strategy
   theme: {
     extend: {
       fontFamily: {

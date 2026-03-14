@@ -438,17 +438,28 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   return (
     <div className="space-y-6 mt-4">
-      {/* Hero */}
-      <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 flex-wrap">
-              Recovery Plan (Averaging / Correction Engine)
-              <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+      {/* Enhanced Hero */}
+      <section className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50 p-8 shadow-xl">
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg">
+                <span className="text-white font-bold text-xl">R</span>
+              </div>
+              <div>
+                <h2 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+                  Recovery Plan (Averaging / Correction Engine)
+                  <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
+                </h2>
+                <p className="text-lg text-slate-600 mt-2">Intelligent loss recovery with AI-powered optimization</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 ml-auto">
+              <span className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-md ${
+                isAiAvailable ? 'bg-gradient-to-r from-emerald-100 to-emerald-200 text-emerald-800 border border-emerald-300' : 
+                'bg-gradient-to-r from-amber-100 to-amber-200 text-amber-800 border border-amber-300'
+              }`}>
+                {isAiAvailable ? <CheckCircleIcon className="h-5 w-5" /> : <ExclamationTriangleIcon className="h-5 w-5" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
               </span>
               <button
                 type="button"
@@ -456,97 +467,156 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   loadDemoData({ includeRecoveryPlan: true });
                   window.location.reload();
                 }}
-                className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                className="px-4 py-2 border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 font-medium transition-all duration-200 shadow-sm hover:shadow-md"
                 title="Load demo data for testing"
               >
                 Load Demo Data
               </button>
+              {recoveryStats && recoveryStats.totalExecutions > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowStats(!showStats)}
+                  className="px-4 py-2 rounded-xl border-2 border-indigo-300 bg-gradient-to-r from-indigo-50 to-indigo-100 text-indigo-700 hover:from-indigo-100 hover:to-indigo-200 font-bold transition-all duration-200 shadow-sm hover:shadow-md"
+                >
+                  {showStats ? 'Hide' : 'Show'} Performance Stats
+                </button>
+              )}
             </div>
-            {recoveryStats && recoveryStats.totalExecutions > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowStats(!showStats)}
-                className="ml-auto text-xs px-3 py-1.5 rounded-md border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
-              >
-                {showStats ? 'Hide' : 'Show'} Performance Stats
-              </button>
-            )}
           </div>
-          <p className="text-sm text-slate-600 max-w-2xl">
-            Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
-          </p>
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
+            <p className="text-slate-700 leading-relaxed">
+              Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
+            </p>
+          </div>
           {(onNavigateToTab || onOpenWealthUltra) && (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Related:</span>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">Related:</span>
               {onNavigateToTab && (
                 <>
-                  <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="text-sm font-medium text-primary hover:underline">Portfolios</button>
+                  <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">Portfolios</button>
                   <span className="text-slate-300">·</span>
-                  <button type="button" onClick={() => onNavigateToTab('Investment Plan')} className="text-sm font-medium text-primary hover:underline">Investment Plan</button>
+                  <button type="button" onClick={() => onNavigateToTab('Investment Plan')} className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">Investment Plan</button>
                   <span className="text-slate-300">·</span>
-                  <button type="button" onClick={() => onNavigateToTab('Execution History')} className="text-sm font-medium text-primary hover:underline">Execution History</button>
+                  <button type="button" onClick={() => onNavigateToTab('Execution History')} className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">Execution History</button>
                   <span className="text-slate-300">·</span>
-                  <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="text-sm font-medium text-primary hover:underline">Watchlist</button>
+                  <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">Watchlist</button>
                 </>
               )}
               {onOpenWealthUltra && (
                 <>
                   <span className="text-slate-300">·</span>
-                  <button type="button" onClick={onOpenWealthUltra} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button>
+                  <button type="button" onClick={onOpenWealthUltra} className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">Wealth Ultra</button>
                 </>
               )}
             </div>
           )}
         </div>
-        <details className="mt-4 text-sm text-slate-600">
-          <summary className="cursor-pointer font-medium text-primary">Default parameters</summary>
-          <ul className="mt-2 pl-4 space-y-1 list-disc">
-            <li><strong>Loss trigger</strong> <InfoHint text="Position must be in loss by at least this % to qualify (e.g. 20% = -20% or worse)." />: 20%</li>
-            <li><strong>Recovery budget</strong> <InfoHint text="Max share of deployable cash that can be used for recovery plans (e.g. 20%)." />: 20% of deployable cash</li>
-            <li><strong>Cash cap per ticker</strong> <InfoHint text="Max amount allowed for correction on a single ticker." />: 5,000 (default)</li>
-            <li><strong>Spec</strong>: Recovery is off for Speculative sleeve unless overridden; guardrails prevent over-spending.</li>
-          </ul>
+        <details className="mt-6 text-sm text-slate-600">
+          <summary className="cursor-pointer font-bold text-primary mb-3">Default parameters</summary>
+          <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-slate-200">
+            <ul className="space-y-3">
+              <li className="flex items-start gap-3">
+                <div className="w-2 h-2 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <strong className="text-slate-800">Loss trigger</strong> <InfoHint text="Position must be in loss by at least this % to qualify (e.g. 20% = -20% or worse)." />: <span className="text-blue-600 font-bold">20%</span>
+                </div>
+              </li>
+              <li className="flex items-start gap-3">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <strong className="text-slate-800">Recovery budget</strong> <InfoHint text="Max share of deployable cash that can be used for recovery plans (e.g. 20%)." />: <span className="text-emerald-600 font-bold">20% of deployable cash</span>
+                </div>
+              </li>
+              <li className="flex items-start gap-3">
+                <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <strong className="text-slate-800">Cash cap per ticker</strong> <InfoHint text="Max amount allowed for correction on a single ticker." />: <span className="text-amber-600 font-bold">5,000 (default)</span>
+                </div>
+              </li>
+              <li className="flex items-start gap-3">
+                <div className="w-2 h-2 bg-rose-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <strong className="text-slate-800">Spec</strong>: Recovery is off for Speculative sleeve unless overridden; guardrails prevent over-spending.
+                </div>
+              </li>
+            </ul>
+          </div>
         </details>
       </section>
 
-      {/* Performance Statistics */}
+      {/* Enhanced Performance Statistics */}
       {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
-        <SectionCard title="Recovery Plan Performance Statistics" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-white">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <div className="rounded-lg border border-indigo-200 bg-white p-4">
-              <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-1">Success Rate</p>
-              <p className="text-2xl font-black text-indigo-900 tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
-              <p className="text-xs text-slate-600 mt-1">{recoveryStats.totalExecutions} total executions</p>
+        <SectionCard title="Recovery Plan Performance Statistics" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 shadow-xl">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-indigo-600 uppercase tracking-wider">Success Rate</p>
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">%</span>
+                </div>
+              </div>
+              <p className="text-3xl font-black text-indigo-900 tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
+              <p className="text-sm text-slate-600 mt-2">{recoveryStats.totalExecutions} total executions</p>
             </div>
-            <div className="rounded-lg border border-emerald-200 bg-white p-4">
-              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Avg Recovery Time</p>
-              <p className="text-2xl font-black text-emerald-900 tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
-              <p className="text-xs text-slate-600 mt-1">days</p>
+            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-emerald-600 uppercase tracking-wider">Avg Recovery Time</p>
+                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">⏱</span>
+                </div>
+              </div>
+              <p className="text-3xl font-black text-emerald-900 tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
+              <p className="text-sm text-slate-600 mt-2">days</p>
             </div>
-            <div className="rounded-lg border border-amber-200 bg-white p-4">
-              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">Avg ROI</p>
-              <p className={`text-2xl font-black tabular-nums ${recoveryStats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-amber-600 uppercase tracking-wider">Avg ROI</p>
+                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-amber-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">📈</span>
+                </div>
+              </div>
+              <p className={`text-3xl font-black tabular-nums ${
+                recoveryStats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              }`}>
                 {recoveryStats.avgRoi >= 0 ? '+' : ''}{(recoveryStats.avgRoi * 100).toFixed(1)}%
               </p>
-              <p className="text-xs text-slate-600 mt-1">on recovery capital</p>
+              <p className="text-sm text-slate-600 mt-2">on recovery capital</p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Capital Deployed</p>
-              <p className="text-xl font-black text-slate-900 tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
-              <p className="text-xs text-slate-600 mt-1">Total recovered: {formatCurrencyString(recoveryStats.totalRecovered)}</p>
+            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Capital Deployed</p>
+                <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">💰</span>
+                </div>
+              </div>
+              <p className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
+              <p className="text-sm text-slate-600 mt-2">Total recovered: {formatCurrencyString(recoveryStats.totalRecovered)}</p>
             </div>
           </div>
           {Object.keys(recoveryStats.bySymbol).length > 0 && (
-            <div className="mt-4 pt-4 border-t border-slate-200">
-              <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Performance by Symbol</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <p className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-4">Performance by Symbol</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(recoveryStats.bySymbol).slice(0, 6).map(([symbol, stats]) => (
-                  <div key={symbol} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-sm font-bold text-slate-900">{symbol}</p>
-                    <p className="text-xs text-slate-600 mt-1">
+                  <div key={symbol} className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-md hover:shadow-lg transition-all duration-300">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-lg font-bold text-slate-900">{symbol}</p>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        stats.avgRoi >= 0 ? 'bg-emerald-100' : 'bg-rose-100'
+                      }`}>
+                        <span className={`text-xs font-bold ${
+                          stats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                        }`}>
+                          {stats.avgRoi >= 0 ? '↑' : '↓'}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-600 mb-2">
                       {stats.count} execution{stats.count !== 1 ? 's' : ''} • {(stats.successRate * 100).toFixed(0)}% success
                     </p>
-                    <p className={`text-xs font-semibold mt-1 ${stats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    <p className={`text-sm font-bold ${
+                      stats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                    }`}>
                       Avg ROI: {stats.avgRoi >= 0 ? '+' : ''}{(stats.avgRoi * 100).toFixed(1)}%
                     </p>
                   </div>
@@ -557,77 +627,124 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         </SectionCard>
       )}
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SectionCard className="min-w-0">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Losing positions</p>
-          <p className="text-2xl font-bold text-slate-800 tabular-nums mt-1">{losingPositions.length}</p>
-        </SectionCard>
-        <SectionCard className="min-w-0 border-l-4 border-emerald-500">
-          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Recovery eligible</p>
-          <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{qualifiedPositions.length}</p>
-        </SectionCard>
-        <SectionCard className="min-w-0">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Deployable cash (SAR + USD)</p>
-          <p className="text-xl font-bold text-slate-800 tabular-nums mt-1">
-            {formatCurrencyString(deployableCashSAR)}
-          </p>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            Approximate total across currencies. Per-position values below use each portfolio&apos;s base currency.
-          </p>
-        </SectionCard>
+      {/* Enhanced KPI cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-gradient-to-br from-rose-50 to-red-50 border-2 border-rose-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-xl">⬇</span>
+            </div>
+            <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-rose-800 uppercase tracking-wider mb-2">Losing positions</p>
+          <p className="text-4xl font-black text-rose-900 tabular-nums">{losingPositions.length}</p>
+          <p className="text-sm text-rose-700 mt-2">Positions requiring attention</p>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-xl">✓</span>
+            </div>
+            <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-emerald-800 uppercase tracking-wider mb-2">Recovery eligible</p>
+          <p className="text-4xl font-black text-emerald-900 tabular-nums">{qualifiedPositions.length}</p>
+          <p className="text-sm text-emerald-700 mt-2">Positions ready for recovery</p>
+        </div>
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-xl">💰</span>
+            </div>
+            <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-2">Deployable cash (SAR + USD)</p>
+          <p className="text-3xl font-black text-blue-900 tabular-nums">{formatCurrencyString(deployableCashSAR)}</p>
+          <p className="text-sm text-blue-700 mt-2">Approximate total across currencies</p>
+          <p className="text-xs text-blue-600 mt-3">Per-position values below use each portfolio&apos;s base currency</p>
+        </div>
       </div>
 
-      {/* Losing positions table */}
+      {/* Enhanced Losing positions table */}
       <SectionCard title="Positions in loss" className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-gradient-to-r from-slate-50 to-slate-100">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-slate-700">Symbol</th>
-                <th className="px-4 py-3 text-right font-semibold text-slate-700">P/L %</th>
-                <th className="px-4 py-3 text-right font-semibold text-slate-700">Cost / Value</th>
-                <th className="px-4 py-3 text-center font-semibold text-slate-700">State</th>
-                <th className="px-4 py-3 text-center font-semibold text-slate-700">Action</th>
+                <th className="px-6 py-4 text-left font-bold text-slate-700 uppercase tracking-wider">Symbol</th>
+                <th className="px-6 py-4 text-right font-bold text-slate-700 uppercase tracking-wider">P/L %</th>
+                <th className="px-6 py-4 text-right font-bold text-slate-700 uppercase tracking-wider">Cost / Value</th>
+                <th className="px-6 py-4 text-center font-bold text-slate-700 uppercase tracking-wider">State</th>
+                <th className="px-6 py-4 text-center font-bold text-slate-700 uppercase tracking-wider">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {losingPositions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-slate-500">No losing positions. Recovery plan applies only when a position is in loss.</td>
+                  <td colSpan={5} className="px-6 py-16 text-center">
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="w-16 h-16 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-full flex items-center justify-center">
+                        <span className="text-emerald-600 text-2xl">✓</span>
+                      </div>
+                      <div>
+                        <p className="text-lg font-semibold text-slate-700">No losing positions</p>
+                        <p className="text-sm text-slate-500 mt-1">Recovery plan applies only when a position is in loss</p>
+                      </div>
+                    </div>
+                  </td>
                 </tr>
               ) : (
                 losingPositions.map(({ holding, portfolioName, currency, plan }) => (
-                  <tr key={holding.id} className={isSelected(holding.id) ? 'bg-primary/5' : 'hover:bg-slate-50'}>
-                    <td className="px-4 py-3">
-                      <span className="font-semibold text-slate-800">{holding.symbol}</span>
-                      <span className="block text-xs text-slate-500">{portfolioName}</span>
+                  <tr key={holding.id} className={`${isSelected(holding.id) ? 'bg-primary/10 border-l-4 border-primary' : 'hover:bg-slate-50'} transition-colors duration-150`}>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gradient-to-br from-slate-100 to-slate-200 rounded-lg flex items-center justify-center">
+                          <span className="font-bold text-slate-700 text-sm">{holding.symbol.slice(0, 2)}</span>
+                        </div>
+                        <div>
+                          <span className="font-bold text-slate-900 text-lg">{holding.symbol}</span>
+                          <span className="block text-sm text-slate-500">{portfolioName}</span>
+                        </div>
+                      </div>
                     </td>
-                    <td className={`px-4 py-3 text-right font-semibold tabular-nums ${plan.plPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    <td className={`px-6 py-4 text-right font-bold tabular-nums text-lg ${
+                      plan.plPct >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                    }`}>
                       {plan.plPct >= 0 ? '+' : ''}{plan.plPct.toFixed(1)}%
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-600 tabular-nums">
-                      {formatCurrencyString(plan.costBasis, { inCurrency: currency })} →{' '}
-                      {formatCurrencyString(plan.marketValue, { inCurrency: currency })}
+                    <td className="px-6 py-4 text-right text-slate-600 tabular-nums font-medium">
+                      <div className="flex flex-col gap-1">
+                        <span>{formatCurrencyString(plan.costBasis, { inCurrency: currency })}</span>
+                        <div className="flex items-center gap-2 text-slate-400">
+                          <span>→</span>
+                          <span>{formatCurrencyString(plan.marketValue, { inCurrency: currency })}</span>
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-6 py-4 text-center">
                       {plan.qualified ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-100 text-emerald-800">Recovery Eligible</span>
+                        <span className="inline-flex items-center px-4 py-2 rounded-full text-sm font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm">
+                          ✓ Recovery Eligible
+                        </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700">{plan.state}</span>
+                        <span className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          {plan.state}
+                        </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-6 py-4 text-center">
                       {plan.qualified && (
                         <button
                           type="button"
                           onClick={() => setSelectedHoldingId(isSelected(holding.id) ? null : holding.id)}
-                          className="text-primary font-medium hover:underline"
+                          className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary font-bold text-sm transition-colors duration-200 shadow-sm hover:shadow-md"
                         >
                           {isSelected(holding.id) ? 'Hide plan' : 'Generate Recovery Plan'}
                         </button>
                       )}
-                      {!plan.qualified && plan.reason && <span className="text-xs text-slate-500" title={plan.reason}>—</span>}
+                      {!plan.qualified && plan.reason && (
+                        <span className="text-xs text-slate-500 italic" title={plan.reason}>—</span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -648,29 +765,39 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 ? (completed.filter(e => e.outcome?.recovered).length / completed.length) * 100
                 : 0;
               return (
-                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 mb-4">
-                  <p className="text-xs font-semibold text-indigo-900 uppercase tracking-wide mb-2">Historical Performance for {selected.holding.symbol}</p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-purple-50 p-6 mb-6 shadow-lg">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+                      <span className="text-white font-bold text-lg">📊</span>
+                    </div>
                     <div>
-                      <p className="text-indigo-700 font-medium">{symbolHistory.length} previous recovery{symbolHistory.length !== 1 ? 's' : ''}</p>
+                      <p className="text-lg font-bold text-indigo-900 uppercase tracking-wide">Historical Performance</p>
+                      <p className="text-indigo-700 font-medium">{selected.holding.symbol} recovery history</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-indigo-100">
+                      <p className="text-2xl font-black text-indigo-900 tabular-nums">{symbolHistory.length}</p>
+                      <p className="text-sm text-indigo-700 font-medium">Previous recovery{symbolHistory.length !== 1 ? 's' : ''}</p>
                     </div>
                     {completed.length > 0 && (
                       <>
-                        <div>
-                          <p className="text-indigo-700 font-medium">Success rate: {successRate.toFixed(0)}%</p>
+                        <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-indigo-100">
+                          <p className="text-2xl font-black text-indigo-900 tabular-nums">{successRate.toFixed(0)}%</p>
+                          <p className="text-sm text-indigo-700 font-medium">Success rate</p>
                         </div>
                         {lastExecution.outcome && (
                           <>
-                            <div>
-                              <p className="text-indigo-700 font-medium">
-                                Last recovery: {lastExecution.outcome.recovered ? 'Success' : 'In progress'}
+                            <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-indigo-100">
+                              <p className="text-lg font-bold text-indigo-900">
+                                {lastExecution.outcome.recovered ? 'Success' : 'In progress'}
                               </p>
+                              <p className="text-sm text-indigo-700 font-medium">Last recovery</p>
                             </div>
                             {lastExecution.outcome.recoveryTimeDays && (
-                              <div>
-                                <p className="text-indigo-700 font-medium">
-                                  Recovery time: {lastExecution.outcome.recoveryTimeDays} days
-                                </p>
+                              <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-indigo-100">
+                                <p className="text-lg font-bold text-indigo-900 tabular-nums">{lastExecution.outcome.recoveryTimeDays}</p>
+                                <p className="text-sm text-indigo-700 font-medium">Recovery time (days)</p>
                               </div>
                             )}
                           </>
@@ -683,86 +810,185 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             }
             return null;
           })()}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-slate-600">
-              Portfolio: {selected.portfolioName}{' '}
-              <span className="text-xs text-slate-500">
-                · Display currency: {selected.currency ?? 'USD'}
-              </span>
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={refreshAiRecoveryConfig} disabled={isAiRecoveryLoading} className="px-3 py-1.5 rounded-md border border-primary/30 text-primary text-xs font-medium hover:bg-primary/5 disabled:opacity-50">
+          <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gradient-to-r from-slate-50 to-slate-100 rounded-2xl border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold">📁</span>
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-900">
+                  Portfolio: {selected.portfolioName}
+                </p>
+                <p className="text-xs text-slate-600">
+                  Display currency: {selected.currency ?? 'USD'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button 
+                type="button" 
+                onClick={refreshAiRecoveryConfig} 
+                disabled={isAiRecoveryLoading} 
+                className="px-4 py-2.5 rounded-xl border-2 border-primary/30 text-primary text-sm font-bold hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+              >
                 {isAiRecoveryLoading ? 'Optimizing…' : 'AI optimize selected'}
               </button>
-              <button type="button" onClick={applyAiToAllQualifiedPositions} disabled={isBulkAiRecoveryLoading || qualifiedPositions.length === 0} className="px-3 py-1.5 rounded-md border border-emerald-300 text-emerald-700 text-xs font-medium hover:bg-emerald-50 disabled:opacity-50">
+              <button 
+                type="button" 
+                onClick={applyAiToAllQualifiedPositions} 
+                disabled={isBulkAiRecoveryLoading || qualifiedPositions.length === 0} 
+                className="px-4 py-2.5 rounded-xl border-2 border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+              >
                 {isBulkAiRecoveryLoading ? 'Optimizing all…' : `AI optimize all (${qualifiedPositions.length})`}
               </button>
             </div>
           </div>
           {selectedRecoveryBrief && (
-            <p className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">{selectedRecoveryBrief}</p>
+            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 p-6 shadow-lg">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <span className="text-white font-bold text-sm">ℹ</span>
+                </div>
+                <p className="text-sm text-indigo-800 font-medium leading-relaxed">{selectedRecoveryBrief}</p>
+              </div>
+            </div>
           )}
           {selected.aiNotes && (
-            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">{selected.aiNotes}</p>
+            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-r from-emerald-50 to-green-50 p-6 shadow-lg">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <span className="text-white font-bold text-sm">✓</span>
+                </div>
+                <p className="text-sm text-emerald-800 font-medium leading-relaxed">{selected.aiNotes}</p>
+              </div>
+            </div>
           )}
           {aiRecoveryError && (
-            <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 mt-2">{aiRecoveryError}</p>
+            <div className="rounded-2xl border-2 border-rose-200 bg-gradient-to-r from-rose-50 to-red-50 p-6 shadow-lg">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-rose-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <span className="text-white font-bold text-sm">⚠</span>
+                </div>
+                <p className="text-sm text-rose-800 font-medium leading-relaxed">{aiRecoveryError}</p>
+              </div>
+            </div>
           )}
 
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Deployable cash ({selected.currency ?? 'USD'})</p>
-              <p className="text-sm font-semibold text-slate-800 tabular-nums">{formatCurrencyString(selectedCurrencyDeployableCash, { inCurrency: selected.currency ?? 'USD' })}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.currency ?? 'USD'})</p>
+                <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-slate-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">💰</span>
+                </div>
+              </div>
+              <p className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(selectedCurrencyDeployableCash, { inCurrency: selected.currency ?? 'USD' })}</p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Cross-currency reference ({selected?.currency === 'USD' ? 'SAR' : 'USD'})</p>
-              <p className="text-sm font-semibold text-slate-800 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.currency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
+            <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-bold text-blue-700 uppercase tracking-wider">Cross-currency reference ({selected?.currency === 'USD' ? 'SAR' : 'USD'})</p>
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">🔄</span>
+                </div>
+              </div>
+              <p className="text-2xl font-black text-blue-900 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.currency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
             </div>
           </div>
           {!isAiAvailable && (
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">AI is currently unavailable. Recovery plan still runs with deterministic guardrails, dual-currency checks, and clear trigger logic.</p>
+            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-6 shadow-lg">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <span className="text-white font-bold text-sm">⚠</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-amber-800 mb-1">AI Currently Unavailable</p>
+                  <p className="text-sm text-amber-700 leading-relaxed">Recovery plan still runs with deterministic guardrails, dual-currency checks, and clear trigger logic.</p>
+                </div>
+              </div>
+            </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Current</p>
-              <p className="text-sm text-slate-700">
-                Shares: {selected.holding.quantity} · Avg cost:{' '}
-                {formatCurrencyString(selected.holding.avgCost ?? 0, {
-                  inCurrency: selected.currency ?? 'USD',
-                })}{' '}
-                · Price:{' '}
-                {formatCurrencyString(selectedPlan.currentPrice, {
-                  inCurrency: selected.currency ?? 'USD',
-                })}
-              </p>
-              <p className="mt-2 font-semibold text-slate-800">
-                P/L:{' '}
-                {formatCurrencyString(selectedPlan.plUsd, {
-                  inCurrency: selected.currency ?? 'USD',
-                })}{' '}
-                ({selectedPlan.plPct.toFixed(1)}%)
-              </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Current Position</p>
+                <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">📊</span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-600 font-medium">Shares:</span>
+                  <span className="text-sm font-bold text-slate-900">{selected.holding.quantity}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-600 font-medium">Avg Cost:</span>
+                  <span className="text-sm font-bold text-slate-900">
+                    {formatCurrencyString(selected.holding.avgCost ?? 0, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-600 font-medium">Price:</span>
+                  <span className="text-sm font-bold text-slate-900">
+                    {formatCurrencyString(selectedPlan.currentPrice, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                </div>
+                <div className="border-t border-slate-200 pt-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600 font-medium">P/L:</span>
+                    <span className={`text-lg font-black tabular-nums ${
+                      selectedPlan.plPct >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                    }`}>
+                      {formatCurrencyString(selectedPlan.plUsd, {
+                        inCurrency: selected.currency ?? 'USD',
+                      })} ({selectedPlan.plPct.toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="p-4 rounded-xl bg-emerald-50/80 border border-emerald-100">
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1">After ladder fills <InfoHint text="New average cost and share count if all planned buy orders are filled." /></p>
-              <p className="text-sm text-slate-700">
-                New shares: {selectedPlan.newShares} · New avg cost:{' '}
-                {formatCurrencyString(selectedPlan.newAvgCost, {
-                  inCurrency: selected.currency ?? 'USD',
-                })}
-              </p>
-              <p className="mt-2 font-semibold text-emerald-800">
-                Planned recovery cost:{' '}
-                {formatCurrencyString(selectedPlan.totalPlannedCost, {
-                  inCurrency: selected.currency ?? 'USD',
-                })}
-              </p>
-              <p className="mt-1 text-xs text-emerald-700">
-                Added shares cap: {Math.max(0, selectedPlan.newShares - selectedPlan.shares)} / {selected.positionConfig.maxAddShares ?? 0}
-                {' '}({selectedPlan.shares > 0 ? (((selectedPlan.newShares - selectedPlan.shares) / selectedPlan.shares) * 100).toFixed(0) : '0'}% of current shares)
-              </p>
+            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-2">After ladder fills <InfoHint text="New average cost and share count if all planned buy orders are filled." /></p>
+                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-xl flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">📈</span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-emerald-600 font-medium">New Shares:</span>
+                  <span className="text-sm font-bold text-emerald-900">{selectedPlan.newShares}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-emerald-600 font-medium">New Avg Cost:</span>
+                  <span className="text-sm font-bold text-emerald-900">
+                    {formatCurrencyString(selectedPlan.newAvgCost, {
+                      inCurrency: selected.currency ?? 'USD',
+                    })}
+                  </span>
+                </div>
+                <div className="border-t border-emerald-200 pt-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-emerald-600 font-medium">Planned Recovery Cost:</span>
+                    <span className="text-lg font-black text-emerald-900 tabular-nums">
+                      {formatCurrencyString(selectedPlan.totalPlannedCost, {
+                        inCurrency: selected.currency ?? 'USD',
+                      })}
+                    </span>
+                  </div>
+                  <div className="bg-emerald-100/50 rounded-lg p-3">
+                    <p className="text-xs text-emerald-700 font-medium">
+                      Added shares cap: {Math.max(0, selectedPlan.newShares - selectedPlan.shares)} / {selected.positionConfig.maxAddShares ?? 0}
+                      {' '}({selectedPlan.shares > 0 ? (((selectedPlan.newShares - selectedPlan.shares) / selectedPlan.shares) * 100).toFixed(0) : '0'}% of current shares)
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -856,22 +1082,40 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </div>
           </div>
 
-          <div>
-            <h4 className="font-semibold text-slate-800 mb-2 flex items-center gap-1">Buy ladder (limit orders) <InfoHint text="Up to 3 levels below current price. Use limit orders only; no market orders." /></h4>
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50"><tr><th className="px-3 py-2 text-left font-semibold text-slate-700">Level</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Qty</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Price</th><th className="px-3 py-2 text-right font-semibold text-slate-700">Cost</th></tr></thead>
-                <tbody className="bg-white">
+          <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">Buy ladder (limit orders) <InfoHint text="Up to 3 levels below current price. Use limit orders only; no market orders." /></h4>
+              <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center">
+                <span className="text-white font-bold text-lg">📊</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full">
+                <thead className="bg-gradient-to-r from-slate-100 to-slate-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-bold text-slate-700 text-sm uppercase tracking-wider">Level</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-700 text-sm uppercase tracking-wider">Quantity</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-700 text-sm uppercase tracking-wider">Price</th>
+                    <th className="px-4 py-3 text-right font-bold text-slate-700 text-sm uppercase tracking-wider">Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-slate-100">
                   {selectedPlan.ladder.map(l => (
-                    <tr key={l.level} className="border-t border-slate-100">
-                      <td className="px-3 py-2">L{l.level}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
+                    <tr key={l.level} className="hover:bg-slate-50 transition-colors duration-150">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-slate-600 rounded-lg flex items-center justify-center">
+                            <span className="text-white font-bold text-xs">L{l.level}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-900 tabular-nums">{l.qty}</td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-800 tabular-nums">
                         {formatCurrencyString(l.price, {
                           inCurrency: selected.currency ?? 'USD',
                         })}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">
+                      <td className="px-4 py-3 text-right font-bold text-emerald-700 tabular-nums">
                         {formatCurrencyString(l.cost, {
                           inCurrency: selected.currency ?? 'USD',
                         })}
@@ -883,36 +1127,52 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </div>
           </div>
 
-          <div>
-            <h4 className="font-semibold text-slate-800 mb-2 flex items-center gap-1">Exit targets (optional) <InfoHint text="Target 1/2 and trailing stop based on new average cost. Apply when you want to auto-suggest exit prices." /></h4>
-            <div className="flex flex-wrap gap-3 text-sm">
+          <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">Exit targets (optional) <InfoHint text="Target 1/2 and trailing stop based on new average cost. Apply when you want to auto-suggest exit prices." /></h4>
+              <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center">
+                <span className="text-white font-bold text-lg">🎯</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
               {selectedPlan.exitPlan.applyTarget1 &&
                 selectedPlan.exitPlan.target1Price != null && (
-                  <span className="px-3 py-1.5 rounded-lg bg-violet-50 text-violet-800 font-medium">
-                    Target 1: {selectedPlan.exitPlan.target1Pct}% →{' '}
-                    {formatCurrencyString(selectedPlan.exitPlan.target1Price, {
-                      inCurrency: selected.currency ?? 'USD',
-                    })}
-                  </span>
+                  <div className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-50 to-purple-50 border-2 border-violet-200 shadow-md hover:shadow-lg transition-all duration-200">
+                    <p className="text-sm font-bold text-violet-800">Target 1: {selectedPlan.exitPlan.target1Pct}%</p>
+                    <p className="text-sm font-black text-violet-900 tabular-nums">
+                      {formatCurrencyString(selectedPlan.exitPlan.target1Price, {
+                        inCurrency: selected.currency ?? 'USD',
+                      })}
+                    </p>
+                  </div>
                 )}
               {selectedPlan.exitPlan.applyTarget2 &&
                 selectedPlan.exitPlan.target2Price != null && (
-                  <span className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-800 font-medium">
-                    Target 2: {selectedPlan.exitPlan.target2Pct}% →{' '}
-                    {formatCurrencyString(selectedPlan.exitPlan.target2Price, {
-                      inCurrency: selected.currency ?? 'USD',
-                    })}
-                  </span>
+                  <div className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-50 to-blue-50 border-2 border-indigo-200 shadow-md hover:shadow-lg transition-all duration-200">
+                    <p className="text-sm font-bold text-indigo-800">Target 2: {selectedPlan.exitPlan.target2Pct}%</p>
+                    <p className="text-sm font-black text-indigo-900 tabular-nums">
+                      {formatCurrencyString(selectedPlan.exitPlan.target2Price, {
+                        inCurrency: selected.currency ?? 'USD',
+                      })}
+                    </p>
+                  </div>
                 )}
               {selectedPlan.exitPlan.applyTrailing &&
                 selectedPlan.exitPlan.trailStopPrice != null && (
-                  <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 font-medium">
-                    Trailing: {selectedPlan.exitPlan.trailPct}% →{' '}
-                    {formatCurrencyString(selectedPlan.exitPlan.trailStopPrice, {
-                      inCurrency: selected.currency ?? 'USD',
-                    })}
-                  </span>
+                  <div className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200 shadow-md hover:shadow-lg transition-all duration-200">
+                    <p className="text-sm font-bold text-amber-800">Trailing: {selectedPlan.exitPlan.trailPct}%</p>
+                    <p className="text-sm font-black text-amber-900 tabular-nums">
+                      {formatCurrencyString(selectedPlan.exitPlan.trailStopPrice, {
+                        inCurrency: selected.currency ?? 'USD',
+                      })}
+                    </p>
+                  </div>
                 )}
+              {(!selectedPlan.exitPlan.applyTarget1 && !selectedPlan.exitPlan.applyTarget2 && !selectedPlan.exitPlan.applyTrailing) && (
+                <div className="px-4 py-2.5 rounded-xl bg-slate-100 border-2 border-slate-200">
+                  <p className="text-sm font-medium text-slate-600">No exit targets configured</p>
+                </div>
+              )}
             </div>
           </div>
 

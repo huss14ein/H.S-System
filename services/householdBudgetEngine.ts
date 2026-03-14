@@ -303,6 +303,211 @@ export const HOUSEHOLD_ENGINE_PROFILES: Record<HouseholdEngineProfile, { label: 
   },
 };
 
+/** Saudi Arabia specific preset with realistic costs for Saudi households */
+export const SAUDI_HOUSEHOLD_PRESET: HouseholdEngineConfig = {
+  operatingMode: 'Balanced',
+  emergencyTargetMonths: 6,
+  reserveTargetMonths: 2,
+  utilities: {
+    baseMonthly: 350, // SAR - Electricity, water, internet base
+    perAdultLoad: 150, // Additional per adult
+    perKidLoad: 80, // Additional per child
+  },
+  transport: {
+    singleDriverBaseCost: 1200, // Car payment, fuel, insurance
+    rideSupportEnabled: true,
+    rideSupportCost: 400, // Uber/Careem for family
+  },
+  allowances: {
+    spouseFixedEnabled: true,
+    spouseFixedAmount: 1500, // Personal spending money
+    personalAllowanceEnabled: true,
+    personalAllowancePerAdult: 500,
+  },
+  obligations: {
+    annual: 8000, // Annual obligations (car registration, insurance, etc.)
+    semiAnnual: 4000, // Semi-annual obligations
+    monthlyFixed: 0,
+    annualDueMonth: 12,
+    semiAnnualDueMonths: [6, 12],
+  },
+  requiredExpenses: {
+    annualReserveEnabled: true,
+    annualReserveAmount: 5000, // House maintenance reserve
+    semiAnnualReserveEnabled: true,
+    semiAnnualReserveAmount: 3000, // Car maintenance reserve
+    monthlyRequiredEnabled: true,
+    monthlyRequiredAmount: 500, // Monthly miscellaneous
+  },
+  autoRouteGoalPriority: ['House', 'Car', 'Hajj', 'Umrah'],
+  bucketRules: {
+    fixedObligations: { enabled: true },
+    householdEssentials: { enabled: true },
+    householdOperations: { enabled: true, minPctOfSalary: 0.08 },
+    transport: { enabled: true },
+    personalSupport: { enabled: true },
+    reserveSavings: { enabled: true, minPctOfSalary: 0.05 },
+    emergencySavings: { enabled: true, minPctOfSalary: 0.07 },
+    goalSavings: { enabled: true, minPctOfSalary: 0.06 },
+    kidsFutureSavings: { enabled: true, minPctOfSalary: 0.03 },
+    retirementSavings: { enabled: true, minPctOfSalary: 0.1 },
+    investing: { enabled: true, minPctOfSalary: 0.04 },
+  },
+};
+
+/** Generate budget categories based on household engine for Saudi Arabia */
+export function generateSaudiBudgetCategories(
+  adults: number,
+  kids: number,
+  monthlySalary: number,
+  profile: HouseholdEngineProfile = 'Moderate'
+): Array<{ category: string; limit: number; tier: 'Core' | 'Supporting' | 'Optional'; period: 'monthly' | 'yearly' }> {
+  const config = { ...SAUDI_HOUSEHOLD_PRESET, ...HOUSEHOLD_ENGINE_PROFILES[profile].config };
+  
+  // Calculate base amounts
+  const utilityLoad = config.utilities.baseMonthly + adults * config.utilities.perAdultLoad + kids * config.utilities.perKidLoad;
+  const transportCost = config.transport.singleDriverBaseCost + (config.transport.rideSupportEnabled ? config.transport.rideSupportCost : 0);
+  const spouseAllowance = config.allowances.spouseFixedEnabled ? config.allowances.spouseFixedAmount : 0;
+  const personalAllowance = config.allowances.personalAllowanceEnabled ? adults * config.allowances.personalAllowancePerAdult : 0;
+  
+  // Reserve obligations monthly equivalent
+  const reserveMonthly = (config.obligations.annual / 12) + (config.obligations.semiAnnual / 6);
+  const annualReserveMonthly = config.requiredExpenses.annualReserveEnabled ? config.requiredExpenses.annualReserveAmount / 12 : 0;
+  const semiAnnualReserveMonthly = config.requiredExpenses.semiAnnualReserveEnabled ? config.requiredExpenses.semiAnnualReserveAmount / 6 : 0;
+  const monthlyRequired = config.requiredExpenses.monthlyRequiredEnabled ? config.requiredExpenses.monthlyRequiredAmount : 0;
+  
+  // Essentials calculation (food, household items)
+  const essentialsBase = 2000 + adults * 1200 + kids * 700;
+  
+  // Calculate percentage-based amounts
+  const reserveSavings = monthlySalary * (config.bucketRules.reserveSavings.minPctOfSalary || 0.05);
+  const emergencySavings = monthlySalary * (config.bucketRules.emergencySavings.minPctOfSalary || 0.07);
+  const goalSavings = monthlySalary * (config.bucketRules.goalSavings.minPctOfSalary || 0.06);
+  const kidsSavings = kids > 0 ? Math.max(monthlySalary * (config.bucketRules.kidsFutureSavings.minPctOfSalary || 0.03), kids * 300) : 0;
+  const retirementSavings = monthlySalary * (config.bucketRules.retirementSavings.minPctOfSalary || 0.1);
+  const investing = monthlySalary * (config.bucketRules.investing.minPctOfSalary || 0.04);
+  
+  // Operations (household running costs)
+  const operationsBase = Math.max(monthlySalary * (config.bucketRules.householdOperations.minPctOfSalary || 0.08), 500 + kids * 150);
+  
+  // Fixed obligations
+  const fixedObligations = reserveMonthly + annualReserveMonthly + semiAnnualReserveMonthly;
+  
+  const categories: Array<{ category: string; limit: number; tier: 'Core' | 'Supporting' | 'Optional'; period: 'monthly' | 'yearly' }> = [
+    // Core - Essential for living (Detailed breakdown)
+    { category: 'House Rent/Mortgage', limit: Math.round(fixedObligations * 0.7), tier: 'Core', period: 'monthly' },
+    { category: 'Electricity & Water', limit: Math.round(utilityLoad * 0.4), tier: 'Core', period: 'monthly' },
+    { category: 'Internet & Mobile Plans', limit: Math.round(utilityLoad * 0.3), tier: 'Core', period: 'monthly' },
+    { category: 'Groceries - Fresh Produce', limit: Math.round(essentialsBase * 0.35), tier: 'Core', period: 'monthly' },
+    { category: 'Groceries - Meat & Poultry', limit: Math.round(essentialsBase * 0.25), tier: 'Core', period: 'monthly' },
+    { category: 'Groceries - Dairy & Bakery', limit: Math.round(essentialsBase * 0.2), tier: 'Core', period: 'monthly' },
+    { category: 'Groceries - Dry Goods & Essentials', limit: Math.round(essentialsBase * 0.2), tier: 'Core', period: 'monthly' },
+    { category: 'Vehicle Fuel', limit: Math.round(transportCost * 0.4), tier: 'Core', period: 'monthly' },
+    { category: 'Vehicle Insurance', limit: Math.round(transportCost * 0.3), tier: 'Core', period: 'monthly' },
+    { category: 'Vehicle Maintenance', limit: Math.round(transportCost * 0.3), tier: 'Core', period: 'monthly' },
+    
+    // Supporting - Important but flexible (Detailed breakdown)
+    { category: 'House Cleaning Supplies', limit: Math.round(operationsBase * 0.2), tier: 'Supporting', period: 'monthly' },
+    { category: 'Laundry & Dry Cleaning', limit: Math.round(operationsBase * 0.15), tier: 'Supporting', period: 'monthly' },
+    { category: 'Home Maintenance', limit: Math.round(operationsBase * 0.25), tier: 'Supporting', period: 'monthly' },
+    { category: 'School Supplies - Books', limit: kids > 0 ? Math.round(kids * 150) : 0, tier: 'Supporting', period: 'monthly' },
+    { category: 'School Supplies - Uniforms', limit: kids > 0 ? Math.round(kids * 100) : 0, tier: 'Supporting', period: 'monthly' },
+    { category: 'School Transportation', limit: kids > 0 ? Math.round(kids * 200) : 0, tier: 'Supporting', period: 'monthly' },
+    { category: 'Spouse Personal Allowance', limit: Math.round(spouseAllowance), tier: 'Supporting', period: 'monthly' },
+    { category: 'Personal Care - Grooming', limit: Math.round(personalAllowance * 0.3), tier: 'Supporting', period: 'monthly' },
+    { category: 'Personal Care - Health & Fitness', limit: Math.round(personalAllowance * 0.4), tier: 'Supporting', period: 'monthly' },
+    { category: 'Personal Care - Clothing', limit: Math.round(personalAllowance * 0.3), tier: 'Supporting', period: 'monthly' },
+    { category: 'Reserve Savings - Short Term', limit: Math.round(reserveSavings * 0.6), tier: 'Supporting', period: 'monthly' },
+    { category: 'Reserve Savings - Medium Term', limit: Math.round(reserveSavings * 0.4), tier: 'Supporting', period: 'monthly' },
+    { category: 'Emergency Fund - Medical', limit: Math.round(emergencySavings * 0.4), tier: 'Supporting', period: 'monthly' },
+    { category: 'Emergency Fund - Job Loss', limit: Math.round(emergencySavings * 0.6), tier: 'Supporting', period: 'monthly' },
+    
+    // Optional - Future planning and goals (Detailed breakdown)
+    { category: 'Retirement - General Pension', limit: Math.round(retirementSavings * 0.5), tier: 'Optional', period: 'monthly' },
+    { category: 'Retirement - Private Investments', limit: Math.round(retirementSavings * 0.5), tier: 'Optional', period: 'monthly' },
+    { category: 'Goal Savings - House Down Payment', limit: Math.round(goalSavings * 0.4), tier: 'Optional', period: 'monthly' },
+    { category: 'Goal Savings - Car Purchase', limit: Math.round(goalSavings * 0.3), tier: 'Optional', period: 'monthly' },
+    { category: 'Goal Savings - Travel & Vacation', limit: Math.round(goalSavings * 0.3), tier: 'Optional', period: 'monthly' },
+    { category: 'Investing - Local Stocks', limit: Math.round(investing * 0.4), tier: 'Optional', period: 'monthly' },
+    { category: 'Investing - International Stocks', limit: Math.round(investing * 0.3), tier: 'Optional', period: 'monthly' },
+    { category: 'Investing - Real Estate/REITs', limit: Math.round(investing * 0.3), tier: 'Optional', period: 'monthly' },
+  ];
+  
+  // Add kids savings if there are kids
+  if (kids > 0) {
+    categories.push({ category: 'Kids Future Savings', limit: Math.round(kidsSavings), tier: 'Optional', period: 'monthly' });
+  }
+  
+  // Add yearly obligations category
+  categories.push({ 
+    category: 'Annual Car Registration', 
+    limit: Math.round(config.obligations.annual * 0.3), 
+    tier: 'Core', 
+    period: 'yearly' 
+  });
+  categories.push({ 
+    category: 'Annual Insurance Premiums', 
+    limit: Math.round(config.obligations.annual * 0.4), 
+    tier: 'Core', 
+    period: 'yearly' 
+  });
+  categories.push({ 
+    category: 'Annual Professional Fees', 
+    limit: Math.round(config.obligations.annual * 0.2), 
+    tier: 'Core', 
+    period: 'yearly' 
+  });
+  categories.push({ 
+    category: 'Annual Membership Subscriptions', 
+    limit: Math.round(config.obligations.annual * 0.1), 
+    tier: 'Core', 
+    period: 'yearly' 
+  });
+  
+  // Add semi-annual obligations as yearly
+  if (config.obligations.semiAnnual > 0) {
+    categories.push({ 
+      category: 'Semi-Annual Car Maintenance', 
+      limit: Math.round(config.obligations.semiAnnual), 
+      tier: 'Core', 
+      period: 'yearly' 
+    });
+  }
+  
+  // Add maintenance reserves as yearly
+  if (config.requiredExpenses.annualReserveEnabled) {
+    categories.push({ 
+      category: 'House Maintenance - Major Repairs', 
+      limit: Math.round(config.requiredExpenses.annualReserveAmount * 0.6), 
+      tier: 'Supporting', 
+      period: 'yearly' 
+    });
+    categories.push({ 
+      category: 'House Maintenance - Appliances', 
+      limit: Math.round(config.requiredExpenses.annualReserveAmount * 0.4), 
+      tier: 'Supporting', 
+      period: 'yearly' 
+    });
+  }
+  
+  if (config.requiredExpenses.semiAnnualReserveEnabled) {
+    categories.push({ 
+      category: 'Car Maintenance - Oil Changes', 
+      limit: Math.round(config.requiredExpenses.semiAnnualReserveAmount * 0.5), 
+      tier: 'Supporting', 
+      period: 'yearly' 
+    });
+    categories.push({ 
+      category: 'Car Maintenance - Tires & Service', 
+      limit: Math.round(config.requiredExpenses.semiAnnualReserveAmount * 0.5), 
+      tier: 'Supporting', 
+      period: 'yearly' 
+    });
+  }
+  
+  return categories;
+}
+
 export interface AutoHouseholdInputOptions {
   /** Calendar year to project (1–12 months). */
   year: number;
@@ -544,8 +749,10 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
     investing: 0,
   };
 
-  let remainingEmergencyGap = Math.max(0, toCurrency(input.monthlyActualExpense?.[0] || monthlySalaryPlan[0]) * config.emergencyTargetMonths - toCurrency(input.emergencyBalance));
-  let remainingReserveGap = Math.max(0, reserveMonthlyObligation * config.reserveTargetMonths - toCurrency(input.reserveBalance));
+  const initialEmergencyGap = Math.max(0, toCurrency((input.monthlyActualExpense?.[0] || monthlySalaryPlan[0] || 0) * config.emergencyTargetMonths - toCurrency(input.emergencyBalance)));
+  const initialReserveGap = Math.max(0, reserveMonthlyObligation * config.reserveTargetMonths - toCurrency(input.reserveBalance));
+  let remainingEmergencyGap = initialEmergencyGap;
+  let remainingReserveGap = initialReserveGap;
   let reservePoolBalance = toCurrency(input.reserveBalance);
 
   const months: HouseholdMonthPlan[] = Array.from({ length: 12 }, (_, index) => {
@@ -588,6 +795,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       buckets.personalSupport = toCurrency(spouse + personal);
     }
 
+    // Calculate remaining after base obligations
     const baseOutflow = Object.values(buckets).reduce((s, v) => s + v, 0);
     let remaining = salary - baseOutflow;
 
@@ -615,18 +823,38 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
       remaining -= allocated;
     };
 
-    assignBucket('reserveSavings', Math.max(remainingReserveGap > 0 ? remainingReserveGap / (13 - month) : 0, salary * (config.bucketRules.reserveSavings.minPctOfSalary || 0)));
+    // Priority 1: Reserve savings (gap-based first, then percentage)
+    const reserveTarget = Math.max(
+      remainingReserveGap > 0 ? remainingReserveGap / (13 - month) : 0,
+      salary * (config.bucketRules.reserveSavings.minPctOfSalary || 0)
+    );
+    assignBucket('reserveSavings', reserveTarget);
     remainingReserveGap = Math.max(0, remainingReserveGap - buckets.reserveSavings);
 
-    assignBucket('emergencySavings', Math.max(remainingEmergencyGap > 0 ? remainingEmergencyGap / (13 - month) : 0, salary * (config.bucketRules.emergencySavings.minPctOfSalary || 0)));
+    // Priority 2: Emergency savings (gap-based first, then percentage)
+    const emergencyTarget = Math.max(
+      remainingEmergencyGap > 0 ? remainingEmergencyGap / (13 - month) : 0,
+      salary * (config.bucketRules.emergencySavings.minPctOfSalary || 0)
+    );
+    assignBucket('emergencySavings', emergencyTarget);
     remainingEmergencyGap = Math.max(0, remainingEmergencyGap - buckets.emergencySavings);
 
+    // Priority 3: Kids future savings (if applicable)
     assignBucket('kidsFutureSavings', kids > 0 ? Math.max(salary * (config.bucketRules.kidsFutureSavings.minPctOfSalary || 0), kids * 250) : 0);
+    
+    // Priority 4: Retirement savings
     assignBucket('retirementSavings', salary * (config.bucketRules.retirementSavings.minPctOfSalary || 0));
+    
+    // Priority 5: Investing
     assignBucket('investing', salary * (config.bucketRules.investing.minPctOfSalary || 0));
 
+    // Priority 6: Goal savings (minimum percentage OR goal-based, whichever is higher)
     const activeGoal = resolveGoal(config.autoRouteGoalPriority, goals);
-    assignBucket('goalSavings', Math.max(salary * (config.bucketRules.goalSavings.minPctOfSalary || 0), Math.min(activeGoal.remaining, Math.max(0, remaining))));
+    const goalTarget = Math.max(
+      salary * (config.bucketRules.goalSavings.minPctOfSalary || 0),
+      Math.min(activeGoal.remaining, Math.max(0, remaining))
+    );
+    assignBucket('goalSavings', goalTarget);
 
     const routedGoalName = activeGoal.name;
     const routedGoalAmount = toCurrency(remaining > 0 ? remaining : 0);
@@ -716,8 +944,8 @@ export function buildHouseholdBudgetPlan(input: HouseholdEngineInput): Household
     annualBuckets,
     recommendations,
     suggestedProfile: suggested ?? undefined,
-    emergencyGap: round2(Math.max(0, remainingEmergencyGap)),
-    reserveGap: round2(Math.max(0, remainingReserveGap)),
+    emergencyGap: round2(initialEmergencyGap),
+    reserveGap: round2(initialReserveGap),
     plannedVsActual: { plannedIncome, actualIncome, plannedOutflow, actualOutflow, plannedNet, actualNet },
     balanceProjection: {
       openingLiquid: toCurrency(input.liquidBalance),
