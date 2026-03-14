@@ -16,10 +16,12 @@ import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import {
     buildHouseholdBudgetPlan,
     DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    getSuggestedBudgetsFromHousehold,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     mapGoalsForRouting,
     sumLiquidCash,
@@ -53,21 +55,28 @@ interface BudgetModalProps {
     currentYear: number;
 }
 
+const SAVINGS_CATEGORY = 'Savings & Investments';
+
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
+    const [destinationAccountId, setDestinationAccountId] = useState<string>('');
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
     const availableCategories = useMemo(() => {
-        const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
+        const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', SAVINGS_CATEGORY, 'Personal Care', 'Miscellaneous'];
         if (budgetToEdit) return allPossible;
         return allPossible.filter(c => !existingCategories.has(c));
     }, [existingCategories, budgetToEdit]);
 
+    const savingsEligibleAccounts = useMemo(() => {
+        const accounts = data?.accounts ?? [];
+        return accounts.filter((a: { type?: string }) => ['Checking', 'Savings', 'Investment'].includes(a.type ?? ''));
+    }, [data?.accounts]);
 
     React.useEffect(() => {
         if (budgetToEdit) {
@@ -75,13 +84,19 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimit(String(budgetToEdit.limit));
             setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
+            setDestinationAccountId((budgetToEdit as { destinationAccountId?: string }).destinationAccountId ?? '');
         } else {
             setCategory('');
             setLimit('');
             setLimitPeriod('Monthly');
             setTier('Optional');
+            setDestinationAccountId('');
         }
     }, [budgetToEdit, isOpen]);
+
+    React.useEffect(() => {
+        if (category !== SAVINGS_CATEGORY) setDestinationAccountId('');
+    }, [category]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -91,14 +106,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
 
-        onSave({
+        const payload: Parameters<typeof onSave>[0] = {
             category,
             limit: rawLimit,
             month,
             year,
             period,
             tier,
-        }, !!budgetToEdit);
+        };
+        if (category === SAVINGS_CATEGORY && destinationAccountId) payload.destinationAccountId = destinationAccountId;
+        onSave(payload, !!budgetToEdit);
         onClose();
     };
     
@@ -108,9 +125,9 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
+                    <label htmlFor="category" className="block text-sm font-medium text-slate-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
                     {budgetToEdit ? (
-                        <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
+                        <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-slate-300 rounded-md bg-slate-100" />
                     ) : (
                         <div className="mt-1">
                             <Combobox 
@@ -123,7 +140,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     )}
                 </div>
                 <div>
-                    <label htmlFor="budget-tier" className="block text-sm font-medium text-gray-700 flex items-center">Budget Type <InfoHint text="Core: essential spending (e.g. rent, food). Supporting: important but flexible. Optional: discretionary." /></label>
+                    <label htmlFor="budget-tier" className="block text-sm font-medium text-slate-700 flex items-center">Budget Type <InfoHint text="Core: essential spending (e.g. rent, food). Supporting: important but flexible. Optional: discretionary." /></label>
                     <select id="budget-tier" value={tier} onChange={(e) => setTier(e.target.value as 'Core' | 'Supporting' | 'Optional')} className="select-base">
                         <option value="Core">Core (essential)</option>
                         <option value="Supporting">Supporting</option>
@@ -131,11 +148,11 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     </select>
                 </div>
                  <div>
-                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
+                    <label htmlFor="limit" className="block text-sm font-medium text-slate-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="input-base" />
                 </div>
                 <div>
-                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is and applies to all months of the year." /></label>
+                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-slate-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is and applies to all months of the year." /></label>
                     <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="select-base">
                         <option value="Monthly">Monthly</option>
                         <option value="Weekly">Weekly</option>
@@ -143,6 +160,17 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                         <option value="Yearly">Yearly (all months)</option>
                     </select>
                 </div>
+                {category === SAVINGS_CATEGORY && (
+                    <div>
+                        <label htmlFor="destinationAccount" className="block text-sm font-medium text-slate-700">Savings go to account</label>
+                        <select id="destinationAccount" value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)} className="select-base mt-1">
+                            <option value="">None</option>
+                            {savingsEligibleAccounts.map((acc: { id: string; name?: string }) => (
+                                <option key={acc.id} value={acc.id}>{acc.name ?? acc.id}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
                 <button type="submit" className="w-full btn-primary">Save Budget</button>
             </form>
         </Modal>
@@ -186,6 +214,8 @@ const Budgets: React.FC = () => {
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
+    const [sharedTxMonth, setSharedTxMonth] = useState<number>(() => new Date().getMonth() + 1);
+    const [sharedTxYear, setSharedTxYear] = useState<number>(() => new Date().getFullYear());
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
@@ -679,6 +709,20 @@ const Budgets: React.FC = () => {
         );
     }, [sharedBudgetCards]);
 
+    const filteredOwnerSharedTx = useMemo(() => {
+        return ownerSharedTransactions.filter((tx) => {
+            const d = new Date(tx.transaction_date || tx.date || 0);
+            return d.getMonth() + 1 === sharedTxMonth && d.getFullYear() === sharedTxYear;
+        });
+    }, [ownerSharedTransactions, sharedTxMonth, sharedTxYear]);
+
+    const filteredMySharedTx = useMemo(() => {
+        return mySharedBudgetTransactions.filter((tx) => {
+            const d = new Date(tx.transaction_date || tx.date || 0);
+            return d.getMonth() + 1 === sharedTxMonth && d.getFullYear() === sharedTxYear;
+        });
+    }, [mySharedBudgetTransactions, sharedTxMonth, sharedTxYear]);
+
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
@@ -791,6 +835,55 @@ const Budgets: React.FC = () => {
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
         }
+    };
+
+    const monthlySalaryForSuggestions = useMemo(() => {
+        const incomeByMonth = Array(12).fill(0);
+        (data?.transactions ?? []).forEach((t) => {
+            const d = new Date(t.date);
+            if (d.getFullYear() !== currentYear) return;
+            const m = d.getMonth();
+            if ((t as { type?: string }).type === 'income') incomeByMonth[m] += Math.max(0, Number((t as { amount?: number }).amount) || 0);
+        });
+        const total = incomeByMonth.reduce((a, b) => a + b, 0);
+        const count = incomeByMonth.filter((x) => x > 0).length;
+        return count > 0 ? total / count : 0;
+    }, [data?.transactions, currentYear]);
+
+    const handleGenerateFromHousehold = async () => {
+        if (!isAdmin) return;
+        const suggested = getSuggestedBudgetsFromHousehold({
+            adults: householdAdults,
+            kids: householdKids,
+            monthlySalaryNet: monthlySalaryForSuggestions || householdBudgetEngine.dynamicBaseline.baselineMonthlyIncome || 0,
+        });
+        const existingCategories = new Set(
+            (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth).map((b) => b.category)
+        );
+        const toAdd = suggested.filter((s) => !existingCategories.has(s.category));
+        if (toAdd.length === 0) {
+            alert('All suggested categories already have a budget for this month.');
+            return;
+        }
+        if (!window.confirm(`Generate ${toAdd.length} budget(s) from household (${householdAdults} adults, ${householdKids} kids)? Existing categories will not be overwritten.`)) return;
+        let added = 0;
+        for (const row of toAdd) {
+            try {
+                await addBudget({
+                    category: row.category,
+                    limit: row.limit,
+                    month: currentMonth,
+                    year: currentYear,
+                    period: row.period,
+                    tier: row.tier ?? 'Optional',
+                });
+                added++;
+                existingCategories.add(row.category);
+            } catch (e) {
+                console.error('Failed to add budget for', row.category, e);
+            }
+        }
+        if (added > 0) alert(`${added} budget(s) added from household suggestions.`);
     };
 
     const handleSmartFillBudgets = () => {
@@ -987,6 +1080,42 @@ const Budgets: React.FC = () => {
             return;
         }
 
+        if (request.request_type === 'NewCategory') {
+            const requesterId = request.user_id ?? request.userId;
+            const categoryName = (request.category_name ?? request.categoryName ?? '').trim();
+            if (requesterId && categoryName) {
+                if (requesterId === auth?.user?.id && addBudget) {
+                    try {
+                        await addBudget({
+                            category: categoryName,
+                            limit: amount,
+                            month: currentMonth,
+                            year: currentYear,
+                            period: 'monthly',
+                            tier: 'Optional',
+                        });
+                    } catch (e) {
+                        console.error('Failed to create budget for requester:', e);
+                        alert('Request marked finalized but failed to create budget. Please add the budget manually or try again.');
+                    }
+                } else {
+                    const { error: budgetInsertError } = await supabase.from('budgets').insert({
+                        user_id: requesterId,
+                        category: categoryName,
+                        limit: amount,
+                        month: currentMonth,
+                        year: currentYear,
+                        period: 'monthly',
+                        tier: 'Optional',
+                    });
+                    if (budgetInsertError) {
+                        console.error('Failed to create budget row for requester:', budgetInsertError);
+                        alert('Request marked finalized but failed to create budget for requester.');
+                    }
+                }
+            }
+        }
+
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
     };
 
@@ -1063,11 +1192,23 @@ const Budgets: React.FC = () => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
-                        <SparklesIcon className="h-5 w-5" />
-                        Smart-fill from history
-                    </button>
-                    <button type="button" disabled={!isAdmin} onClick={handleCopyBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
+                    <select
+                        disabled={!isAdmin}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            e.target.value = '';
+                            if (v === 'smart-fill') handleSmartFillBudgets();
+                            else if (v === 'copy') handleCopyBudgets();
+                            else if (v === 'generate') handleGenerateFromHousehold();
+                        }}
+                        className="select-base min-w-[180px] disabled:opacity-50"
+                        aria-label="Budget actions"
+                    >
+                        <option value="">Actions</option>
+                        <option value="smart-fill">Smart-fill from history</option>
+                        <option value="copy">Copy Last Month</option>
+                        <option value="generate">Generate from household</option>
+                    </select>
                     <button type="button" disabled={!isAdmin} onClick={() => handleOpenModal()} className="btn-primary disabled:opacity-50">Add Budget</button>
                 </div>
             }
@@ -1102,31 +1243,31 @@ const Budgets: React.FC = () => {
                 </div>
             </SectionCard>
 
-            <SectionCard title="Budget Intelligence">
+            <CollapsibleSection title="Budget Intelligence" summary={`Portfolio ${formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })} · Spend ${formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}`} defaultOpen={false} storageKey="budgets-intelligence">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
+                        <p className="metric-label text-slate-500 w-full">Portfolio Budget</p>
                         <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalLimit, { digits: 0 })}</p>
                     </div>
                     <div className="rounded-lg border bg-indigo-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Current Spend</p>
+                        <p className="metric-label text-slate-500 w-full">Current Spend</p>
                         <p className="metric-value text-lg font-semibold w-full">{formatCurrencyString(budgetInsights.totalSpent, { digits: 0 })}</p>
                     </div>
                     <div className="rounded-lg border bg-amber-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Needs Attention</p>
+                        <p className="metric-label text-slate-500 w-full">Needs Attention</p>
                         <p className="metric-value text-lg font-semibold w-full">{budgetInsights.watchCount + budgetInsights.criticalCount}</p>
                     </div>
                     <div className="rounded-lg border bg-emerald-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Healthy Budgets</p>
+                        <p className="metric-label text-slate-500 w-full">Healthy Budgets</p>
                         <p className="metric-value text-lg font-semibold w-full">{budgetInsights.healthyCount}</p>
                     </div>
                 </div>
                 {budgetInsights.topChange && (
-                    <p className="mt-3 text-xs text-gray-600">
+                    <p className="mt-3 text-xs text-slate-600">
                         Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta ?? 0, { digits: 0 })} vs previous period).
                     </p>
                 )}
-            </SectionCard>
+            </CollapsibleSection>
 
             {!isAdmin && (() => {
                 const selectedCategoryName = requestType === 'IncreaseLimit' && requestCategoryId ? (governanceCategories.find(c => c.id === requestCategoryId)?.name ?? '') : '';
@@ -1138,7 +1279,7 @@ const Budgets: React.FC = () => {
                         <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit new-category or limit-increase proposals with context notes for admin approval." /></h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Request type</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Request type</label>
                                 <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="w-full p-2 border rounded">
                                     <option value="NewCategory">New Category</option>
                                     <option value="IncreaseLimit">Increase Limit</option>
@@ -1146,23 +1287,23 @@ const Budgets: React.FC = () => {
                             </div>
                             {requestType === 'NewCategory' ? (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Category name</label>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Category name</label>
                                     <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="e.g. Travel, Education" className="w-full p-2 border rounded" />
                                 </div>
                             ) : (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Category to increase</label>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Category to increase</label>
                                     <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
                                         <option value="">Select category</option>
                                         {governanceCategories.filter((c) => permittedCategories.includes(c.name)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
                                     {currentBudgetRow && (
-                                        <p className="mt-1 text-xs text-gray-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
+                                        <p className="mt-1 text-xs text-slate-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
                                     )}
                                 </div>
                             )}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Proposed amount ({requestAmountPeriod})</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Proposed amount ({requestAmountPeriod})</label>
                                 <div className="flex gap-2">
                                     <input type="number" min="0" step="1" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} placeholder="Amount" className="flex-1 p-2 border rounded" />
                                     <select value={requestAmountPeriod} onChange={(e) => setRequestAmountPeriod(e.target.value as 'Monthly' | 'Weekly' | 'Daily' | 'Yearly')} className="p-2 border rounded w-28">
@@ -1177,14 +1318,14 @@ const Budgets: React.FC = () => {
                                 )}
                             </div>
                             <div className="md:col-span-2">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Reason / note (optional)</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Reason / note (optional)</label>
                                 <input value={requestNote} onChange={(e) => setRequestNote(e.target.value)} placeholder="e.g. Higher travel expected next quarter" className="w-full p-2 border rounded" />
                             </div>
                             <div className="md:col-span-2">
                                 <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Submit request</button>
                             </div>
                         </div>
-                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked.</p>
+                        <p className="mt-3 text-xs text-slate-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked.</p>
                     </div>
                 );
             })()}
@@ -1197,9 +1338,9 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    <p className="text-xs text-slate-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-slate-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-slate-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
                                 <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
                             </div>
@@ -1217,9 +1358,9 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    <p className="text-xs text-slate-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-slate-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-slate-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
                                 <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
                             </div>
@@ -1236,9 +1377,9 @@ const Budgets: React.FC = () => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Requested (monthly normalized): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    <p className="text-xs text-slate-500">Requested (monthly normalized): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    {(r.note || r.request_note) && <p className="text-xs text-slate-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                    <p className="text-[11px] text-slate-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
@@ -1265,7 +1406,7 @@ const Budgets: React.FC = () => {
                     <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
                         <div>
                             <h2 className="text-lg font-semibold">Request History</h2>
-                            <p className="text-xs text-gray-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
+                            <p className="text-xs text-slate-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
                         </div>
                         <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded shrink-0">{allRespondedRequests.length} total</span>
                         <span className="text-violet-600 shrink-0">{historyCollapsed ? '▼ Expand' : '▲ Collapse'}</span>
@@ -1276,23 +1417,23 @@ const Budgets: React.FC = () => {
                                 <table className="w-full text-sm border-collapse">
                                     <thead className="sticky top-0 bg-violet-50/95 z-10">
                                         <tr className="border-b border-violet-200">
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
-                                            <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                            <th className="text-left py-2 px-2 font-medium text-slate-700">Date</th>
+                                            <th className="text-left py-2 px-2 font-medium text-slate-700">Type</th>
+                                            <th className="text-left py-2 px-2 font-medium text-slate-700">Category</th>
+                                            <th className="text-right py-2 px-2 font-medium text-slate-700">Amount</th>
+                                            <th className="text-left py-2 px-2 font-medium text-slate-700">Status</th>
+                                            <th className="text-left py-2 px-2 font-medium text-slate-700">Note</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {visibleHistoryRequests.map((r) => (
                                             <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
-                                                <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                                <td className="py-2 px-2 text-slate-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
                                                 <td className="py-2 px-2">{r.request_type}</td>
                                                 <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
                                                 <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
                                                 <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                                <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
+                                                <td className="py-2 px-2 text-slate-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
                                                     <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
                                                 </td>
                                             </tr>
@@ -1501,7 +1642,7 @@ const Budgets: React.FC = () => {
                     <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Share with user email</label>
                                 <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
                                     <option value="">Select a signed-up user…</option>
                                     {shareableUsers.map((u) => (
@@ -1513,7 +1654,7 @@ const Budgets: React.FC = () => {
                                 {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Category scope</label>
                                 <select value={shareCategory} onChange={(e) => setShareCategory(e.target.value)} className="select-base">
                                     <option value="ALL">All budget categories</option>
                                     {Array.from(new Set((data?.budgets ?? []).map((b) => b.category))).map((cat) => (
@@ -1555,14 +1696,16 @@ const Budgets: React.FC = () => {
                                         </div>
 
                                         <h4 className="mt-3 text-base font-semibold text-slate-900">{budget.category}</h4>
-
+                                        {budget.category === SAVINGS_CATEGORY && (budget as Budget).destinationAccountId && (
+                                            <p className="text-xs text-slate-500 mt-0.5">→ {data?.accounts?.find((a: { id: string; name?: string }) => a.id === (budget as Budget).destinationAccountId)?.name ?? (budget as Budget).destinationAccountId}</p>
+                                        )}
                                         <div className="mt-4">
                                             <div className="flex justify-between items-baseline mb-1">
                                                 <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                                <span className="text-xs text-gray-600">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                                                <span className="text-xs text-slate-600">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
                                             </div>
                                             <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
-                                            <p className={`text-right text-sm mt-1 ${remaining >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                            <p className={`text-right text-sm mt-1 ${remaining >= 0 ? 'text-slate-600' : 'text-danger font-medium'}`}>
                                                 {remaining >= 0 ? `${formatCurrencyString(remaining, { digits: 0 })} remaining` : `${formatCurrencyString(Math.abs(remaining), { digits: 0 })} over budget`}
                                             </p>
                                         </div>
@@ -1575,10 +1718,24 @@ const Budgets: React.FC = () => {
             </SectionCard>
 
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
-                <SectionCard title="Shared-budget transaction visibility">
+                <SectionCard title="Shared budgets & requests">
                     <p className="text-xs text-slate-500 mb-3">
                         Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
                     </p>
+                    <div className="flex flex-wrap items-center gap-3 mb-3">
+                        <label className="text-sm font-medium text-slate-700">Month</label>
+                        <select value={sharedTxMonth} onChange={(e) => setSharedTxMonth(Number(e.target.value))} className="select-base w-32">
+                            {MONTHS.map((name, i) => (
+                                <option key={i} value={i + 1}>{name}</option>
+                            ))}
+                        </select>
+                        <label className="text-sm font-medium text-slate-700">Year</label>
+                        <select value={sharedTxYear} onChange={(e) => setSharedTxYear(Number(e.target.value))} className="select-base w-24">
+                            {[currentYear, currentYear - 1, currentYear - 2].map((y) => (
+                                <option key={y} value={y}>{y}</option>
+                            ))}
+                        </select>
+                    </div>
                     <div className="overflow-x-auto rounded-lg border border-slate-200">
                         <table className="min-w-full text-sm">
                             <thead className="bg-slate-50">
@@ -1592,7 +1749,7 @@ const Budgets: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
+                                {(filteredOwnerSharedTx.length > 0 ? filteredOwnerSharedTx : filteredMySharedTx).slice(0, 50).map((tx, idx) => (
                                     <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
                                         <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
                                         <td className="px-3 py-2">{tx.budget_category}</td>
@@ -1620,13 +1777,16 @@ const Budgets: React.FC = () => {
                                 <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
                                 <span className={`text-[11px] px-2 py-1 rounded ${budget.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : budget.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>{budget.budgetTier}</span>
                             </div>
+                            {budget.category === SAVINGS_CATEGORY && budget.destinationAccountId && (
+                                <p className="text-xs text-slate-500 mt-0.5">→ {data?.accounts?.find((a: { id: string; name?: string }) => a.id === budget.destinationAccountId)?.name ?? budget.destinationAccountId}</p>
+                            )}
                             <div className="mt-4">
                                 <div className="flex justify-between items-baseline mb-1">
                                     <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                                    <span className="text-sm text-slate-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
                                 </div>
                                 <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
+                                <p className={`text-right text-sm mt-1 ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-slate-600' : 'text-danger font-medium'}`}>
                                     {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 
                                         ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
                                         : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`
@@ -1634,25 +1794,25 @@ const Budgets: React.FC = () => {
                                 </p>
                                 <div className="mt-2 flex items-center justify-between text-xs">
                                     <span className={`px-2 py-1 rounded ${budget.utilizationLabel === 'Critical' ? 'bg-rose-100 text-rose-800' : budget.utilizationLabel === 'Watch' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{budget.utilizationLabel}</span>
-                                    <span className={budget.trendDirection === 'up' ? 'text-rose-600' : budget.trendDirection === 'down' ? 'text-emerald-600' : 'text-gray-500'}>
+                                    <span className={budget.trendDirection === 'up' ? 'text-rose-600' : budget.trendDirection === 'down' ? 'text-emerald-600' : 'text-slate-500'}>
                                         {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'} {formatCurrencyString(Math.abs(budget.trendDelta ?? 0), { digits: 0 })} vs previous
                                     </span>
                                 </div>
                             </div>
                         </div>
                          <div className="border-t mt-4 pt-2 flex justify-end items-center space-x-2">
-                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-gray-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
+                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-slate-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
                                 <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
                             </button>
-                            <button type="button" disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
-                            <button type="button" disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
+                            <button type="button" disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-slate-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
+                            <button type="button" disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-slate-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
                         </div>
                     </div>
                 ))}
             </div>
              {budgetData.length === 0 && (
                 <div className="text-center py-12 bg-white rounded-lg shadow">
-                    <p className="text-gray-500">No budgets set for this month.</p>
+                    <p className="text-slate-500">No budgets set for this month.</p>
                 </div>
             )}
 
