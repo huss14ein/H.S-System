@@ -150,9 +150,49 @@ const InvestmentOverview: React.FC = () => {
         </div>
         
         <div className="border-t border-slate-200 pt-4">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Portfolio Breakdown</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700">Portfolio Breakdown</h3>
+            {portfolios.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    ['Portfolio Name', 'Holdings', 'Currency', 'Value (SAR)', 'Percentage'].join(','),
+                    ...portfolios.map(p => {
+                      const portfolioCurrency = (p.currency ?? 'USD') as 'USD' | 'SAR';
+                      const portValue = (p.holdings ?? []).reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
+                      const portValueInSAR = portfolioCurrency === 'SAR' ? portValue : portValue * exchangeRate;
+                      const percentage = metrics.totalValueInSAR > 0 ? (portValueInSAR / metrics.totalValueInSAR) * 100 : 0;
+                      return [
+                        p.name,
+                        p.holdings?.length ?? 0,
+                        portfolioCurrency,
+                        portValueInSAR.toFixed(2),
+                        percentage.toFixed(2)
+                      ].join(',');
+                    })
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `portfolio-breakdown-${new Date().toISOString().split('T')[0]}.csv`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Export CSV
+              </button>
+            )}
+          </div>
           {portfolios.length === 0 ? (
-            <p className="text-sm text-slate-500">No portfolios yet. Create one in the Portfolios tab.</p>
+            <div className="text-center py-8">
+              <p className="text-sm text-slate-500 mb-2">No portfolios yet.</p>
+              <p className="text-xs text-slate-400">Create one in the Portfolios tab to see breakdown here.</p>
+            </div>
           ) : (
             <div className="space-y-2">
               {portfolios.map(portfolio => {

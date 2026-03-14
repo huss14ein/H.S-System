@@ -1583,7 +1583,54 @@ const PlatformView: React.FC<{
                         <PlusIcon className="h-4 w-4" /> Add Portfolio
                     </button>
                 </div>
-            ) : null}
+            ) : (
+                <div className="flex justify-end mb-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const csv = [
+                                ['Platform', 'Portfolio', 'Symbol', 'Quantity', 'Avg Cost', 'Current Value', 'Gain/Loss', 'Gain/Loss %', 'Currency'].join(','),
+                                ...platformsData.flatMap(p => 
+                                    p.portfolios.flatMap(port => 
+                                        (port.holdings || []).map(h => {
+                                            const sym = h.symbol ?? '';
+                                            const priceInfo = sym ? props.simulatedPrices[sym] : undefined;
+                                            const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
+                                            const liveValue = currentMktPrice * h.quantity;
+                                            const totalCost = h.avgCost * h.quantity;
+                                            const gainLoss = liveValue - totalCost;
+                                            const gainLossPct = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
+                                            return [
+                                                p.account.name,
+                                                port.name,
+                                                sym,
+                                                h.quantity,
+                                                h.avgCost ?? 0,
+                                                liveValue,
+                                                gainLoss,
+                                                gainLossPct.toFixed(2),
+                                                port.currency || 'USD'
+                                            ].join(',');
+                                        })
+                                    )
+                                )
+                            ].join('\n');
+                            const blob = new Blob([csv], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `portfolios-export-${new Date().toISOString().split('T')[0]}.csv`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                        }}
+                        className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+                    >
+                        Export All Holdings to CSV
+                    </button>
+                </div>
+            )}
 
             <div className="platform-cards-grid grid grid-cols-1 xl:grid-cols-2 gap-6 items-stretch min-w-0" data-platform-count={platformsData.length}>
                 {platformsData.map(p => (
@@ -2679,6 +2726,35 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     )}
                                     {onOpenWealthUltra && (
                                         <p className="text-xs text-slate-500 mt-3">Use <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> to see live allocation and export orders.</p>
+                                    )}
+                                    {executionResult.trades.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-slate-200">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const csv = [
+                                                        ['Ticker', 'Sleeve/Reason', `Amount (${plan.budgetCurrency ?? 'SAR'})`].join(','),
+                                                        ...executionResult.trades.map(t => [
+                                                            t.ticker,
+                                                            t.reason,
+                                                            t.amount
+                                                        ].join(','))
+                                                    ].join('\n');
+                                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                                    const url = URL.createObjectURL(blob);
+                                                    const a = document.createElement('a');
+                                                    a.href = url;
+                                                    a.download = `investment-plan-execution-${new Date().toISOString().split('T')[0]}.csv`;
+                                                    document.body.appendChild(a);
+                                                    a.click();
+                                                    document.body.removeChild(a);
+                                                    URL.revokeObjectURL(url);
+                                                }}
+                                                className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors"
+                                            >
+                                                Export Trades to CSV
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             </div>

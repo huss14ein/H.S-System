@@ -1308,7 +1308,55 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
       {draftOrders && draftOrders.length > 0 && (
         <SectionCard title="Draft orders (export to broker)" className="space-y-3">
-          <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    ['Type', 'Symbol', 'Quantity', 'Limit Price', 'Currency', 'Label'].join(','),
+                    ...draftOrders.map(d => [
+                      d.type,
+                      d.symbol,
+                      d.qty,
+                      d.limitPrice,
+                      selected?.currency ?? 'USD',
+                      d.label || ''
+                    ].join(','))
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `recovery-orders-${selected?.holding.symbol ?? 'orders'}-${new Date().toISOString().split('T')[0]}.csv`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = draftOrders.map((d, i) => 
+                    `${i + 1}. ${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`
+                  ).join('\n');
+                  navigator.clipboard.writeText(text).then(() => {
+                    alert('Orders copied to clipboard!');
+                  }).catch(() => {
+                    alert('Failed to copy to clipboard. Please copy manually.');
+                  });
+                }}
+                className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+              >
+                Copy All
+              </button>
+            </div>
+          </div>
           <div className="space-y-2">
             {draftOrders.map((d, i) => (
               <div
@@ -1326,6 +1374,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   })}
                 </span>
                 {d.label && <span className="text-slate-500">({d.label})</span>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
+                    navigator.clipboard.writeText(text).then(() => {
+                      // Visual feedback could be added here
+                    }).catch(() => {
+                      alert('Failed to copy to clipboard.');
+                    });
+                  }}
+                  className="ml-auto px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
+                  title="Copy this order"
+                >
+                  Copy
+                </button>
               </div>
             ))}
           </div>

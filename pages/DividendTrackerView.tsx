@@ -337,6 +337,35 @@ const DividendTrackerView: React.FC = () => {
                             <p className="text-slate-500 font-medium">No dividend transactions recorded</p>
                         </div>
                     )}
+                    {recentDividendTransactions.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const csv = [
+                                        ['Date', 'Symbol', 'Amount'].join(','),
+                                        ...recentDividendTransactions.map(t => [
+                                            t.date,
+                                            t.symbol,
+                                            t.total ?? 0
+                                        ].join(','))
+                                    ].join('\n');
+                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `dividend-transactions-${new Date().toISOString().split('T')[0]}.csv`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                }}
+                                className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                            >
+                                Export to CSV
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Top Dividend Payers */}
