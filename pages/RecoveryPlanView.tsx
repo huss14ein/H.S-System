@@ -139,7 +139,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
       }, 0);
 
-    return bankCash + platformCashSAR;
+    const total = bankCash + platformCashSAR;
+    // Validate result
+    if (!Number.isFinite(total) || total < 0) {
+      console.warn('Invalid deployable cash calculated:', { bankCash, platformCashSAR, total });
+      return 0;
+    }
+    return total;
   }, [data?.accounts, getAvailableCashForAccount, safeFxRate]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
@@ -482,9 +488,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  loadDemoData({ includeRecoveryPlan: true });
-                  window.location.reload();
+                onClick={async () => {
+                  if (!window.confirm('This will reload the page and load demo data. Continue?')) {
+                    return;
+                  }
+                  try {
+                    await loadDemoData({ includeRecoveryPlan: true });
+                    window.location.reload();
+                  } catch (error) {
+                    alert(`Failed to load demo data: ${error instanceof Error ? error.message : String(error)}`);
+                  }
                 }}
                 className="px-4 py-2 border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 font-medium transition-all duration-200 shadow-sm hover:shadow-md"
                 title="Load demo data for testing"
@@ -1269,20 +1282,24 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </button>
             {setActivePage && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setActivePage('Dashboard')}
-                  className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
-                >
-                  Check Market Events for {selected.holding.symbol ?? 'holding'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActivePage('Dashboard')}
-                  className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
-                >
-                  View in Wealth Ultra
-                </button>
+                {setActivePage && (
+                  <button
+                    type="button"
+                    onClick={() => setActivePage('Market Events')}
+                    className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
+                  >
+                    Check Market Events for {selected.holding.symbol ?? 'holding'}
+                  </button>
+                )}
+                {onOpenWealthUltra && (
+                  <button
+                    type="button"
+                    onClick={onOpenWealthUltra}
+                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
+                  >
+                    View in Wealth Ultra
+                  </button>
+                )}
               </>
             )}
           </div>

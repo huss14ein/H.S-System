@@ -478,6 +478,18 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
+    
+    // Loading state
+    if (!data) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-sm text-slate-600">Loading watchlist data...</p>
+                </div>
+            </div>
+        );
+    }
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
@@ -623,7 +635,20 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     }, [data?.watchlist, data?.priceAlerts, simulatedPrices]);
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
-    const handleConfirmDelete = () => { if (!itemToDelete) return; if (activeBucket) { handleRemoveFromActiveBucket(itemToDelete.symbol); } else { deleteWatchlistItem(itemToDelete.symbol); } setIsDeleteModalOpen(false); setItemToDelete(null); };
+    const handleConfirmDelete = () => {
+        if (!itemToDelete) return;
+        try {
+            if (activeBucket) {
+                handleRemoveFromActiveBucket(itemToDelete.symbol);
+            } else {
+                deleteWatchlistItem(itemToDelete.symbol);
+            }
+            setIsDeleteModalOpen(false);
+            setItemToDelete(null);
+        } catch (error) {
+            alert(`Failed to delete item: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
     const handleOpenAlertModal = (item: WatchlistItem) => { const sym = item.symbol ?? ''; setStockForAlert({ ...item, symbol: sym, price: simulatedPrices[sym]?.price || 0 }); setIsAlertModalOpen(true); };
 
     const recentTransactions = (data?.investmentTransactions ?? []).slice(0, 10);
@@ -683,8 +708,19 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const handleCreateBucket = () => {
         const name = newBucketName.trim();
         if (!name) {
-            alert('Please enter a name for the new watchlist before adding it.');
+            alert('Please enter a name for the new watchlist bucket.');
             return;
+        }
+        if (name.length < 2 || name.length > 50) {
+            alert('Bucket name must be between 2 and 50 characters.');
+            return;
+        }
+        // Check for duplicate bucket names
+        const existing = watchlistBuckets.find(b => b.name.toLowerCase() === name.toLowerCase());
+        if (existing) {
+            if (!window.confirm(`A bucket named "${name}" already exists. Create anyway?`)) {
+                return;
+            }
         }
         const id = `bucket-${Date.now()}`;
         setWatchlistBuckets((prev) => [...prev, { id, name, currency: newBucketCurrency, symbols: [] }]);

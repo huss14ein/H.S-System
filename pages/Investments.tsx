@@ -119,10 +119,12 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
         const corePct = data?.investmentPlan?.coreAllocation ?? 0.7;
         const upsidePct = data?.investmentPlan?.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
+        const target = data?.investmentPlan?.monthlyBudget ?? 0;
+        const percent = target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : (monthlyInvested > 0 ? 100 : 0);
         return {
-            percent: Math.min((monthlyInvested / (data?.investmentPlan?.monthlyBudget || 1)) * 100, 100),
+            percent: Number.isFinite(percent) ? percent : 0,
             amount: monthlyInvested,
-            target: data?.investmentPlan?.monthlyBudget ?? 0,
+            target,
             corePct,
             upsidePct,
             specPct,
@@ -149,7 +151,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
                             <span>Monthly Progress</span>
-                            <span>{investmentProgress.percent.toFixed(0)}%</span>
+                            <span>{Number.isFinite(investmentProgress.percent) ? investmentProgress.percent.toFixed(0) : '0'}%</span>
                         </div>
                         <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div 
@@ -2702,6 +2704,18 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
+  
+  // Loading state
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-sm text-slate-600">Loading investment data...</p>
+        </div>
+      </div>
+    );
+  }
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }) | null>(null);

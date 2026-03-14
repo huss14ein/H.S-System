@@ -21,6 +21,18 @@ const DividendTrackerView: React.FC = () => {
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    
+    // Loading state
+    if (!data) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-sm text-slate-600">Loading dividend data...</p>
+                </div>
+            </div>
+        );
+    }
 
     const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
         const dividendTransactions = (data?.investmentTransactions ?? []).filter(t => t.type === 'dividend');
@@ -48,7 +60,10 @@ const DividendTrackerView: React.FC = () => {
         const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate), 0);
 
         const holdingsWithProjectedDividends = allHoldings
-            .filter(h => (h.dividendYield ?? 0) > 0)
+            .filter(h => {
+                const yieldVal = h.dividendYield ?? 0;
+                return yieldVal > 0 && Number.isFinite(yieldVal) && yieldVal <= 100; // Validate yield is reasonable
+            })
             .map(h => ({
                 name: h.name ?? h.symbol ?? '—',
                 projected: toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate) * ((h.dividendYield ?? 0) / 100),

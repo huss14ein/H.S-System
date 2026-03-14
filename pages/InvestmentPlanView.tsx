@@ -316,6 +316,23 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
+    
+    // Loading state
+    if (!data) {
+        return (
+            <PageLayout 
+                title="Investment Plan" 
+                description="Proactively plan your trades based on price or date targets with AI-powered alignment."
+            >
+                <div className="flex items-center justify-center py-12">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-sm text-slate-600">Loading investment plan data...</p>
+                    </div>
+                </div>
+            </PageLayout>
+        );
+    }
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [planToEdit, setPlanToEdit] = useState<PlannedTrade | null>(null);
@@ -930,7 +947,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                     </div>
 
                     <div className="space-y-4 max-h-96 overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-blue-200 scrollbar-track-blue-50">
-                        {planAlignment.filteredRows.slice(0, 10).map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
+                        {planAlignment.filteredRows.map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
                             <div key={`align-${plan.id}`} className={`border-2 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 hover:shadow-lg transition-all duration-300 ${
                                 aligned === true ? 'border-emerald-200 bg-gradient-to-r from-emerald-50/50 to-green-50/30' :
                                 aligned === false ? 'border-rose-200 bg-gradient-to-r from-rose-50/50 to-red-50/30' :
