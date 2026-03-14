@@ -34,6 +34,16 @@ import {
     detectAnomalies,
     detectSeasonality,
 } from '../services/householdBudgetAnalytics';
+import {
+    autoCategorizeExpense,
+    analyzeSpendingPatternsAI,
+    generateBudgetRecommendations,
+    predictFutureExpenses,
+    learnAndAutoAdjust,
+    type AICategorySuggestion,
+    type BudgetRecommendation,
+    type PredictiveInsight,
+} from '../services/aiBudgetAutomation';
 
 
 
@@ -163,7 +173,7 @@ interface BudgetsProps {
 }
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
-    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, updateTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
@@ -190,9 +200,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
-    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true, buckets: true, bucketComparison: false });
+    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true, buckets: true, bucketComparison: false, aiAutomation: true });
     const [selectedBucketMonth, setSelectedBucketMonth] = useState<number | null>(currentMonth);
     const [bucketViewMode, setBucketViewMode] = useState<'current' | 'all' | 'comparison'>('current');
+    const [aiAutoAdjustEnabled, setAiAutoAdjustEnabled] = useState(false);
+    const [aiRecommendations, setAiRecommendations] = useState<BudgetRecommendation[]>([]);
+    const [aiPredictions, setAiPredictions] = useState<PredictiveInsight[]>([]);
+    const [uncategorizedTransactions, setUncategorizedTransactions] = useState<AICategorySuggestion[]>([]);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -390,6 +405,73 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+
+    // AI Automation: Auto-categorize uncategorized transactions
+    React.useEffect(() => {
+        const uncategorized = (data?.transactions ?? []).filter(
+            t => t.type === 'expense' && !t.budgetCategory && new Date(t.date).getFullYear() === currentYear
+        );
+        
+        if (uncategorized.length > 0 && !isAnalyzing) {
+            setIsAnalyzing(true);
+            Promise.all(
+                uncategorized.slice(0, 10).map(tx => 
+                    autoCategorizeExpense(tx, data?.transactions ?? [], data?.budgets ?? [])
+                        .catch(() => null)
+                )
+            ).then(suggestions => {
+                setUncategorizedTransactions(suggestions.filter((s): s is AICategorySuggestion => s !== null));
+                setIsAnalyzing(false);
+            });
+        }
+    }, [data?.transactions, data?.budgets, currentYear, isAnalyzing]);
+
+    // AI Automation: Generate budget recommendations
+    React.useEffect(() => {
+        if (data?.transactions && data?.budgets && !isAnalyzing) {
+            setIsAnalyzing(true);
+            generateBudgetRecommendations(
+                data.transactions,
+                data.budgets,
+                currentMonth,
+                currentYear
+            ).then(recs => {
+                setAiRecommendations(recs);
+                setIsAnalyzing(false);
+            }).catch(() => setIsAnalyzing(false));
+        }
+    }, [data?.transactions, data?.budgets, currentMonth, currentYear, isAnalyzing]);
+
+    // AI Automation: Predict future expenses
+    React.useEffect(() => {
+        if (data?.transactions && data?.budgets && !isAnalyzing) {
+            predictFutureExpenses(data.transactions, data.budgets, 3)
+                .then(predictions => setAiPredictions(predictions))
+                .catch(() => {});
+        }
+    }, [data?.transactions, data?.budgets]);
+
+    // AI Automation: Auto-adjust budgets if enabled
+    React.useEffect(() => {
+        if (aiAutoAdjustEnabled && data?.transactions && data?.budgets && !isAnalyzing) {
+            setIsAnalyzing(true);
+            learnAndAutoAdjust(
+                data.transactions,
+                data.budgets,
+                currentMonth,
+                currentYear
+            ).then(adjustedBudgets => {
+                // Apply adjustments (only if significantly different)
+                adjustedBudgets.forEach(adjusted => {
+                    const original = data.budgets.find(b => b.id === adjusted.id);
+                    if (original && Math.abs(original.limit - adjusted.limit) > original.limit * 0.1) {
+                        updateBudget(adjusted);
+                    }
+                });
+                setIsAnalyzing(false);
+            }).catch(() => setIsAnalyzing(false));
+        }
+    }, [aiAutoAdjustEnabled, data?.transactions, data?.budgets, currentMonth, currentYear, isAnalyzing, updateBudget]);
 
     React.useEffect(() => {
         const riskProfile = String(data?.settings?.riskProfile ?? '').toLowerCase();
@@ -1805,6 +1887,175 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Auto Household Budget Engine">
                 <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
+                
+                {/* AI Automation Section */}
+                <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                    <button 
+                        type="button" 
+                        onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, aiAutomation: !prev.aiAutomation }))} 
+                        className="w-full flex items-center justify-between text-left"
+                    >
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-purple-700">🤖 AI-Powered Automation</span>
+                            {isAnalyzing && <span className="text-xs text-purple-600 animate-pulse">Analyzing...</span>}
+                        </div>
+                        <span className="text-xs text-purple-500">{engineSectionsOpen.aiAutomation ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.aiAutomation && (
+                        <div className="mt-3 space-y-4">
+                            {/* Auto-Adjustment Toggle */}
+                            <div className="flex items-center justify-between p-3 bg-white rounded-lg border">
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700">Auto-Adjust Budgets</p>
+                                    <p className="text-xs text-slate-500">Automatically learn from spending patterns and adjust budgets</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={aiAutoAdjustEnabled}
+                                        onChange={(e) => setAiAutoAdjustEnabled(e.target.checked)}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                </label>
+                            </div>
+
+                            {/* Uncategorized Transactions */}
+                            {uncategorizedTransactions.length > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-amber-800 mb-2">
+                                        AI Category Suggestions ({uncategorizedTransactions.length})
+                                    </h4>
+                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                        {uncategorizedTransactions.map((suggestion, idx) => (
+                                            <div key={idx} className="bg-white rounded p-2 border border-amber-200">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1">
+                                                        <p className="text-xs font-medium text-slate-700">{suggestion.description}</p>
+                                                        <p className="text-xs text-slate-500 mt-1">
+                                                            Suggested: <span className="font-semibold text-purple-700">{suggestion.suggestedCategory}</span>
+                                                            {suggestion.confidence > 0.7 && <span className="ml-2 text-emerald-600">✓ High confidence</span>}
+                                                        </p>
+                                                        {suggestion.reasoning && (
+                                                            <p className="text-[10px] text-slate-400 mt-1">{suggestion.reasoning}</p>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const tx = data?.transactions.find(t => t.id === suggestion.transactionId);
+                                                            if (tx) {
+                                                                updateTransaction({ ...tx, budgetCategory: suggestion.suggestedCategory });
+                                                                setUncategorizedTransactions(prev => prev.filter(s => s.transactionId !== suggestion.transactionId));
+                                                            }
+                                                        }}
+                                                        className="ml-2 px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                                                    >
+                                                        Apply
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* AI Recommendations */}
+                            {aiRecommendations.length > 0 && (
+                                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-indigo-800 mb-2">
+                                        AI Budget Recommendations ({aiRecommendations.length})
+                                    </h4>
+                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                        {aiRecommendations
+                                            .sort((a, b) => a.priority === 'high' ? -1 : b.priority === 'high' ? 1 : 0)
+                                            .map((rec, idx) => (
+                                                <div key={idx} className={`bg-white rounded p-3 border ${
+                                                    rec.priority === 'high' ? 'border-red-300 bg-red-50' :
+                                                    rec.priority === 'medium' ? 'border-amber-300 bg-amber-50' :
+                                                    'border-indigo-200'
+                                                }`}>
+                                                    <div className="flex items-start justify-between">
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className="text-sm font-semibold text-slate-700">{rec.category}</span>
+                                                                <span className={`text-xs px-2 py-0.5 rounded ${
+                                                                    rec.priority === 'high' ? 'bg-red-100 text-red-700' :
+                                                                    rec.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                                    'bg-indigo-100 text-indigo-700'
+                                                                }`}>
+                                                                    {rec.priority}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-600 mb-1">{rec.reason}</p>
+                                                            <div className="flex items-center gap-4 text-xs">
+                                                                <span className="text-slate-500">
+                                                                    Current: <span className="font-semibold">{formatCurrencyString(rec.currentLimit, { digits: 0 })}</span>
+                                                                </span>
+                                                                <span className="text-indigo-600">
+                                                                    Recommended: <span className="font-semibold">{formatCurrencyString(rec.recommendedLimit, { digits: 0 })}</span>
+                                                                </span>
+                                                                {rec.expectedSavings && (
+                                                                    <span className="text-emerald-600">
+                                                                        Savings: <span className="font-semibold">{formatCurrencyString(rec.expectedSavings, { digits: 0 })}</span>
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const budget = data?.budgets.find(b => 
+                                                                    b.category === rec.category && 
+                                                                    b.month === currentMonth && 
+                                                                    b.year === currentYear
+                                                                );
+                                                                if (budget) {
+                                                                    updateBudget({ ...budget, limit: rec.recommendedLimit });
+                                                                    setAiRecommendations(prev => prev.filter(r => r.category !== rec.category));
+                                                                }
+                                                            }}
+                                                            className="ml-2 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                                                        >
+                                                            Apply
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Predictive Insights */}
+                            {aiPredictions.length > 0 && (
+                                <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-teal-800 mb-2">AI Expense Predictions (Next 3 Months)</h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                        {aiPredictions
+                                            .filter(p => p.confidence > 0.5)
+                                            .slice(0, 9)
+                                            .map((pred, idx) => (
+                                                <div key={idx} className="bg-white rounded p-2 border border-teal-200">
+                                                    <p className="text-xs font-medium text-slate-700">{pred.category}</p>
+                                                    <p className="text-sm font-bold text-teal-900 mt-1">
+                                                        {formatCurrencyString(pred.predictedAmount, { digits: 0 })}
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-500 mt-1">
+                                                        Month {pred.month} • {MONTHS[pred.month - 1]} • {(pred.confidence * 100).toFixed(0)}% confidence
+                                                    </p>
+                                                    {pred.factors.length > 0 && (
+                                                        <p className="text-[10px] text-slate-400 mt-1">
+                                                            {pred.factors[0]}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editable inputs</p>
                     <div className="mt-2 flex flex-wrap items-center gap-3">
