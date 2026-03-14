@@ -230,14 +230,6 @@ const RecordTradeModal: React.FC<{
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     
     // Note: Duplicate transaction check is now handled inline in RecordTradeModal
-        return data.investmentTransactions.some(existing => 
-            existing.accountId === tx.accountId &&
-            existing.symbol === tx.symbol &&
-            existing.date === tx.date &&
-            Math.abs((existing.total ?? 0) - (tx.total ?? 0)) < 0.01 &&
-            existing.type === tx.type
-        );
-    }, [data?.investmentTransactions]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
