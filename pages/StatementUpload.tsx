@@ -5,7 +5,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
-import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
+import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 
@@ -28,6 +28,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [duplicateTransactions, setDuplicateTransactions] = useState<Set<number>>(new Set());
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
@@ -39,13 +41,16 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
     setUploadedFile(file);
     setProcessingError(null);
+    setValidationWarnings([]);
+    setValidationErrors([]);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
     try {
       // Validate file
-      if (file.size > 10 * 1024 * 1024) {
-        throw new Error('File size exceeds 10MB limit');
+      const fileValidation = validateFile(file);
+      if (!fileValidation.isValid) {
+        throw new Error(fileValidation.error || 'Invalid file');
       }
 
       setProcessingProgress(20);
@@ -60,10 +65,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         const result = await parseTradingStatement(file, selectedAccount);
         investmentTransactions = result.transactions;
         setExtractedInvestmentTransactions(investmentTransactions);
+        if (result.warnings) setValidationWarnings(result.warnings);
+        if (result.errors) setValidationErrors(result.errors);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = result.transactions;
         setExtractedTransactions(transactions);
+        if (result.warnings) setValidationWarnings(result.warnings);
+        if (result.errors) setValidationErrors(result.errors);
       }
       
       setProcessingProgress(80);
@@ -122,6 +131,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
       setExtractedTransactions(result.transactions);
+      if (result.warnings) setValidationWarnings(result.warnings);
+      if (result.errors) setValidationErrors(result.errors);
       setProcessingProgress(70);
       
       if (result.transactions.length > 0) {
@@ -269,6 +280,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setExtractedInvestmentTransactions([]);
       setDuplicateTransactions(new Set());
       setSelectedTransactions(new Set());
+      setValidationWarnings([]);
+      setValidationErrors([]);
       setProcessingProgress(0);
       setSmsText('');
       setUploadedFile(null);
@@ -612,14 +625,54 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
               <p className="text-sm text-slate-600">
                 Review the extracted transactions before importing. Select which transactions to import.
               </p>
-              {duplicateTransactions.size > 0 && (
-                <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-xs font-medium text-amber-800">
-                    {duplicateTransactions.size} potential duplicate(s) detected
-                  </p>
-                </div>
-              )}
+              <div className="flex gap-2">
+                {duplicateTransactions.size > 0 && (
+                  <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-xs font-medium text-amber-800">
+                      {duplicateTransactions.size} potential duplicate(s) detected
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Validation Errors */}
+            {validationErrors.length > 0 && (
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg">
+                <p className="text-sm font-semibold text-rose-800 mb-2">
+                  Validation Errors ({validationErrors.length})
+                </p>
+                <ul className="list-disc list-inside space-y-1 max-h-32 overflow-y-auto">
+                  {validationErrors.slice(0, 5).map((error, idx) => (
+                    <li key={idx} className="text-xs text-rose-700">{error}</li>
+                  ))}
+                  {validationErrors.length > 5 && (
+                    <li className="text-xs text-rose-600 italic">
+                      + {validationErrors.length - 5} more error(s)
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            {/* Validation Warnings */}
+            {validationWarnings.length > 0 && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-sm font-semibold text-amber-800 mb-2">
+                  Validation Warnings ({validationWarnings.length})
+                </p>
+                <ul className="list-disc list-inside space-y-1 max-h-32 overflow-y-auto">
+                  {validationWarnings.slice(0, 5).map((warning, idx) => (
+                    <li key={idx} className="text-xs text-amber-700">{warning}</li>
+                  ))}
+                  {validationWarnings.length > 5 && (
+                    <li className="text-xs text-amber-600 italic">
+                      + {validationWarnings.length - 5} more warning(s)
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
 
             {/* Progress Indicator */}
             {processingProgress > 0 && processingProgress < 100 && (
@@ -850,6 +903,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   setIsReviewModalOpen(false);
                   setSelectedTransactions(new Set());
                   setDuplicateTransactions(new Set());
+                  setValidationWarnings([]);
+                  setValidationErrors([]);
                 }}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
               >

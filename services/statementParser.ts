@@ -6,6 +6,22 @@ export interface ParseResult {
   investmentTransactions?: InvestmentTransaction[];
   confidence: number;
   errors?: string[];
+  warnings?: string[];
+  validation?: ValidationResult;
+}
+
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  statistics: {
+    totalTransactions: number;
+    validTransactions: number;
+    invalidTransactions: number;
+    duplicateCount: number;
+    dateRange: { start: string; end: string } | null;
+    amountRange: { min: number; max: number; total: number } | null;
+  };
 }
 
 /**
@@ -33,10 +49,19 @@ export async function parseBankStatement(
     // Use AI to extract transactions from text
     const transactions = await extractTransactionsFromText(text, accountId, 'bank');
     
+    // Validate extracted transactions
+    const validation = validateTransactions(transactions);
+    
     return {
-      transactions,
-      confidence: 0.85,
-      errors: []
+      transactions: validation.isValid ? transactions : transactions.filter((_, i) => {
+        // Filter out invalid transactions
+        const txDate = new Date(transactions[i].date);
+        return !isNaN(txDate.getTime()) && transactions[i].description && transactions[i].amount !== undefined;
+      }),
+      confidence: validation.isValid ? 0.85 : Math.max(0, 0.85 - (validation.errors.length * 0.1)),
+      errors: validation.errors,
+      warnings: validation.warnings,
+      validation
     };
   } catch (error) {
     console.error('Error parsing bank statement:', error);
@@ -66,10 +91,18 @@ export async function parseSMSTransactions(
     const allTransactions = [...patternTransactions, ...aiTransactions];
     const uniqueTransactions = deduplicateTransactions(allTransactions);
     
+    // Validate extracted transactions
+    const validation = validateTransactions(uniqueTransactions);
+    
     return {
-      transactions: uniqueTransactions,
-      confidence: 0.90,
-      errors: []
+      transactions: validation.isValid ? uniqueTransactions : uniqueTransactions.filter((_, i) => {
+        const txDate = new Date(uniqueTransactions[i].date);
+        return !isNaN(txDate.getTime()) && uniqueTransactions[i].description && uniqueTransactions[i].amount !== undefined;
+      }),
+      confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
+      errors: validation.errors,
+      warnings: validation.warnings,
+      validation
     };
   } catch (error) {
     console.error('Error parsing SMS:', error);
@@ -87,7 +120,7 @@ export async function parseSMSTransactions(
 export async function parseTradingStatement(
   file: File,
   accountId: string
-): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[] }> {
+): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult }> {
   const fileType = getFileType(file.name);
   
   try {
@@ -106,10 +139,19 @@ export async function parseTradingStatement(
     // Extract investment transactions using AI
     const transactions = await extractInvestmentTransactionsFromText(text, accountId || '');
     
+    // Validate extracted transactions
+    const validation = validateTransactions([], transactions);
+    
     return {
-      transactions,
-      confidence: 0.80,
-      errors: []
+      transactions: validation.isValid ? transactions : transactions.filter((_, i) => {
+        const txDate = new Date(transactions[i].date);
+        return !isNaN(txDate.getTime()) && transactions[i].symbol && 
+               transactions[i].quantity !== undefined && transactions[i].price !== undefined;
+      }),
+      confidence: validation.isValid ? 0.80 : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
+      errors: validation.errors,
+      warnings: validation.warnings,
+      validation
     };
   } catch (error) {
     console.error('Error parsing trading statement:', error);
@@ -481,6 +523,222 @@ function inferCategory(description: string): string {
   }
   
   return 'Uncategorized';
+}
+
+/**
+ * Validate extracted transactions
+ */
+export function validateTransactions(
+  transactions: Transaction[],
+  investmentTransactions?: InvestmentTransaction[]
+): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  let validCount = 0;
+  let invalidCount = 0;
+  const duplicateKeys = new Set<string>();
+  const seenKeys = new Set<string>();
+  const dates: Date[] = [];
+  const amounts: number[] = [];
+
+  // Validate regular transactions
+  transactions.forEach((tx, index) => {
+    const txErrors: string[] = [];
+    const txWarnings: string[] = [];
+
+    // Required fields
+    if (!tx.date) {
+      txErrors.push(`Transaction ${index + 1}: Missing date`);
+    } else {
+      const date = new Date(tx.date);
+      if (isNaN(date.getTime())) {
+        txErrors.push(`Transaction ${index + 1}: Invalid date format`);
+      } else {
+        dates.push(date);
+        // Check for future dates
+        if (date > new Date()) {
+          txWarnings.push(`Transaction ${index + 1}: Future date detected`);
+        }
+        // Check for very old dates (more than 10 years)
+        const tenYearsAgo = new Date();
+        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+        if (date < tenYearsAgo) {
+          txWarnings.push(`Transaction ${index + 1}: Very old date (${date.toLocaleDateString()})`);
+        }
+      }
+    }
+
+    if (!tx.description || tx.description.trim().length === 0) {
+      txErrors.push(`Transaction ${index + 1}: Missing description`);
+    } else if (tx.description.trim().length < 3) {
+      txWarnings.push(`Transaction ${index + 1}: Very short description`);
+    }
+
+    if (tx.amount === undefined || tx.amount === null) {
+      txErrors.push(`Transaction ${index + 1}: Missing amount`);
+    } else {
+      if (!Number.isFinite(tx.amount)) {
+        txErrors.push(`Transaction ${index + 1}: Invalid amount (not a number)`);
+      } else {
+        amounts.push(Math.abs(tx.amount));
+        // Check for suspiciously large amounts
+        if (Math.abs(tx.amount) > 1000000) {
+          txWarnings.push(`Transaction ${index + 1}: Very large amount (${tx.amount.toLocaleString()})`);
+        }
+        // Check for zero amounts
+        if (tx.amount === 0) {
+          txWarnings.push(`Transaction ${index + 1}: Zero amount transaction`);
+        }
+      }
+    }
+
+    if (!tx.accountId) {
+      txErrors.push(`Transaction ${index + 1}: Missing account ID`);
+    }
+
+    // Check for duplicates within the statement
+    const duplicateKey = `${tx.date}_${tx.amount}_${tx.description.substring(0, 20)}`;
+    if (seenKeys.has(duplicateKey)) {
+      duplicateKeys.add(duplicateKey);
+      txWarnings.push(`Transaction ${index + 1}: Potential duplicate within statement`);
+    } else {
+      seenKeys.add(duplicateKey);
+    }
+
+    if (txErrors.length === 0) {
+      validCount++;
+    } else {
+      invalidCount++;
+      errors.push(...txErrors);
+    }
+    if (txWarnings.length > 0) {
+      warnings.push(...txWarnings);
+    }
+  });
+
+  // Validate investment transactions
+  if (investmentTransactions) {
+    investmentTransactions.forEach((tx, index) => {
+      const txErrors: string[] = [];
+      const txWarnings: string[] = [];
+
+      if (!tx.date) {
+        txErrors.push(`Investment transaction ${index + 1}: Missing date`);
+      } else {
+        const date = new Date(tx.date);
+        if (isNaN(date.getTime())) {
+          txErrors.push(`Investment transaction ${index + 1}: Invalid date format`);
+        } else {
+          dates.push(date);
+        }
+      }
+
+      if (!tx.symbol || tx.symbol.trim().length === 0) {
+        txErrors.push(`Investment transaction ${index + 1}: Missing symbol`);
+      }
+
+      if (tx.quantity === undefined || tx.quantity === null || !Number.isFinite(tx.quantity)) {
+        txErrors.push(`Investment transaction ${index + 1}: Invalid quantity`);
+      } else if (tx.quantity <= 0) {
+        txWarnings.push(`Investment transaction ${index + 1}: Zero or negative quantity`);
+      }
+
+      if (tx.price === undefined || tx.price === null || !Number.isFinite(tx.price)) {
+        txErrors.push(`Investment transaction ${index + 1}: Invalid price`);
+      } else if (tx.price <= 0) {
+        txWarnings.push(`Investment transaction ${index + 1}: Zero or negative price`);
+      }
+
+      if (!tx.accountId) {
+        txErrors.push(`Investment transaction ${index + 1}: Missing account ID`);
+      }
+
+      // Check for duplicates
+      const duplicateKey = `${tx.date}_${tx.symbol}_${tx.type}_${tx.quantity}_${tx.price}`;
+      if (seenKeys.has(duplicateKey)) {
+        duplicateKeys.add(duplicateKey);
+        txWarnings.push(`Investment transaction ${index + 1}: Potential duplicate within statement`);
+      } else {
+        seenKeys.add(duplicateKey);
+      }
+
+      if (txErrors.length === 0) {
+        validCount++;
+      } else {
+        invalidCount++;
+        errors.push(...txErrors);
+      }
+      if (txWarnings.length > 0) {
+        warnings.push(...txWarnings);
+      }
+    });
+  }
+
+  // Calculate statistics
+  const dateRange = dates.length > 0
+    ? {
+        start: new Date(Math.min(...dates.map(d => d.getTime()))).toISOString().split('T')[0],
+        end: new Date(Math.max(...dates.map(d => d.getTime()))).toISOString().split('T')[0]
+      }
+    : null;
+
+  const amountRange = amounts.length > 0
+    ? {
+        min: Math.min(...amounts),
+        max: Math.max(...amounts),
+        total: amounts.reduce((sum, amt) => sum + amt, 0)
+      }
+    : null;
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+    statistics: {
+      totalTransactions: transactions.length + (investmentTransactions?.length || 0),
+      validTransactions: validCount,
+      invalidTransactions: invalidCount,
+      duplicateCount: duplicateKeys.size,
+      dateRange,
+      amountRange
+    }
+  };
+}
+
+/**
+ * Validate file before processing
+ */
+export function validateFile(file: File): { isValid: boolean; error?: string } {
+  // Check file size (10MB limit)
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    return {
+      isValid: false,
+      error: `File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds the maximum allowed size of 10MB`
+    };
+  }
+
+  // Check file type
+  const allowedExtensions = ['.pdf', '.csv', '.xlsx', '.xls', '.ofx', '.qfx'];
+  const fileName = file.name.toLowerCase();
+  const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+
+  if (!hasValidExtension) {
+    return {
+      isValid: false,
+      error: `Unsupported file type. Allowed types: ${allowedExtensions.join(', ')}`
+    };
+  }
+
+  // Check if file is empty
+  if (file.size === 0) {
+    return {
+      isValid: false,
+      error: 'File is empty'
+    };
+  }
+
+  return { isValid: true };
 }
 
 function deduplicateTransactions(transactions: Transaction[]): Transaction[] {
