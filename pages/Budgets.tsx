@@ -36,7 +36,6 @@ import {
 } from '../services/householdBudgetAnalytics';
 import {
     autoCategorizeExpense,
-    analyzeSpendingPatternsAI,
     generateBudgetRecommendations,
     predictFutureExpenses,
     learnAndAutoAdjust,
@@ -1161,6 +1160,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 monthNumber: idx + 1,
                 income: month.incomePlanned,
                 ...buckets,
+                emergencySavings: buckets.emergencySavings ?? 0,
+                reserveSavings: buckets.reserveSavings ?? 0,
+                goalSavings: buckets.goalSavings ?? 0,
+                retirementSavings: buckets.retirementSavings ?? 0,
+                investing: buckets.investing ?? 0,
+                housing: buckets.housing ?? 0,
+                food: buckets.food ?? 0,
+                transportation: buckets.transportation ?? 0,
+                health: buckets.health ?? 0,
                 totalSavings: (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0),
                 totalExpenses: (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0),
             };
@@ -2133,7 +2141,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <button 
                             type="button" 
                             className="btn-primary text-xs" 
-                            onClick={handleSyncHouseholdBudgets}
+                            onClick={() => handleSyncHouseholdBudgets()}
                             title="Sync calculated budget buckets from household engine to actual budget entries for the current month"
                         >
                             Apply Engine Budgets to {MONTHS[currentMonth - 1]} {currentYear}
@@ -2259,10 +2267,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
                                 const savingsBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'savings');
                                 const expenseBuckets = Object.entries(buckets).filter(([key]) => 
-                                    bucketToCategoryMap[key]?.type === 'expense' || 
-                                    bucketToCategoryMap[key]?.type === 'semi-annual' ||
-                                    bucketToCategoryMap[key]?.type === 'annual' ||
-                                    bucketToCategoryMap[key]?.type === 'weekly'
+                                    bucketToCategoryMap[key]?.type === 'expense'
                                 );
                                 const totalSavings = savingsBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
                                 const totalExpenses = expenseBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
@@ -2360,9 +2365,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                                         const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100' };
                                                         const pct = totalAllocated > 0 ? ((amount as number) / totalAllocated * 100) : 0;
                                                         const expenseType = bucketToCategoryMap[bucketKey]?.type || 'expense';
-                                                        const typeLabel = expenseType === 'semi-annual' ? ' (6-month)' : 
-                                                                         expenseType === 'annual' ? ' (annual)' : 
-                                                                         expenseType === 'weekly' ? ' (weekly)' : '';
+                                                        const typeLabel = expenseType === 'savings' ? ' (Savings)' : ' (Expense)';
                                                         return (
                                                             <div key={bucketKey} className="flex items-center gap-2">
                                                                 <div className="flex-1 min-w-0">
@@ -2489,8 +2492,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             const annualRetirement = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.retirementSavings as number) ?? 0), 0);
                             const annualInvesting = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.investing as number) ?? 0), 0);
                             const annualTotalSavings = annualEmergency + annualReserve + annualGoals + annualRetirement + annualInvesting;
-                            const annualHousing = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.housing as number) ?? 0), 0);
-                            const annualFood = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.food as number) ?? 0), 0);
+                            // Annual housing and food calculated but not displayed - kept for potential future use
                             const annualTotalExpenses = householdBudgetEngine.months.reduce((sum, m) => {
                                 const buckets = m.buckets ?? {};
                                 return sum + ((buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0));
@@ -2606,7 +2608,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Scenarios & recommendations</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.scenarios ? 'Collapse' : 'Expand'}</span>
                     </button>
@@ -2640,7 +2642,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     )}
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
                     </button>

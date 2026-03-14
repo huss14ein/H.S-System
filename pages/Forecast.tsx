@@ -18,10 +18,10 @@ import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngin
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
-    // Handle negative growth rates correctly
-    if (annualPct < 0) {
-        return -Math.pow(1 + Math.abs(annualPct) / 100, 1 / 12) + 1;
-    }
+    // Convert annual percentage to monthly rate using compound interest formula
+    // Works correctly for both positive and negative rates
+    // For -20% annual: (1 - 0.20)^(1/12) - 1 = 0.8^(1/12) - 1 ≈ -0.0184 (-1.84% monthly)
+    // Verification: (1 - 0.0184)^12 ≈ 0.8 (80% retention = 20% decline) ✓
     return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
 };
 
