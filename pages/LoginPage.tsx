@@ -71,7 +71,14 @@ const LoginPage: React.FC = () => {
                     {loading ? 'Logging in...' : 'Log In'}
                 </button>
                 </form>
-                <p className="mt-6 text-center text-sm text-gray-500">Sign-up is currently disabled on this deployment. Please contact your administrator.</p>
+                {typeof import.meta.env.VITE_ALLOW_SIGNUP !== 'undefined' && import.meta.env.VITE_ALLOW_SIGNUP === 'true' ? (
+                  <p className="mt-6 text-center text-sm text-gray-500">
+                    Don&apos;t have an account?{' '}
+                    <a href="#signup" className="font-medium text-primary hover:underline">Sign up</a>
+                  </p>
+                ) : (
+                  <p className="mt-6 text-center text-sm text-gray-500">Sign-up is currently disabled on this deployment. Please contact your administrator.</p>
+                )}
             </>
         )}
       </div>
