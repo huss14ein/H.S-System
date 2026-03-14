@@ -187,7 +187,7 @@ const StatementHistoryView: React.FC = () => {
                             Processed: {statement.processedAt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         )}
-                        <span>Transactions: {statement.transactions.length}</span>
+                            <span>Transactions: {statement.transactions?.length || 0}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -200,7 +200,7 @@ const StatementHistoryView: React.FC = () => {
                         <ArrowDownTrayIcon className="h-4 w-4 inline mr-1" />
                         Export
                       </button>
-                      {statement.status === 'completed' && statement.transactions.length > 0 && (
+                      {statement.status === 'completed' && (statement.transactions?.length || 0) > 0 && (
                         <button
                           type="button"
                           onClick={() => handleReconcile(statement.id)}
@@ -265,37 +265,37 @@ const StatementHistoryView: React.FC = () => {
                     </div>
                   )}
 
-                  {statement.transactions.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-slate-200">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">
-                        Extracted Transactions ({statement.transactions.length})
-                      </p>
-                      <div className="max-h-48 overflow-y-auto space-y-1">
-                        {statement.transactions.slice(0, 10).map((tx, idx) => (
-                          <div
-                            key={idx}
-                            className="text-xs p-2 bg-slate-50 rounded border border-slate-200 flex items-center justify-between"
-                          >
-                            <div>
-                              <span className="font-semibold">{tx.description}</span>
-                              <span className="text-slate-500 ml-2">
-                                {tx.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                              </span>
-                            </div>
-                            <span className={`font-bold ${tx.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                              {tx.amount >= 0 ? '+' : ''}
-                              {formatCurrencyString(tx.amount, { digits: 2 })}
-                            </span>
-                          </div>
-                        ))}
-                        {statement.transactions.length > 10 && (
-                          <p className="text-xs text-slate-500 italic text-center pt-2">
-                            + {statement.transactions.length - 10} more transactions
+                  {(statement.transactions?.length || 0) > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                          <p className="text-sm font-semibold text-slate-700 mb-2">
+                            Extracted Transactions ({statement.transactions?.length || 0})
                           </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                          <div className="max-h-48 overflow-y-auto space-y-1">
+                            {(statement.transactions || []).slice(0, 10).map((tx, idx) => (
+                              <div
+                                key={idx}
+                                className="text-xs p-2 bg-slate-50 rounded border border-slate-200 flex items-center justify-between"
+                              >
+                                <div>
+                                  <span className="font-semibold">{tx.description}</span>
+                                  <span className="text-slate-500 ml-2">
+                                    {tx.date instanceof Date ? tx.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : new Date(tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </span>
+                                </div>
+                                <span className={`font-bold ${tx.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                  {tx.amount >= 0 ? '+' : ''}
+                                  {formatCurrencyString(tx.amount, { digits: 2 })}
+                                </span>
+                              </div>
+                            ))}
+                            {(statement.transactions?.length || 0) > 10 && (
+                              <p className="text-xs text-slate-500 italic text-center pt-2">
+                                + {(statement.transactions?.length || 0) - 10} more transactions
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
                 </div>
               ))}
             </div>

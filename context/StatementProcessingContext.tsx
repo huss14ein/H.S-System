@@ -3,6 +3,7 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { DataContext } from './DataContext';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
+import { invokeAI } from '../services/geminiService';
 
 export interface FinancialStatement {
   id: string;
@@ -553,7 +554,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
 
     // Match extracted transactions with existing ones
     for (const extractedTx of statement.transactions) {
-      const extractedDate = new Date(extractedTx.date);
+      const extractedDate = extractedTx.date instanceof Date ? extractedTx.date : new Date(extractedTx.date);
       const extractedAmount = Math.abs(extractedTx.amount);
       const extractedDesc = extractedTx.description.toLowerCase().trim();
 
@@ -655,14 +656,114 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
       ? (matchedCount / statement.transactions.length) * 100 
       : 0;
 
+    // Enhance discrepancies with AI-powered suggestions if there are any
+    let enhancedDiscrepancies = discrepancies;
+    if (discrepancies.length > 0) {
+      try {
+        enhancedDiscrepancies = await enhanceDiscrepanciesWithAI(discrepancies, statement);
+      } catch (error) {
+        console.warn('Failed to get AI suggestions for reconciliation:', error);
+        // Continue with original discrepancies if AI fails
+      }
+    }
+
     return {
       totalTransactions: statement.transactions.length,
       matchedTransactions: matchedCount,
       unmatchedTransactions: unmatchedCount,
       duplicateTransactions: duplicateCount,
-      discrepancies,
+      discrepancies: enhancedDiscrepancies,
       confidence
     };
+  };
+
+  // AI-powered reconciliation suggestions
+  const enhanceDiscrepanciesWithAI = async (
+    discrepancies: TransactionDiscrepancy[],
+    statement: FinancialStatement
+  ): Promise<TransactionDiscrepancy[]> => {
+    if (discrepancies.length === 0) return discrepancies;
+
+    try {
+      const prompt = `You are a financial reconciliation expert. Analyze these transaction discrepancies and provide intelligent suggestions for resolution.
+
+Statement: ${statement.fileName}
+Bank: ${statement.bankName || 'Unknown'}
+Account: ${statement.accountNumber || 'Unknown'}
+Total Transactions: ${statement.transactions.length}
+
+Discrepancies to analyze:
+${discrepancies.map((disc, idx) => `
+${idx + 1}. Type: ${disc.type}
+   Extracted: ${disc.extractedTransaction.description} | ${disc.extractedTransaction.date.toISOString().split('T')[0]} | ${disc.extractedTransaction.amount}
+   ${disc.existingTransaction ? `Existing: ${disc.existingTransaction.description} | ${disc.existingTransaction.date} | ${disc.existingTransaction.amount}` : 'No existing match'}
+   Current Suggestion: ${disc.suggestion}
+   Severity: ${disc.severity}
+`).join('\n')}
+
+For each discrepancy, provide:
+1. A more intelligent, actionable suggestion
+2. Likely cause (e.g., "timing difference", "rounding error", "different merchant name", "duplicate entry")
+3. Recommended action (e.g., "merge", "keep both", "update existing", "create new")
+
+Return a JSON array with the same length as the input, where each object has:
+- "suggestion": improved suggestion text
+- "cause": likely cause
+- "action": recommended action
+
+Return ONLY valid JSON, no markdown or extra text.`;
+
+      const response = await invokeAI({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+
+      // Parse AI response
+      let aiSuggestions: Array<{ suggestion?: string; cause?: string; action?: string }> = [];
+      try {
+        const text = response.text || '';
+        if (!text) {
+          console.warn('AI response has no text content');
+          return discrepancies;
+        }
+        
+        // Extract JSON from response (handle markdown code blocks)
+        const jsonMatch = text.match(/\[[\s\S]*?\]/);
+        if (jsonMatch) {
+          try {
+            aiSuggestions = JSON.parse(jsonMatch[0]);
+            if (!Array.isArray(aiSuggestions)) {
+              console.warn('AI suggestions is not an array');
+              return discrepancies;
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse AI JSON:', parseError);
+            return discrepancies;
+          }
+        } else {
+          console.warn('No JSON array found in AI response');
+          return discrepancies;
+        }
+      } catch (parseError) {
+        console.warn('Failed to parse AI suggestions:', parseError);
+        return discrepancies;
+      }
+
+      // Enhance discrepancies with AI suggestions
+      return discrepancies.map((disc, idx) => {
+        const aiSuggestion = aiSuggestions[idx];
+        if (aiSuggestion && aiSuggestion.suggestion) {
+          return {
+            ...disc,
+            suggestion: `${aiSuggestion.suggestion}${aiSuggestion.cause ? ` (Likely cause: ${aiSuggestion.cause})` : ''}${aiSuggestion.action ? ` [Action: ${aiSuggestion.action}]` : ''}`
+          };
+        }
+        return disc;
+      });
+    } catch (error) {
+      console.error('Error getting AI reconciliation suggestions:', error);
+      return discrepancies; // Return original if AI fails
+    }
   };
 
   // Helper function to calculate string similarity (Levenshtein-based)
