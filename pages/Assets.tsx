@@ -2,7 +2,6 @@ import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PageLayout from '../components/PageLayout';
-import { CurrencyContext } from '../context/CurrencyContext';
 import { format } from 'date-fns';
 import { 
   BuildingLibraryIcon, 
