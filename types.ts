@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Investments' | 'Assets' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Plan' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'System & APIs Health' | 'Settings' | 'Wealth Ultra';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System Health';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -27,6 +27,8 @@ export interface Account {
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
   owner?: string;
+  /** For Investment accounts: linked cash account IDs that can fund this platform */
+  linkedAccountIds?: string[];
   platformDetails?: {
     features: string[];
     assetTypes: string[];
@@ -36,6 +38,7 @@ export interface Account {
 
 export type AssetType =
   | 'Cash'
+  | 'Sukuk'
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
@@ -107,11 +110,15 @@ export type HoldingAssetClass =
   | 'NFT'
   | 'Other';
 
+/** ticker = listed instrument (symbol required); manual_fund = bank product / unmapped (e.g. Al Rajhi Mashura), no market feed, valuation from current_value. */
+export type HoldingType = 'ticker' | 'manual_fund';
+
 export interface Holding {
   id: string; 
   user_id?: string;
   portfolio_id?: string;
-  symbol: string;
+  /** Required when holdingType is 'ticker'; may be null/empty for manual_fund. */
+  symbol?: string;
   name?: string;
   quantity: number;
   avgCost: number;
@@ -123,6 +130,8 @@ export interface Holding {
   realizedPnL: number;
   dividendDistribution?: 'Reinvest' | 'Payout';
   dividendYield?: number;
+  /** ticker = listed; manual_fund = unmapped bank product (no market feed). Default ticker. */
+  holdingType?: HoldingType;
 }
 
 export interface InvestmentPortfolio {
@@ -151,6 +160,8 @@ export interface InvestmentTransaction {
   total: number;
   /** Currency the trade was recorded in (display & reporting). */
   currency?: TradeCurrency;
+  /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
+  linkedCashAccountId?: string;
 }
 
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */
@@ -167,8 +178,26 @@ export interface Budget {
   period?: 'monthly' | 'yearly' | 'weekly' | 'daily';
   /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
   tier?: BudgetTier;
+  /** Account id where savings for this budget (e.g. Savings & Investments) are directed. Shown as "→ Account name" and used to pre-fill transaction account. */
+  destinationAccountId?: string;
 }
 
+/** Single source of truth for adults, kids, overrides. Used by Plan, Budgets, and Investment Control Tower. */
+export interface HouseholdProfile {
+  user_id: string;
+  adults: number;
+  kids: number;
+  monthly_overrides?: { monthIndex: number; incomeAdjustment?: number; expenseAdjustment?: number; note?: string }[];
+  updated_at?: string;
+}
+
+/** Suggested budget row from household engine (category + limit + period). */
+export interface SuggestedBudgetRow {
+  category: string;
+  limit: number;
+  period: 'monthly' | 'yearly' | 'weekly' | 'daily';
+  tier?: BudgetTier;
+}
 
 export interface GovernanceUser {
   id: string;
@@ -205,9 +234,11 @@ export interface CommodityHolding {
   name: 'Gold' | 'Silver' | 'Bitcoin' | 'Other';
   quantity: number;
   unit: 'gram' | 'ounce' | 'BTC' | 'unit';
+  /** Gold purity in karat (required for gold valuation). */
+  goldKarat?: 24 | 22 | 21 | 18;
   purchaseValue: number;
   currentValue: number;
-  symbol: string; // e.g., GOLD_GRAM, BTC_USD
+  symbol: string; // e.g., XAU_GRAM_24K, BTC_USD
   zakahClass: 'Zakatable' | 'Non-Zakatable';
   owner?: string;
   goalId?: string;
@@ -318,6 +349,12 @@ export interface FinancialData {
   statusChangeLog: StatusChangeLog[];
   executionLogs: InvestmentPlanExecutionLog[];
   notifications: Notification[];
+  /** Budget requests for current user (for notifications: finalized/rejected). */
+  budgetRequests?: BudgetRequest[];
+  /** Admin-only: All users' transactions for approval notifications */
+  allTransactions?: Transaction[];
+  /** Admin-only: All users' budgets for tracking */
+  allBudgets?: Budget[];
 }
 
 export interface KPISummary {
@@ -418,7 +455,12 @@ export interface WealthUltraSystemConfig {
 
 export interface ProposedTrade {
     ticker: string;
+    /** Amount in plan currency (used for totals/logs). */
     amount: number;
+    /** Trade currency of the underlying share/portfolio for this ticker. */
+    tradeCurrency?: TradeCurrency;
+    /** Optional converted amount in the trade currency (if different from plan currency). */
+    amountInTradeCurrency?: number;
     reason: 'Core' | 'Upside' | 'Speculative' | 'Redirected' | 'Rebalance' | 'Unused Upside Funds' | 'Leftover';
 }
 
@@ -472,6 +514,13 @@ export type WealthUltraSleeve = 'Core' | 'Upside' | 'Spec';
 export type WealthUltraRiskTier = 'Low' | 'Med' | 'High' | 'Spec';
 export type WealthUltraStrategyMode = 'Hold' | 'Adjust' | 'DipBuy' | 'Trim' | 'Exit';
 
+/** Explicit rebalance policy: when and how to rebalance. */
+export type RebalancePolicy =
+  | 'threshold_only'   // rebalance when drift exceeds threshold
+  | 'calendar'         // rebalance on fixed schedule (e.g. quarterly)
+  | 'threshold_or_calendar'
+  | 'manual_only';
+
 export interface WealthUltraConfig {
   fxRate: number;
   targetCorePct: number;
@@ -492,6 +541,10 @@ export interface WealthUltraConfig {
   coreTickers?: string[];
   upsideTickers?: string[];
   specTickers?: string[];
+  /** Rebalance policy: when to suggest/run rebalance. */
+  rebalancePolicy?: RebalancePolicy;
+  /** Drift threshold % for threshold-based rebalance (default 5). */
+  rebalanceDriftThresholdPct?: number;
 }
 
 export interface WealthUltraPosition {
@@ -499,6 +552,8 @@ export interface WealthUltraPosition {
   sleeveType: WealthUltraSleeve;
   riskTier: WealthUltraRiskTier;
   strategyMode: WealthUltraStrategyMode;
+  /** Composite 0–100 risk score based on volatility, drawdown, and concentration; higher = riskier. */
+  riskScore?: number;
   currentShares: number;
   avgCost: number;
   currentPrice: number;
@@ -524,6 +579,10 @@ export interface WealthUltraPosition {
   trailingPctOverride?: number;
   applyTrailing: boolean;
   trailingStopPrice?: number;
+  /** Risk score 0–100 (higher = riskier position). Filled by riskScoring. */
+  riskScore?: number;
+  /** Execution priority rank for trades (1 = highest). Filled by trade ranking. */
+  tradeRank?: number;
 }
 
 export interface WealthUltraSleeveAllocation {
@@ -544,6 +603,10 @@ export interface WealthUltraOrder {
   target1Price?: number;
   target2Price?: number;
   trailingStopPrice?: number;
+  /** Optional engine priority score (higher = more impact per unit of capital). */
+  priorityScore?: number;
+  /** Short human-readable explanation for why this order exists. */
+  rationale?: string;
 }
 
 export type WealthUltraAlertType =

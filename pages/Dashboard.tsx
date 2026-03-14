@@ -1,10 +1,11 @@
-import React, { useMemo, useContext, useState, useCallback } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
 import Card from '../components/Card';
 import DraggableResizableGrid from '../components/DraggableResizableGrid';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import AIFeed from '../components/AIFeed';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
@@ -24,6 +25,11 @@ import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
+import { loadDemoData } from '../services/demoDataService';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -66,14 +72,14 @@ const AIExecutiveSummary: React.FC = () => {
                     onClick={handleGenerate}
                     disabled={!isAiAvailable || isLoading}
                     title={!isAiAvailable ? "AI features are disabled" : "Generate a new summary"}
-                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <ArrowPathIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                    {isLoading ? 'Summarizing...' : 'Generate Summary'}
+                    {isLoading ? 'Summarizing...' : (summary ? 'Refresh Summary' : 'Generate Summary')}
                 </button>
             </div>
             
-            {isLoading && <div className="text-center p-8 text-gray-500">Analyzing your financial picture...</div>}
+            {isLoading && <div className="text-center p-8 text-slate-500">Analyzing your financial picture...</div>}
             
             {!isLoading && error && (
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
@@ -84,14 +90,14 @@ const AIExecutiveSummary: React.FC = () => {
             )}
 
             {!isAiAvailable ? (
-                <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
                     <p className="text-sm">Please set your Gemini API key to enable this feature.</p>
                 </div>
             ) : (
                 !summary && !isLoading && !error && (
-                    <div className="text-center p-8 text-gray-500">
-                        Click "Generate Summary" for a high-level overview and strategic advice from your expert advisor.
+                    <div className="text-center p-8 text-slate-500">
+                        Click &quot;Generate Summary&quot; for a high-level overview and strategic advice from your expert advisor.
                     </div>
                 )
             )}
@@ -115,7 +121,7 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
                     <li key={acc.id} className="flex justify-between items-center text-sm">
                         <div>
                             <p className="font-medium text-dark">{acc.name}</p>
-                            <p className="text-xs text-gray-500">{acc.type}</p>
+                            <p className="text-xs text-slate-500">{acc.type}</p>
                         </div>
                         <p className={`font-semibold ${acc.balance >= 0 ? 'text-success' : 'text-danger'}`}>{formatCurrencyString(acc.balance)}</p>
                     </li>
@@ -131,30 +137,33 @@ const UpcomingBills: React.FC = () => {
     const formatDate = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const upcomingBills = useMemo(() => {
-        const recurringExpenses = new Map<string, { amount: number; lastDate: Date; count: number }>();
+        const recurringExpenses = new Map<string, { totalAmount: number; lastAmount: number; lastDate: Date; count: number }>();
         const now = new Date();
 
         // Find recurring fixed expenses from the last year
         data.transactions
             .filter(t => t.type === 'expense' && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() -1, now.getMonth(), now.getDate()))
             .forEach(t => {
-                const existing = recurringExpenses.get(t.description) || { amount: 0, lastDate: new Date(0), count: 0 };
+                const existing = recurringExpenses.get(t.description) || { totalAmount: 0, lastAmount: 0, lastDate: new Date(0), count: 0 };
+                const thisAmount = Math.abs(t.amount);
                 recurringExpenses.set(t.description, {
-                    amount: Math.abs(t.amount),
+                    totalAmount: existing.totalAmount + thisAmount,
+                    lastAmount: thisAmount,
                     lastDate: new Date(Math.max(existing.lastDate.getTime(), new Date(t.date).getTime())),
                     count: existing.count + 1
                 });
             });
 
         const bills = [];
-        for (const [name, { amount, lastDate, count }] of recurringExpenses.entries()) {
+        for (const [name, { totalAmount, lastAmount, lastDate, count }] of recurringExpenses.entries()) {
             if (count > 1) { // Consider it recurring if it happened more than once
                 const nextDueDate = new Date(lastDate);
                 // Simple assumption of monthly recurrence for this example
                 nextDueDate.setMonth(nextDueDate.getMonth() + 1);
                 
                 if (nextDueDate > now && nextDueDate < new Date(now.getFullYear(), now.getMonth() + 2, 0)) { // If due in the next ~month
-                     bills.push({ name, date: nextDueDate, amount });
+                     const avgAmount = totalAmount / count;
+                     bills.push({ name, date: nextDueDate, amount: lastAmount, avgAmount });
                 }
             }
         }
@@ -170,14 +179,16 @@ const UpcomingBills: React.FC = () => {
                         <li key={bill.name} className="flex justify-between items-center text-sm">
                             <div>
                                 <p className="font-medium text-dark">{bill.name}</p>
-                                <p className="text-xs text-gray-500">Due: {formatDate(bill.date)}</p>
+                                <p className="text-xs text-slate-500">
+                                    Due: {formatDate(bill.date)} • Typical: {formatCurrencyString(bill.avgAmount)}
+                                </p>
                             </div>
                             <p className="font-semibold text-dark">{formatCurrencyString(bill.amount)}</p>
                         </li>
                     ))}
                 </ul>
             ) : (
-                <p className="text-sm text-center text-gray-500 py-4">No upcoming recurring bills detected this month.</p>
+                <p className="text-sm text-center text-slate-500 py-4">No upcoming recurring bills detected this month.</p>
             )}
         </div>
     );
@@ -199,7 +210,7 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], onClick: () =>
                     >
                         <div>
                             <p className="font-medium text-dark">{t.description}</p>
-                            <p className="text-sm text-gray-500">{formatDate(t.date)}</p>
+                            <p className="text-sm text-slate-500">{formatDate(t.date)}</p>
                         </div>
                         <p className="font-semibold">
                             {formatCurrency(t.amount, { colorize: true })}
@@ -239,10 +250,10 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
                                 </span>
                             </div>
                             <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? budget.limit} color={status.colorClass} />
-                            <div className="flex justify-between items-baseline text-xs text-gray-500 mt-1">
+                            <div className="flex justify-between items-baseline text-xs text-slate-500 mt-1">
                                 <span>
                                     <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.monthlyLimit ?? budget.limit, { digits: 0 })}
-                                    <span className="font-medium text-gray-600"> ({budget.percentage.toFixed(0)}%)</span>
+                                    <span className="font-medium text-slate-600"> ({budget.percentage.toFixed(0)}%)</span>
                                 </span>
                                 <span>
                                     {daysLeft} days left
@@ -256,16 +267,32 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     );
 };
 
-type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan';
+type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
-const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
+const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
     const kpiDensity = 'compact' as const;
+
+
+    useEffect(() => {
+        const loadRole = async () => {
+            if (!auth?.user || !supabase) {
+                setIsAdmin(false);
+                return;
+            }
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
+        };
+        loadRole();
+    }, [auth?.user?.id]);
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
@@ -312,7 +339,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             
             // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
             const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalInvestmentsValue = (data.investments || []).reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments || [], exchangeRate);
             const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
             const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
@@ -403,10 +430,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, data?.commodityHoldings]);
+    }, [data, data?.commodityHoldings, exchangeRate]);
     
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
+    const visibleKpiOrder: KpiCardKey[] = isAdmin ? KPI_CARD_ORDER : KPI_CARD_ORDER.filter((k) => k !== 'netWorth');
 
     const kpiCards = useMemo(() => {
         const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
@@ -419,6 +447,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
             investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
             investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+            wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
+            marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, federal tax policy, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
     }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity]);
     
@@ -476,7 +506,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             <DraggableResizableGrid
                 layoutKey="dashboard-kpi"
                 itemOverflowY="visible"
-                items={KPI_CARD_ORDER.map((cardKey) => ({
+                items={visibleKpiOrder.map((cardKey) => ({
                     id: cardKey,
                     content: (
                         <div className="min-h-[132px] flex flex-col h-full">
@@ -505,14 +535,40 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
             <AIFeed />
             
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
-                    <h3 className="section-title mb-4">Net Worth Composition</h3>
-                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
-                        <NetWorthCompositionChart title="Net Worth Composition" />
+            <div className="section-card border-l-4 border-slate-300">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h3 className="section-title text-base">Demo Data</h3>
+                        <p className="text-xs text-slate-500 mt-1">Load demo data for testing all features</p>
                     </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            loadDemoData({ includeAll: true });
+                            window.location.reload();
+                        }}
+                        className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 text-sm font-medium"
+                    >
+                        Load All Demo Data
+                    </button>
                 </div>
             </div>
+            
+            {isAdmin ? (
+                <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
+                    <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
+                        <h3 className="section-title mb-4">Net Worth Composition</h3>
+                        <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                            <NetWorthCompositionChart title="Net Worth Composition" />
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                <div className="section-card border-l-4 border-amber-400">
+                    <h3 className="section-title text-base">Admin-only metric</h3>
+                    <p className="text-sm text-slate-600">Net worth visibility is restricted to Admin accounts. Your own budgets, transactions, and goals remain fully available.</p>
+                </div>
+            )}
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-5">
                  <div className="lg:col-span-3 section-card-hover flex flex-col" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>

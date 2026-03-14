@@ -17,13 +17,48 @@ interface CardProps {
   density?: 'comfortable' | 'compact';
 }
 
+const isInvalidDisplayToken = (raw: string): boolean => {
+  const normalized = raw.trim().toLowerCase();
+  return (
+    normalized === '' ||
+    normalized.includes('nan') ||
+    normalized.includes('infinity') ||
+    normalized.includes('undefined') ||
+    normalized.includes('null')
+  );
+};
+
+const toFiniteNumber = (raw: React.ReactNode): number | null => {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== 'string') return null;
+  if (isInvalidDisplayToken(raw)) return null;
+  const sanitized = raw.replace(/,/g, '').replace(/[^0-9.+-]/g, '');
+  if (!sanitized || sanitized === '-' || sanitized === '+' || sanitized === '.') return null;
+  const parsed = Number(sanitized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeDisplayNode = (raw: React.ReactNode): React.ReactNode => {
+  if (typeof raw === 'string') {
+    if (isInvalidDisplayToken(raw)) return '—';
+    return raw;
+  }
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return '—';
+    return raw;
+  }
+  return raw;
+};
+
 const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
+  const displayValue = normalizeDisplayNode(value);
+  const displayTrend = typeof trend === 'string' && isInvalidDisplayToken(trend) ? undefined : trend;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevValueRef = useRef<number | undefined>(undefined);
 
-  const isPositive = trend?.includes('+') || (trend && /(surplus|under|healthy)/i.test(trend));
-  const isNegative = trend?.includes('-') || (trend && /(deficit|over|critical|low)/i.test(trend));
-  let trendColor = 'text-gray-500';
+  const isPositive = displayTrend?.includes('+') || (displayTrend && /(surplus|under|healthy)/i.test(displayTrend));
+  const isNegative = displayTrend?.includes('-') || (displayTrend && /(deficit|over|critical|low)/i.test(displayTrend));
+  let trendColor = 'text-slate-500';
   if (isPositive) trendColor = 'text-green-700';
   if (isNegative) trendColor = 'text-red-700';
 
@@ -33,31 +68,21 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       ? 'text-red-700'
       : (valueColor || 'text-dark');
 
-  const cardToneClass = indicatorColor
-    ? (indicatorColor === 'green' ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200' :
-       indicatorColor === 'yellow' ? 'from-amber-50/80 via-white to-yellow-50/80 border-amber-200' :
-       indicatorColor === 'red' ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200' :
-       'from-sky-50 via-white to-indigo-50 border-slate-200')
-    : isPositive
-      ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200'
-      : isNegative
-        ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200'
-        : 'from-sky-50 via-white to-indigo-50 border-slate-200';
+  const cardToneClass = 'bg-white border-slate-200';
 
   useEffect(() => {
-    const isNumeric = typeof value === 'number' || (typeof value === 'string' && !isNaN(parseFloat(String(value).replace(/[^0-9.,$SAR]+/g, ""))));
-    if (!isNumeric) return;
-    
-    const numericValue = parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
+    const numericValue = toFiniteNumber(displayValue);
+    if (numericValue == null) return;
 
     if (prevValueRef.current !== undefined && Math.abs(numericValue - prevValueRef.current) > 0.001) {
       setFlash(numericValue > prevValueRef.current ? 'up' : 'down');
       const timer = setTimeout(() => setFlash(null), 1000);
+      prevValueRef.current = numericValue;
       return () => clearTimeout(timer);
     }
-    
+
     prevValueRef.current = numericValue;
-  }, [value]);
+  }, [displayValue]);
   
   const indicatorClass =
       indicatorColor === 'green' ? 'border-l-4 border-l-emerald-500 border-t-emerald-500/30' :
@@ -81,24 +106,21 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? (ariaLabel ?? title) : undefined}
-      className={`bg-gradient-to-br ${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
+      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
       onClick={onClick}
       onKeyDown={handleKeyDown}
-      style={{
-        backgroundImage: 'radial-gradient(circle at top right, rgba(239, 246, 255, 0.4) 0%, transparent 50%)',
-      }}
     >
       {/* Header: title + icon/tooltip — same layout for all cards */}
       <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
-        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 uppercase tracking-wide`}>{title}</h3>
+        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide`}>{title}</h3>
         <div className="flex-shrink-0 flex items-center gap-0.5">
           {icon}
           {tooltip && (
-            <div className="relative group">
-              <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-              <div className="absolute bottom-full mb-2 w-48 bg-gray-800 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none left-1/2 -translate-x-1/2 z-10">
+            <div className="relative group inline-flex items-center">
+              <InformationCircleIcon className="h-4 w-4 text-slate-400" />
+              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-slate-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none left-1/2 -translate-x-1/2 z-20 leading-relaxed shadow-lg">
                 {tooltip}
-                <svg className="absolute text-gray-800 h-2 w-full left-0 top-full" x="0px" y="0px" viewBox="0 0 255 255"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
+                <svg className="absolute text-slate-800 h-2 w-3 left-1/2 -translate-x-1/2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
               </div>
             </div>
           )}
@@ -106,12 +128,12 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       </div>
       {/* Value + trend: allow full visibility without clipping. */}
       <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0">
-        <p className={`metric-value ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}>{value}</p>
-        {trend && (
+        <p className={`metric-value ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}>{displayValue}</p>
+        {displayTrend && (
           <div className={`metric-value flex items-center gap-1 ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-3.5 w-3.5 flex-shrink-0"/>}
             {isNegative && <ArrowTrendingDownIcon className="h-3.5 w-3.5 flex-shrink-0"/>}
-            <span className="break-words">{trend}</span>
+            <span className="break-words">{displayTrend}</span>
           </div>
         )}
       </div>

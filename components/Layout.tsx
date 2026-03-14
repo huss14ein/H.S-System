@@ -55,7 +55,6 @@ const Layout: React.FC<LayoutProps> = ({
       >
         Skip to main content
       </a>
-
       <Header
         activePage={activePage}
         setActivePage={setActivePage}

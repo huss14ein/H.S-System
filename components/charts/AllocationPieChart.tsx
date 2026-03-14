@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
+import ChartContainer from './ChartContainer';
 
 interface AllocationPieChartProps {
   data: { name: string; value: number }[];
@@ -26,19 +27,18 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
 const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     const { formatCurrencyString } = useFormatCurrency();
     if (active && payload && payload.length) {
-        const data = payload[0].payload;
-        const percentage = totalValue > 0 ? (data.value / totalValue) * 100 : 0;
+        const point = payload[0].payload;
+        const percentage = totalValue > 0 ? (point.value / totalValue) * 100 : 0;
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[120px]">
-                <p className="font-bold text-dark">{data.name}</p>
-                <p className="text-gray-600">{formatCurrencyString(data.value)}</p>
+                <p className="font-bold text-dark">{point.name}</p>
+                <p className="text-gray-600">{formatCurrencyString(point.value)}</p>
                 <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
             </div>
         );
     }
     return null;
 };
-
 
 const formatCompactAmount = (value: number): string => {
   const abs = Math.abs(value);
@@ -51,45 +51,79 @@ const formatCompactAmount = (value: number): string => {
 
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
-  const totalValue = useMemo(() => data.reduce((sum, entry) => sum + entry.value, 0), [data]);
+  const chartHostRef = useRef<HTMLDivElement | null>(null);
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = chartHostRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      setChartSize({ width: el.clientWidth, height: el.clientHeight });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, []);
+  const sanitizedData = useMemo(
+    () => (data || []).filter((d) => Number.isFinite(d.value) && d.value > 0),
+    [data]
+  );
+  const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
   const totalDisplay = useMemo(() => formatCompactAmount(totalValue), [totalValue]);
   const totalFull = useMemo(() => formatCurrencyString(totalValue, { digits: 0 }), [formatCurrencyString, totalValue]);
-  
+  const isEmpty = !sanitizedData.length || totalValue <= 0;
+  const tooltipPosition = chartSize.width >= 640
+    ? { x: Math.max(8, chartSize.width - 220), y: Math.max(10, Math.round(chartSize.height * 0.24)) }
+    : undefined;
+  const pieCenterX = chartSize.width >= 640 ? '38%' : '50%';
+
   return (
-    <div className="w-full h-full min-h-[200px] relative">
+    <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
+      <div ref={chartHostRef} className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
-            data={data}
-            cx="50%"
+            data={sanitizedData}
+            cx={pieCenterX}
             cy="50%"
             labelLine={false}
-            label={renderCustomizedLabel}
-            outerRadius="85%"
+            label={sanitizedData.length > 1 ? renderCustomizedLabel : undefined}
+            outerRadius="80%"
             innerRadius="60%"
             dataKey="value"
             paddingAngle={3}
             isAnimationActive={true}
             animationDuration={800}
           >
-            {data.map((_entry, index) => (
+            {sanitizedData.map((_entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
           </Pie>
-          <Tooltip content={<CustomTooltip totalValue={totalValue} />} />
-          <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />
+          {sanitizedData.length > 1 && (
+            <Tooltip
+              content={<CustomTooltip totalValue={totalValue} />}
+              position={tooltipPosition}
+              allowEscapeViewBox={{ x: true, y: true }}
+              wrapperStyle={{ pointerEvents: 'none' }}
+            />
+          )}
+          {sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
         </PieChart>
       </ResponsiveContainer>
-      <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide text-center">Total Value</p>
-        <p
-          className="text-2xl sm:text-3xl font-bold text-dark tabular-nums mt-0.5 text-center whitespace-nowrap"
-          title={totalFull}
-        >
-          {totalDisplay}
-        </p>
       </div>
-    </div>
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
+        <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[82%]">
+          <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
+          <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis" title={totalFull}>{totalDisplay}</p>
+          {sanitizedData.length === 1 && <p className="text-xs text-slate-500 mt-0.5">{sanitizedData[0].name}</p>}
+        </div>
+      </div>
+    </ChartContainer>
   );
 };
 
