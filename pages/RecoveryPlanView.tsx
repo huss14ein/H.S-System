@@ -431,9 +431,28 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [selected?.holding?.symbol]);
 
   const handleGenerateDraft = () => {
-    if (!selectedPlan) return;
-    const drafts = orderDraftGenerator(selectedPlan, true);
-    setDraftOrders(drafts);
+    if (!selectedPlan) {
+      alert('Please select a position first.');
+      return;
+    }
+    if (!selectedPlan.qualified) {
+      alert('This position does not qualify for recovery. Loss must exceed the trigger threshold.');
+      return;
+    }
+    if ((selectedPlan.ladder ?? []).length === 0) {
+      alert('No recovery ladder available for this position.');
+      return;
+    }
+    try {
+      const drafts = orderDraftGenerator(selectedPlan, true);
+      if (!drafts || drafts.length === 0) {
+        alert('Could not generate draft orders. Please check the recovery plan configuration.');
+        return;
+      }
+      setDraftOrders(drafts);
+    } catch (error) {
+      alert(`Failed to generate draft orders: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   return (

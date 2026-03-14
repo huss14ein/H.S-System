@@ -895,9 +895,21 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (holding) {
-            onSave({ ...holding, name, zakahClass, goalId });
+        if (!holding) return;
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Holding name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 200) {
+            alert('Holding name must be between 2 and 200 characters.');
+            return;
+        }
+        try {
+            onSave({ ...holding, name: trimmedName, zakahClass, goalId });
             onClose();
+        } catch (error) {
+            alert(`Failed to save holding: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
     if (!holding) return null;
@@ -934,6 +946,8 @@ export const PortfolioModal: React.FC<{
     investmentAccounts: Account[];
     goals: Goal[];
 }> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId, investmentAccounts, goals }) => {
+    const { data } = useContext(DataContext)!;
+    const investments = data?.investments ?? [];
     const [name, setName] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>();
@@ -950,19 +964,40 @@ export const PortfolioModal: React.FC<{
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Portfolio name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            alert('Portfolio name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicate portfolio names in the same account
+        if (!portfolioToEdit && selectedAccountId) {
+            const existingPortfolios = investments.filter(p => 
+                (p.accountId ?? (p as any).account_id) === selectedAccountId &&
+                p.name?.trim().toLowerCase() === trimmedName.toLowerCase()
+            );
+            if (existingPortfolios.length > 0) {
+                if (!window.confirm(`A portfolio named "${trimmedName}" already exists in this account. Create anyway?`)) {
+                    return;
+                }
+            }
+        }
         try {
             if (portfolioToEdit) {
-                await onSave({ ...portfolioToEdit, name, goalId, currency });
+                await onSave({ ...portfolioToEdit, name: trimmedName, goalId, currency });
             } else {
                 if (!selectedAccountId) {
                     alert("Please select an account for the new portfolio.");
                     return;
                 }
-                await onSave({ name, accountId: selectedAccountId, goalId, currency });
+                await onSave({ name: trimmedName, accountId: selectedAccountId, goalId, currency });
             }
             onClose();
         } catch (error) {
-            // Error handled in DataContext
+            alert(`Failed to save portfolio: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
 
@@ -1567,18 +1602,60 @@ const PlatformView: React.FC<{
 
 interface PlatformModalProps { isOpen: boolean; onClose: () => void; onSave: (platform: Account) => void; platformToEdit: Account | null; }
 const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, platformToEdit }) => {
+    const { data } = useContext(DataContext)!;
     const [name, setName] = useState('');
     useEffect(() => { if (platformToEdit) setName(platformToEdit.name); else setName(''); }, [platformToEdit, isOpen]);
     const handleSubmit = async (e: React.FormEvent) => { 
-        e.preventDefault(); 
+        e.preventDefault();
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Platform name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            alert('Platform name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicate platform names
+        if (!platformToEdit) {
+            const existingPlatforms = (data?.accounts ?? []).filter(acc => 
+                acc.type === 'Investment' && 
+                acc.name?.trim().toLowerCase() === trimmedName.toLowerCase()
+            );
+            if (existingPlatforms.length > 0) {
+                if (!window.confirm(`A platform named "${trimmedName}" already exists. Create anyway?`)) {
+                    return;
+                }
+            }
+        }
         try {
-            await onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); 
+            await onSave({ ...(platformToEdit || { id: '', balance: 0 }), name: trimmedName, type: 'Investment' }); 
             onClose(); 
         } catch (error) {
-            // Error handled in DataContext
+            alert(`Failed to save platform: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
+    return ( 
+        <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label>
+                    <input 
+                        type="text" 
+                        id="platform-name" 
+                        value={name} 
+                        onChange={e => setName(e.target.value)} 
+                        required 
+                        maxLength={100}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        placeholder="e.g., Interactive Brokers, Al Rajhi Capital"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">2-100 characters</p>
+                </div>
+                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button>
+            </form>
+        </Modal> 
+    );
 };
 
 const ANALYST_DEFAULTS = {
