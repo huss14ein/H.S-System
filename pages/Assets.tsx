@@ -41,7 +41,7 @@ interface CommodityHolding {
 }
 
 const Assets: React.FC = () => {
-  const { data, loading, addAsset, updateAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
+  const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
 
   const [activeTab, setActiveTab] = useState<'physical' | 'commodities'>('physical');

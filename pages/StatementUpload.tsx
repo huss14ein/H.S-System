@@ -4,14 +4,14 @@ import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon, ExclamationTriangleIcon } from '../components/icons';
+import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon } from '../components/icons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
-import { Transaction, InvestmentTransaction, Account } from '../types';
+import { Transaction, InvestmentTransaction } from '../types';
 import InfoHint from '../components/InfoHint';
 
 const StatementUpload: React.FC = () => {
   const { data, addTransaction, recordTrade } = useContext(DataContext)!;
-  const { uploadStatement, processStatement, statements, isProcessing } = useStatementProcessing();
+  const { uploadStatement, processStatement } = useStatementProcessing();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');

@@ -148,7 +148,7 @@ async function extractTextFromPDF(file: File): Promise<string> {
 /**
  * Extract text from PDF using AI (fallback)
  */
-async function extractTextFromPDFWithAI(base64: string): Promise<string> {
+async function extractTextFromPDFWithAI(_base64: string): Promise<string> {
   // In a real implementation, you'd send this to a backend service
   // that uses OCR or PDF parsing libraries
   // For now, return empty and let the AI extraction handle it
