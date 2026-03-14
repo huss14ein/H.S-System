@@ -23,7 +23,9 @@ import {
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     mapGoalsForRouting,
     sumLiquidCash,
+    type HouseholdEngineConfig,
     type HouseholdMonthlyOverride,
+    type HouseholdMonthResult,
 } from '../services/householdBudgetEngine';
 
 
@@ -222,7 +224,7 @@ const Budgets: React.FC = () => {
             setHouseholdAdults(Math.max(1, Number(parsed?.adults) || 2));
             setHouseholdKids(Math.max(0, Number(parsed?.kids) || 0));
             setHouseholdOverrides(Array.isArray(parsed?.overrides) ? parsed.overrides : []);
-            setEngineConfig((prev) => ({ ...prev, ...(parsed?.config || {}) }));
+            setEngineConfig((prev: HouseholdEngineConfig) => ({ ...prev, ...(parsed?.config || {}) }));
         } catch {
             // no-op
         }
@@ -698,7 +700,7 @@ const Budgets: React.FC = () => {
         setHouseholdOverrides((prev) => {
             const existing = prev.find((o) => o.month === month) || { month };
             const next = { ...existing, ...patch };
-            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => a.month - b.month);
+            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
             return merged;
         });
     };
@@ -711,11 +713,11 @@ const Budgets: React.FC = () => {
                 const prior = map.get(m - 1);
                 if (prior) map.set(m, { ...prior, month: m });
             }
-            return Array.from(map.values()).sort((a, b) => a.month - b.month);
+            return Array.from(map.values()).sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
         });
     };
 
-    const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
+    const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum: number, m: HouseholdMonthResult) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
         if (!isAdmin) return;
@@ -1328,7 +1330,7 @@ const Budgets: React.FC = () => {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editable inputs</p>
                     <div className="mt-2 flex flex-wrap items-center gap-3">
                         <label className="text-sm text-slate-600">Operating mode
-                            <select value={engineConfig.operatingMode || 'Balanced'} onChange={(e) => setEngineConfig((prev) => ({ ...prev, operatingMode: e.target.value as any }))} className="ml-2 p-1.5 border rounded">
+                            <select value={engineConfig.operatingMode || 'Balanced'} onChange={(e) => setEngineConfig((prev: HouseholdEngineConfig) => ({ ...prev, operatingMode: e.target.value as any }))} className="ml-2 p-1.5 border rounded">
                                 <option>Balanced</option>
                                 <option>Aggressive Goal</option>
                                 <option>Protection First</option>
@@ -1342,10 +1344,10 @@ const Budgets: React.FC = () => {
                     <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p></div>
                     <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
-                    <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
+                    <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m: HouseholdMonthResult) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
                     </button>
@@ -1402,24 +1404,24 @@ const Budgets: React.FC = () => {
                         </div>
                         <div className="rounded border bg-white p-2">
                             <p className="text-[11px] uppercase tracking-wide text-slate-500">Pressure months</p>
-                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.filter((m) => m.warnings.length > 0).length}</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.filter((m: HouseholdMonthResult) => m.warnings.length > 0).length}</p>
                         </div>
                         <div className="rounded border bg-white p-2">
                             <p className="text-[11px] uppercase tracking-wide text-slate-500">Validation flags</p>
-                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.reduce((sum, m) => sum + (m.validationErrors?.length || 0), 0)}</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.reduce((sum: number, m: HouseholdMonthResult) => sum + (m.validationErrors?.length || 0), 0)}</p>
                         </div>
                     </div>
                     <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Scenarios & recommendations</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.scenarios ? 'Collapse' : 'Expand'}</span>
                     </button>
                     {engineSectionsOpen.scenarios && (
                         <>
                             <div className="mt-3 flex flex-wrap gap-2">
-                                {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
+                                {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario: (typeof HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS)[number]) => (
                                     <button
                                         key={scenario.id}
                                         type="button"
@@ -1439,14 +1441,14 @@ const Budgets: React.FC = () => {
                             </div>
                             {householdBudgetEngine.recommendations.length > 0 && (
                                 <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
-                                    {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
+                                    {householdBudgetEngine.recommendations.slice(0, 4).map((item: string, idx: number) => <li key={`hh-rec-${idx}`}>{item}</li>)}
                                 </ul>
                             )}
                         </>
                     )}
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
                     </button>
@@ -1455,13 +1457,13 @@ const Budgets: React.FC = () => {
                             <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
                             {criticalValidationCount > 0 && (
                                 <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
-                                    {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m) => (
+                                    {householdBudgetEngine.months.filter((m: HouseholdMonthResult) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m: HouseholdMonthResult) => (
                                         <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
                                     ))}
                                 </ul>
                             )}
                             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                                {householdBudgetEngine.months.filter((m) => m.warnings.some((w) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m) => (
+                                {householdBudgetEngine.months.filter((m: HouseholdMonthResult) => m.warnings.some((w: string) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m: HouseholdMonthResult) => (
                                     <div key={`res-track-${m.month}`} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
                                         M{m.month}: reserve after deductions {formatCurrencyString(m.reservePoolAfterDeductions, { digits: 0 })}
                                     </div>

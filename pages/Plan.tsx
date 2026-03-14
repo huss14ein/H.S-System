@@ -140,26 +140,27 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
-                if (parsed?.config) {
+                if (parsed?.config && typeof parsed.config === 'object') {
+                    const c = parsed.config as Record<string, unknown>;
                     setEngineConfig({
                         ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-                        ...parsed.config,
-                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(parsed.config.transport || {}) },
-                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(parsed.config.allowances || {}) },
-                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(parsed.config.obligations || {}) },
+                        ...c,
+                        transport: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport || {}), ...((c.transport as Record<string, unknown>) || {}) },
+                        allowances: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances || {}), ...((c.allowances as Record<string, unknown>) || {}) },
+                        obligations: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations || {}), ...((c.obligations as Record<string, unknown>) || {}) },
                         requiredExpenses: {
-                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
-                            ...(parsed.config.maintenance ? {
-                                annualReserveEnabled: Boolean(parsed.config.maintenance.houseAnnualEnabled),
-                                annualReserveAmount: Number(parsed.config.maintenance.houseAnnualAmount || 0),
-                                semiAnnualReserveEnabled: Boolean(parsed.config.maintenance.carAnnualEnabled),
-                                semiAnnualReserveAmount: Number(parsed.config.maintenance.carAnnualAmount || 0),
-                                monthlyRequiredEnabled: Boolean(parsed.config.maintenance.otherMonthlyEnabled),
-                                monthlyRequiredAmount: Number(parsed.config.maintenance.otherMonthlyAmount || 0),
+                            ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses || {}),
+                            ...((c.maintenance as Record<string, unknown>) ? {
+                                annualReserveEnabled: Boolean((c.maintenance as Record<string, unknown>).houseAnnualEnabled),
+                                annualReserveAmount: Number((c.maintenance as Record<string, unknown>).houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean((c.maintenance as Record<string, unknown>).carAnnualEnabled),
+                                semiAnnualReserveAmount: Number((c.maintenance as Record<string, unknown>).carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean((c.maintenance as Record<string, unknown>).otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number((c.maintenance as Record<string, unknown>).otherMonthlyAmount || 0),
                             } : {}),
-                            ...(parsed.config.requiredExpenses || {}),
+                            ...((c.requiredExpenses as Record<string, unknown>) || {}),
                         },
-                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(parsed.config.bucketRules || {}) },
+                        bucketRules: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules || {}), ...((c.bucketRules as Record<string, unknown>) || {}) },
                     });
                 }
             }
@@ -184,26 +185,27 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
-                if (profile?.config) {
+                if (profile?.config && typeof profile.config === 'object') {
+                    const c = profile.config as Record<string, unknown>;
                     setEngineConfig({
                         ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
-                        ...profile.config,
-                        transport: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport, ...(profile.config.transport || {}) },
-                        allowances: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances, ...(profile.config.allowances || {}) },
-                        obligations: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations, ...(profile.config.obligations || {}) },
+                        ...c,
+                        transport: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.transport || {}), ...((c.transport as Record<string, unknown>) || {}) },
+                        allowances: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.allowances || {}), ...((c.allowances as Record<string, unknown>) || {}) },
+                        obligations: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.obligations || {}), ...((c.obligations as Record<string, unknown>) || {}) },
                         requiredExpenses: {
-                            ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses,
-                            ...(profile.config.maintenance ? {
-                                annualReserveEnabled: Boolean(profile.config.maintenance.houseAnnualEnabled),
-                                annualReserveAmount: Number(profile.config.maintenance.houseAnnualAmount || 0),
-                                semiAnnualReserveEnabled: Boolean(profile.config.maintenance.carAnnualEnabled),
-                                semiAnnualReserveAmount: Number(profile.config.maintenance.carAnnualAmount || 0),
-                                monthlyRequiredEnabled: Boolean(profile.config.maintenance.otherMonthlyEnabled),
-                                monthlyRequiredAmount: Number(profile.config.maintenance.otherMonthlyAmount || 0),
+                            ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.requiredExpenses || {}),
+                            ...((c.maintenance as Record<string, unknown>) ? {
+                                annualReserveEnabled: Boolean((c.maintenance as Record<string, unknown>).houseAnnualEnabled),
+                                annualReserveAmount: Number((c.maintenance as Record<string, unknown>).houseAnnualAmount || 0),
+                                semiAnnualReserveEnabled: Boolean((c.maintenance as Record<string, unknown>).carAnnualEnabled),
+                                semiAnnualReserveAmount: Number((c.maintenance as Record<string, unknown>).carAnnualAmount || 0),
+                                monthlyRequiredEnabled: Boolean((c.maintenance as Record<string, unknown>).otherMonthlyEnabled),
+                                monthlyRequiredAmount: Number((c.maintenance as Record<string, unknown>).otherMonthlyAmount || 0),
                             } : {}),
-                            ...(profile.config.requiredExpenses || {}),
+                            ...((c.requiredExpenses as Record<string, unknown>) || {}),
                         },
-                        bucketRules: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules, ...(profile.config.bucketRules || {}) },
+                        bucketRules: { ...(DEFAULT_HOUSEHOLD_ENGINE_CONFIG.bucketRules || {}), ...((c.bucketRules as Record<string, unknown>) || {}) },
                     });
                 }
             } catch {
