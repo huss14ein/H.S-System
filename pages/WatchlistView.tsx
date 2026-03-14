@@ -804,7 +804,18 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                         <h2 className="text-xl font-semibold text-dark">My Watchlist</h2>
                         <LivePricesStatus variant="inline" className="flex-shrink-0" />
                     </div>
-                    <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
+                    <div className="flex gap-2">
+                        {filteredWatchlist.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleExportWatchlist}
+                                className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 text-sm font-medium"
+                            >
+                                Export CSV
+                            </button>
+                        )}
+                        <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
+                    </div>
                 </div>
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                     <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search symbol or name..." className="input-base max-w-xs" />

@@ -13,15 +13,58 @@ const ExecutionHistoryView: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
   
   const executionLogs = useMemo(() => {
-    // Get execution logs from data context
-    // Note: This assumes execution logs are stored in data.executionLogs
-    // If stored differently, adjust accordingly
-    const logs = (data as any)?.executionLogs ?? [];
-    return logs
-      .filter((log: any) => filterStatus === 'All' || log.status === filterStatus)
+    // Get execution logs - they are saved via saveExecutionLog in Investment Plan
+    // Check localStorage for stored execution logs
+    let logs: any[] = [];
+    
+    // Try multiple possible storage keys
+    const storageKeys = [
+      'investment-execution-logs',
+      'investmentPlanExecutionLogs',
+      'execution-logs',
+    ];
+    
+    for (const key of storageKeys) {
+      try {
+        const stored = localStorage.getItem(key);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            logs = [...logs, ...parsed];
+          } else if (parsed && typeof parsed === 'object') {
+            // If it's an object with logs array
+            logs = [...logs, ...(parsed.logs || [parsed])];
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+    
+    // Also check data context if available
+    if ((data as any)?.executionLogs) {
+      logs = [...logs, ...((data as any).executionLogs)];
+    }
+    
+    // Remove duplicates by id or unique combination
+    const uniqueLogs = Array.from(
+      new Map(
+        logs.map((log: any) => [
+          log.id || `${log.date || log.created_at || log.timestamp}-${log.totalInvestment || 0}`,
+          log
+        ])
+      ).values()
+    );
+    
+    return uniqueLogs
+      .filter((log: any) => {
+        if (filterStatus === 'All') return true;
+        const status = log.status || log.executionStatus || 'unknown';
+        return status.toLowerCase() === filterStatus.toLowerCase();
+      })
       .sort((a: any, b: any) => {
-        const dateA = new Date(a.created_at || a.date || 0).getTime();
-        const dateB = new Date(b.created_at || b.date || 0).getTime();
+        const dateA = new Date(a.created_at || a.date || a.timestamp || 0).getTime();
+        const dateB = new Date(b.created_at || b.date || b.timestamp || 0).getTime();
         return dateB - dateA; // Most recent first
       });
   }, [data, filterStatus]);
