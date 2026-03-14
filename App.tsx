@@ -49,6 +49,10 @@ const Plan = lazy(() => import('./pages/Plan'));
 // Asset Management Pages
 const Assets = lazy(() => import('./pages/Assets'));
 
+// Statement Upload
+const StatementUpload = lazy(() => import('./pages/StatementUpload'));
+const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
+
 // System & Market Pages
 const MarketEvents = lazy(() => import('./pages/MarketEvents'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
@@ -58,7 +62,7 @@ const VALID_PAGES: Page[] = [
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System Health'
+  'Assets', 'System Health', 'Statement Upload', 'Statement History'
 ];
 
 function getAuthViewFromHash(allowSignup: boolean): boolean {
@@ -171,6 +175,10 @@ const App: React.FC = () => {
       
       // Asset Management Pages
       case 'Assets': return <Assets />;
+      
+      // Statement Upload
+      case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} />;
+      case 'Statement History': return <StatementHistoryView />;
       
       // System & Market Pages
       case 'Market Events': return <MarketEvents />;

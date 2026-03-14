@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System Health';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System Health' | 'Statement Upload' | 'Statement History';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -93,6 +93,8 @@ export interface Transaction {
   rejectionReason?: string;
   /** Set when transaction was auto-created from a recurring rule. */
   recurringId?: string;
+  /** Set when transaction was imported from a financial statement. */
+  statementId?: string;
 }
 
 export type HoldingAssetClass =

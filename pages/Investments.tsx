@@ -38,6 +38,8 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
+import { ClockIcon } from '../components/icons/ClockIcon';
+import ExecutionHistoryView from './ExecutionHistoryView';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -45,7 +47,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -94,6 +96,7 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
+    { name: 'Execution History', icon: ClockIcon },
 ];
 
 
@@ -116,10 +119,12 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
         const corePct = data?.investmentPlan?.coreAllocation ?? 0.7;
         const upsidePct = data?.investmentPlan?.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
+        const target = data?.investmentPlan?.monthlyBudget ?? 0;
+        const percent = target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : (monthlyInvested > 0 ? 100 : 0);
         return {
-            percent: Math.min((monthlyInvested / (data?.investmentPlan?.monthlyBudget || 1)) * 100, 100),
+            percent: Number.isFinite(percent) ? percent : 0,
             amount: monthlyInvested,
-            target: data?.investmentPlan?.monthlyBudget ?? 0,
+            target,
             corePct,
             upsidePct,
             specPct,
@@ -146,7 +151,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
                             <span>Monthly Progress</span>
-                            <span>{investmentProgress.percent.toFixed(0)}%</span>
+                            <span>{Number.isFinite(investmentProgress.percent) ? investmentProgress.percent.toFixed(0) : '0'}%</span>
                         </div>
                         <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div 
@@ -223,6 +228,8 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
+    
+    // Note: Duplicate transaction check is now handled inline in RecordTradeModal
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
@@ -230,7 +237,9 @@ const RecordTradeModal: React.FC<{
     );
     const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
-    const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
+    const portfoliosForAccount = useMemo(() => {
+        return accountId ? portfolios.filter(p => p.accountId === accountId) : [];
+    }, [accountId, portfolios]);
     
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
@@ -319,15 +328,29 @@ const RecordTradeModal: React.FC<{
             if (!accountId) return 'Please select a platform.';
             const amt = parseFloat(cashAmount);
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
+            if (type === 'withdrawal' && accountId) {
+                const available = availableCashInTradeCurrency;
+                if (amt > available) return `Insufficient cash. Available: ${formatCurrencyString(available, { inCurrency: tradeCurrency })}`;
+            }
             return null;
         }
         if (!portfolioId) return 'Please select a portfolio.';
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return 'Symbol is required.';
+        if (symbol.trim().length < 1 || symbol.trim().length > 10) return 'Symbol must be between 1 and 10 characters.';
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
+        if (parsedQuantity > 1000000) return 'Quantity seems unusually high. Please verify.';
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
+        if (parsedPrice > 100000) return 'Price seems unusually high. Please verify.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
+        if (type === 'buy' && accountId) {
+            const totalCost = parsedQuantity * parsedPrice;
+            const available = availableCashInTradeCurrency;
+            if (totalCost > available * 1.1) { // Allow 10% buffer for fees
+                return `Insufficient cash. Required: ${formatCurrencyString(totalCost, { inCurrency: tradeCurrency })}. Available: ${formatCurrencyString(available, { inCurrency: tradeCurrency })}`;
+            }
+        }
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
@@ -335,8 +358,17 @@ const RecordTradeModal: React.FC<{
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
+        // Validate date
+        if (date) {
+            const selectedDate = new Date(date);
+            const today = new Date();
+            today.setHours(23, 59, 59, 999);
+            if (selectedDate > today && !window.confirm) {
+                // Future date validation handled in onChange
+            }
+        }
         return null;
-    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios, availableCashInTradeCurrency, tradeCurrency, formatCurrencyString, date]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -346,6 +378,22 @@ const RecordTradeModal: React.FC<{
             setSubmitError(validationError);
             return;
         }
+        
+        // Additional duplicate check
+        if (!isCashFlow && type === 'buy') {
+            const existingTrades = (data?.investmentTransactions ?? []).filter(t => 
+                t.accountId === accountId && 
+                t.symbol?.toUpperCase() === symbol.toUpperCase().trim() &&
+                t.date === date &&
+                Math.abs((t.total ?? 0) - (parseFloat(quantity) * parseFloat(price))) < 0.01
+            );
+            if (existingTrades.length > 0) {
+                if (!window.confirm('A similar trade already exists for this date and amount. Continue anyway?')) {
+                    return;
+                }
+            }
+        }
+        
         try {
             setIsSubmitting(true);
             if (isCashFlow) {
@@ -363,7 +411,7 @@ const RecordTradeModal: React.FC<{
                 await onSave({
                     accountId, portfolioId, type,
                     symbol: symbol.toUpperCase().trim(),
-                    name: isNewHolding ? holdingName : undefined,
+                    name: isNewHolding ? holdingName.trim() : undefined,
                     quantity: parseFloat(quantity) || 0,
                     price: parseFloat(price) || 0,
                     date,
@@ -486,7 +534,29 @@ const RecordTradeModal: React.FC<{
                 )}
                 <div>
                     <label htmlFor="date" className="block text-sm font-medium text-gray-700">Transaction Date</label>
-                    <input type="date" id="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input 
+                        type="date" 
+                        id="date" 
+                        value={date} 
+                        onChange={e => {
+                            const selectedDate = new Date(e.target.value);
+                            const today = new Date();
+                            today.setHours(23, 59, 59, 999);
+                            if (selectedDate > today) {
+                                const confirmed = window.confirm('This date is in the future. Are you sure you want to record a future transaction?');
+                                if (!confirmed) {
+                                    // Reset to today if user cancels
+                                    setDate(new Date().toISOString().split('T')[0]);
+                                    return;
+                                }
+                            }
+                            setDate(e.target.value);
+                        }} 
+                        required 
+                        max={new Date().toISOString().split('T')[0]}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md" 
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Future dates require confirmation</p>
                 </div>
                 {(submitError || validationError) && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{submitError || validationError}</p>}
                 <button type="submit" disabled={submitDisabled} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : isCashFlow ? (type === 'deposit' ? 'Record Deposit' : 'Record Withdrawal') : 'Record Trade'}</button>
@@ -823,11 +893,23 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         }
     }, [holding, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (holding) {
-            onSave({ ...holding, name, zakahClass, goalId });
+        if (!holding) return;
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Holding name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 200) {
+            alert('Holding name must be between 2 and 200 characters.');
+            return;
+        }
+        try {
+            await onSave({ ...holding, name: trimmedName, zakahClass, goalId });
             onClose();
+        } catch (error) {
+            alert(`Failed to save holding: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
     if (!holding) return null;
@@ -864,6 +946,8 @@ export const PortfolioModal: React.FC<{
     investmentAccounts: Account[];
     goals: Goal[];
 }> = ({ isOpen, onClose, onSave, portfolioToEdit, accountId, investmentAccounts, goals }) => {
+    const { data } = useContext(DataContext)!;
+    const investments = data?.investments ?? [];
     const [name, setName] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>();
@@ -880,19 +964,40 @@ export const PortfolioModal: React.FC<{
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Portfolio name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            alert('Portfolio name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicate portfolio names in the same account
+        if (!portfolioToEdit && selectedAccountId) {
+            const existingPortfolios = investments.filter(p => 
+                (p.accountId ?? (p as any).account_id) === selectedAccountId &&
+                p.name?.trim().toLowerCase() === trimmedName.toLowerCase()
+            );
+            if (existingPortfolios.length > 0) {
+                if (!window.confirm(`A portfolio named "${trimmedName}" already exists in this account. Create anyway?`)) {
+                    return;
+                }
+            }
+        }
         try {
             if (portfolioToEdit) {
-                await onSave({ ...portfolioToEdit, name, goalId, currency });
+                await onSave({ ...portfolioToEdit, name: trimmedName, goalId, currency });
             } else {
                 if (!selectedAccountId) {
                     alert("Please select an account for the new portfolio.");
                     return;
                 }
-                await onSave({ name, accountId: selectedAccountId, goalId, currency });
+                await onSave({ name: trimmedName, accountId: selectedAccountId, goalId, currency });
             }
             onClose();
         } catch (error) {
-            // Error handled in DataContext
+            alert(`Failed to save portfolio: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
 
@@ -953,34 +1058,82 @@ export const PortfolioModal: React.FC<{
 
 const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, transactions: InvestmentTransaction[], platformName: string }> = ({ isOpen, onClose, transactions, platformName }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const handleExportCSV = () => {
+        const csv = [
+            ['Date', 'Type', 'Symbol', 'Quantity', 'Price', 'Amount', 'Currency'].join(','),
+            ...transactions.map(t => {
+                const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+                return [
+                    t.date,
+                    t.type,
+                    t.symbol === 'CASH' ? '' : (t.symbol || ''),
+                    t.quantity || 0,
+                    t.price || 0,
+                    t.total ?? 0,
+                    cur
+                ].join(',');
+            })
+        ].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `transactions-${platformName}-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
+            <div className="mb-4 flex justify-end">
+                {transactions.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={handleExportCSV}
+                        className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+                    >
+                        Export CSV
+                    </button>
+                )}
+            </div>
             <div className="max-h-[60vh] overflow-y-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
-                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {transactions.map(t => {
-                            const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-                            return (
-                                <tr key={t.id} className="hover:bg-gray-50">
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
-                                    <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                {transactions.length === 0 ? (
+                    <div className="text-center py-12">
+                        <p className="text-sm text-slate-500">No transactions recorded for this platform yet.</p>
+                        <p className="text-xs text-slate-400 mt-2">Record trades to see transaction history here.</p>
+                    </div>
+                ) : (
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {transactions.map(t => {
+                                const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+                                return (
+                                    <tr key={t.id} className="hover:bg-gray-50">
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
+                                        <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-600">{t.quantity || '—'}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-600">{t.price ? formatCurrencyString(t.price, { inCurrency: cur }) : '—'}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                )}
             </div>
         </Modal>
     )
@@ -1092,7 +1245,7 @@ const PlatformCard: React.FC<{
         const priceInfo = sym ? simulatedPrices[sym] : undefined;
         const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
         const liveValue = currentMktPrice * h.quantity;
-        const totalCost = h.avgCost * h.quantity;
+        const totalCost = (h.avgCost ?? 0) * h.quantity;
         const gainLoss = liveValue - totalCost;
         return { ...h, currentValue: liveValue, totalCost, gainLoss };
     }).sort((a,b) => b.currentValue - a.currentValue);
@@ -1470,7 +1623,54 @@ const PlatformView: React.FC<{
                         <PlusIcon className="h-4 w-4" /> Add Portfolio
                     </button>
                 </div>
-            ) : null}
+            ) : (
+                <div className="flex justify-end mb-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const csv = [
+                                ['Platform', 'Portfolio', 'Symbol', 'Quantity', 'Avg Cost', 'Current Value', 'Gain/Loss', 'Gain/Loss %', 'Currency'].join(','),
+                                ...platformsData.flatMap(p => 
+                                    p.portfolios.flatMap(port => 
+                                        (port.holdings || []).map(h => {
+                                            const sym = h.symbol ?? '';
+                                            const priceInfo = sym ? props.simulatedPrices[sym] : undefined;
+                                            const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
+                                            const liveValue = currentMktPrice * h.quantity;
+                                            const totalCost = h.avgCost * h.quantity;
+                                            const gainLoss = liveValue - totalCost;
+                                            const gainLossPct = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
+                                            return [
+                                                p.account.name,
+                                                port.name,
+                                                sym,
+                                                h.quantity,
+                                                h.avgCost ?? 0,
+                                                liveValue,
+                                                gainLoss,
+                                                gainLossPct.toFixed(2),
+                                                port.currency || 'USD'
+                                            ].join(',');
+                                        })
+                                    )
+                                )
+                            ].join('\n');
+                            const blob = new Blob([csv], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `portfolios-export-${new Date().toISOString().split('T')[0]}.csv`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                        }}
+                        className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+                    >
+                        Export All Holdings to CSV
+                    </button>
+                </div>
+            )}
 
             <div className="platform-cards-grid grid grid-cols-1 xl:grid-cols-2 gap-6 items-stretch min-w-0" data-platform-count={platformsData.length}>
                 {platformsData.map(p => (
@@ -1497,18 +1697,60 @@ const PlatformView: React.FC<{
 
 interface PlatformModalProps { isOpen: boolean; onClose: () => void; onSave: (platform: Account) => void; platformToEdit: Account | null; }
 const PlatformModal: React.FC<PlatformModalProps> = ({ isOpen, onClose, onSave, platformToEdit }) => {
+    const { data } = useContext(DataContext)!;
     const [name, setName] = useState('');
     useEffect(() => { if (platformToEdit) setName(platformToEdit.name); else setName(''); }, [platformToEdit, isOpen]);
     const handleSubmit = async (e: React.FormEvent) => { 
-        e.preventDefault(); 
+        e.preventDefault();
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            alert('Platform name is required.');
+            return;
+        }
+        if (trimmedName.length < 2 || trimmedName.length > 100) {
+            alert('Platform name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicate platform names
+        if (!platformToEdit) {
+            const existingPlatforms = (data?.accounts ?? []).filter(acc => 
+                acc.type === 'Investment' && 
+                acc.name?.trim().toLowerCase() === trimmedName.toLowerCase()
+            );
+            if (existingPlatforms.length > 0) {
+                if (!window.confirm(`A platform named "${trimmedName}" already exists. Create anyway?`)) {
+                    return;
+                }
+            }
+        }
         try {
-            await onSave({ ...(platformToEdit || { id: '', balance: 0 }), name, type: 'Investment' }); 
+            await onSave({ ...(platformToEdit || { id: '', balance: 0 }), name: trimmedName, type: 'Investment' }); 
             onClose(); 
         } catch (error) {
-            // Error handled in DataContext
+            alert(`Failed to save platform: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    return ( <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}><form onSubmit={handleSubmit} className="space-y-4"><div><label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label><input type="text" id="platform-name" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div><button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button></form></Modal> );
+    return ( 
+        <Modal isOpen={isOpen} onClose={onClose} title={platformToEdit ? 'Edit Platform' : 'Add New Platform'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="platform-name" className="block text-sm font-medium text-gray-700">Platform Name</label>
+                    <input 
+                        type="text" 
+                        id="platform-name" 
+                        value={name} 
+                        onChange={e => setName(e.target.value)} 
+                        required 
+                        maxLength={100}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        placeholder="e.g., Interactive Brokers, Al Rajhi Capital"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">2-100 characters</p>
+                </div>
+                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Platform</button>
+            </form>
+        </Modal> 
+    );
 };
 
 const ANALYST_DEFAULTS = {
@@ -1763,9 +2005,29 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [planAdvancedOpen, isAiAvailable, unifiedUniverse]);
 
     const handleAddNewTicker = async () => {
-        if (!newTicker.ticker || !newTicker.name) return;
+        const ticker = newTicker.ticker.trim().toUpperCase();
+        const name = newTicker.name.trim();
+        if (!ticker || !name) {
+            alert('Both ticker symbol and company name are required.');
+            return;
+        }
+        if (ticker.length < 1 || ticker.length > 10) {
+            alert('Ticker symbol must be between 1 and 10 characters.');
+            return;
+        }
+        if (name.length < 2 || name.length > 100) {
+            alert('Company name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicates
+        const existing = unifiedUniverse.find(t => t.ticker.toUpperCase() === ticker);
+        if (existing) {
+            if (!window.confirm(`Ticker ${ticker} already exists in universe (${existing.status}). Add anyway?`)) {
+                return;
+            }
+        }
         try {
-            await addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+            await addUniverseTicker({ ticker, name, status: 'Watchlist' });
             setNewTicker({ ticker: '', name: '' });
         } catch (error) {
             // Error already alerted in DataContext
@@ -1887,11 +2149,25 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const handleSave = () => {
+        // Validate plan before saving
+        if ((plan.monthlyBudget ?? 0) <= 0) {
+            alert('Please set a positive monthly budget before saving.');
+            return;
+        }
         if (allocationWarning && !window.confirm(`${allocationWarning}\n\nSave anyway?`)) return;
+        if (universeHealth.actionableCount === 0) {
+            if (!window.confirm('No Core or High-Upside tickers in universe. Plan may not execute. Save anyway?')) {
+                return;
+            }
+        }
         setSaveMessage(null);
-        saveInvestmentPlan(plan);
-        setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
-        setTimeout(() => setSaveMessage(null), 6000);
+        try {
+            saveInvestmentPlan(plan);
+            setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
+            setTimeout(() => setSaveMessage(null), 6000);
+        } catch (error) {
+            alert(`Failed to save plan: ${error instanceof Error ? error.message : String(error)}`);
+        }
     };
 
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
@@ -2089,11 +2365,33 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. You can use the suggested value from your recent buy activity." /></label>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                                    <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2 border rounded-md" />
+                                    <input 
+                                        type="number" 
+                                        value={plan.monthlyBudget} 
+                                        onChange={e => {
+                                            const val = parseFloat(e.target.value) || 0;
+                                            if (val < 0) {
+                                                alert('Monthly budget cannot be negative.');
+                                                return;
+                                            }
+                                            if (val > 10000000) {
+                                                if (!window.confirm('Monthly budget seems unusually high. Continue?')) {
+                                                    return;
+                                                }
+                                            }
+                                            handlePlanChange('monthlyBudget', val);
+                                        }} 
+                                        min="0"
+                                        step="100"
+                                        className="flex-1 min-w-0 p-2 border rounded-md" 
+                                    />
                                     {suggestedMonthlyBudget > 0 && (
                                         <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="text-sm text-primary hover:underline whitespace-nowrap">Use suggested ({formatCurrencyString(suggestedMonthlyBudget, { digits: 0 })})</button>
                                     )}
                                 </div>
+                                {plan.monthlyBudget > 0 && plan.monthlyBudget < 100 && (
+                                    <p className="text-xs text-amber-600 mt-1">Monthly budget seems low. Minimum order size may prevent execution.</p>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from app defaults." /></label>
@@ -2229,9 +2527,37 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
                             )}
                             <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
-                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
-                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
-                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
+                            <input 
+                                type="text" 
+                                placeholder="Ticker (e.g., AAPL)" 
+                                value={newTicker.ticker} 
+                                onChange={e => {
+                                    const val = e.target.value.toUpperCase().trim();
+                                    if (val.length > 10) {
+                                        alert('Ticker symbol cannot exceed 10 characters.');
+                                        return;
+                                    }
+                                    setNewTicker(p => ({...p, ticker: val}));
+                                }} 
+                                maxLength={10}
+                                className="p-2 border rounded-md" 
+                            />
+                            <input 
+                                type="text" 
+                                placeholder="Company Name" 
+                                value={newTicker.name} 
+                                onChange={e => setNewTicker(p => ({...p, name: e.target.value.trim()}))} 
+                                className="flex-grow min-w-[120px] p-2 border rounded-md" 
+                                maxLength={100}
+                            />
+                            <button 
+                                onClick={handleAddNewTicker} 
+                                disabled={!newTicker.ticker.trim() || !newTicker.name.trim()}
+                                className="p-2 bg-primary text-white rounded-md hover:bg-secondary disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                title={!newTicker.ticker.trim() || !newTicker.name.trim() ? 'Ticker and name are required' : 'Add ticker to universe'}
+                            >
+                                <PlusIcon className="h-5 w-5" />
+                            </button>
                         </div>
                         <div className="max-h-60 overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -2441,6 +2767,35 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                     {onOpenWealthUltra && (
                                         <p className="text-xs text-slate-500 mt-3">Use <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> to see live allocation and export orders.</p>
                                     )}
+                                    {executionResult.trades.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-slate-200">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const csv = [
+                                                        ['Ticker', 'Sleeve/Reason', `Amount (${plan.budgetCurrency ?? 'SAR'})`].join(','),
+                                                        ...executionResult.trades.map(t => [
+                                                            t.ticker,
+                                                            t.reason,
+                                                            t.amount
+                                                        ].join(','))
+                                                    ].join('\n');
+                                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                                    const url = URL.createObjectURL(blob);
+                                                    const a = document.createElement('a');
+                                                    a.href = url;
+                                                    a.download = `investment-plan-execution-${new Date().toISOString().split('T')[0]}.csv`;
+                                                    document.body.appendChild(a);
+                                                    a.click();
+                                                    document.body.removeChild(a);
+                                                    URL.revokeObjectURL(url);
+                                                }}
+                                                className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors"
+                                            >
+                                                Export Trades to CSV
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -2465,6 +2820,18 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
+  
+  // Loading state
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-sm text-slate-600">Loading investment data...</p>
+        </div>
+      </div>
+    );
+  }
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }) | null>(null);
@@ -2517,7 +2884,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
     const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
-    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    let roi = 0;
+    if (netCapital > 0) {
+        roi = (totalGainLoss / netCapital) * 100;
+    } else if (netCapital === 0 && totalGainLoss > 0) {
+        roi = Infinity; // Pure gains scenario
+    } else if (netCapital < 0) {
+        roi = totalGainLoss > 0 ? Infinity : -100; // More withdrawn than invested
+    }
 
     const allHoldings = (data?.investments ?? []).flatMap((p: InvestmentPortfolio) => p.holdings ?? []);
     const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => {
@@ -2558,9 +2932,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
     const handleSaveHolding = async (holding: Holding) => { 
         try {
-            await updateHolding(holding); 
+            await updateHolding(holding);
+            setIsHoldingEditModalOpen(false);
+            setHoldingToEdit(null);
         } catch (error) {
-            // Error already alerted in DataContext
+            alert(`Failed to save holding: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
   
@@ -2644,6 +3020,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
+      case 'Execution History': return <ExecutionHistoryView />;
       default: return null;
     }
   };
@@ -2697,11 +3074,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             />
             <Card
                 title="Portfolio ROI"
-                value={`${roi.toFixed(2)}%`}
-                valueColor={roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}
+                value={Number.isFinite(roi) ? `${roi.toFixed(2)}%` : 'N/A'}
+                valueColor={Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-700' : 'text-rose-700') : 'text-slate-500'}
                 density="compact"
-                indicatorColor={roi >= 0 ? 'green' : 'red'}
-                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
+                indicatorColor={Number.isFinite(roi) ? (roi >= 0 ? 'green' : 'red') : undefined}
+                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`} aria-hidden />}
                 tooltip="Return on investment based on total capital invested across portfolios."
             />
             <Card
@@ -2744,7 +3121,15 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       </InvestmentTabErrorBoundary>
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
-      <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
+      <HoldingEditModal 
+        isOpen={isHoldingEditModalOpen} 
+        onClose={() => {
+            setIsHoldingEditModalOpen(false);
+            setHoldingToEdit(null);
+        }} 
+        onSave={handleSaveHolding} 
+        holding={holdingToEdit} 
+      />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 
         isOpen={isPortfolioModalOpen} 

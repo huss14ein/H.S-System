@@ -2,6 +2,7 @@ import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PageLayout from '../components/PageLayout';
+import Modal from '../components/Modal';
 import { 
   BuildingLibraryIcon, 
   TruckIcon, 
@@ -12,6 +13,7 @@ import {
   TrashIcon,
   ChartBarIcon
 } from '../components/icons';
+import { Asset as AssetType, CommodityHolding as CommodityHoldingType } from '../types';
 
 interface Asset {
   id: string;
@@ -39,65 +41,60 @@ interface CommodityHolding {
 }
 
 const Assets: React.FC = () => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
 
   const [activeTab, setActiveTab] = useState<'physical' | 'commodities'>('physical');
+  const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
+  const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
+  const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
+  const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
 
-  // Mock data for demonstration
-  const mockAssets: Asset[] = [
-    {
-      id: '1',
-      name: 'Primary Residence',
-      type: 'Property',
-      value: 800000,
-      currency: 'SAR',
-      purchaseDate: '2020-01-15',
-      purchaseValue: 650000,
-      description: 'Family home in Riyadh'
-    },
-    {
-      id: '2',
-      name: 'Toyota Camry',
-      type: 'Vehicle',
-      value: 85000,
-      currency: 'SAR',
-      purchaseDate: '2022-06-10',
-      purchaseValue: 95000,
-      description: 'Personal vehicle'
-    }
-  ];
+  // Use real data from context - map to local Asset interface
+  const realAssets: Asset[] = useMemo(() => {
+    return (data?.assets ?? []).map(asset => ({
+      id: asset.id,
+      name: asset.name,
+      type: (asset.type === 'Property' ? 'Property' : asset.type === 'Vehicle' ? 'Vehicle' : asset.type === 'Sukuk' ? 'Sukuk' : 'Other') as Asset['type'],
+      value: asset.value ?? 0,
+      currency: 'SAR', // Default currency
+      purchaseDate: new Date().toISOString().split('T')[0], // Default to today if not available
+      purchaseValue: asset.purchasePrice ?? asset.value ?? 0,
+      description: undefined,
+      goalId: asset.goalId
+    }));
+  }, [data?.assets]);
 
-  const mockCommodities: CommodityHolding[] = [
-    {
-      id: '1',
-      symbol: 'GOLD',
-      name: 'Gold',
-      quantity: 10,
-      currentPrice: 250,
-      currency: 'SAR',
-      purchasePrice: 220,
-      totalValue: 2500,
-      gainLoss: 300,
-      gainLossPercent: 13.6
-    },
-    {
-      id: '2',
-      symbol: 'SILVER',
-      name: 'Silver',
-      quantity: 100,
-      currentPrice: 3.5,
-      currency: 'SAR',
-      purchasePrice: 3.2,
-      totalValue: 350,
-      gainLoss: 30,
-      gainLossPercent: 9.4
-    }
-  ];
+  const realCommodities: CommodityHolding[] = useMemo(() => {
+    return (data?.commodityHoldings ?? []).map(commodity => {
+      const currentValue = commodity.currentValue ?? 0;
+      const purchaseValue = commodity.purchaseValue ?? 0;
+      const gainLoss = currentValue - purchaseValue;
+      const gainLossPercent = purchaseValue > 0 ? (gainLoss / purchaseValue) * 100 : 0;
+      
+      // Calculate currentPrice from currentValue / quantity if needed
+      const currentPrice = commodity.quantity > 0 ? currentValue / commodity.quantity : 0;
+      // Calculate purchasePrice from purchaseValue / quantity if needed
+      const purchasePrice = commodity.quantity > 0 ? purchaseValue / commodity.quantity : 0;
+      
+      return {
+        id: commodity.id,
+        symbol: commodity.symbol ?? '',
+        name: (typeof commodity.name === 'string' ? commodity.name : 'Gold') ?? commodity.symbol ?? '',
+        quantity: commodity.quantity ?? 0,
+        currentPrice,
+        currency: 'SAR', // Default currency
+        purchasePrice,
+        totalValue: currentValue,
+        gainLoss,
+        gainLossPercent
+      };
+    });
+  }, [data?.commodityHoldings]);
 
-  const calculations = useMemo(() => {
-    const assets = mockAssets || [];
-    const commodities = mockCommodities || [];
+    const calculations = useMemo(() => {
+    const assets = realAssets || [];
+    const commodities = realCommodities || [];
 
     const totalPhysicalAssets = assets.reduce((sum, asset) => 
       sum + (asset.value ?? 0), 0
@@ -107,14 +104,18 @@ const Assets: React.FC = () => {
       sum + (commodity.totalValue ?? 0), 0
     );
 
-    const totalGainLoss = commodities.reduce((sum, commodity) => 
+    const commodityGainLoss = commodities.reduce((sum, commodity) => 
       sum + (commodity.gainLoss ?? 0), 0
     );
 
-    const totalPurchaseValue = assets.reduce((sum, asset) => 
-      sum + (asset.purchaseValue ?? 0), 0
-    );
-
+    // Calculate gain/loss for physical assets
+    const physicalGainLoss = assets.reduce((sum, asset) => {
+      const gain = (asset.value ?? 0) - (asset.purchaseValue ?? 0);
+      return sum + gain;
+    }, 0);
+    
+    const totalPurchaseValue = assets.reduce((sum, asset) => sum + (asset.purchaseValue ?? 0), 0);
+    const totalGainLossAll = physicalGainLoss + commodityGainLoss;
     const totalGainLossPercent = totalPurchaseValue > 0 
       ? ((totalPhysicalAssets - totalPurchaseValue) / totalPurchaseValue) * 100 
       : 0;
@@ -123,12 +124,14 @@ const Assets: React.FC = () => {
       totalPhysicalAssets,
       totalCommodities,
       totalAssetValue: totalPhysicalAssets + totalCommodities,
-      totalGainLoss,
+      totalGainLoss: totalGainLossAll,
       totalGainLossPercent,
       assetCount: assets.length,
-      commodityCount: commodities.length
+      commodityCount: commodities.length,
+      physicalGainLoss,
+      commodityGainLoss
     };
-  }, [mockAssets, mockCommodities]);
+  }, [realAssets, realCommodities]);
 
   if (loading || !data) {
     return (
@@ -235,7 +238,7 @@ const Assets: React.FC = () => {
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-gray-900">Physical Assets</h3>
                   <button
-                    onClick={() => {}}
+                    onClick={() => { setAssetToEdit(null); setIsAssetModalOpen(true); }}
                     className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />
@@ -243,8 +246,15 @@ const Assets: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {mockAssets.map(asset => (
+                {realAssets.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <BuildingLibraryIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <p>No physical assets recorded yet.</p>
+                    <p className="text-sm mt-2">Click "Add Asset" to get started.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {realAssets.map(asset => (
                     <div key={asset.id} className="border border-gray-200 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center space-x-3">
@@ -258,10 +268,22 @@ const Assets: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex space-x-2">
-                          <button className="text-gray-400 hover:text-gray-600">
+                          <button 
+                            onClick={() => { setAssetToEdit(asset); setIsAssetModalOpen(true); }}
+                            className="text-gray-400 hover:text-gray-600"
+                            aria-label="Edit asset"
+                          >
                             <PencilIcon className="h-4 w-4" />
                           </button>
-                          <button className="text-gray-400 hover:text-red-600">
+                          <button 
+                            onClick={() => {
+                              if (confirm(`Delete ${asset.name}?`)) {
+                                deleteAsset(asset.id);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-red-600"
+                            aria-label="Delete asset"
+                          >
                             <TrashIcon className="h-4 w-4" />
                           </button>
                         </div>
@@ -283,12 +305,27 @@ const Assets: React.FC = () => {
                             <p className="text-xs text-gray-500">
                               {new Date(asset.purchaseDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
                             </p>
+                            {(asset.value - asset.purchaseValue) !== 0 && asset.purchaseValue > 0 && (
+                              <p className={`text-xs font-medium mt-1 ${
+                                (asset.value - asset.purchaseValue) >= 0 ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {(asset.value - asset.purchaseValue) >= 0 ? '+' : ''}
+                                {formatCurrencyString(asset.value - asset.purchaseValue)}
+                                ({((asset.value - asset.purchaseValue) / asset.purchaseValue * 100).toFixed(1)}%)
+                              </p>
+                            )}
+                            {asset.purchaseValue === 0 && asset.value !== 0 && (
+                              <p className="text-xs font-medium mt-1 text-slate-500">
+                                {formatCurrencyString(asset.value - asset.purchaseValue)} (N/A %)
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
                     </div>
                   ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -297,7 +334,7 @@ const Assets: React.FC = () => {
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-gray-900">Commodity Holdings</h3>
                   <button
-                    onClick={() => {}}
+                    onClick={() => { setCommodityToEdit(null); setIsCommodityModalOpen(true); }}
                     className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />
@@ -305,8 +342,15 @@ const Assets: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {mockCommodities.map(commodity => (
+                {realCommodities.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <CurrencyDollarIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <p>No commodity holdings recorded yet.</p>
+                    <p className="text-sm mt-2">Click "Add Commodity" to get started.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {realCommodities.map(commodity => (
                     <div key={commodity.id} className="border border-gray-200 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div>
@@ -314,10 +358,22 @@ const Assets: React.FC = () => {
                           <p className="text-sm text-gray-600">{commodity.symbol}</p>
                         </div>
                         <div className="flex space-x-2">
-                          <button className="text-gray-400 hover:text-gray-600">
+                          <button 
+                            onClick={() => { setCommodityToEdit(commodity); setIsCommodityModalOpen(true); }}
+                            className="text-gray-400 hover:text-gray-600"
+                            aria-label="Edit commodity"
+                          >
                             <PencilIcon className="h-4 w-4" />
                           </button>
-                          <button className="text-gray-400 hover:text-red-600">
+                          <button 
+                            onClick={() => {
+                              if (confirm(`Delete ${commodity.name}?`)) {
+                                deleteCommodityHolding(commodity.id);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-red-600"
+                            aria-label="Delete commodity"
+                          >
                             <TrashIcon className="h-4 w-4" />
                           </button>
                         </div>
@@ -333,6 +389,9 @@ const Assets: React.FC = () => {
                             <p className="text-sm text-gray-600">Current Price</p>
                             <p className="text-sm font-medium text-gray-900">
                               {formatCurrencyString(commodity.currentPrice)}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Purchase: {formatCurrencyString(commodity.purchasePrice)}
                             </p>
                           </div>
                         </div>
@@ -359,67 +418,351 @@ const Assets: React.FC = () => {
                       </div>
                     </div>
                   ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Asset Allocation Chart */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Asset Allocation</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-3">By Type</h3>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Property</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {formatCurrencyString(800000)} (66.7%)
-                  </span>
+        {/* Asset Allocation Chart - Real Data */}
+        {(() => {
+          const typeBreakdown = useMemo(() => {
+            const byType = new Map<string, number>();
+            realAssets.forEach(asset => {
+              const type = asset.type;
+              byType.set(type, (byType.get(type) || 0) + (asset.value ?? 0));
+            });
+            return Array.from(byType.entries()).map(([type, value]) => ({
+              type,
+              value,
+              percentage: calculations.totalAssetValue > 0 ? (value / calculations.totalAssetValue) * 100 : 0
+            }));
+          }, [realAssets, calculations.totalAssetValue]);
+
+          // Calculate annualized return based on purchase dates
+          const annualizedReturn = useMemo(() => {
+            if (realAssets.length === 0) return 0;
+            const now = new Date();
+            const totalYears = realAssets.reduce((sum, asset) => {
+              const purchaseDate = new Date(asset.purchaseDate);
+              const years = (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24 * 365);
+              return sum + Math.max(years, 0.1); // Minimum 0.1 years to avoid division by zero
+            }, 0);
+            const avgYears = totalYears / realAssets.length;
+            return avgYears > 0 ? calculations.totalGainLossPercent / avgYears : 0;
+          }, [realAssets, calculations.totalGainLossPercent]);
+
+          return (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-6">Asset Allocation & Performance</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">By Type</h3>
+                  <div className="space-y-2">
+                    {typeBreakdown.length > 0 ? (
+                      typeBreakdown.map(({ type, value, percentage }) => (
+                        <div key={type} className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">{type}</span>
+                          <span className="text-sm font-medium text-gray-900">
+                            {formatCurrencyString(value)} ({percentage.toFixed(1)}%)
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-500">No assets to display</p>
+                    )}
+                    {calculations.totalCommodities > 0 && (
+                      <div className="flex justify-between items-center pt-2 border-t">
+                        <span className="text-sm text-gray-600">Commodities</span>
+                        <span className="text-sm font-medium text-gray-900">
+                          {formatCurrencyString(calculations.totalCommodities)} 
+                          ({calculations.totalAssetValue > 0 ? ((calculations.totalCommodities / calculations.totalAssetValue) * 100).toFixed(1) : '0'}%)
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Vehicles</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {formatCurrencyString(85000)} (7.1%)
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Commodities</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {formatCurrencyString(2850)} (0.2%)
-                  </span>
+                
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">Performance</h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Total Return</span>
+                      <span className={`text-sm font-medium ${
+                        calculations.totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {calculations.totalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.totalGainLoss)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Physical Assets Return</span>
+                      <span className={`text-sm font-medium ${
+                        calculations.physicalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {calculations.physicalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.physicalGainLoss)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Commodities Return</span>
+                      <span className={`text-sm font-medium ${
+                        calculations.commodityGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {calculations.commodityGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.commodityGainLoss)}
+                      </span>
+                    </div>
+                    {calculations.totalGainLossPercent !== 0 && (
+                      <div className="flex justify-between items-center pt-2 border-t">
+                        <span className="text-sm text-gray-600">Return Percentage</span>
+                        <span className={`text-sm font-medium ${
+                          calculations.totalGainLossPercent >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {calculations.totalGainLossPercent >= 0 ? '+' : ''}{calculations.totalGainLossPercent.toFixed(1)}%
+                        </span>
+                      </div>
+                    )}
+                    {annualizedReturn !== 0 && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Annualized Return</span>
+                        <span className={`text-sm font-medium ${
+                          annualizedReturn >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {annualizedReturn >= 0 ? '+' : ''}{annualizedReturn.toFixed(1)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-            
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Performance</h3>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Total Return</span>
-                  <span className="text-sm font-medium text-green-600">
-                    +{formatCurrencyString(calculations.totalGainLoss)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Return Percentage</span>
-                  <span className="text-sm font-medium text-green-600">
-                    +{calculations.totalGainLossPercent.toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Annualized Return</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    +{(calculations.totalGainLossPercent / 3).toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          );
+        })()}
       </div>
+
+      {/* Asset Modal */}
+      <Modal isOpen={isAssetModalOpen} onClose={() => { setIsAssetModalOpen(false); setAssetToEdit(null); }} title={assetToEdit ? 'Edit Asset' : 'Add Asset'}>
+        <AssetForm 
+          asset={assetToEdit}
+          onSave={async (assetData) => {
+            // Convert local Asset interface to AssetType
+            const assetTypeData: AssetType = {
+              id: assetToEdit?.id || '',
+              name: assetData.name || '',
+              type: assetData.type || 'Other',
+              value: assetData.value || 0,
+              purchasePrice: assetData.purchaseValue,
+              goalId: assetData.goalId
+            };
+            if (assetToEdit) {
+              await updateAsset({ ...assetToEdit, ...assetTypeData });
+            } else {
+              await addAsset(assetTypeData);
+            }
+            setIsAssetModalOpen(false);
+            setAssetToEdit(null);
+          }}
+        />
+      </Modal>
+
+      {/* Commodity Modal */}
+      <Modal isOpen={isCommodityModalOpen} onClose={() => { setIsCommodityModalOpen(false); setCommodityToEdit(null); }} title={commodityToEdit ? 'Edit Commodity' : 'Add Commodity'}>
+        <CommodityForm 
+          commodity={commodityToEdit}
+          onSave={async (commodityData) => {
+            // Convert local CommodityHolding interface to CommodityHoldingType
+            const commodityTypeData: Omit<CommodityHoldingType, 'id' | 'user_id'> = {
+              name: (commodityData.name === 'Gold' || commodityData.name === 'Silver' || commodityData.name === 'Bitcoin' ? commodityData.name : 'Other') as 'Gold' | 'Silver' | 'Bitcoin' | 'Other',
+              quantity: commodityData.quantity || 0,
+              unit: 'unit' as const,
+              purchaseValue: (commodityData.purchasePrice || 0) * (commodityData.quantity || 0),
+              currentValue: (commodityData.currentPrice || 0) * (commodityData.quantity || 0),
+              symbol: commodityData.symbol || '',
+              zakahClass: 'Zakatable' as const,
+              goalId: undefined
+            };
+            if (commodityToEdit) {
+              await updateCommodityHolding({ ...commodityToEdit, ...commodityTypeData });
+            } else {
+              await addCommodityHolding(commodityTypeData);
+            }
+            setIsCommodityModalOpen(false);
+            setCommodityToEdit(null);
+          }}
+        />
+      </Modal>
     </PageLayout>
+  );
+};
+
+// Asset Form Component
+const AssetForm: React.FC<{ asset: Asset | null; onSave: (data: Partial<Asset>) => Promise<void> }> = ({ asset, onSave }) => {
+  const [name, setName] = useState(asset?.name || '');
+  const [type, setType] = useState<Asset['type']>(asset?.type || 'Property');
+  const [value, setValue] = useState(String(asset?.value || ''));
+  const [purchaseValue, setPurchaseValue] = useState(String(asset?.purchaseValue || ''));
+  const [purchaseDate, setPurchaseDate] = useState(asset?.purchaseDate || new Date().toISOString().split('T')[0]);
+  const [description, setDescription] = useState(asset?.description || '');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validation
+    const valueNum = parseFloat(value);
+    const purchaseValueNum = parseFloat(purchaseValue);
+    
+    if (!name || name.trim().length < 2) {
+      alert('Asset name must be at least 2 characters.');
+      return;
+    }
+    
+    if (!Number.isFinite(valueNum) || valueNum <= 0) {
+      alert('Current value must be a positive number.');
+      return;
+    }
+    
+    if (!Number.isFinite(purchaseValueNum) || purchaseValueNum < 0) {
+      alert('Purchase value must be a non-negative number.');
+      return;
+    }
+    
+    const purchaseDateObj = new Date(purchaseDate);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (purchaseDateObj > today) {
+      if (!confirm('Purchase date is in the future. Continue anyway?')) {
+        return;
+      }
+    }
+    
+    try {
+      await onSave({
+        name: name.trim(),
+        type,
+        value: valueNum,
+        purchaseValue: purchaseValueNum,
+        purchaseDate,
+        description: description?.trim(),
+        currency: 'SAR'
+      });
+    } catch (error) {
+      alert(`Failed to save asset: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Asset Name</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+        <select value={type} onChange={e => setType(e.target.value as Asset['type'])} className="select-base">
+          <option value="Property">Property</option>
+          <option value="Vehicle">Vehicle</option>
+          <option value="Sukuk">Sukuk</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Current Value (SAR)</label>
+        <input type="number" step="0.01" value={value} onChange={e => setValue(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Value (SAR)</label>
+        <input type="number" step="0.01" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Date</label>
+        <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+        <textarea value={description} onChange={e => setDescription(e.target.value)} className="input-base" rows={3} />
+      </div>
+      <button type="submit" className="w-full btn-primary">Save Asset</button>
+    </form>
+  );
+};
+
+// Commodity Form Component
+const CommodityForm: React.FC<{ commodity: CommodityHolding | null; onSave: (data: Partial<CommodityHolding>) => Promise<void> }> = ({ commodity, onSave }) => {
+  const [symbol, setSymbol] = useState(commodity?.symbol || '');
+  const [name, setName] = useState(commodity?.name || '');
+  const [quantity, setQuantity] = useState(String(commodity?.quantity || ''));
+  const [purchasePrice, setPurchasePrice] = useState(String(commodity?.purchasePrice || ''));
+  const [currentPrice, setCurrentPrice] = useState(String(commodity?.currentPrice || ''));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validation
+    if (!symbol || symbol.trim().length < 1 || symbol.trim().length > 10) {
+      alert('Symbol must be between 1 and 10 characters.');
+      return;
+    }
+    
+    const qty = parseFloat(quantity);
+    const purchasePriceNum = parseFloat(purchasePrice);
+    const currentPriceNum = parseFloat(currentPrice);
+    
+    if (!Number.isFinite(qty) || qty <= 0) {
+      alert('Quantity must be a positive number.');
+      return;
+    }
+    
+    if (!Number.isFinite(purchasePriceNum) || purchasePriceNum < 0) {
+      alert('Purchase price must be a non-negative number.');
+      return;
+    }
+    
+    const price = Number.isFinite(currentPriceNum) && currentPriceNum > 0 ? currentPriceNum : purchasePriceNum;
+    if (!Number.isFinite(price) || price <= 0) {
+      alert('Current price must be a positive number.');
+      return;
+    }
+    
+    try {
+      await onSave({
+        symbol: symbol.trim().toUpperCase(),
+        name: (name || symbol.trim()).toUpperCase(),
+        quantity: qty,
+        purchasePrice: purchasePriceNum,
+        currentPrice: price,
+        currency: 'SAR',
+        totalValue: qty * price,
+        gainLoss: (qty * price) - (qty * purchasePriceNum),
+        gainLossPercent: purchasePriceNum > 0 ? (((price - purchasePriceNum) / purchasePriceNum) * 100) : 0
+      });
+    } catch (error) {
+      alert(`Failed to save commodity: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Symbol (e.g., GOLD, SILVER)</label>
+        <input type="text" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} className="input-base" placeholder="Auto-filled from symbol" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+        <input type="number" step="0.001" value={quantity} onChange={e => setQuantity(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price per Unit (SAR)</label>
+        <input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} required className="input-base" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Current Price per Unit (SAR)</label>
+        <input type="number" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} required className="input-base" />
+      </div>
+      <button type="submit" className="w-full btn-primary">Save Commodity</button>
+    </form>
   );
 };
 

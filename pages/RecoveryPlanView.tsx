@@ -139,7 +139,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
       }, 0);
 
-    return bankCash + platformCashSAR;
+    const total = bankCash + platformCashSAR;
+    // Validate result
+    if (!Number.isFinite(total) || total < 0) {
+      console.warn('Invalid deployable cash calculated:', { bankCash, platformCashSAR, total });
+      return 0;
+    }
+    return total;
   }, [data?.accounts, getAvailableCashForAccount, safeFxRate]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
@@ -161,9 +167,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       else if (u.status === 'High-Upside') upsideTickers.push(t);
       else if (u.status === 'Speculative') specTickers.push(t);
     });
-    if (coreTickers.length === 0 && upsideTickers.length === 0) {
-      (data.investmentPlan?.corePortfolio ?? []).forEach((p: { ticker?: string }) => coreTickers.push((p.ticker ?? '').toUpperCase()));
-      (data.investmentPlan?.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
+    if (coreTickers.length === 0 && upsideTickers.length === 0 && data?.investmentPlan) {
+      (data.investmentPlan.corePortfolio ?? []).forEach((p: { ticker?: string }) => coreTickers.push((p.ticker ?? '').toUpperCase()));
+      (data.investmentPlan.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
     }
     return { coreTickers, upsideTickers, specTickers };
   }, [universe, data?.investmentPlan]);
@@ -431,9 +437,28 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [selected?.holding?.symbol]);
 
   const handleGenerateDraft = () => {
-    if (!selectedPlan) return;
-    const drafts = orderDraftGenerator(selectedPlan, true);
-    setDraftOrders(drafts);
+    if (!selectedPlan) {
+      alert('Please select a position first.');
+      return;
+    }
+    if (!selectedPlan.qualified) {
+      alert('This position does not qualify for recovery. Loss must exceed the trigger threshold.');
+      return;
+    }
+    if ((selectedPlan.ladder ?? []).length === 0) {
+      alert('No recovery ladder available for this position.');
+      return;
+    }
+    try {
+      const drafts = orderDraftGenerator(selectedPlan, true);
+      if (!drafts || drafts.length === 0) {
+        alert('Could not generate draft orders. Please check the recovery plan configuration.');
+        return;
+      }
+      setDraftOrders(drafts);
+    } catch (error) {
+      alert(`Failed to generate draft orders: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   return (
@@ -463,9 +488,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  loadDemoData({ includeRecoveryPlan: true });
-                  window.location.reload();
+                onClick={async () => {
+                  if (!window.confirm('This will reload the page and load demo data. Continue?')) {
+                    return;
+                  }
+                  try {
+                    await loadDemoData({ includeRecoveryPlan: true });
+                    window.location.reload();
+                  } catch (error) {
+                    alert(`Failed to load demo data: ${error instanceof Error ? error.message : String(error)}`);
+                  }
                 }}
                 className="px-4 py-2 border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 font-medium transition-all duration-200 shadow-sm hover:shadow-md"
                 title="Load demo data for testing"
@@ -1250,20 +1282,24 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </button>
             {setActivePage && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setActivePage('Dashboard')}
-                  className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
-                >
-                  Check Market Events for {selected.holding.symbol ?? 'holding'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActivePage('Dashboard')}
-                  className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
-                >
-                  View in Wealth Ultra
-                </button>
+                {setActivePage && (
+                  <button
+                    type="button"
+                    onClick={() => setActivePage('Market Events')}
+                    className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
+                  >
+                    Check Market Events for {selected.holding.symbol ?? 'holding'}
+                  </button>
+                )}
+                {onOpenWealthUltra && (
+                  <button
+                    type="button"
+                    onClick={onOpenWealthUltra}
+                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
+                  >
+                    View in Wealth Ultra
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -1272,7 +1308,55 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
       {draftOrders && draftOrders.length > 0 && (
         <SectionCard title="Draft orders (export to broker)" className="space-y-3">
-          <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    ['Type', 'Symbol', 'Quantity', 'Limit Price', 'Currency', 'Label'].join(','),
+                    ...draftOrders.map(d => [
+                      d.type,
+                      d.symbol,
+                      d.qty,
+                      d.limitPrice,
+                      selected?.currency ?? 'USD',
+                      d.label || ''
+                    ].join(','))
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `recovery-orders-${selected?.holding.symbol ?? 'orders'}-${new Date().toISOString().split('T')[0]}.csv`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = draftOrders.map((d, i) => 
+                    `${i + 1}. ${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`
+                  ).join('\n');
+                  navigator.clipboard.writeText(text).then(() => {
+                    alert('Orders copied to clipboard!');
+                  }).catch(() => {
+                    alert('Failed to copy to clipboard. Please copy manually.');
+                  });
+                }}
+                className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+              >
+                Copy All
+              </button>
+            </div>
+          </div>
           <div className="space-y-2">
             {draftOrders.map((d, i) => (
               <div
@@ -1290,6 +1374,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   })}
                 </span>
                 {d.label && <span className="text-slate-500">({d.label})</span>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
+                    navigator.clipboard.writeText(text).then(() => {
+                      // Visual feedback could be added here
+                    }).catch(() => {
+                      alert('Failed to copy to clipboard.');
+                    });
+                  }}
+                  className="ml-auto px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
+                  title="Copy this order"
+                >
+                  Copy
+                </button>
               </div>
             ))}
           </div>

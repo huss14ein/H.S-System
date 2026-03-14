@@ -289,8 +289,14 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         });
         const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
         const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
+        // Use weighted average if we have data, otherwise use simple average of non-zero months
         const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
-        const incomePlanned = incomeActuals.map((actual) => actual > 0 ? actual : incomeAvg);
+        // For months with no data, use average; for months with data, use actual (more accurate)
+        const incomePlanned = incomeActuals.map((actual) => {
+            if (actual > 0) return actual;
+            // If we have historical data, use average; otherwise use 0 to avoid overestimation
+            return incomeMonthsWithData >= 3 ? incomeAvg : 0;
+        });
         // Recurring income: include both auto and manual so plan reflects full expected recurring (actuals already in Transactions)
         const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'income').reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
         for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
@@ -524,8 +530,22 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [processedPlanData]);
 
     const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
+        // Validations
+        if (!Number.isFinite(newValue) || newValue < 0) {
+            alert('Value must be a positive number.');
+            return;
+        }
+        if (monthIndex < 0 || monthIndex > 11) {
+            alert('Invalid month index.');
+            return;
+        }
+        if (rowIndex < 0 || rowIndex >= planData.length) {
+            alert('Invalid row index.');
+            return;
+        }
+        
         const newData = [...planData];
-        newData[rowIndex].monthly_planned[monthIndex] = newValue;
+        newData[rowIndex].monthly_planned[monthIndex] = Math.max(0, newValue);
         setPlanData(newData);
         setIsEditing(null);
     }
@@ -912,6 +932,102 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             </div>
 
              <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
+
+             {/* Household Engine Buckets Summary */}
+             {(() => {
+                 const currentMonthIndex = new Date().getMonth();
+                 const currentMonthResult = householdBudgetEngine.months[currentMonthIndex];
+                 const buckets = currentMonthResult?.buckets ?? {};
+                 const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
+                 
+                 if (!hasBuckets) return null;
+                 
+                 const bucketToCategoryMap: Record<string, string> = {
+                     // Savings
+                     'emergencySavings': 'Emergency Savings',
+                     'reserveSavings': 'Reserve Savings',
+                     'goalSavings': 'Goal Savings',
+                     'kidsFutureSavings': 'Kids Future',
+                     'retirementSavings': 'Retirement',
+                     'investing': 'Investing',
+                     // Monthly Expenses (KSA)
+                     'housing': 'Housing Rent',
+                     'housingSemiAnnual': 'Housing Rent (6-month)',
+                     'groceries': 'Groceries & Supermarket',
+                     'food': 'Groceries & Supermarket',
+                     'utilities': 'Utilities (SEC/NWC)',
+                     'telecommunications': 'Telecommunications',
+                     'transportation': 'Transportation',
+                     'domesticHelp': 'Domestic Help',
+                     'diningEntertainment': 'Dining & Entertainment',
+                     'entertainment': 'Dining & Entertainment',
+                     'insuranceCoPay': 'Insurance Co-pay',
+                     'health': 'Insurance Co-pay',
+                     'debtLoans': 'Debt/Loans',
+                     'remittances': 'Remittances',
+                     'pocketMoney': 'Pocket Money',
+                     'personalCare': 'Personal Care',
+                     'shopping': 'Shopping',
+                     'miscellaneous': 'Miscellaneous',
+                     // Semi-Annual
+                     'schoolTuition': 'School Tuition',
+                     'householdMaintenance': 'Household Maintenance',
+                     // Annual (Sinking Funds)
+                     'iqamaRenewal': 'Iqama Renewal',
+                     'dependentFees': 'Dependent Fees',
+                     'exitReentryVisa': 'Exit/Re-entry Visa',
+                     'vehicleInsurance': 'Vehicle Insurance',
+                     'istimara': 'Istimara (Registration)',
+                     'fahas': 'Fahas (MVPI)',
+                     'schoolUniformsBooks': 'School Uniforms & Books',
+                     'zakat': 'Zakat',
+                     'annualVacation': 'Annual Vacation',
+                     // Weekly
+                     'freshProduce': 'Fresh Produce',
+                     'householdHelpHourly': 'Household Help (Hourly)',
+                     'leisureWeekly': 'Leisure (Weekly)',
+                 };
+                 
+                 const savingsTotal = (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0);
+                 const expensesTotal = (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0);
+                 
+                 return (
+                     <div className="bg-white shadow rounded-lg p-4 mb-4">
+                         <h3 className="text-lg font-bold text-slate-900 mb-3">Current Month Budget Allocations</h3>
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                             <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                                 <p className="text-xs uppercase text-emerald-600 mb-1">Total Savings</p>
+                                 <p className="text-2xl font-bold text-emerald-900">{formatCurrencyString(savingsTotal, { digits: 0 })}</p>
+                             </div>
+                             <div className="bg-rose-50 rounded-lg p-3 border border-rose-200">
+                                 <p className="text-xs uppercase text-rose-600 mb-1">Total Expenses</p>
+                                 <p className="text-2xl font-bold text-rose-900">{formatCurrencyString(expensesTotal, { digits: 0 })}</p>
+                             </div>
+                             <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                                 <p className="text-xs uppercase text-blue-600 mb-1">Income</p>
+                                 <p className="text-2xl font-bold text-blue-900">{formatCurrencyString(currentMonthResult?.incomePlanned ?? 0, { digits: 0 })}</p>
+                             </div>
+                         </div>
+                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                             {Object.entries(buckets)
+                                 .filter(([_, amount]) => (amount as number) > 0)
+                                 .map(([bucketKey, amount]) => {
+                                     const displayName = bucketToCategoryMap[bucketKey] || bucketKey;
+                                     const isSavings = bucketKey.includes('Savings') || bucketKey === 'investing';
+                                     return (
+                                         <div key={bucketKey} className={`rounded-lg border p-2 ${isSavings ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                                             <p className="text-[10px] uppercase text-slate-600 truncate">{displayName}</p>
+                                             <p className="font-bold text-slate-900 text-sm mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                         </div>
+                                     );
+                                 })}
+                         </div>
+                         <p className="text-xs text-slate-500 mt-3">
+                             These allocations are calculated by the household budget engine based on your income, expenses, goals, and profile settings.
+                         </p>
+                     </div>
+                 );
+             })()}
 
              <SinkingFunds />
             

@@ -17,7 +17,22 @@ import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngin
 
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const toMonthlyRate = (annualPct: number) => Math.pow(1 + annualPct / 100, 1 / 12) - 1;
+const toMonthlyRate = (annualPct: number) => {
+    // Convert annual percentage to monthly rate using compound interest formula
+    // Works correctly for both positive and negative rates
+    // 
+    // Formula: (1 + r)^(1/12) - 1 where r is the annual rate as a decimal
+    // 
+    // Examples:
+    // - For -20% annual: (1 - 0.20)^(1/12) - 1 = 0.8^(1/12) - 1 ≈ -0.0184 (-1.84% monthly)
+    //   Verification: (1 - 0.0184)^12 ≈ 0.8 (80% retention = 20% decline) ✓
+    // - For +20% annual: (1 + 0.20)^(1/12) - 1 = 1.2^(1/12) - 1 ≈ 0.0153 (+1.53% monthly)
+    //   Verification: (1 + 0.0153)^12 ≈ 1.2 (120% = 20% growth) ✓
+    //
+    // NOTE: Do NOT use Math.abs() for negative rates - it produces incorrect compounding.
+    // The formula (1 + r)^(1/12) - 1 correctly handles negative r values.
+    return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
+};
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -40,8 +55,15 @@ const Forecast: React.FC = () => {
         });
 
         const values = Array.from(monthlyNet.values());
-        if (values.length === 0) {
-            return { averageMonthlySavings: 7500, medianMonthlySavings: 7500, monthlyStdDev: 0, consistencyScore: 0, incomeGrowthSuggestion: 3 };
+        if (values.length === 0 || values.every(v => v === 0)) {
+            // No transaction data available - return neutral defaults with a note
+            return { 
+                averageMonthlySavings: 0, 
+                medianMonthlySavings: 0, 
+                monthlyStdDev: 0, 
+                consistencyScore: 0, 
+                incomeGrowthSuggestion: 3 
+            };
         }
 
         const averageMonthlySavings = values.reduce((sum, v) => sum + v, 0) / values.length;
@@ -97,9 +119,10 @@ const Forecast: React.FC = () => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
         const investments = data?.investments ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const netWorth = totalAssets + totalLiabilities;
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivables = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
+        const netWorth = totalAssets - totalLiabilities + totalReceivables;
         const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };
     }, [data, exchangeRate]);
@@ -149,12 +172,14 @@ const Forecast: React.FC = () => {
             for (let i = 0; i < horizon * 12; i++) {
                 const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
                 
-                if (monthDate.getMonth() === 0 && i > 0) {
-                    currentMonthlySavings *= (1 + clamp(incomeGrowth, -20, 40) / 100);
+                // Apply income growth monthly (more accurate than yearly)
+                const monthlyIncomeGrowth = toMonthlyRate(clamp(incomeGrowth, -20, 40));
+                if (i > 0) {
+                    currentMonthlySavings *= (1 + monthlyIncomeGrowth);
                 }
 
                 const normalizedMonthlySavings = Math.max(0, currentMonthlySavings);
-                const monthlyGrowthRate = toMonthlyRate(clamp(investmentGrowth, -40, 40) );
+                const monthlyGrowthRate = toMonthlyRate(clamp(investmentGrowth, -40, 40));
 
                 currentInvestmentValue += normalizedMonthlySavings;
                 const investmentGain = currentInvestmentValue * monthlyGrowthRate;
@@ -179,7 +204,7 @@ const Forecast: React.FC = () => {
 
             setForecastData(results);
             if (results.length > 0) {
-                const finalEntry = results[results.length-1];
+                const finalEntry = results[results.length - 1];
                 const computedSummary = {
                     projectedNetWorth: finalEntry["Net Worth"],
                     projectedInvestments: finalEntry["Investment Value"],

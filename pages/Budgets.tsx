@@ -34,6 +34,15 @@ import {
     detectAnomalies,
     detectSeasonality,
 } from '../services/householdBudgetAnalytics';
+import {
+    autoCategorizeExpense,
+    generateBudgetRecommendations,
+    predictFutureExpenses,
+    learnAndAutoAdjust,
+    type AICategorySuggestion,
+    type BudgetRecommendation,
+    type PredictiveInsight,
+} from '../services/aiBudgetAutomation';
 
 
 
@@ -163,7 +172,7 @@ interface BudgetsProps {
 }
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
-    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, updateTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
@@ -190,7 +199,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
-    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true });
+    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true, buckets: true, bucketComparison: false, aiAutomation: true });
+    const [selectedBucketMonth, setSelectedBucketMonth] = useState<number | null>(currentMonth);
+    const [bucketViewMode, setBucketViewMode] = useState<'current' | 'all' | 'comparison'>('current');
+    const [aiAutoAdjustEnabled, setAiAutoAdjustEnabled] = useState(false);
+    const [aiRecommendations, setAiRecommendations] = useState<BudgetRecommendation[]>([]);
+    const [aiPredictions, setAiPredictions] = useState<PredictiveInsight[]>([]);
+    const [uncategorizedTransactions, setUncategorizedTransactions] = useState<AICategorySuggestion[]>([]);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -352,6 +368,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
+                config: { ...engineConfig, profile: engineProfile },
             }
         );
         const result = buildHouseholdBudgetPlan(input);
@@ -387,6 +404,81 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+
+    // AI Automation: Auto-categorize uncategorized transactions (debounced)
+    React.useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            const uncategorized = (data?.transactions ?? []).filter(
+                t => t.type === 'expense' && !t.budgetCategory && new Date(t.date).getFullYear() === currentYear
+            );
+            
+            if (uncategorized.length > 0 && !isAnalyzing) {
+                setIsAnalyzing(true);
+                Promise.all(
+                    uncategorized.slice(0, 10).map(tx => 
+                        autoCategorizeExpense(tx, data?.transactions ?? [], data?.budgets ?? [])
+                            .catch(() => null)
+                    )
+                ).then(suggestions => {
+                    setUncategorizedTransactions(suggestions.filter((s): s is AICategorySuggestion => s !== null));
+                    setIsAnalyzing(false);
+                });
+            }
+        }, 1000); // Debounce by 1 second
+        
+        return () => clearTimeout(timeoutId);
+    }, [data?.transactions, data?.budgets, currentYear, isAnalyzing]);
+
+    // AI Automation: Generate budget recommendations (debounced)
+    React.useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            if (data?.transactions && data?.budgets && !isAnalyzing) {
+                setIsAnalyzing(true);
+                generateBudgetRecommendations(
+                    data.transactions,
+                    data.budgets,
+                    currentMonth,
+                    currentYear
+                ).then(recs => {
+                    setAiRecommendations(recs);
+                    setIsAnalyzing(false);
+                }).catch(() => setIsAnalyzing(false));
+            }
+        }, 1500); // Debounce by 1.5 seconds
+        
+        return () => clearTimeout(timeoutId);
+    }, [data?.transactions, data?.budgets, currentMonth, currentYear, isAnalyzing]);
+
+    // AI Automation: Predict future expenses
+    React.useEffect(() => {
+        if (data?.transactions && data?.budgets && !isAnalyzing) {
+            predictFutureExpenses(data.transactions, data.budgets, 3)
+                .then(predictions => setAiPredictions(predictions))
+                .catch(() => {});
+        }
+    }, [data?.transactions, data?.budgets]);
+
+    // AI Automation: Auto-adjust budgets if enabled
+    React.useEffect(() => {
+        if (aiAutoAdjustEnabled && data?.transactions && data?.budgets && !isAnalyzing) {
+            setIsAnalyzing(true);
+            learnAndAutoAdjust(
+                data.transactions,
+                data.budgets,
+                currentMonth,
+                currentYear
+            ).then(adjustedBudgets => {
+                // Apply adjustments (only if significantly different)
+                adjustedBudgets.forEach(adjusted => {
+                    const original = data.budgets.find(b => b.id === adjusted.id);
+                    if (original && Math.abs(original.limit - adjusted.limit) > original.limit * 0.1) {
+                        updateBudget(adjusted);
+                    }
+                });
+                setIsAnalyzing(false);
+            }).catch(() => setIsAnalyzing(false));
+        }
+    }, [aiAutoAdjustEnabled, data?.transactions, data?.budgets, currentMonth, currentYear, isAnalyzing, updateBudget]);
 
     React.useEffect(() => {
         const riskProfile = String(data?.settings?.riskProfile ?? '').toLowerCase();
@@ -618,7 +710,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+            // More accurate conversion: account for actual days/weeks in the year
+            const currentYearDays = new Date(currentYear, 1, 29).getMonth() === 1 ? 366 : 365; // Check for leap year
+            const toYearly = (b: Budget) => {
+                if (b.period === 'yearly') return b.limit;
+                if (b.period === 'weekly') return b.limit * (currentYearDays / 7); // More accurate: weeks in actual year
+                if (b.period === 'daily') return b.limit * currentYearDays;
+                return b.limit * 12; // Monthly
+            };
             scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
 
             return Array.from(yearlyLimitByCategory.entries())
@@ -645,7 +744,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
+                // More accurate period conversion accounting for actual year length
+                const currentYearDays = new Date(currentYear, 1, 29).getMonth() === 1 ? 366 : 365;
+                const monthlyEquivalent = budget.period === 'yearly' 
+                    ? budget.limit / 12 
+                    : budget.period === 'weekly' 
+                        ? budget.limit * (currentYearDays / 7 / 12) // More accurate: weeks in year / 12
+                        : budget.period === 'daily' 
+                            ? budget.limit * (currentYearDays / 12) // More accurate: days in year / 12
+                            : budget.limit;
                 const spent = spending.get(budget.category) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -860,11 +967,241 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     };
 
     const handleSaveBudget = (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
+        // Validations
+        if (budget.limit <= 0) {
+            alert('Budget limit must be greater than zero.');
+            return;
+        }
+        if (!budget.category || budget.category.trim() === '') {
+            alert('Budget category is required.');
+            return;
+        }
+        if (budget.month < 1 || budget.month > 12) {
+            alert('Month must be between 1 and 12.');
+            return;
+        }
+        if (budget.year < 2000 || budget.year > 2100) {
+            alert('Year must be a valid year.');
+            return;
+        }
+        
+        // Check for duplicate category in same month/year (unless editing same budget)
+        if (!isEditing) {
+            const existing = (data?.budgets ?? []).find(
+                b => b.category === budget.category && 
+                b.month === budget.month && 
+                b.year === budget.year &&
+                (budget.period === 'yearly' ? b.period === 'yearly' : b.period !== 'yearly')
+            );
+            if (existing) {
+                if (!confirm(`A budget for "${budget.category}" already exists for ${MONTHS[budget.month - 1]} ${budget.year}. Overwrite it?`)) {
+                    return;
+                }
+                updateBudget({ ...existing, ...budget });
+                return;
+            }
+        }
+        
         if (isEditing && budgetToEdit) {
             updateBudget({ ...budgetToEdit, ...budget });
         } else {
             addBudget(budget);
         }
+    };
+
+    const handleSyncHouseholdBudgets = (targetMonth?: number) => {
+        const monthToSync = targetMonth ?? currentMonth;
+        const monthIndex = monthToSync - 1;
+        const monthResult = householdBudgetEngine.months[monthIndex];
+        
+        if (!monthResult || !monthResult.buckets) {
+            alert(`No budget buckets available for ${MONTHS[monthIndex]} ${currentYear} from the household engine.`);
+            return;
+        }
+
+        // Map household engine bucket names to budget categories (KSA-specific)
+        const bucketToCategoryMap: Record<string, string> = {
+            // Savings
+            'emergencySavings': 'Savings & Investments',
+            'reserveSavings': 'Savings & Investments',
+            'goalSavings': 'Savings & Investments',
+            'kidsFutureSavings': 'Education',
+            'retirementSavings': 'Savings & Investments',
+            'investing': 'Savings & Investments',
+            // Monthly Expenses
+            'housing': 'Housing',
+            'housingSemiAnnual': 'Housing',
+            'groceries': 'Food',
+            'food': 'Food',
+            'utilities': 'Utilities',
+            'telecommunications': 'Utilities',
+            'transportation': 'Transportation',
+            'domesticHelp': 'Miscellaneous',
+            'diningEntertainment': 'Entertainment',
+            'entertainment': 'Entertainment',
+            'insuranceCoPay': 'Health',
+            'health': 'Health',
+            'debtLoans': 'Miscellaneous',
+            'remittances': 'Miscellaneous',
+            'pocketMoney': 'Miscellaneous',
+            'personalCare': 'Personal Care',
+            'shopping': 'Shopping',
+            'miscellaneous': 'Miscellaneous',
+            // Semi-Annual
+            'schoolTuition': 'Education',
+            'householdMaintenance': 'Miscellaneous',
+            // Annual (Sinking Funds)
+            'iqamaRenewal': 'Miscellaneous',
+            'dependentFees': 'Miscellaneous',
+            'exitReentryVisa': 'Miscellaneous',
+            'vehicleInsurance': 'Miscellaneous',
+            'istimara': 'Miscellaneous',
+            'fahas': 'Miscellaneous',
+            'schoolUniformsBooks': 'Education',
+            'zakat': 'Miscellaneous',
+            'annualVacation': 'Entertainment',
+            // Weekly
+            'freshProduce': 'Food',
+            'householdHelpHourly': 'Miscellaneous',
+            'leisureWeekly': 'Entertainment',
+        };
+
+        const buckets = monthResult.buckets;
+        const existingBudgets = (data?.budgets ?? []).filter(
+            b => b.year === currentYear && b.month === monthToSync
+        );
+
+        // Preview changes
+        const changes: Array<{ action: 'create' | 'update' | 'skip'; category: string; amount: number; existing?: number }> = [];
+        
+        Object.entries(buckets).forEach(([bucketKey, amount]) => {
+            if (!amount || amount <= 0) return;
+
+            const category = bucketToCategoryMap[bucketKey] || 'Miscellaneous';
+            const existingBudget = existingBudgets.find(b => b.category === category);
+
+            if (existingBudget) {
+                if (Math.abs(existingBudget.limit - amount) > 0.01) {
+                    changes.push({ action: 'update', category, amount, existing: existingBudget.limit });
+                } else {
+                    changes.push({ action: 'skip', category, amount, existing: existingBudget.limit });
+                }
+            } else {
+                changes.push({ action: 'create', category, amount });
+            }
+        });
+
+        // Show preview and confirm
+        const createCount = changes.filter(c => c.action === 'create').length;
+        const updateCount = changes.filter(c => c.action === 'update').length;
+        const skipCount = changes.filter(c => c.action === 'skip').length;
+
+        const previewMessage = `Preview for ${MONTHS[monthIndex]} ${currentYear}:\n\n` +
+            `• ${createCount} new budgets will be created\n` +
+            `• ${updateCount} budgets will be updated\n` +
+            `• ${skipCount} budgets will remain unchanged\n\n` +
+            `Proceed with sync?`;
+
+        if (!confirm(previewMessage)) {
+            return;
+        }
+
+        // Apply changes
+        let syncedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+
+        Object.entries(buckets).forEach(([bucketKey, amount]) => {
+            if (!amount || amount <= 0) return;
+
+            const category = bucketToCategoryMap[bucketKey] || 'Miscellaneous';
+            const existingBudget = existingBudgets.find(b => b.category === category);
+
+            if (existingBudget) {
+                if (Math.abs(existingBudget.limit - amount) > 0.01) {
+                    updateBudget({
+                        ...existingBudget,
+                        limit: amount,
+                        tier: bucketKey.includes('Savings') || bucketKey === 'investing' ? 'Core' : 
+                              bucketKey === 'housing' || bucketKey === 'utilities' || bucketKey === 'food' ? 'Core' : 
+                              'Supporting',
+                    });
+                    updatedCount++;
+                } else {
+                    skippedCount++;
+                }
+            } else {
+                addBudget({
+                    category,
+                    limit: amount,
+                    month: monthToSync,
+                    year: currentYear,
+                    period: 'monthly',
+                    tier: bucketKey.includes('Savings') || bucketKey === 'investing' ? 'Core' : 
+                          bucketKey === 'housing' || bucketKey === 'utilities' || bucketKey === 'food' ? 'Core' : 
+                          'Supporting',
+                });
+                syncedCount++;
+            }
+        });
+
+        const message = `Successfully synced household engine budgets for ${MONTHS[monthIndex]} ${currentYear}:\n` +
+            `• ${syncedCount} new budgets created\n` +
+            `• ${updatedCount} budgets updated\n` +
+            `• ${skippedCount} budgets unchanged`;
+        alert(message);
+    };
+
+    const handleExportBuckets = () => {
+        const bucketData = householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => {
+            const buckets = month.buckets ?? {};
+            return {
+                month: MONTHS[idx],
+                monthNumber: idx + 1,
+                income: month.incomePlanned,
+                ...buckets,
+                emergencySavings: buckets.emergencySavings ?? 0,
+                reserveSavings: buckets.reserveSavings ?? 0,
+                goalSavings: buckets.goalSavings ?? 0,
+                retirementSavings: buckets.retirementSavings ?? 0,
+                investing: buckets.investing ?? 0,
+                housing: buckets.housing ?? 0,
+                food: buckets.food ?? 0,
+                transportation: buckets.transportation ?? 0,
+                health: buckets.health ?? 0,
+                totalSavings: (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0),
+                totalExpenses: (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0),
+            };
+        });
+
+        const csv = [
+            ['Month', 'Income', 'Emergency Savings', 'Reserve Savings', 'Goal Savings', 'Retirement', 'Investing', 'Housing', 'Food', 'Transportation', 'Health', 'Total Savings', 'Total Expenses'].join(','),
+            ...bucketData.map(row => [
+                row.month,
+                row.income,
+                row.emergencySavings ?? 0,
+                row.reserveSavings ?? 0,
+                row.goalSavings ?? 0,
+                row.retirementSavings ?? 0,
+                row.investing ?? 0,
+                row.housing ?? 0,
+                row.food ?? 0,
+                row.transportation ?? 0,
+                row.health ?? 0,
+                row.totalSavings,
+                row.totalExpenses,
+            ].join(','))
+        ].join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `household-budget-buckets-${currentYear}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
     };
 
     const handleShareBudget = async () => {
@@ -936,14 +1273,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
         }
-        const now = new Date(currentYear, currentMonth - 1, 1);
+        // Use UTC dates to avoid timezone issues with month boundaries
+        const now = new Date(Date.UTC(currentYear, currentMonth - 1, 1, 0, 0, 0, 0));
         const threeMonthsAgo = new Date(now);
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        threeMonthsAgo.setUTCMonth(threeMonthsAgo.getUTCMonth() - 3);
 
         const byCategory = new Map<string, { total: number; months: Set<string> }>();
         allTx.forEach((t) => {
-            const d = new Date(t.date);
-            if (d < threeMonthsAgo || d > now) return;
+            // Parse and normalize transaction date
+            const txDateStr = t.date.split('T')[0];
+            const [txYear, txMonth, txDay] = txDateStr.split('-').map(Number);
+            const d = new Date(Date.UTC(txYear, txMonth - 1, txDay, 0, 0, 0, 0));
+            if (d < threeMonthsAgo || d >= now) return;
             const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
@@ -1616,6 +1957,175 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
             <SectionCard title="Auto Household Budget Engine">
                 <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
+                
+                {/* AI Automation Section */}
+                <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                    <button 
+                        type="button" 
+                        onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, aiAutomation: !prev.aiAutomation }))} 
+                        className="w-full flex items-center justify-between text-left"
+                    >
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-purple-700">🤖 AI-Powered Automation</span>
+                            {isAnalyzing && <span className="text-xs text-purple-600 animate-pulse">Analyzing...</span>}
+                        </div>
+                        <span className="text-xs text-purple-500">{engineSectionsOpen.aiAutomation ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.aiAutomation && (
+                        <div className="mt-3 space-y-4">
+                            {/* Auto-Adjustment Toggle */}
+                            <div className="flex items-center justify-between p-3 bg-white rounded-lg border">
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700">Auto-Adjust Budgets</p>
+                                    <p className="text-xs text-slate-500">Automatically learn from spending patterns and adjust budgets</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={aiAutoAdjustEnabled}
+                                        onChange={(e) => setAiAutoAdjustEnabled(e.target.checked)}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                </label>
+                            </div>
+
+                            {/* Uncategorized Transactions */}
+                            {uncategorizedTransactions.length > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-amber-800 mb-2">
+                                        AI Category Suggestions ({uncategorizedTransactions.length})
+                                    </h4>
+                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                        {uncategorizedTransactions.map((suggestion, idx) => (
+                                            <div key={idx} className="bg-white rounded p-2 border border-amber-200">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1">
+                                                        <p className="text-xs font-medium text-slate-700">{suggestion.description}</p>
+                                                        <p className="text-xs text-slate-500 mt-1">
+                                                            Suggested: <span className="font-semibold text-purple-700">{suggestion.suggestedCategory}</span>
+                                                            {suggestion.confidence > 0.7 && <span className="ml-2 text-emerald-600">✓ High confidence</span>}
+                                                        </p>
+                                                        {suggestion.reasoning && (
+                                                            <p className="text-[10px] text-slate-400 mt-1">{suggestion.reasoning}</p>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const tx = data?.transactions.find(t => t.id === suggestion.transactionId);
+                                                            if (tx) {
+                                                                updateTransaction({ ...tx, budgetCategory: suggestion.suggestedCategory });
+                                                                setUncategorizedTransactions(prev => prev.filter(s => s.transactionId !== suggestion.transactionId));
+                                                            }
+                                                        }}
+                                                        className="ml-2 px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                                                    >
+                                                        Apply
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* AI Recommendations */}
+                            {aiRecommendations.length > 0 && (
+                                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-indigo-800 mb-2">
+                                        AI Budget Recommendations ({aiRecommendations.length})
+                                    </h4>
+                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                        {aiRecommendations
+                                            .sort((a, b) => a.priority === 'high' ? -1 : b.priority === 'high' ? 1 : 0)
+                                            .map((rec, idx) => (
+                                                <div key={idx} className={`bg-white rounded p-3 border ${
+                                                    rec.priority === 'high' ? 'border-red-300 bg-red-50' :
+                                                    rec.priority === 'medium' ? 'border-amber-300 bg-amber-50' :
+                                                    'border-indigo-200'
+                                                }`}>
+                                                    <div className="flex items-start justify-between">
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className="text-sm font-semibold text-slate-700">{rec.category}</span>
+                                                                <span className={`text-xs px-2 py-0.5 rounded ${
+                                                                    rec.priority === 'high' ? 'bg-red-100 text-red-700' :
+                                                                    rec.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                                    'bg-indigo-100 text-indigo-700'
+                                                                }`}>
+                                                                    {rec.priority}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-600 mb-1">{rec.reason}</p>
+                                                            <div className="flex items-center gap-4 text-xs">
+                                                                <span className="text-slate-500">
+                                                                    Current: <span className="font-semibold">{formatCurrencyString(rec.currentLimit, { digits: 0 })}</span>
+                                                                </span>
+                                                                <span className="text-indigo-600">
+                                                                    Recommended: <span className="font-semibold">{formatCurrencyString(rec.recommendedLimit, { digits: 0 })}</span>
+                                                                </span>
+                                                                {rec.expectedSavings && (
+                                                                    <span className="text-emerald-600">
+                                                                        Savings: <span className="font-semibold">{formatCurrencyString(rec.expectedSavings, { digits: 0 })}</span>
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const budget = data?.budgets.find(b => 
+                                                                    b.category === rec.category && 
+                                                                    b.month === currentMonth && 
+                                                                    b.year === currentYear
+                                                                );
+                                                                if (budget) {
+                                                                    updateBudget({ ...budget, limit: rec.recommendedLimit });
+                                                                    setAiRecommendations(prev => prev.filter(r => r.category !== rec.category));
+                                                                }
+                                                            }}
+                                                            className="ml-2 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                                                        >
+                                                            Apply
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Predictive Insights */}
+                            {aiPredictions.length > 0 && (
+                                <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
+                                    <h4 className="text-sm font-semibold text-teal-800 mb-2">AI Expense Predictions (Next 3 Months)</h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                        {aiPredictions
+                                            .filter(p => p.confidence > 0.5)
+                                            .slice(0, 9)
+                                            .map((pred, idx) => (
+                                                <div key={idx} className="bg-white rounded p-2 border border-teal-200">
+                                                    <p className="text-xs font-medium text-slate-700">{pred.category}</p>
+                                                    <p className="text-sm font-bold text-teal-900 mt-1">
+                                                        {formatCurrencyString(pred.predictedAmount, { digits: 0 })}
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-500 mt-1">
+                                                        Month {pred.month} • {MONTHS[pred.month - 1]} • {(pred.confidence * 100).toFixed(0)}% confidence
+                                                    </p>
+                                                    {pred.factors.length > 0 && (
+                                                        <p className="text-[10px] text-slate-400 mt-1">
+                                                            {pred.factors[0]}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editable inputs</p>
                     <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -1628,6 +2138,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             </select>
                         </label>
                         <button type="button" className="btn-outline text-xs" onClick={copyPriorMonthDefaults}>Copy prior month defaults</button>
+                        <button 
+                            type="button" 
+                            className="btn-primary text-xs" 
+                            onClick={() => handleSyncHouseholdBudgets()}
+                            title="Sync calculated budget buckets from household engine to actual budget entries for the current month"
+                        >
+                            Apply Engine Budgets to {MONTHS[currentMonth - 1]} {currentYear}
+                        </button>
                     </div>
                 </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1637,7 +2155,381 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m: HouseholdMonthResult) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
+                    <button 
+                        type="button" 
+                        onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, buckets: !prev.buckets }))} 
+                        className="w-full flex items-center justify-between text-left"
+                    >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Budget Buckets & Allocations</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.buckets ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.buckets && (
+                        <div className="mt-3 space-y-4">
+                            {/* View Mode Selector */}
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => { setBucketViewMode('current'); setSelectedBucketMonth(currentMonth); }}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'current' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    Current Month
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketViewMode('all')}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'all' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    All Months
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBucketViewMode('comparison')}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border ${
+                                        bucketViewMode === 'comparison' 
+                                            ? 'bg-primary text-white border-primary' 
+                                            : 'bg-white border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    Comparison View
+                                </button>
+                                {bucketViewMode === 'current' && (
+                                    <>
+                                        <button 
+                                            type="button" 
+                                            className="btn-primary text-xs px-3 py-1.5 ml-auto" 
+                                            onClick={() => handleSyncHouseholdBudgets(selectedBucketMonth ?? currentMonth)}
+                                            title="Create or update budget entries from these calculated buckets"
+                                        >
+                                            Apply to Budgets
+                                        </button>
+                                        <button 
+                                            type="button" 
+                                            className="btn-outline text-xs px-3 py-1.5" 
+                                            onClick={handleExportBuckets}
+                                            title="Export all bucket data to CSV"
+                                        >
+                                            Export CSV
+                                        </button>
+                                    </>
+                                )}
+                                {bucketViewMode === 'all' && (
+                                    <button 
+                                        type="button" 
+                                        className="btn-outline text-xs px-3 py-1.5 ml-auto" 
+                                        onClick={handleExportBuckets}
+                                        title="Export all bucket data to CSV"
+                                    >
+                                        Export CSV
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Current Month View */}
+                            {bucketViewMode === 'current' && (() => {
+                                const monthIndex = (selectedBucketMonth ?? currentMonth) - 1;
+                                const monthResult = householdBudgetEngine.months[monthIndex];
+                                const buckets = monthResult?.buckets ?? {};
+                                const hasBuckets = Object.keys(buckets).length > 0 && Object.values(buckets).some((v: any) => v > 0);
+                                
+                                if (!hasBuckets) {
+                                    return (
+                                        <div className="text-center py-8 text-slate-500">
+                                            <p>No bucket data available for {MONTHS[monthIndex]} {currentYear}</p>
+                                        </div>
+                                    );
+                                }
+
+                                const bucketToCategoryMap: Record<string, { name: string; type: 'savings' | 'expense'; color: string }> = {
+                                    'emergencySavings': { name: 'Emergency Savings', type: 'savings', color: 'bg-amber-100 border-amber-300 text-amber-800' },
+                                    'reserveSavings': { name: 'Reserve Savings', type: 'savings', color: 'bg-blue-100 border-blue-300 text-blue-800' },
+                                    'goalSavings': { name: 'Goal Savings', type: 'savings', color: 'bg-indigo-100 border-indigo-300 text-indigo-800' },
+                                    'kidsFutureSavings': { name: 'Kids Future', type: 'savings', color: 'bg-purple-100 border-purple-300 text-purple-800' },
+                                    'retirementSavings': { name: 'Retirement', type: 'savings', color: 'bg-emerald-100 border-emerald-300 text-emerald-800' },
+                                    'investing': { name: 'Investing', type: 'savings', color: 'bg-teal-100 border-teal-300 text-teal-800' },
+                                    'housing': { name: 'Housing', type: 'expense', color: 'bg-rose-100 border-rose-300 text-rose-800' },
+                                    'utilities': { name: 'Utilities', type: 'expense', color: 'bg-orange-100 border-orange-300 text-orange-800' },
+                                    'food': { name: 'Food', type: 'expense', color: 'bg-yellow-100 border-yellow-300 text-yellow-800' },
+                                    'transportation': { name: 'Transportation', type: 'expense', color: 'bg-cyan-100 border-cyan-300 text-cyan-800' },
+                                    'health': { name: 'Health', type: 'expense', color: 'bg-red-100 border-red-300 text-red-800' },
+                                    'personalCare': { name: 'Personal Care', type: 'expense', color: 'bg-pink-100 border-pink-300 text-pink-800' },
+                                    'entertainment': { name: 'Entertainment', type: 'expense', color: 'bg-violet-100 border-violet-300 text-violet-800' },
+                                    'shopping': { name: 'Shopping', type: 'expense', color: 'bg-slate-100 border-slate-300 text-slate-800' },
+                                    'miscellaneous': { name: 'Miscellaneous', type: 'expense', color: 'bg-gray-100 border-gray-300 text-gray-800' },
+                                };
+
+                                const savingsBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'savings');
+                                const expenseBuckets = Object.entries(buckets).filter(([key]) => 
+                                    bucketToCategoryMap[key]?.type === 'expense'
+                                );
+                                const totalSavings = savingsBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
+                                const totalExpenses = expenseBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
+                                const income = monthResult?.incomePlanned ?? 0;
+                                const totalAllocated = totalSavings + totalExpenses;
+
+                                return (
+                                    <div className="space-y-4">
+                                        {/* Month Selector */}
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs text-slate-600">View Month:</label>
+                                            <select 
+                                                value={selectedBucketMonth ?? currentMonth} 
+                                                onChange={(e) => setSelectedBucketMonth(Number(e.target.value))}
+                                                className="text-xs border rounded px-2 py-1"
+                                            >
+                                                {MONTHS.map((name, idx) => (
+                                                    <option key={idx} value={idx + 1}>{name} {currentYear}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Summary Cards */}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div className="rounded-lg border p-3 bg-slate-50">
+                                                <p className="text-[10px] uppercase text-slate-500">Income</p>
+                                                <p className="font-bold text-slate-900 text-lg">{formatCurrencyString(income, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-rose-50">
+                                                <p className="text-[10px] uppercase text-rose-600">Expenses</p>
+                                                <p className="font-bold text-rose-900 text-lg">{formatCurrencyString(totalExpenses, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-emerald-50">
+                                                <p className="text-[10px] uppercase text-emerald-600">Savings</p>
+                                                <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(totalSavings, { digits: 0 })}</p>
+                                            </div>
+                                            <div className="rounded-lg border p-3 bg-blue-50">
+                                                <p className="text-[10px] uppercase text-blue-600">Remaining</p>
+                                                <p className="font-bold text-blue-900 text-lg">{formatCurrencyString(income - totalAllocated, { digits: 0 })}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Savings Buckets */}
+                                        {savingsBuckets.length > 0 && (
+                                            <div>
+                                                <h4 className="text-sm font-semibold text-emerald-700 mb-2">Savings & Investments</h4>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                    {savingsBuckets
+                                                        .filter(([_, amount]) => (amount as number) > 0)
+                                                        .map(([bucketKey, amount]) => {
+                                                            const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100 border-slate-300 text-slate-800' };
+                                                            const pct = income > 0 ? ((amount as number) / income * 100).toFixed(1) : '0';
+                                                            return (
+                                                                <div key={bucketKey} className={`rounded-lg border-2 p-3 ${info.color}`}>
+                                                                    <p className="text-[10px] uppercase tracking-wide font-medium truncate">{info.name}</p>
+                                                                    <p className="font-bold text-lg mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                                                    <p className="text-[10px] mt-1 opacity-75">{pct}% of income</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Expense Buckets */}
+                                        {expenseBuckets.length > 0 && (
+                                            <div>
+                                                <h4 className="text-sm font-semibold text-rose-700 mb-2">Expenses</h4>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                    {expenseBuckets
+                                                        .filter(([_, amount]) => (amount as number) > 0)
+                                                        .map(([bucketKey, amount]) => {
+                                                            const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100 border-slate-300 text-slate-800' };
+                                                            const pct = income > 0 ? ((amount as number) / income * 100).toFixed(1) : '0';
+                                                            return (
+                                                                <div key={bucketKey} className={`rounded-lg border-2 p-3 ${info.color}`}>
+                                                                    <p className="text-[10px] uppercase tracking-wide font-medium truncate">{info.name}</p>
+                                                                    <p className="font-bold text-lg mt-1">{formatCurrencyString(amount as number, { digits: 0 })}</p>
+                                                                    <p className="text-[10px] mt-1 opacity-75">{pct}% of income</p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Visual Breakdown */}
+                                        <div className="mt-4 p-4 bg-slate-50 rounded-lg">
+                                            <h4 className="text-sm font-semibold text-slate-700 mb-3">Allocation Breakdown</h4>
+                                            <div className="space-y-2">
+                                                {Object.entries(buckets)
+                                                    .filter(([_, amount]) => (amount as number) > 0)
+                                                    .sort(([_, a], [__, b]) => (b as number) - (a as number))
+                                                    .map(([bucketKey, amount]) => {
+                                                        const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100' };
+                                                        const pct = totalAllocated > 0 ? ((amount as number) / totalAllocated * 100) : 0;
+                                                        const expenseType = bucketToCategoryMap[bucketKey]?.type || 'expense';
+                                                        const typeLabel = expenseType === 'savings' ? ' (Savings)' : ' (Expense)';
+                                                        return (
+                                                            <div key={bucketKey} className="flex items-center gap-2">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center justify-between mb-1">
+                                                                        <span className="text-xs font-medium text-slate-700 truncate">{info.name}{typeLabel}</span>
+                                                                        <span className="text-xs text-slate-600 ml-2">{formatCurrencyString(amount as number, { digits: 0 })}</span>
+                                                                    </div>
+                                                                    <div className="w-full bg-slate-200 rounded-full h-2">
+                                                                        <div 
+                                                                            className={`h-2 rounded-full ${info.color.split(' ')[0]}`}
+                                                                            style={{ width: `${pct}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* All Months View */}
+                            {bucketViewMode === 'all' && (
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-xs border-collapse">
+                                        <thead className="bg-slate-100 sticky top-0">
+                                            <tr>
+                                                <th className="text-left py-2 px-2 border-b font-semibold text-slate-700">Month</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Income</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Emergency</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Reserve</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Goals</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Retirement</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Investing</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Housing</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Food</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Total Savings</th>
+                                                <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Total Expenses</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => {
+                                                const buckets = month.buckets ?? {};
+                                                const totalSavings = (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0);
+                                                const totalExpenses = (buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0);
+                                                return (
+                                                    <tr key={idx} className="border-b hover:bg-slate-50">
+                                                        <td className="py-2 px-2 font-medium">{MONTHS[idx]}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(month.incomePlanned, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.emergencySavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.reserveSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.goalSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.retirementSavings ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.investing ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.housing ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right">{formatCurrencyString(buckets.food ?? 0, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right font-semibold text-emerald-700">{formatCurrencyString(totalSavings, { digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right font-semibold text-rose-700">{formatCurrencyString(totalExpenses, { digits: 0 })}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {/* Comparison View */}
+                            {bucketViewMode === 'comparison' && (
+                                <div className="space-y-4">
+                                    <p className="text-sm text-slate-600">Compare planned bucket allocations vs actual spending by category.</p>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-xs border-collapse">
+                                            <thead className="bg-slate-100">
+                                                <tr>
+                                                    <th className="text-left py-2 px-2 border-b font-semibold text-slate-700">Category</th>
+                                                    {MONTHS.map((month, idx) => (
+                                                        <th key={idx} className="text-right py-2 px-2 border-b font-semibold text-slate-700">{month}</th>
+                                                    ))}
+                                                    <th className="text-right py-2 px-2 border-b font-semibold text-slate-700">Annual Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {['emergencySavings', 'reserveSavings', 'goalSavings', 'housing', 'food', 'transportation'].map((bucketKey) => {
+                                                    const bucketToCategoryMap: Record<string, string> = {
+                                                        'emergencySavings': 'Emergency Savings',
+                                                        'reserveSavings': 'Reserve Savings',
+                                                        'goalSavings': 'Goal Savings',
+                                                        'housing': 'Housing',
+                                                        'food': 'Food',
+                                                        'transportation': 'Transportation',
+                                                    };
+                                                    const annualTotal = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.[bucketKey] as number) ?? 0), 0);
+                                                    return (
+                                                        <tr key={bucketKey} className="border-b hover:bg-slate-50">
+                                                            <td className="py-2 px-2 font-medium">{bucketToCategoryMap[bucketKey] || bucketKey}</td>
+                                                            {householdBudgetEngine.months.map((month: HouseholdMonthResult, idx: number) => (
+                                                                <td key={idx} className="py-2 px-2 text-right">
+                                                                    {formatCurrencyString((month.buckets?.[bucketKey] as number) ?? 0, { digits: 0 })}
+                                                                </td>
+                                                            ))}
+                                                            <td className="py-2 px-2 text-right font-semibold">{formatCurrencyString(annualTotal, { digits: 0 })}</td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                {/* Annual Summary */}
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                    <h4 className="text-sm font-semibold text-emerald-800 mb-3">Annual Budget Summary</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {(() => {
+                            const annualIncome = householdBudgetEngine.months.reduce((sum, m) => sum + (m.incomePlanned ?? 0), 0);
+                            const annualEmergency = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.emergencySavings as number) ?? 0), 0);
+                            const annualReserve = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.reserveSavings as number) ?? 0), 0);
+                            const annualGoals = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.goalSavings as number) ?? 0), 0);
+                            const annualRetirement = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.retirementSavings as number) ?? 0), 0);
+                            const annualInvesting = householdBudgetEngine.months.reduce((sum, m) => sum + ((m.buckets?.investing as number) ?? 0), 0);
+                            const annualTotalSavings = annualEmergency + annualReserve + annualGoals + annualRetirement + annualInvesting;
+                            // Annual housing and food calculated but not displayed - kept for potential future use
+                            const annualTotalExpenses = householdBudgetEngine.months.reduce((sum, m) => {
+                                const buckets = m.buckets ?? {};
+                                return sum + ((buckets.housing ?? 0) + (buckets.food ?? 0) + (buckets.utilities ?? 0) + (buckets.transportation ?? 0) + (buckets.health ?? 0) + (buckets.personalCare ?? 0) + (buckets.entertainment ?? 0) + (buckets.shopping ?? 0) + (buckets.miscellaneous ?? 0));
+                            }, 0);
+                            
+                            return (
+                                <>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-slate-500">Annual Income</p>
+                                        <p className="font-bold text-slate-900 text-lg">{formatCurrencyString(annualIncome, { digits: 0 })}</p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-emerald-600">Total Savings</p>
+                                        <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(annualTotalSavings, { digits: 0 })}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            {annualIncome > 0 ? ((annualTotalSavings / annualIncome) * 100).toFixed(1) : '0'}% of income
+                                        </p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-rose-600">Total Expenses</p>
+                                        <p className="font-bold text-rose-900 text-lg">{formatCurrencyString(annualTotalExpenses, { digits: 0 })}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            {annualIncome > 0 ? ((annualTotalExpenses / annualIncome) * 100).toFixed(1) : '0'}% of income
+                                        </p>
+                                    </div>
+                                    <div className="bg-white rounded-lg border p-3">
+                                        <p className="text-[10px] uppercase text-blue-600">Net Surplus</p>
+                                        <p className="font-bold text-blue-900 text-lg">{formatCurrencyString(annualIncome - annualTotalExpenses - annualTotalSavings, { digits: 0 })}</p>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: any) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
                     </button>
@@ -1716,7 +2608,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Scenarios & recommendations</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.scenarios ? 'Collapse' : 'Expand'}</span>
                     </button>
@@ -1750,7 +2642,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     )}
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
                         <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
                     </button>

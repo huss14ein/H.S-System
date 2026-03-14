@@ -105,13 +105,28 @@ const AddWatchlistItemModal: React.FC<{
     const handleFinalSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const sym = symbol.toUpperCase().trim();
-        if (!sym) return;
+        if (!sym) {
+            alert('Please enter a stock symbol.');
+            return;
+        }
+        if (sym.length < 1 || sym.length > 10) {
+            alert('Symbol must be between 1 and 10 characters.');
+            return;
+        }
         const displayName = name.trim() || sym;
-        onAdd({ symbol: sym, name: displayName });
+        if (displayName.length < 2) {
+            alert('Company name must be at least 2 characters.');
+            return;
+        }
         if (onAddAlert && setAlert && targetPrice.trim()) {
             const price = parseFloat(targetPrice.replace(/,/g, ''));
-            if (Number.isFinite(price) && price > 0) onAddAlert(sym, price, alertCurrency);
+            if (!Number.isFinite(price) || price <= 0) {
+                alert('Target price must be a positive number.');
+                return;
+            }
+            onAddAlert(sym, price, alertCurrency);
         }
+        onAdd({ symbol: sym, name: displayName });
         onClose();
     };
 
@@ -463,6 +478,18 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
+    
+    // Loading state
+    if (!data) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-sm text-slate-600">Loading watchlist data...</p>
+                </div>
+            </div>
+        );
+    }
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
@@ -583,7 +610,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const filteredWatchlist = useMemo(() => {
         const q = searchQuery.trim().toUpperCase();
         const bucketSymbolSet = activeBucket ? new Set((activeBucket.symbols || []).map((s) => s.toUpperCase())) : null;
-        return (data?.watchlist ?? []).filter((item) => {
+        const filtered = (data?.watchlist ?? []).filter((item) => {
             const symbol = (item.symbol || '').toUpperCase();
             const name = (item.name || '').toUpperCase();
             const market = getExchangeAndCurrencyForSymbol(symbol);
@@ -592,6 +619,12 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             const queryOk = !q || symbol.includes(q) || name.includes(q);
             const bucketOk = !bucketSymbolSet || bucketSymbolSet.has(symbol);
             return marketOk && queryOk && bucketOk;
+        });
+        // Sort by symbol name for consistent display
+        return filtered.sort((a, b) => {
+            const symbolA = (a.symbol || '').toUpperCase();
+            const symbolB = (b.symbol || '').toUpperCase();
+            return symbolA.localeCompare(symbolB);
         });
     }, [data?.watchlist, searchQuery, marketFilter, activeBucket]);
 
@@ -608,7 +641,20 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     }, [data?.watchlist, data?.priceAlerts, simulatedPrices]);
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
-    const handleConfirmDelete = () => { if (!itemToDelete) return; if (activeBucket) { handleRemoveFromActiveBucket(itemToDelete.symbol); } else { deleteWatchlistItem(itemToDelete.symbol); } setIsDeleteModalOpen(false); setItemToDelete(null); };
+    const handleConfirmDelete = () => {
+        if (!itemToDelete) return;
+        try {
+            if (activeBucket) {
+                handleRemoveFromActiveBucket(itemToDelete.symbol);
+            } else {
+                deleteWatchlistItem(itemToDelete.symbol);
+            }
+            setIsDeleteModalOpen(false);
+            setItemToDelete(null);
+        } catch (error) {
+            alert(`Failed to delete item: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
     const handleOpenAlertModal = (item: WatchlistItem) => { const sym = item.symbol ?? ''; setStockForAlert({ ...item, symbol: sym, price: simulatedPrices[sym]?.price || 0 }); setIsAlertModalOpen(true); };
 
     const recentTransactions = (data?.investmentTransactions ?? []).slice(0, 10);
@@ -668,8 +714,19 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const handleCreateBucket = () => {
         const name = newBucketName.trim();
         if (!name) {
-            alert('Please enter a name for the new watchlist before adding it.');
+            alert('Please enter a name for the new watchlist bucket.');
             return;
+        }
+        if (name.length < 2 || name.length > 50) {
+            alert('Bucket name must be between 2 and 50 characters.');
+            return;
+        }
+        // Check for duplicate bucket names
+        const existing = watchlistBuckets.find(b => b.name.toLowerCase() === name.toLowerCase());
+        if (existing) {
+            if (!window.confirm(`A bucket named "${name}" already exists. Create anyway?`)) {
+                return;
+            }
         }
         const id = `bucket-${Date.now()}`;
         setWatchlistBuckets((prev) => [...prev, { id, name, currency: newBucketCurrency, symbols: [] }]);
@@ -698,6 +755,47 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const handleAddWatchlistItemWithBucket = (item: WatchlistItem) => {
         addWatchlistItem(item);
         handleAddToActiveBucket(item.symbol);
+    };
+
+    const handleExportWatchlist = () => {
+        const csv = [
+            ['Symbol', 'Name', 'Price', 'Change', 'Change %', 'Target Price', 'Status'].join(','),
+            ...filteredWatchlist.map(item => {
+                const priceInfo = simulatedPrices[item.symbol ?? ''] || { price: 0, change: 0, changePercent: 0 };
+                const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
+                const targetPrice = activeAlerts.length > 0 ? (activeAlerts[0].targetPrice ?? 0) : 0;
+                const market = getExchangeAndCurrencyForSymbol(item.symbol ?? '');
+                const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
+                const displayCurrency: 'USD' | 'SAR' = activeBucket?.currency || priceCurrency;
+                const convertCurrency = (value: number, from: 'USD' | 'SAR', to: 'USD' | 'SAR') => {
+                    if (!Number.isFinite(value)) return 0;
+                    if (from === to) return value;
+                    if (from === 'USD' && to === 'SAR') return value * exchangeRate;
+                    if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+                    return value;
+                };
+                const displayPrice = convertCurrency(priceInfo.price, priceCurrency, displayCurrency);
+                const displayChange = convertCurrency(priceInfo.change, priceCurrency, displayCurrency);
+                return [
+                    item.symbol ?? '',
+                    item.name ?? '',
+                    displayPrice.toFixed(2),
+                    displayChange.toFixed(2),
+                    priceInfo.changePercent.toFixed(2),
+                    targetPrice > 0 ? targetPrice.toFixed(2) : '',
+                    activeAlerts.length > 0 ? 'Has Alert' : 'No Alert'
+                ].join(',');
+            })
+        ].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `watchlist-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
     return (
@@ -753,7 +851,18 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                         <h2 className="text-xl font-semibold text-dark">My Watchlist</h2>
                         <LivePricesStatus variant="inline" className="flex-shrink-0" />
                     </div>
-                    <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
+                    <div className="flex gap-2">
+                        {filteredWatchlist.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleExportWatchlist}
+                                className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 text-sm font-medium"
+                            >
+                                Export CSV
+                            </button>
+                        )}
+                        <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
+                    </div>
                 </div>
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                     <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search symbol or name..." className="input-base max-w-xs" />

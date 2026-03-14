@@ -62,21 +62,84 @@ const PlanTradeModal: React.FC<{
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        
+        // Validations
+        if (!symbol || symbol.trim() === '') {
+            alert('Symbol is required.');
+            return;
+        }
+        
         if (!quantity && !amount) {
             alert("Please specify either a quantity of shares or a total amount in SAR for the trade.");
             return;
         }
         
+        if (quantity && (parseFloat(quantity) <= 0 || !Number.isFinite(parseFloat(quantity)))) {
+            alert('Quantity must be a positive number.');
+            return;
+        }
+        
+        if (amount && (parseFloat(amount) <= 0 || !Number.isFinite(parseFloat(amount)))) {
+            alert('Amount must be a positive number.');
+            return;
+        }
+        
+        if (conditionType === 'price') {
+            const price = parseFloat(targetValue);
+            if (!Number.isFinite(price) || price <= 0) {
+                alert('Target price must be a positive number.');
+                return;
+            }
+            if (price > 1000000) {
+                if (!confirm('Target price seems unusually high. Continue anyway?')) {
+                    return;
+                }
+            }
+        } else {
+            const targetDate = new Date(targetValue);
+            if (isNaN(targetDate.getTime())) {
+                alert('Invalid target date.');
+                return;
+            }
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const selectedDate = new Date(targetDate);
+            selectedDate.setHours(0, 0, 0, 0);
+            if (selectedDate < today) {
+                if (!confirm('Target date is in the past. Continue anyway?')) {
+                    return;
+                }
+            }
+        }
+        
+        // Validate quantity/amount consistency if both are provided
+        if (quantity && amount) {
+            const qty = parseFloat(quantity);
+            const amt = parseFloat(amount);
+            if (qty > 0 && amt > 0) {
+                const impliedPrice = amt / qty;
+                if (conditionType === 'price') {
+                    const targetPrice = parseFloat(targetValue);
+                    const diff = Math.abs(impliedPrice - targetPrice) / targetPrice;
+                    if (diff > 0.1) { // More than 10% difference
+                        if (!confirm(`Quantity and amount imply a price of ${impliedPrice.toFixed(2)}, which differs from target price ${targetPrice.toFixed(2)}. Continue anyway?`)) {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        
         const planData = {
             symbol: symbol.toUpperCase().trim(),
-            name,
+            name: name.trim() || symbol.toUpperCase().trim(),
             tradeType,
             conditionType,
             targetValue: conditionType === 'date' ? new Date(targetValue).getTime() : parseFloat(targetValue),
             quantity: quantity ? parseFloat(quantity) : undefined,
             amount: amount ? parseFloat(amount) : undefined,
             priority,
-            notes,
+            notes: notes.trim(),
             status: 'Planned' as const
         };
         
@@ -253,6 +316,23 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
+    
+    // Loading state
+    if (!data) {
+        return (
+            <PageLayout 
+                title="Investment Plan" 
+                description="Proactively plan your trades based on price or date targets with AI-powered alignment."
+            >
+                <div className="flex items-center justify-center py-12">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-sm text-slate-600">Loading investment plan data...</p>
+                    </div>
+                </div>
+            </PageLayout>
+        );
+    }
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [planToEdit, setPlanToEdit] = useState<PlannedTrade | null>(null);
@@ -275,7 +355,11 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     
     const priorityClass = (p: PlannedTrade['priority']) => ({ High: 'bg-red-100 text-red-800', Medium: 'bg-yellow-100 text-yellow-800', Low: 'bg-blue-100 text-blue-800' }[p]);
     const getPlannedExecutionPrice = (plan: PlannedTrade): number | null => {
-        if ((plan.quantity ?? 0) > 0 && (plan.amount ?? 0) > 0) return (plan.amount ?? 0) / (plan.quantity ?? 1);
+        if ((plan.quantity ?? 0) > 0 && (plan.amount ?? 0) > 0) {
+            const qty = plan.quantity ?? 1;
+            if (qty === 0) return null; // Prevent division by zero
+            return (plan.amount ?? 0) / qty;
+        }
         return plan.conditionType === 'price' ? plan.targetValue : null;
     };
 
@@ -370,38 +454,52 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
 
 
     const handleAddToUniverse = async (plan: PlannedTrade) => {
-        const universe = data?.portfolioUniverse ?? [];
-        const exists = universe.some((t: { ticker?: string }) => (t.ticker ?? '').toUpperCase() === (plan.symbol ?? '').toUpperCase());
-        if (exists) {
+        try {
+            const universe = data?.portfolioUniverse ?? [];
+            const exists = universe.some((t: { ticker?: string }) => (t.ticker ?? '').toUpperCase() === (plan.symbol ?? '').toUpperCase());
+            if (exists) {
+                setAlignmentFilter('All');
+                setSymbolFocus(plan.symbol);
+                return;
+            }
+
+            await addUniverseTicker({
+                ticker: (plan.symbol ?? '').toUpperCase(),
+                name: plan.name ?? (plan.symbol ?? '').toUpperCase(),
+                status: 'Watchlist',
+                max_position_weight: 0.1,
+            });
             setAlignmentFilter('All');
             setSymbolFocus(plan.symbol);
-            return;
+        } catch (error) {
+            alert(`Failed to add ticker to universe: ${error instanceof Error ? error.message : String(error)}`);
         }
-
-        await addUniverseTicker({
-            ticker: (plan.symbol ?? '').toUpperCase(),
-            name: plan.name ?? (plan.symbol ?? '').toUpperCase(),
-            status: 'Watchlist',
-            max_position_weight: 0.1,
-        });
-        setAlignmentFilter('All');
-        setSymbolFocus(plan.symbol);
     };
 
 
     const handleAlignWithAi = async (plan: PlannedTrade, suggestedTradeType: 'buy' | 'sell') => {
         if (plan.tradeType === suggestedTradeType) return;
-        await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
-        setSymbolFocus(plan.symbol);
+        try {
+            await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
+            setSymbolFocus(plan.symbol);
+        } catch (error) {
+            alert(`Failed to update plan: ${error instanceof Error ? error.message : String(error)}`);
+        }
     };
 
     const handleAlignAllConflicts = async () => {
         const conflicts = planAlignment.rows.filter(r => r.aligned === false);
-        for (const { plan, suggestedTradeType } of conflicts) {
-            await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
-        }
-        if (conflicts.length > 0) {
-            setAlignmentFilter('Aligned');
+        if (conflicts.length === 0) return;
+        
+        try {
+            for (const { plan, suggestedTradeType } of conflicts) {
+                await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
+            }
+            if (conflicts.length > 0) {
+                setAlignmentFilter('Aligned');
+            }
+        } catch (error) {
+            alert(`Failed to align some plans: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
 
@@ -460,27 +558,36 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     }, [data?.portfolioUniverse, data?.plannedTrades]);
 
     const handleCreatePlanFromAi = async (candidate: { symbol: string; name: string; status: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
-        const plannedTrades = data?.plannedTrades ?? [];
-        const existing = plannedTrades.some(plan => (plan.symbol ?? '').toUpperCase() === candidate.symbol.toUpperCase());
-        if (existing) {
-            setSymbolFocus(candidate.symbol);
-            return;
-        }
+        try {
+            const plannedTrades = data?.plannedTrades ?? [];
+            const existing = plannedTrades.some(plan => (plan.symbol ?? '').toUpperCase() === candidate.symbol.toUpperCase());
+            if (existing) {
+                setSymbolFocus(candidate.symbol);
+                return;
+            }
 
-        const priceAnchor = simulatedPrices[candidate.symbol]?.price || 1;
-        await addPlannedTrade({
-            symbol: candidate.symbol,
-            name: candidate.name || candidate.symbol,
-            tradeType: candidate.suggestion,
-            conditionType: 'price',
-            targetValue: priceAnchor,
-            quantity: undefined,
-            amount: undefined,
-            priority: candidate.status === 'Quarantine' ? 'High' : 'Medium',
-            notes: `Created from AI rebalance posture (${candidate.status}).`,
-            status: 'Planned',
-        });
-        setSymbolFocus(candidate.symbol);
+            const priceAnchor = simulatedPrices[candidate.symbol]?.price || 1;
+            if (priceAnchor <= 0) {
+                alert(`Cannot create plan: No valid price data for ${candidate.symbol}`);
+                return;
+            }
+
+            await addPlannedTrade({
+                symbol: candidate.symbol,
+                name: candidate.name || candidate.symbol,
+                tradeType: candidate.suggestion,
+                conditionType: 'price',
+                targetValue: priceAnchor,
+                quantity: undefined,
+                amount: undefined,
+                priority: candidate.status === 'Quarantine' ? 'High' : 'Medium',
+                notes: `Created from AI rebalance posture (${candidate.status}).`,
+                status: 'Planned',
+            });
+            setSymbolFocus(candidate.symbol);
+        } catch (error) {
+            alert(`Failed to create plan: ${error instanceof Error ? error.message : String(error)}`);
+        }
     };
 
     const visiblePlans = useMemo(() => {
@@ -840,7 +947,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                     </div>
 
                     <div className="space-y-4 max-h-96 overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-blue-200 scrollbar-track-blue-50">
-                        {planAlignment.filteredRows.slice(0, 10).map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
+                        {planAlignment.filteredRows.map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
                             <div key={`align-${plan.id}`} className={`border-2 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 hover:shadow-lg transition-all duration-300 ${
                                 aligned === true ? 'border-emerald-200 bg-gradient-to-r from-emerald-50/50 to-green-50/30' :
                                 aligned === false ? 'border-rose-200 bg-gradient-to-r from-rose-50/50 to-red-50/30' :

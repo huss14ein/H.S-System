@@ -21,6 +21,18 @@ const DividendTrackerView: React.FC = () => {
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    
+    // Loading state
+    if (!data) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-sm text-slate-600">Loading dividend data...</p>
+                </div>
+            </div>
+        );
+    }
 
     const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
         const dividendTransactions = (data?.investmentTransactions ?? []).filter(t => t.type === 'dividend');
@@ -42,13 +54,22 @@ const DividendTrackerView: React.FC = () => {
             "Dividend Income": value 
         }));
 
-        const recentDividendTransactions = dividendTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
+        const recentDividendTransactions = dividendTransactions
+            .filter(t => {
+                const txDate = new Date(t.date);
+                return !isNaN(txDate.getTime());
+            })
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .slice(0, 10);
 
         const allHoldings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
         const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate), 0);
 
         const holdingsWithProjectedDividends = allHoldings
-            .filter(h => (h.dividendYield ?? 0) > 0)
+            .filter(h => {
+                const yieldVal = h.dividendYield ?? 0;
+                return yieldVal > 0 && Number.isFinite(yieldVal) && yieldVal <= 100; // Validate yield is reasonable
+            })
             .map(h => ({
                 name: h.name ?? h.symbol ?? '—',
                 projected: toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate) * ((h.dividendYield ?? 0) / 100),
@@ -320,6 +341,35 @@ const DividendTrackerView: React.FC = () => {
                                 <span className="text-slate-400 text-2xl">📭</span>
                             </div>
                             <p className="text-slate-500 font-medium">No dividend transactions recorded</p>
+                        </div>
+                    )}
+                    {recentDividendTransactions.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const csv = [
+                                        ['Date', 'Symbol', 'Amount'].join(','),
+                                        ...recentDividendTransactions.map(t => [
+                                            t.date,
+                                            t.symbol,
+                                            t.total ?? 0
+                                        ].join(','))
+                                    ].join('\n');
+                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `dividend-transactions-${new Date().toISOString().split('T')[0]}.csv`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                }}
+                                className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                            >
+                                Export to CSV
+                            </button>
                         </div>
                     )}
                 </div>

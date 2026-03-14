@@ -186,12 +186,14 @@ export function buildHouseholdEngineInputFromData(
 }
 
 export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): HouseholdBudgetPlanResult {
-  const { monthlySalaryPlan, monthlyActualIncome, monthlyActualExpense, liquidBalance, emergencyBalance, reserveBalance, config } = input;
+  const { monthlySalaryPlan, monthlyActualIncome, monthlyActualExpense, liquidBalance, emergencyBalance, reserveBalance, goals, householdDefaults, monthlyOverrides, config } = input;
   const plannedNet = monthlySalaryPlan.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
   const actualNet = monthlyActualIncome.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
 
   const emergencyTargetMonths = Number((config as { emergencyTargetMonths?: number })?.emergencyTargetMonths) || DEFAULT_EMERGENCY_TARGET_MONTHS;
   const reserveTargetMonths = Number((config as { reserveTargetMonths?: number })?.reserveTargetMonths) || DEFAULT_RESERVE_TARGET_MONTHS;
+  const operatingMode = String((config as { operatingMode?: string })?.operatingMode || 'Balanced');
+  
   // Use average monthly expense across the year so emergency/reserve targets aren't skewed by a single outlier month
   const expenseValues = (monthlyActualExpense ?? []).map((e) => Number(e) ?? 0);
   const avgMonthlyExpense = expenseValues.length > 0
@@ -204,28 +206,261 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
   const initialEmergencyGap = Math.max(0, monthlyExpenseForTargets * emergencyTargetMonths - Number(emergencyBalance ?? 0));
   const initialReserveGap = Math.max(0, monthlyExpenseForTargets * reserveTargetMonths - Number(reserveBalance ?? 0));
 
+  // Calculate profile-based percentages
+  const profile = String((config as { profile?: string })?.profile || 'Moderate');
+  const getProfilePercentages = () => {
+    if (profile === 'Conservative') {
+      return {
+        emergencySavings: 0.10, // 10% of income
+        reserveSavings: 0.08,   // 8% of income
+        goalSavings: 0.05,      // 5% of income
+        retirementSavings: 0.15, // 15% of income
+        investing: 0.05,         // 5% of income
+        kidsFutureSavings: 0.03, // 3% of income
+      };
+    } else if (profile === 'Aggressive' || profile === 'Growth') {
+      return {
+        emergencySavings: 0.05, // 5% of income
+        reserveSavings: 0.03,   // 3% of income
+        goalSavings: 0.10,      // 10% of income
+        retirementSavings: 0.20, // 20% of income
+        investing: 0.15,         // 15% of income
+        kidsFutureSavings: 0.05, // 5% of income
+      };
+    } else { // Moderate
+      return {
+        emergencySavings: 0.07, // 7% of income
+        reserveSavings: 0.05,   // 5% of income
+        goalSavings: 0.08,      // 8% of income
+        retirementSavings: 0.12, // 12% of income
+        investing: 0.10,         // 10% of income
+        kidsFutureSavings: 0.04, // 4% of income
+      };
+    }
+  };
+
+  const profilePcts = getProfilePercentages();
+  const adults = householdDefaults?.adults ?? 2;
+  const kids = householdDefaults?.kids ?? 0;
+
+  // Calculate expense category allocations based on household size and income (KSA-specific)
+  const getExpenseAllocations = (income: number, expense: number, monthIndex: number) => {
+    const override = monthlyOverrides.find(o => (o.monthIndex === monthIndex || o.month === monthIndex + 1));
+    const baseExpense = expense || (income * 0.6); // Default 60% of income for expenses if no expense data
+    
+    // KSA-specific monthly expense allocations (as percentages of total monthly expenses)
+    const allocations: Record<string, number> = {
+      // Monthly Recurring Expenses
+      housing: baseExpense * 0.30,      // 30% - Housing Rent (if paid monthly)
+      groceries: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // 12% base + per person - Groceries & Supermarket
+      utilities: baseExpense * 0.08,     // 8% - Electricity (SEC), Water (NWC) - spikes in summer
+      telecommunications: baseExpense * 0.04, // 4% - Home Fiber/5G internet and Mobile data plans
+      transportation: baseExpense * 0.10, // 10% - Petrol/Fuel, Riyadh Metro, Uber/Careem
+      domesticHelp: baseExpense * 0.08,  // 8% - Salary for live-in housemaids or drivers
+      diningEntertainment: baseExpense * 0.06, // 6% - Restaurants, cafes, streaming (Netflix/Shahid)
+      insuranceCoPay: baseExpense * 0.02, // 2% - Small fees at clinics during doctor visits
+      debtLoans: baseExpense * 0.05,    // 5% - Personal loan installments or Credit Card minimums
+      remittances: baseExpense * 0.08,   // 8% - Funds sent to family outside KSA (for expats)
+      pocketMoney: baseExpense * 0.02,   // 2% - Cash for small daily needs (tea, snacks, parking)
+      
+      // Legacy category mappings for backward compatibility
+      food: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // Alias for groceries
+      health: baseExpense * 0.02,        // Alias for insuranceCoPay
+      personalCare: baseExpense * 0.03,  // 3% - Grooming, hygiene (part of groceries)
+      entertainment: baseExpense * 0.06,  // Alias for diningEntertainment
+      shopping: baseExpense * 0.03,       // 3% - Clothing, household items
+      miscellaneous: baseExpense * 0.02,  // 2% - Other expenses
+    };
+
+    // Semi-Annual Expenses (6-month) - allocate monthly sinking fund
+    // These are divided by 6 to get monthly allocation
+    const semiAnnualExpenses = {
+      housingSemiAnnual: (baseExpense * 0.30) / 6, // Housing Rent (2 checks per year)
+      schoolTuition: (baseExpense * 0.10) / 6,     // School fees per semester (if applicable)
+      householdMaintenance: (baseExpense * 0.03) / 6, // AC cleaning/servicing before and after summer
+    };
+    Object.assign(allocations, semiAnnualExpenses);
+
+    // Annual Expenses - allocate monthly sinking fund (divided by 12)
+    const annualExpenses = {
+      iqamaRenewal: (income * 0.02) / 12,          // Government fee for residency (expats)
+      dependentFees: (kids * 4800) / 12,           // SAR 4,800 per person per year
+      exitReentryVisa: (income * 0.01) / 12,       // For vacations outside the Kingdom
+      vehicleInsurance: (income * 0.03) / 12,     // Mandatory TPL or Comprehensive insurance
+      istimara: (income * 0.01) / 12,              // Car registration renewal (every 3 years, budgeted yearly)
+      fahas: (income * 0.005) / 12,                // Annual periodic vehicle inspection fee
+      schoolUniformsBooks: (kids * 2000) / 12,     // Typically in August/September
+      zakat: (income * 0.025) / 12,                // Religious almsgiving (2.5% of annual savings)
+      annualVacation: (income * 0.08) / 12,         // Flights and travel expenses
+    };
+    Object.assign(allocations, annualExpenses);
+
+    // Weekly Expenses - convert to monthly (multiply by 4.33)
+    const weeklyExpenses = {
+      freshProduce: (baseExpense * 0.03) * 4.33,   // Fruit, vegetables, bread from local markets
+      householdHelpHourly: (baseExpense * 0.02) * 4.33, // Hourly cleaning services (Mudarri or Java)
+      leisureWeekly: (baseExpense * 0.02) * 4.33,  // Weekend outings, cinema, family gatherings
+    };
+    Object.assign(allocations, weeklyExpenses);
+
+    // Apply overrides if present
+    if (override?.expenseAdjustment) {
+      const adjustment = override.expenseAdjustment;
+      Object.keys(allocations).forEach(key => {
+        allocations[key] = allocations[key] * (1 + adjustment / 100);
+      });
+    }
+
+    // Apply summer utility spike (June, July, August in KSA - months 6, 7, 8)
+    if (monthIndex >= 5 && monthIndex <= 7) {
+      allocations.utilities = allocations.utilities * 1.5; // 50% increase in summer
+    }
+
+    return allocations;
+  };
+
+  let remainingEmergencyGap = initialEmergencyGap;
+  let remainingReserveGap = initialReserveGap;
+  let cumulativeLiquid = liquidBalance;
+  let activeGoal: GoalForRouting | null = null;
+  const goalsWithRemaining = goals.filter(g => (g.targetAmount - g.currentAmount) > 0);
+  if (goalsWithRemaining.length > 0) {
+    // Prioritize goal with closest deadline
+    activeGoal = goalsWithRemaining.reduce((closest, g) => {
+      if (!closest) return g;
+      const closestDeadline = new Date(closest.deadline);
+      const gDeadline = new Date(g.deadline);
+      return gDeadline < closestDeadline ? g : closest;
+    });
+  }
+
   const months: HouseholdMonthResult[] = (monthlySalaryPlan.length ? monthlySalaryPlan : Array(12).fill(0)).map((_, i) => {
-    const inc = Number(monthlySalaryPlan[i] ?? 0);
+    const override = monthlyOverrides.find(o => (o.monthIndex === i || o.month === i + 1));
+    const inc = override?.salary ?? Number(monthlySalaryPlan[i] ?? 0);
     const exp = Number(monthlyActualExpense[i] ?? 0);
+    const actualInc = Number(monthlyActualIncome[i] ?? 0);
     const plannedNetMonth = inc - exp;
+    const surplus = actualInc - exp;
+    
+    // Calculate buckets
+    const buckets: Record<string, number> = {};
+    
+    // 1. Expense buckets (from actual/planned expenses)
+    const expenseAllocations = getExpenseAllocations(inc, exp, i);
+    Object.assign(buckets, expenseAllocations);
+    
+    // 2. Calculate available for savings (income - expenses)
+    const availableForSavings = Math.max(0, inc - exp);
+    
+    // 3. Emergency savings (priority 1) - Fixed division by zero and overflow
+    const monthsRemaining = Math.max(1, 12 - i);
+    const emergencyGapPerMonth = remainingEmergencyGap > 0 ? remainingEmergencyGap / monthsRemaining : 0;
+    const emergencyFromProfile = availableForSavings * profilePcts.emergencySavings;
+    const emergencyTarget = remainingEmergencyGap > 0 
+      ? Math.min(emergencyFromProfile, emergencyGapPerMonth, availableForSavings) // Ensure we don't exceed available
+      : availableForSavings * profilePcts.emergencySavings * 0.5; // Maintain 50% of allocation even when funded
+    buckets.emergencySavings = Math.max(0, Math.min(Math.round(emergencyTarget), availableForSavings));
+    remainingEmergencyGap = Math.max(0, remainingEmergencyGap - buckets.emergencySavings);
+    
+    // 4. Reserve savings (priority 2) - Fixed division by zero
+    const remainingAfterEmergency = Math.max(0, availableForSavings - buckets.emergencySavings);
+    const reserveGapPerMonth = remainingReserveGap > 0 ? remainingReserveGap / monthsRemaining : 0;
+    const reserveFromProfile = remainingAfterEmergency * profilePcts.reserveSavings;
+    const reserveTarget = remainingReserveGap > 0
+      ? Math.min(reserveFromProfile, reserveGapPerMonth, remainingAfterEmergency)
+      : reserveFromProfile;
+    buckets.reserveSavings = Math.max(0, Math.min(Math.round(reserveTarget), remainingAfterEmergency));
+    remainingReserveGap = Math.max(0, remainingReserveGap - buckets.reserveSavings);
+    
+    // 5. Goal savings (priority 3) - Fixed division by zero
+    const remainingAfterReserve = Math.max(0, remainingAfterEmergency - buckets.reserveSavings);
+    if (activeGoal && operatingMode !== 'Protection First') {
+      const goalRemaining = Math.max(0, activeGoal.targetAmount - activeGoal.currentAmount);
+      const goalGapPerMonth = goalRemaining / monthsRemaining;
+      const goalFromProfile = remainingAfterReserve * profilePcts.goalSavings;
+      const goalAllocation = Math.min(goalFromProfile, goalGapPerMonth, remainingAfterReserve);
+      buckets.goalSavings = Math.max(0, Math.min(Math.round(goalAllocation), remainingAfterReserve));
+    } else {
+      buckets.goalSavings = Math.max(0, Math.min(Math.round(remainingAfterReserve * profilePcts.goalSavings), remainingAfterReserve));
+    }
+    
+    // 6. Retirement savings
+    const remainingAfterGoal = remainingAfterReserve - buckets.goalSavings;
+    buckets.retirementSavings = Math.max(0, Math.round(remainingAfterGoal * profilePcts.retirementSavings));
+    
+    // 7. Investing
+    const remainingAfterRetirement = remainingAfterGoal - buckets.retirementSavings;
+    buckets.investing = Math.max(0, Math.round(remainingAfterRetirement * profilePcts.investing));
+    
+    // 8. Kids future savings (if applicable)
+    if (kids > 0) {
+      const remainingAfterInvesting = remainingAfterRetirement - buckets.investing;
+      buckets.kidsFutureSavings = Math.max(0, Math.round(remainingAfterInvesting * profilePcts.kidsFutureSavings));
+    } else {
+      buckets.kidsFutureSavings = 0;
+    }
+    
+    // Update cumulative liquid balance - account for bucket allocations reducing available cash
+    const totalBucketAllocations = Object.values(buckets).reduce((sum, val) => sum + (val as number), 0);
+    const netCashFlow = surplus - (totalBucketAllocations - expenseAllocations.housing - expenseAllocations.groceries - expenseAllocations.utilities - expenseAllocations.transportation - expenseAllocations.health - expenseAllocations.personalCare - expenseAllocations.entertainment - expenseAllocations.shopping - expenseAllocations.miscellaneous);
+    cumulativeLiquid = Math.max(0, cumulativeLiquid + netCashFlow);
+    
+    // Calculate cashflow stress
+    let cashflowStress: 'healthy' | 'caution' | 'stress' | 'critical' = 'healthy';
+    if (surplus < 0) {
+      const deficitPct = Math.abs(surplus) / inc;
+      if (deficitPct > 0.3) cashflowStress = 'critical';
+      else if (deficitPct > 0.15) cashflowStress = 'stress';
+      else cashflowStress = 'caution';
+    } else if (surplus < inc * 0.1) {
+      cashflowStress = 'caution';
+    }
+    
+    // Validation and warnings
+    const validationErrors: string[] = [];
+    const warnings: string[] = [];
+    
+    if (surplus < 0) {
+      validationErrors.push(`Negative cashflow: ${Math.round(Math.abs(surplus)).toLocaleString()}`);
+    }
+    if (cumulativeLiquid < 0) {
+      validationErrors.push(`Liquid balance negative: ${Math.round(Math.abs(cumulativeLiquid)).toLocaleString()}`);
+    }
+    if (remainingEmergencyGap > 0 && i === 11) {
+      warnings.push(`Emergency fund still ${Math.round(remainingEmergencyGap).toLocaleString()} short of target`);
+    }
+    if (remainingReserveGap > 0 && i === 11) {
+      warnings.push(`Reserve pool still ${Math.round(remainingReserveGap).toLocaleString()} short of target`);
+    }
+    
     return {
       monthIndex: i,
       month: i + 1,
       incomePlanned: inc,
-      incomeActual: Number(monthlyActualIncome[i] ?? 0),
+      incomeActual: actualInc,
       expensePlanned: exp,
-      expenseActual: exp,
-      surplus: Number(monthlyActualIncome[i] ?? 0) - exp,
-      reservePoolAfterDeductions: Math.max(0, liquidBalance),
-      validationErrors: [],
-      warnings: [],
+      expenseActual: Number(monthlyActualExpense[i] ?? exp),
+      surplus,
+      reservePoolAfterDeductions: Math.max(0, cumulativeLiquid),
+      routedGoalName: activeGoal?.name,
+      routedAmount: buckets.goalSavings,
+      routedGoalAmount: buckets.goalSavings,
+      validationErrors,
+      warnings,
       baselineExpense: exp,
-      cashflowStress: 'healthy' as const,
+      cashflowStress,
       plannedNet: plannedNetMonth,
-      totalPlannedOutflow: exp,
-      totalActualOutflow: exp,
+      totalPlannedOutflow: exp + Object.values(buckets).filter(() => {
+        // Only count savings buckets, not expense buckets (expenses already in exp)
+        const bucketKeys = Object.keys(buckets);
+        const key = bucketKeys[Object.values(buckets).indexOf(_)];
+        return key && (key.includes('Savings') || key === 'investing' || key === 'retirementSavings' || key === 'kidsFutureSavings');
+      }).reduce((a, b) => a + (b as number), 0),
+      totalActualOutflow: Number(monthlyActualExpense[i] ?? exp),
+      buckets,
     };
   });
+  
   const recommendations: string[] = [];
   if (initialEmergencyGap > 0) {
     recommendations.push(`Build emergency fund: ~${Math.round(initialEmergencyGap).toLocaleString()} short of ${emergencyTargetMonths} months of expenses.`);
@@ -233,11 +468,17 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
   if (initialReserveGap > 0) {
     recommendations.push(`Top up reserve pool: ~${Math.round(initialReserveGap).toLocaleString()} short of ${reserveTargetMonths} months target.`);
   }
+  if (goalsWithRemaining.length > 0 && operatingMode !== 'Protection First') {
+    recommendations.push(`Active goal: ${activeGoal?.name || 'Multiple goals'} - allocate savings toward goal achievement.`);
+  }
+  if (operatingMode === 'Aggressive Goal' && goalsWithRemaining.length === 0) {
+    recommendations.push('No active goals. Consider setting new financial goals to maximize growth.');
+  }
 
   return {
     months,
     plannedVsActual: { plannedNet, actualNet },
-    balanceProjection: { projectedYearEndLiquid: liquidBalance, openingLiquid: liquidBalance },
+    balanceProjection: { projectedYearEndLiquid: cumulativeLiquid, openingLiquid: liquidBalance },
     recommendations,
     emergencyGap: initialEmergencyGap,
     reserveGap: initialReserveGap,

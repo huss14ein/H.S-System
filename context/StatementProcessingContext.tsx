@@ -1,4 +1,8 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from './AuthContext';
+import { DataContext } from './DataContext';
+import { invokeAI } from '../services/geminiService';
 
 export interface FinancialStatement {
   id: string;
@@ -119,10 +123,67 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [currentStatement, setCurrentStatement] = useState<FinancialStatement | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const auth = useContext(AuthContext);
+  const dataContext = useContext(DataContext);
 
-  // Load statements from localStorage
+  // Load statements from database and localStorage (fallback)
   useEffect(() => {
-    const loadStatements = () => {
+    const loadStatements = async () => {
+      // Try to load from database first
+      if (supabase && auth?.user) {
+        const supabaseClient = supabase; // Type narrowing
+        const user = auth.user;
+        if (!user) return;
+        
+        try {
+          const { data: dbStatements, error } = await supabaseClient
+            .from('financial_statements')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('uploaded_at', { ascending: false });
+
+          if (!error && dbStatements) {
+            const loaded = dbStatements.map((s: any) => ({
+              id: s.id,
+              fileName: s.file_name,
+              fileType: s.file_type as FinancialStatement['fileType'],
+              fileSize: s.file_size,
+              uploadedAt: new Date(s.uploaded_at),
+              processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
+              status: s.status as FinancialStatement['status'],
+              bankName: s.bank_name,
+              accountNumber: s.account_number,
+              accountType: s.account_type as FinancialStatement['accountType'],
+              statementPeriod: {
+                startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
+                endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date()
+              },
+              openingBalance: s.opening_balance ?? 0,
+              closingBalance: s.closing_balance ?? 0,
+              transactions: [], // Load separately if needed
+              summary: (s.summary as StatementSummary) || {
+                totalCredits: 0,
+                totalDebits: 0,
+                netChange: 0,
+                transactionCount: 0,
+                categories: {},
+                averageTransaction: 0,
+                largestTransaction: 0,
+                smallestTransaction: 0,
+                dailySpending: {}
+              },
+              confidence: s.confidence ?? 0,
+              errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : []
+            }));
+            setStatements(loaded);
+            return;
+          }
+        } catch (error) {
+          console.error('Failed to load statements from database:', error);
+        }
+      }
+
+      // Fallback to localStorage
       try {
         const stored = localStorage.getItem('financialStatements');
         if (stored) {
@@ -136,28 +197,73 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
               startDate: new Date(s.statementPeriod.startDate),
               endDate: new Date(s.statementPeriod.endDate)
             },
-            transactions: s.transactions.map((t: any) => ({
+            transactions: s.transactions?.map((t: any) => ({
               ...t,
               date: new Date(t.date)
-            }))
+            })) || []
           })));
         }
       } catch (error) {
-        console.error('Failed to load statements:', error);
+        console.error('Failed to load statements from localStorage:', error);
       }
     };
 
     loadStatements();
-  }, []);
+  }, [auth?.user]);
 
-  // Save statements to localStorage
+  // Save statements to database (and localStorage as backup)
   useEffect(() => {
+    if (!statements.length) return;
+
+    // Save to database if available
+    if (supabase && auth?.user) {
+      const user = auth.user;
+      if (!user || !supabase) return;
+      
+      const supabaseClient = supabase; // Type narrowing
+      
+      statements.forEach(async (statement) => {
+        try {
+          const { error } = await supabaseClient
+            .from('financial_statements')
+            .upsert({
+              id: statement.id,
+              user_id: user.id,
+              file_name: statement.fileName,
+              file_type: statement.fileType,
+              file_size: statement.fileSize,
+              bank_name: statement.bankName,
+              account_number: statement.accountNumber,
+              account_type: statement.accountType,
+              statement_period_start: statement.statementPeriod.startDate.toISOString().split('T')[0],
+              statement_period_end: statement.statementPeriod.endDate.toISOString().split('T')[0],
+              opening_balance: statement.openingBalance,
+              closing_balance: statement.closingBalance,
+              status: statement.status,
+              confidence: statement.confidence,
+              summary: statement.summary,
+              errors: statement.errors || [],
+              uploaded_at: statement.uploadedAt.toISOString(),
+              processed_at: statement.processedAt?.toISOString(),
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'id' });
+
+          if (error) {
+            console.error('Failed to save statement to database:', error);
+          }
+        } catch (error) {
+          console.error('Error saving statement:', error);
+        }
+      });
+    }
+
+    // Also save to localStorage as backup
     try {
       localStorage.setItem('financialStatements', JSON.stringify(statements));
     } catch (error) {
-      console.error('Failed to save statements:', error);
+      console.error('Failed to save statements to localStorage:', error);
     }
-  }, [statements]);
+  }, [statements, auth?.user]);
 
   const uploadStatement = async (file: File, bankInfo?: BankInfo): Promise<FinancialStatement> => {
     const statement: FinancialStatement = {
@@ -444,21 +550,269 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
       throw new Error('Statement not found');
     }
 
-    // Simulate reconciliation process
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (!dataContext) {
+      throw new Error('DataContext not available');
+    }
 
-    const matchedTransactions = Math.floor(statement.transactions.length * 0.8);
-    const unmatchedTransactions = statement.transactions.length - matchedTransactions;
-    const duplicateTransactions = Math.floor(statement.transactions.length * 0.1);
+    const existingTransactions = dataContext.data.transactions || [];
+    const discrepancies: TransactionDiscrepancy[] = [];
+    let matchedCount = 0;
+    let duplicateCount = 0;
+    const matchedIds = new Set<string>();
+
+    // Match extracted transactions with existing ones
+    for (const extractedTx of statement.transactions) {
+      const extractedDate = extractedTx.date instanceof Date ? extractedTx.date : new Date(extractedTx.date);
+      const extractedAmount = Math.abs(extractedTx.amount);
+      const extractedDesc = extractedTx.description.toLowerCase().trim();
+
+      // Find potential matches
+      const potentialMatches = existingTransactions.filter(existingTx => {
+        const existingDate = new Date(existingTx.date);
+        const existingAmount = Math.abs(existingTx.amount);
+        const existingDesc = existingTx.description.toLowerCase().trim();
+
+        // Date tolerance: ±3 days
+        const dateDiff = Math.abs(extractedDate.getTime() - existingDate.getTime());
+        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
+        
+        // Amount tolerance: ±0.01 (for rounding differences)
+        const amountDiff = Math.abs(extractedAmount - existingAmount);
+
+        // Match criteria:
+        // 1. Same date (±3 days) AND same amount (±0.01) AND similar description
+        // 2. OR same date (±3 days) AND same amount (±0.01) (description might differ)
+        const dateMatch = daysDiff <= 3;
+        const amountMatch = amountDiff <= 0.01;
+        const descSimilarity = calculateStringSimilarity(extractedDesc, existingDesc) > 0.6;
+
+        return dateMatch && amountMatch && (descSimilarity || amountMatch);
+      });
+
+      if (potentialMatches.length === 0) {
+        // Unmatched transaction
+        extractedTx.reconciliationStatus = 'unmatched';
+      } else if (potentialMatches.length === 1) {
+        // Single match - likely a match
+        const match = potentialMatches[0];
+        if (!matchedIds.has(match.id)) {
+          matchedIds.add(match.id);
+          extractedTx.matchedTransaction = match.id;
+          extractedTx.reconciliationStatus = 'matched';
+          matchedCount++;
+
+          // Check for discrepancies
+          const dateDiff = Math.abs(extractedDate.getTime() - new Date(match.date).getTime());
+          const amountDiff = Math.abs(extractedAmount - Math.abs(match.amount));
+          const descSimilarity = calculateStringSimilarity(extractedDesc, match.description.toLowerCase().trim());
+
+          if (dateDiff > 0) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'date_mismatch',
+              severity: dateDiff > 86400000 ? 'medium' : 'low', // > 1 day
+              suggestion: `Date differs by ${Math.floor(dateDiff / (1000 * 60 * 60 * 24))} days`
+            });
+          }
+          if (amountDiff > 0.01) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'amount_mismatch',
+              severity: amountDiff > 10 ? 'high' : amountDiff > 1 ? 'medium' : 'low',
+              suggestion: `Amount differs by ${amountDiff.toFixed(2)}`
+            });
+          }
+          if (descSimilarity < 0.7) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'description_mismatch',
+              severity: 'low',
+              suggestion: 'Description differs significantly'
+            });
+          }
+        } else {
+          // Already matched to another transaction - potential duplicate
+          extractedTx.reconciliationStatus = 'duplicate';
+          duplicateCount++;
+        }
+      } else {
+        // Multiple matches - potential duplicate or ambiguous
+        extractedTx.reconciliationStatus = 'duplicate';
+        duplicateCount++;
+        discrepancies.push({
+          extractedTransaction: extractedTx,
+          existingTransaction: potentialMatches[0],
+          type: 'missing_transaction',
+          severity: 'medium',
+          suggestion: `Multiple potential matches found (${potentialMatches.length}). Please review manually.`
+        });
+      }
+    }
+
+    // Update statement with reconciliation status
+    setStatements(prev => prev.map(s => 
+      s.id === statementId 
+        ? { ...s, transactions: statement.transactions }
+        : s
+    ));
+
+    const unmatchedCount = statement.transactions.length - matchedCount - duplicateCount;
+    const confidence = statement.transactions.length > 0 
+      ? (matchedCount / statement.transactions.length) * 100 
+      : 0;
+
+    // Enhance discrepancies with AI-powered suggestions if there are any
+    let enhancedDiscrepancies = discrepancies;
+    if (discrepancies.length > 0) {
+      try {
+        enhancedDiscrepancies = await enhanceDiscrepanciesWithAI(discrepancies, statement);
+      } catch (error) {
+        console.warn('Failed to get AI suggestions for reconciliation:', error);
+        // Continue with original discrepancies if AI fails
+      }
+    }
 
     return {
       totalTransactions: statement.transactions.length,
-      matchedTransactions,
-      unmatchedTransactions,
-      duplicateTransactions,
-      discrepancies: [],
-      confidence: (matchedTransactions / statement.transactions.length) * 100
+      matchedTransactions: matchedCount,
+      unmatchedTransactions: unmatchedCount,
+      duplicateTransactions: duplicateCount,
+      discrepancies: enhancedDiscrepancies,
+      confidence
     };
+  };
+
+  // AI-powered reconciliation suggestions
+  const enhanceDiscrepanciesWithAI = async (
+    discrepancies: TransactionDiscrepancy[],
+    statement: FinancialStatement
+  ): Promise<TransactionDiscrepancy[]> => {
+    if (discrepancies.length === 0) return discrepancies;
+
+    try {
+      const prompt = `You are a financial reconciliation expert. Analyze these transaction discrepancies and provide intelligent suggestions for resolution.
+
+Statement: ${statement.fileName}
+Bank: ${statement.bankName || 'Unknown'}
+Account: ${statement.accountNumber || 'Unknown'}
+Total Transactions: ${statement.transactions.length}
+
+Discrepancies to analyze:
+${discrepancies.map((disc, idx) => `
+${idx + 1}. Type: ${disc.type}
+   Extracted: ${disc.extractedTransaction.description} | ${disc.extractedTransaction.date.toISOString().split('T')[0]} | ${disc.extractedTransaction.amount}
+   ${disc.existingTransaction ? `Existing: ${disc.existingTransaction.description} | ${disc.existingTransaction.date} | ${disc.existingTransaction.amount}` : 'No existing match'}
+   Current Suggestion: ${disc.suggestion}
+   Severity: ${disc.severity}
+`).join('\n')}
+
+For each discrepancy, provide:
+1. A more intelligent, actionable suggestion
+2. Likely cause (e.g., "timing difference", "rounding error", "different merchant name", "duplicate entry")
+3. Recommended action (e.g., "merge", "keep both", "update existing", "create new")
+
+Return a JSON array with the same length as the input, where each object has:
+- "suggestion": improved suggestion text
+- "cause": likely cause
+- "action": recommended action
+
+Return ONLY valid JSON, no markdown or extra text.`;
+
+      const response = await invokeAI({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+
+      // Parse AI response
+      let aiSuggestions: Array<{ suggestion?: string; cause?: string; action?: string }> = [];
+      try {
+        const text = response.text || '';
+        if (!text) {
+          console.warn('AI response has no text content');
+          return discrepancies;
+        }
+        
+        // Extract JSON from response (handle markdown code blocks)
+        const jsonMatch = text.match(/\[[\s\S]*?\]/);
+        if (jsonMatch) {
+          try {
+            aiSuggestions = JSON.parse(jsonMatch[0]);
+            if (!Array.isArray(aiSuggestions)) {
+              console.warn('AI suggestions is not an array');
+              return discrepancies;
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse AI JSON:', parseError);
+            return discrepancies;
+          }
+        } else {
+          console.warn('No JSON array found in AI response');
+          return discrepancies;
+        }
+      } catch (parseError) {
+        console.warn('Failed to parse AI suggestions:', parseError);
+        return discrepancies;
+      }
+
+      // Enhance discrepancies with AI suggestions
+      return discrepancies.map((disc, idx) => {
+        const aiSuggestion = aiSuggestions[idx];
+        if (aiSuggestion && aiSuggestion.suggestion) {
+          return {
+            ...disc,
+            suggestion: `${aiSuggestion.suggestion}${aiSuggestion.cause ? ` (Likely cause: ${aiSuggestion.cause})` : ''}${aiSuggestion.action ? ` [Action: ${aiSuggestion.action}]` : ''}`
+          };
+        }
+        return disc;
+      });
+    } catch (error) {
+      console.error('Error getting AI reconciliation suggestions:', error);
+      return discrepancies; // Return original if AI fails
+    }
+  };
+
+  // Helper function to calculate string similarity (Levenshtein-based)
+  const calculateStringSimilarity = (str1: string, str2: string): number => {
+    if (str1 === str2) return 1;
+    if (str1.length === 0 || str2.length === 0) return 0;
+
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+
+    // Check if one string contains the other (fuzzy match)
+    if (longer.includes(shorter)) {
+      return shorter.length / longer.length;
+    }
+
+    // Calculate Levenshtein distance
+    const matrix: number[][] = [];
+    for (let i = 0; i <= longer.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= shorter.length; j++) {
+      matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= longer.length; i++) {
+      for (let j = 1; j <= shorter.length; j++) {
+        if (longer[i - 1] === shorter[j - 1]) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+
+    const distance = matrix[longer.length][shorter.length];
+    const maxLength = Math.max(longer.length, shorter.length);
+    return 1 - (distance / maxLength);
   };
 
   const exportTransactions = (statementId: string): string => {

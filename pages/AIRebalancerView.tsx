@@ -31,13 +31,24 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }, [selectedPortfolioId, data?.investments]);
 
   const handleGeneratePlan = useCallback(async () => {
-    if (!selectedPortfolio) return;
+    if (!selectedPortfolio) {
+      alert('Please select a portfolio first.');
+      return;
+    }
+    if (!selectedPortfolio.holdings || selectedPortfolio.holdings.length === 0) {
+      alert('Selected portfolio has no holdings. Add holdings first.');
+      return;
+    }
     setIsLoading(true);
     setRebalancingPlan('');
     setPlanError(null);
     try {
       const plan = await getAIRebalancingPlan(selectedPortfolio.holdings, riskProfile);
-      setRebalancingPlan(plan);
+      if (!plan || plan.trim().length === 0) {
+        setPlanError('AI returned an empty plan. Please try again.');
+      } else {
+        setRebalancingPlan(plan);
+      }
     } catch (err) {
       setPlanError(formatAiError(err));
     } finally {
@@ -58,6 +69,18 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
       })
       .filter((row) => Number.isFinite(row.value) && row.value > 0);
   }, [selectedPortfolio]);
+
+  // Loading state
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-sm text-slate-600">Loading portfolio data...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!data?.investments?.length) {
     return (
