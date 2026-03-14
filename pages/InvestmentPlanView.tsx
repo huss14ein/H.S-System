@@ -19,7 +19,6 @@ import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ChartBarIcon } from '../components/icons/ChartBarIcon';
 import { ClockIcon, TargetIcon } from '../components/icons';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 
 const PlanTradeModal: React.FC<{
@@ -613,7 +612,6 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
         <PageLayout 
             title="Investment Plan" 
             description="Proactively plan your trades based on price or date targets with AI-powered alignment."
-            action={<DemoDataButton page="Investments" options={{ includeInvestments: true }} />}
         >
             <div className="max-w-7xl mx-auto space-y-8">
                 {/* Enhanced Header Section */}
