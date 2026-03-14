@@ -20,8 +20,17 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const toMonthlyRate = (annualPct: number) => {
     // Convert annual percentage to monthly rate using compound interest formula
     // Works correctly for both positive and negative rates
-    // For -20% annual: (1 - 0.20)^(1/12) - 1 = 0.8^(1/12) - 1 ≈ -0.0184 (-1.84% monthly)
-    // Verification: (1 - 0.0184)^12 ≈ 0.8 (80% retention = 20% decline) ✓
+    // 
+    // Formula: (1 + r)^(1/12) - 1 where r is the annual rate as a decimal
+    // 
+    // Examples:
+    // - For -20% annual: (1 - 0.20)^(1/12) - 1 = 0.8^(1/12) - 1 ≈ -0.0184 (-1.84% monthly)
+    //   Verification: (1 - 0.0184)^12 ≈ 0.8 (80% retention = 20% decline) ✓
+    // - For +20% annual: (1 + 0.20)^(1/12) - 1 = 1.2^(1/12) - 1 ≈ 0.0153 (+1.53% monthly)
+    //   Verification: (1 + 0.0153)^12 ≈ 1.2 (120% = 20% growth) ✓
+    //
+    // NOTE: Do NOT use Math.abs() for negative rates - it produces incorrect compounding.
+    // The formula (1 + r)^(1/12) - 1 correctly handles negative r values.
     return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
 };
 
