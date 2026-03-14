@@ -105,13 +105,28 @@ const AddWatchlistItemModal: React.FC<{
     const handleFinalSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const sym = symbol.toUpperCase().trim();
-        if (!sym) return;
+        if (!sym) {
+            alert('Please enter a stock symbol.');
+            return;
+        }
+        if (sym.length < 1 || sym.length > 10) {
+            alert('Symbol must be between 1 and 10 characters.');
+            return;
+        }
         const displayName = name.trim() || sym;
-        onAdd({ symbol: sym, name: displayName });
+        if (displayName.length < 2) {
+            alert('Company name must be at least 2 characters.');
+            return;
+        }
         if (onAddAlert && setAlert && targetPrice.trim()) {
             const price = parseFloat(targetPrice.replace(/,/g, ''));
-            if (Number.isFinite(price) && price > 0) onAddAlert(sym, price, alertCurrency);
+            if (!Number.isFinite(price) || price <= 0) {
+                alert('Target price must be a positive number.');
+                return;
+            }
+            onAddAlert(sym, price, alertCurrency);
         }
+        onAdd({ symbol: sym, name: displayName });
         onClose();
     };
 

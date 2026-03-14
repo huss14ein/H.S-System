@@ -223,6 +223,18 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
+    
+    // Check for duplicate transactions
+    const checkDuplicateTransaction = useCallback((tx: Partial<InvestmentTransaction>) => {
+        if (!data?.investmentTransactions) return false;
+        return data.investmentTransactions.some(existing => 
+            existing.accountId === tx.accountId &&
+            existing.symbol === tx.symbol &&
+            existing.date === tx.date &&
+            Math.abs((existing.total ?? 0) - (tx.total ?? 0)) < 0.01 &&
+            existing.type === tx.type
+        );
+    }, [data?.investmentTransactions]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
@@ -319,15 +331,29 @@ const RecordTradeModal: React.FC<{
             if (!accountId) return 'Please select a platform.';
             const amt = parseFloat(cashAmount);
             if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
+            if (type === 'withdrawal' && accountId) {
+                const available = availableCashInTradeCurrency;
+                if (amt > available) return `Insufficient cash. Available: ${formatCurrencyString(available, { inCurrency: tradeCurrency })}`;
+            }
             return null;
         }
         if (!portfolioId) return 'Please select a portfolio.';
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return 'Symbol is required.';
+        if (symbol.trim().length < 1 || symbol.trim().length > 10) return 'Symbol must be between 1 and 10 characters.';
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
+        if (parsedQuantity > 1000000) return 'Quantity seems unusually high. Please verify.';
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
+        if (parsedPrice > 100000) return 'Price seems unusually high. Please verify.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
+        if (type === 'buy' && accountId) {
+            const totalCost = parsedQuantity * parsedPrice;
+            const available = availableCashInTradeCurrency;
+            if (totalCost > available * 1.1) { // Allow 10% buffer for fees
+                return `Insufficient cash. Required: ${formatCurrencyString(totalCost, { inCurrency: tradeCurrency })}. Available: ${formatCurrencyString(available, { inCurrency: tradeCurrency })}`;
+            }
+        }
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
@@ -335,8 +361,17 @@ const RecordTradeModal: React.FC<{
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
+        // Validate date
+        if (date) {
+            const selectedDate = new Date(date);
+            const today = new Date();
+            today.setHours(23, 59, 59, 999);
+            if (selectedDate > today && !window.confirm) {
+                // Future date validation handled in onChange
+            }
+        }
         return null;
-    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios, availableCashInTradeCurrency, tradeCurrency, formatCurrencyString, date]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -346,6 +381,22 @@ const RecordTradeModal: React.FC<{
             setSubmitError(validationError);
             return;
         }
+        
+        // Additional duplicate check
+        if (!isCashFlow && type === 'buy') {
+            const existingTrades = (data?.investmentTransactions ?? []).filter(t => 
+                t.accountId === accountId && 
+                t.symbol?.toUpperCase() === symbol.toUpperCase().trim() &&
+                t.date === date &&
+                Math.abs((t.total ?? 0) - (parseFloat(quantity) * parseFloat(price))) < 0.01
+            );
+            if (existingTrades.length > 0) {
+                if (!window.confirm('A similar trade already exists for this date and amount. Continue anyway?')) {
+                    return;
+                }
+            }
+        }
+        
         try {
             setIsSubmitting(true);
             if (isCashFlow) {
@@ -363,7 +414,7 @@ const RecordTradeModal: React.FC<{
                 await onSave({
                     accountId, portfolioId, type,
                     symbol: symbol.toUpperCase().trim(),
-                    name: isNewHolding ? holdingName : undefined,
+                    name: isNewHolding ? holdingName.trim() : undefined,
                     quantity: parseFloat(quantity) || 0,
                     price: parseFloat(price) || 0,
                     date,
@@ -486,7 +537,26 @@ const RecordTradeModal: React.FC<{
                 )}
                 <div>
                     <label htmlFor="date" className="block text-sm font-medium text-gray-700">Transaction Date</label>
-                    <input type="date" id="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input 
+                        type="date" 
+                        id="date" 
+                        value={date} 
+                        onChange={e => {
+                            const selectedDate = new Date(e.target.value);
+                            const today = new Date();
+                            today.setHours(23, 59, 59, 999);
+                            if (selectedDate > today) {
+                                if (!window.confirm('This date is in the future. Are you sure you want to record a future transaction?')) {
+                                    return;
+                                }
+                            }
+                            setDate(e.target.value);
+                        }} 
+                        required 
+                        max={new Date().toISOString().split('T')[0]}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md" 
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Future dates require confirmation</p>
                 </div>
                 {(submitError || validationError) && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{submitError || validationError}</p>}
                 <button type="submit" disabled={submitDisabled} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : isCashFlow ? (type === 'deposit' ? 'Record Deposit' : 'Record Withdrawal') : 'Record Trade'}</button>
@@ -1763,9 +1833,29 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [planAdvancedOpen, isAiAvailable, unifiedUniverse]);
 
     const handleAddNewTicker = async () => {
-        if (!newTicker.ticker || !newTicker.name) return;
+        const ticker = newTicker.ticker.trim().toUpperCase();
+        const name = newTicker.name.trim();
+        if (!ticker || !name) {
+            alert('Both ticker symbol and company name are required.');
+            return;
+        }
+        if (ticker.length < 1 || ticker.length > 10) {
+            alert('Ticker symbol must be between 1 and 10 characters.');
+            return;
+        }
+        if (name.length < 2 || name.length > 100) {
+            alert('Company name must be between 2 and 100 characters.');
+            return;
+        }
+        // Check for duplicates
+        const existing = unifiedUniverse.find(t => t.ticker.toUpperCase() === ticker);
+        if (existing) {
+            if (!window.confirm(`Ticker ${ticker} already exists in universe (${existing.status}). Add anyway?`)) {
+                return;
+            }
+        }
         try {
-            await addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+            await addUniverseTicker({ ticker, name, status: 'Watchlist' });
             setNewTicker({ ticker: '', name: '' });
         } catch (error) {
             // Error already alerted in DataContext
@@ -1887,11 +1977,25 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const handleSave = () => {
+        // Validate plan before saving
+        if ((plan.monthlyBudget ?? 0) <= 0) {
+            alert('Please set a positive monthly budget before saving.');
+            return;
+        }
         if (allocationWarning && !window.confirm(`${allocationWarning}\n\nSave anyway?`)) return;
+        if (universeHealth.actionableCount === 0) {
+            if (!window.confirm('No Core or High-Upside tickers in universe. Plan may not execute. Save anyway?')) {
+                return;
+            }
+        }
         setSaveMessage(null);
-        saveInvestmentPlan(plan);
-        setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
-        setTimeout(() => setSaveMessage(null), 6000);
+        try {
+            saveInvestmentPlan(plan);
+            setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
+            setTimeout(() => setSaveMessage(null), 6000);
+        } catch (error) {
+            alert(`Failed to save plan: ${error instanceof Error ? error.message : String(error)}`);
+        }
     };
 
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
@@ -2089,11 +2193,33 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. You can use the suggested value from your recent buy activity." /></label>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                                    <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2 border rounded-md" />
+                                    <input 
+                                        type="number" 
+                                        value={plan.monthlyBudget} 
+                                        onChange={e => {
+                                            const val = parseFloat(e.target.value) || 0;
+                                            if (val < 0) {
+                                                alert('Monthly budget cannot be negative.');
+                                                return;
+                                            }
+                                            if (val > 10000000) {
+                                                if (!window.confirm('Monthly budget seems unusually high. Continue?')) {
+                                                    return;
+                                                }
+                                            }
+                                            handlePlanChange('monthlyBudget', val);
+                                        }} 
+                                        min="0"
+                                        step="100"
+                                        className="flex-1 min-w-0 p-2 border rounded-md" 
+                                    />
                                     {suggestedMonthlyBudget > 0 && (
                                         <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="text-sm text-primary hover:underline whitespace-nowrap">Use suggested ({formatCurrencyString(suggestedMonthlyBudget, { digits: 0 })})</button>
                                     )}
                                 </div>
+                                {plan.monthlyBudget > 0 && plan.monthlyBudget < 100 && (
+                                    <p className="text-xs text-amber-600 mt-1">Monthly budget seems low. Minimum order size may prevent execution.</p>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from app defaults." /></label>
@@ -2229,9 +2355,37 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                                 <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
                             )}
                             <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
-                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
-                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
-                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
+                            <input 
+                                type="text" 
+                                placeholder="Ticker (e.g., AAPL)" 
+                                value={newTicker.ticker} 
+                                onChange={e => {
+                                    const val = e.target.value.toUpperCase().trim();
+                                    if (val.length > 10) {
+                                        alert('Ticker symbol cannot exceed 10 characters.');
+                                        return;
+                                    }
+                                    setNewTicker(p => ({...p, ticker: val}));
+                                }} 
+                                maxLength={10}
+                                className="p-2 border rounded-md" 
+                            />
+                            <input 
+                                type="text" 
+                                placeholder="Company Name" 
+                                value={newTicker.name} 
+                                onChange={e => setNewTicker(p => ({...p, name: e.target.value.trim()}))} 
+                                className="flex-grow min-w-[120px] p-2 border rounded-md" 
+                                maxLength={100}
+                            />
+                            <button 
+                                onClick={handleAddNewTicker} 
+                                disabled={!newTicker.ticker.trim() || !newTicker.name.trim()}
+                                className="p-2 bg-primary text-white rounded-md hover:bg-secondary disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                title={!newTicker.ticker.trim() || !newTicker.name.trim() ? 'Ticker and name are required' : 'Add ticker to universe'}
+                            >
+                                <PlusIcon className="h-5 w-5" />
+                            </button>
                         </div>
                         <div className="max-h-60 overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200 text-sm">
