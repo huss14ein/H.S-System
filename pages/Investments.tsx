@@ -38,6 +38,8 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
+import { ClockIcon } from '../components/icons/ClockIcon';
+import ExecutionHistoryView from './ExecutionHistoryView';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -45,7 +47,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -94,6 +96,7 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
+    { name: 'Execution History', icon: ClockIcon },
 ];
 
 
@@ -546,7 +549,10 @@ const RecordTradeModal: React.FC<{
                             const today = new Date();
                             today.setHours(23, 59, 59, 999);
                             if (selectedDate > today) {
-                                if (!window.confirm('This date is in the future. Are you sure you want to record a future transaction?')) {
+                                const confirmed = window.confirm('This date is in the future. Are you sure you want to record a future transaction?');
+                                if (!confirmed) {
+                                    // Reset to today if user cancels
+                                    setDate(new Date().toISOString().split('T')[0]);
                                     return;
                                 }
                             }
@@ -2875,6 +2881,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
+      case 'Execution History': return <ExecutionHistoryView />;
       default: return null;
     }
   };

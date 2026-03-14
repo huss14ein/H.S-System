@@ -14,20 +14,29 @@ const InvestmentOverview: React.FC = () => {
   const investmentTransactions = data?.investmentTransactions ?? [];
   
   const metrics = useMemo(() => {
-    // Calculate total value using the same function as Investments page
-    const totalValueInSAR = getAllInvestmentsValueInSAR(portfolios, exchangeRate);
+    // Validate exchange rate
+    const safeExchangeRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
     
-    // Calculate total invested (buy transactions)
+    // Calculate total value using the same function as Investments page
+    const totalValueInSAR = getAllInvestmentsValueInSAR(portfolios, safeExchangeRate);
+    
+    // Calculate total invested (buy transactions) - convert to SAR
     const totalInvested = investmentTransactions
       .filter(t => t.type === 'buy')
-      .reduce((sum, t) => sum + (t.total ?? 0), 0);
+      .reduce((sum, t) => {
+        const amount = t.total ?? 0;
+        const currency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'USD' | 'SAR';
+        return sum + (currency === 'SAR' ? amount : amount * safeExchangeRate);
+      }, 0);
     
-    // Calculate total withdrawn (sell transactions)
-    const totalWithdrawn = Math.abs(
-      investmentTransactions
-        .filter(t => t.type === 'sell')
-        .reduce((sum, t) => sum + (t.total ?? 0), 0)
-    );
+    // Calculate total withdrawn (sell transactions) - convert to SAR
+    const totalWithdrawn = investmentTransactions
+      .filter(t => t.type === 'sell')
+      .reduce((sum, t) => {
+        const amount = Math.abs(t.total ?? 0);
+        const currency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'USD' | 'SAR';
+        return sum + (currency === 'SAR' ? amount : amount * safeExchangeRate);
+      }, 0);
     
     // Calculate net capital (invested - withdrawn)
     const netCapital = totalInvested - totalWithdrawn;
@@ -35,8 +44,17 @@ const InvestmentOverview: React.FC = () => {
     // Calculate gain/loss
     const totalGainLoss = totalValueInSAR - netCapital;
     
-    // Calculate ROI
-    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    // Calculate ROI - handle edge cases
+    let roi = 0;
+    if (netCapital > 0) {
+      roi = (totalGainLoss / netCapital) * 100;
+    } else if (netCapital === 0 && totalGainLoss > 0) {
+      // Pure gains scenario (e.g., gifts, dividends reinvested)
+      roi = Infinity;
+    } else if (netCapital < 0) {
+      // More withdrawn than invested (unusual but possible)
+      roi = totalGainLoss > 0 ? Infinity : -100;
+    }
     
     // Portfolio count and holdings count
     const portfolioCount = portfolios.length;
@@ -64,9 +82,25 @@ const InvestmentOverview: React.FC = () => {
       portfolioCount,
       totalHoldings,
       sarValue,
-      usdValue: usdValue * exchangeRate // Convert to SAR for display
+      usdValue: usdValue * safeExchangeRate // Convert to SAR for display
     };
   }, [portfolios, investmentTransactions, exchangeRate]);
+
+  // Loading state
+  if (!data) {
+    return (
+      <div className="space-y-6">
+        <SectionCard title="Investment Overview">
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-sm text-slate-600">Loading investment data...</p>
+            </div>
+          </div>
+        </SectionCard>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -96,7 +130,7 @@ const InvestmentOverview: React.FC = () => {
             <p className={`text-xs mt-1 ${
               metrics.totalGainLoss >= 0 ? 'text-emerald-600' : 'text-red-600'
             }`}>
-              ROI: {metrics.roi >= 0 ? '+' : ''}{metrics.roi.toFixed(2)}%
+              ROI: {!Number.isFinite(metrics.roi) ? 'N/A' : metrics.roi >= 0 ? '+' : ''}{Number.isFinite(metrics.roi) ? metrics.roi.toFixed(2) + '%' : ''}
             </p>
           </div>
           
@@ -122,20 +156,23 @@ const InvestmentOverview: React.FC = () => {
           ) : (
             <div className="space-y-2">
               {portfolios.map(portfolio => {
+                const portfolioCurrency = (portfolio.currency ?? 'USD') as 'USD' | 'SAR';
                 const portValue = (portfolio.holdings ?? []).reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
-                const percentage = metrics.totalValueInSAR > 0 ? (portValue / metrics.totalValueInSAR) * 100 : 0;
+                // Convert portfolio value to SAR for percentage calculation
+                const portValueInSAR = portfolioCurrency === 'SAR' ? portValue : portValue * exchangeRate;
+                const percentage = metrics.totalValueInSAR > 0 ? (portValueInSAR / metrics.totalValueInSAR) * 100 : 0;
                 return (
                   <div key={portfolio.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
                     <div className="flex-1">
                       <p className="text-sm font-medium text-slate-800">{portfolio.name}</p>
                       <p className="text-xs text-slate-500">
                         {portfolio.holdings?.length ?? 0} holding{portfolio.holdings?.length !== 1 ? 's' : ''} • 
-                        {portfolio.currency || 'USD'}
+                        {portfolioCurrency}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-semibold text-slate-900">{formatCurrencyString(portValue, { digits: 0 })}</p>
-                      <p className="text-xs text-slate-500">{percentage.toFixed(1)}%</p>
+                      <p className="text-sm font-semibold text-slate-900">{formatCurrencyString(portValue, { inCurrency: portfolioCurrency, digits: 0 })}</p>
+                      <p className="text-xs text-slate-500">{percentage.toFixed(1)}% of total</p>
                     </div>
                   </div>
                 );

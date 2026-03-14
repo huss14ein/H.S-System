@@ -161,9 +161,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       else if (u.status === 'High-Upside') upsideTickers.push(t);
       else if (u.status === 'Speculative') specTickers.push(t);
     });
-    if (coreTickers.length === 0 && upsideTickers.length === 0) {
-      (data.investmentPlan?.corePortfolio ?? []).forEach((p: { ticker?: string }) => coreTickers.push((p.ticker ?? '').toUpperCase()));
-      (data.investmentPlan?.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
+    if (coreTickers.length === 0 && upsideTickers.length === 0 && data?.investmentPlan) {
+      (data.investmentPlan.corePortfolio ?? []).forEach((p: { ticker?: string }) => coreTickers.push((p.ticker ?? '').toUpperCase()));
+      (data.investmentPlan.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
     }
     return { coreTickers, upsideTickers, specTickers };
   }, [universe, data?.investmentPlan]);
