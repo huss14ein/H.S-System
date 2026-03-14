@@ -93,24 +93,64 @@ const TransactionModal: React.FC<{
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
-    const buildTransactionData = (): Omit<Transaction, 'id'> => ({
-        date,
-        description,
-        amount: type === 'expense' ? -Math.abs(parseFloat(amount) || 0) : Math.abs(parseFloat(amount) || 0),
-        category,
-        subcategory: subcategory || undefined,
-        budgetCategory: type === 'expense' ? budgetCategory : undefined,
-        type,
-        accountId,
-        transactionNature: type === 'expense' ? transactionNature : undefined,
-        expenseType: type === 'expense' ? expenseType : undefined,
-    });
+    const buildTransactionData = (): Omit<Transaction, 'id'> => {
+        // Validations
+        const amountValue = parseFloat(amount) || 0;
+        if (amountValue <= 0) {
+            throw new Error('Amount must be greater than zero.');
+        }
+        
+        const transactionDate = new Date(date);
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        if (transactionDate > today) {
+            if (!confirm('Transaction date is in the future. Continue anyway?')) {
+                throw new Error('Transaction cancelled.');
+            }
+        }
+        
+        if (!description || description.trim() === '') {
+            throw new Error('Description is required.');
+        }
+        
+        if (!accountId) {
+            throw new Error('Account is required.');
+        }
+        
+        return {
+            date,
+            description: description.trim(),
+            amount: type === 'expense' ? -Math.abs(amountValue) : Math.abs(amountValue),
+            category,
+            subcategory: subcategory || undefined,
+            budgetCategory: type === 'expense' ? budgetCategory : undefined,
+            type,
+            accountId,
+            transactionNature: type === 'expense' ? transactionNature : undefined,
+            expenseType: type === 'expense' ? expenseType : undefined,
+            status: 'Approved',
+        };
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const transactionData = buildTransactionData();
-        
         try {
+            const transactionData = buildTransactionData();
+            
+            // Check for potential duplicates (same date, amount, description)
+            if (!transactionToEdit) {
+                const existing = (data?.transactions ?? []).find(t => 
+                    t.date === transactionData.date &&
+                    Math.abs(t.amount) === Math.abs(transactionData.amount) &&
+                    t.description.toLowerCase() === transactionData.description.toLowerCase()
+                );
+                if (existing) {
+                    if (!confirm('A similar transaction already exists on this date. Continue anyway?')) {
+                        return;
+                    }
+                }
+            }
+            
             if (type === 'expense' && budgetCategory === 'Savings & Investments') {
                 await onSaveAndTrade(transactionData);
             } else if (transactionToEdit) {
@@ -120,7 +160,8 @@ const TransactionModal: React.FC<{
             }
             onClose();
         } catch (error) {
-            // Error already alerted in DataContext
+            const errorMsg = error instanceof Error ? error.message : 'Failed to save transaction.';
+            alert(errorMsg);
         }
     };
     
@@ -395,6 +436,7 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -558,11 +600,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const filteredTransactions = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 0, 23, 59, 59);
+        // Use UTC dates to avoid timezone issues
+        const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+        const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
         return (data?.transactions ?? []).filter(t => {
-            const transactionDate = new Date(t.date);
+            // Parse transaction date and normalize to start of day for comparison
+            const transactionDateStr = t.date.split('T')[0]; // Get YYYY-MM-DD part
+            const [txYear, txMonth, txDay] = transactionDateStr.split('-').map(Number);
+            const transactionDate = new Date(Date.UTC(txYear, txMonth - 1, txDay, 0, 0, 0, 0));
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
@@ -648,12 +694,28 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const handleApplyRecurringForMonth = async () => {
         const [year, month] = filters.month.split('-').map(Number);
+        
+        // Validation
+        if (!year || year < 2000 || year > 2100) {
+            alert('Invalid year selected.');
+            return;
+        }
+        if (!month || month < 1 || month > 12) {
+            alert('Invalid month selected.');
+            return;
+        }
+        
         setApplyingRecurring(true);
         try {
             const { applied, skipped } = await applyRecurringForMonth(year, month);
-            alert(`Recurring: ${applied} transaction(s) created, ${skipped} already applied for this month.`);
+            if (applied > 0 || skipped > 0) {
+                alert(`Recurring transactions: ${applied} created, ${skipped} already applied for ${MONTHS[month - 1]} ${year}.`);
+            } else {
+                alert(`No recurring transactions to apply for ${MONTHS[month - 1]} ${year}.`);
+            }
         } catch (e) {
-            // already alerted in context
+            const errorMsg = e instanceof Error ? e.message : 'Failed to apply recurring transactions.';
+            alert(`Error: ${errorMsg}`);
         } finally {
             setApplyingRecurring(false);
         }

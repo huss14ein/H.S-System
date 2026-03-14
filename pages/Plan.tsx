@@ -289,8 +289,14 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         });
         const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
         const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
+        // Use weighted average if we have data, otherwise use simple average of non-zero months
         const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
-        const incomePlanned = incomeActuals.map((actual) => actual > 0 ? actual : incomeAvg);
+        // For months with no data, use average; for months with data, use actual (more accurate)
+        const incomePlanned = incomeActuals.map((actual, idx) => {
+            if (actual > 0) return actual;
+            // If we have historical data, use average; otherwise use 0 to avoid overestimation
+            return incomeMonthsWithData >= 3 ? incomeAvg : 0;
+        });
         // Recurring income: include both auto and manual so plan reflects full expected recurring (actuals already in Transactions)
         const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'income').reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
         for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
@@ -524,8 +530,22 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [processedPlanData]);
 
     const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
+        // Validations
+        if (!Number.isFinite(newValue) || newValue < 0) {
+            alert('Value must be a positive number.');
+            return;
+        }
+        if (monthIndex < 0 || monthIndex > 11) {
+            alert('Invalid month index.');
+            return;
+        }
+        if (rowIndex < 0 || rowIndex >= planData.length) {
+            alert('Invalid row index.');
+            return;
+        }
+        
         const newData = [...planData];
-        newData[rowIndex].monthly_planned[monthIndex] = newValue;
+        newData[rowIndex].monthly_planned[monthIndex] = Math.max(0, newValue);
         setPlanData(newData);
         setIsEditing(null);
     }

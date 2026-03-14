@@ -406,40 +406,48 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
-    // AI Automation: Auto-categorize uncategorized transactions
+    // AI Automation: Auto-categorize uncategorized transactions (debounced)
     React.useEffect(() => {
-        const uncategorized = (data?.transactions ?? []).filter(
-            t => t.type === 'expense' && !t.budgetCategory && new Date(t.date).getFullYear() === currentYear
-        );
+        const timeoutId = setTimeout(() => {
+            const uncategorized = (data?.transactions ?? []).filter(
+                t => t.type === 'expense' && !t.budgetCategory && new Date(t.date).getFullYear() === currentYear
+            );
+            
+            if (uncategorized.length > 0 && !isAnalyzing) {
+                setIsAnalyzing(true);
+                Promise.all(
+                    uncategorized.slice(0, 10).map(tx => 
+                        autoCategorizeExpense(tx, data?.transactions ?? [], data?.budgets ?? [])
+                            .catch(() => null)
+                    )
+                ).then(suggestions => {
+                    setUncategorizedTransactions(suggestions.filter((s): s is AICategorySuggestion => s !== null));
+                    setIsAnalyzing(false);
+                });
+            }
+        }, 1000); // Debounce by 1 second
         
-        if (uncategorized.length > 0 && !isAnalyzing) {
-            setIsAnalyzing(true);
-            Promise.all(
-                uncategorized.slice(0, 10).map(tx => 
-                    autoCategorizeExpense(tx, data?.transactions ?? [], data?.budgets ?? [])
-                        .catch(() => null)
-                )
-            ).then(suggestions => {
-                setUncategorizedTransactions(suggestions.filter((s): s is AICategorySuggestion => s !== null));
-                setIsAnalyzing(false);
-            });
-        }
+        return () => clearTimeout(timeoutId);
     }, [data?.transactions, data?.budgets, currentYear, isAnalyzing]);
 
-    // AI Automation: Generate budget recommendations
+    // AI Automation: Generate budget recommendations (debounced)
     React.useEffect(() => {
-        if (data?.transactions && data?.budgets && !isAnalyzing) {
-            setIsAnalyzing(true);
-            generateBudgetRecommendations(
-                data.transactions,
-                data.budgets,
-                currentMonth,
-                currentYear
-            ).then(recs => {
-                setAiRecommendations(recs);
-                setIsAnalyzing(false);
-            }).catch(() => setIsAnalyzing(false));
-        }
+        const timeoutId = setTimeout(() => {
+            if (data?.transactions && data?.budgets && !isAnalyzing) {
+                setIsAnalyzing(true);
+                generateBudgetRecommendations(
+                    data.transactions,
+                    data.budgets,
+                    currentMonth,
+                    currentYear
+                ).then(recs => {
+                    setAiRecommendations(recs);
+                    setIsAnalyzing(false);
+                }).catch(() => setIsAnalyzing(false));
+            }
+        }, 1500); // Debounce by 1.5 seconds
+        
+        return () => clearTimeout(timeoutId);
     }, [data?.transactions, data?.budgets, currentMonth, currentYear, isAnalyzing]);
 
     // AI Automation: Predict future expenses
@@ -703,7 +711,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
-            const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
+            // More accurate conversion: account for actual days/weeks in the year
+            const currentYearDays = new Date(currentYear, 1, 29).getMonth() === 1 ? 366 : 365; // Check for leap year
+            const toYearly = (b: Budget) => {
+                if (b.period === 'yearly') return b.limit;
+                if (b.period === 'weekly') return b.limit * (currentYearDays / 7); // More accurate: weeks in actual year
+                if (b.period === 'daily') return b.limit * currentYearDays;
+                return b.limit * 12; // Monthly
+            };
             scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
 
             return Array.from(yearlyLimitByCategory.entries())
@@ -730,7 +745,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
 
         return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
+                // More accurate period conversion accounting for actual year length
+                const currentYearDays = new Date(currentYear, 1, 29).getMonth() === 1 ? 366 : 365;
+                const monthlyEquivalent = budget.period === 'yearly' 
+                    ? budget.limit / 12 
+                    : budget.period === 'weekly' 
+                        ? budget.limit * (currentYearDays / 7 / 12) // More accurate: weeks in year / 12
+                        : budget.period === 'daily' 
+                            ? budget.limit * (currentYearDays / 12) // More accurate: days in year / 12
+                            : budget.limit;
                 const spent = spending.get(budget.category) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -945,6 +968,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     };
 
     const handleSaveBudget = (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
+        // Validations
+        if (budget.limit <= 0) {
+            alert('Budget limit must be greater than zero.');
+            return;
+        }
+        if (!budget.category || budget.category.trim() === '') {
+            alert('Budget category is required.');
+            return;
+        }
+        if (budget.month < 1 || budget.month > 12) {
+            alert('Month must be between 1 and 12.');
+            return;
+        }
+        if (budget.year < 2000 || budget.year > 2100) {
+            alert('Year must be a valid year.');
+            return;
+        }
+        
+        // Check for duplicate category in same month/year (unless editing same budget)
+        if (!isEditing) {
+            const existing = (data?.budgets ?? []).find(
+                b => b.category === budget.category && 
+                b.month === budget.month && 
+                b.year === budget.year &&
+                (budget.period === 'yearly' ? b.period === 'yearly' : b.period !== 'yearly')
+            );
+            if (existing) {
+                if (!confirm(`A budget for "${budget.category}" already exists for ${MONTHS[budget.month - 1]} ${budget.year}. Overwrite it?`)) {
+                    return;
+                }
+                updateBudget({ ...existing, ...budget });
+                return;
+            }
+        }
+        
         if (isEditing && budgetToEdit) {
             updateBudget({ ...budgetToEdit, ...budget });
         } else {
@@ -1207,14 +1265,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
         }
-        const now = new Date(currentYear, currentMonth - 1, 1);
+        // Use UTC dates to avoid timezone issues with month boundaries
+        const now = new Date(Date.UTC(currentYear, currentMonth - 1, 1, 0, 0, 0, 0));
         const threeMonthsAgo = new Date(now);
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        threeMonthsAgo.setUTCMonth(threeMonthsAgo.getUTCMonth() - 3);
 
         const byCategory = new Map<string, { total: number; months: Set<string> }>();
         allTx.forEach((t) => {
-            const d = new Date(t.date);
-            if (d < threeMonthsAgo || d > now) return;
+            // Parse and normalize transaction date
+            const txDateStr = t.date.split('T')[0];
+            const [txYear, txMonth, txDay] = txDateStr.split('-').map(Number);
+            const d = new Date(Date.UTC(txYear, txMonth - 1, txDay, 0, 0, 0, 0));
+            if (d < threeMonthsAgo || d >= now) return;
             const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
