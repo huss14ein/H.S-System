@@ -613,7 +613,7 @@ const MarketEvents: React.FC = () => {
             month={calendarMonth}
             year={calendarYear}
             onMonthChange={(month, year) => { setCalendarMonth(month); setCalendarYear(year); }}
-            onEventClick={(event) => {
+            onEventClick={(_event) => {
               // Could open a modal or scroll to event
             }}
             reminders={reminders}

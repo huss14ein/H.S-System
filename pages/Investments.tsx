@@ -229,9 +229,7 @@ const RecordTradeModal: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     
-    // Check for duplicate transactions
-    const checkDuplicateTransaction = useCallback((tx: Partial<InvestmentTransaction>) => {
-        if (!data?.investmentTransactions) return false;
+    // Note: Duplicate transaction check is now handled inline in RecordTradeModal
         return data.investmentTransactions.some(existing => 
             existing.accountId === tx.accountId &&
             existing.symbol === tx.symbol &&
@@ -3085,7 +3083,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 value={Number.isFinite(roi) ? `${roi.toFixed(2)}%` : 'N/A'}
                 valueColor={Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-700' : 'text-rose-700') : 'text-slate-500'}
                 density="compact"
-                indicatorColor={Number.isFinite(roi) ? (roi >= 0 ? 'green' : 'red') : 'gray'}
+                indicatorColor={Number.isFinite(roi) ? (roi >= 0 ? 'green' : 'red') : undefined}
                 icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`} aria-hidden />}
                 tooltip="Return on investment based on total capital invested across portfolios."
             />

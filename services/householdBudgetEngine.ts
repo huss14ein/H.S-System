@@ -450,7 +450,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       baselineExpense: exp,
       cashflowStress,
       plannedNet: plannedNetMonth,
-      totalPlannedOutflow: exp + Object.values(buckets).filter((_, idx, arr) => {
+      totalPlannedOutflow: exp + Object.values(buckets).filter(() => {
         // Only count savings buckets, not expense buckets (expenses already in exp)
         const bucketKeys = Object.keys(buckets);
         const key = bucketKeys[Object.values(buckets).indexOf(_)];

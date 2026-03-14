@@ -41,7 +41,7 @@ interface CommodityHolding {
 }
 
 const Assets: React.FC = () => {
-  const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
+  const { data, loading, addAsset, updateAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
 
   const [activeTab, setActiveTab] = useState<'physical' | 'commodities'>('physical');
@@ -50,17 +50,17 @@ const Assets: React.FC = () => {
   const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
   const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
 
-  // Use real data from context
+  // Use real data from context - map to local Asset interface
   const realAssets: Asset[] = useMemo(() => {
     return (data?.assets ?? []).map(asset => ({
       id: asset.id,
       name: asset.name,
       type: (asset.type === 'Property' ? 'Property' : asset.type === 'Vehicle' ? 'Vehicle' : asset.type === 'Sukuk' ? 'Sukuk' : 'Other') as Asset['type'],
       value: asset.value ?? 0,
-      currency: asset.currency ?? 'SAR',
-      purchaseDate: asset.purchaseDate ?? new Date().toISOString().split('T')[0],
-      purchaseValue: asset.purchaseValue ?? asset.value ?? 0,
-      description: asset.description,
+      currency: 'SAR', // Default currency
+      purchaseDate: new Date().toISOString().split('T')[0], // Default to today if not available
+      purchaseValue: asset.purchasePrice ?? asset.value ?? 0,
+      description: undefined,
       goalId: asset.goalId
     }));
   }, [data?.assets]);
@@ -68,18 +68,23 @@ const Assets: React.FC = () => {
   const realCommodities: CommodityHolding[] = useMemo(() => {
     return (data?.commodityHoldings ?? []).map(commodity => {
       const currentValue = commodity.currentValue ?? 0;
-      const purchaseValue = (commodity.purchasePrice ?? 0) * (commodity.quantity ?? 0);
+      const purchaseValue = commodity.purchaseValue ?? 0;
       const gainLoss = currentValue - purchaseValue;
       const gainLossPercent = purchaseValue > 0 ? (gainLoss / purchaseValue) * 100 : 0;
+      
+      // Calculate currentPrice from currentValue / quantity if needed
+      const currentPrice = commodity.quantity > 0 ? currentValue / commodity.quantity : 0;
+      // Calculate purchasePrice from purchaseValue / quantity if needed
+      const purchasePrice = commodity.quantity > 0 ? purchaseValue / commodity.quantity : 0;
       
       return {
         id: commodity.id,
         symbol: commodity.symbol ?? '',
-        name: commodity.name ?? commodity.symbol ?? '',
+        name: (typeof commodity.name === 'string' ? commodity.name : 'Gold') ?? commodity.symbol ?? '',
         quantity: commodity.quantity ?? 0,
-        currentPrice: (commodity.currentPrice ?? 0),
-        currency: commodity.currency ?? 'SAR',
-        purchasePrice: commodity.purchasePrice ?? 0,
+        currentPrice,
+        currency: 'SAR', // Default currency
+        purchasePrice,
         totalValue: currentValue,
         gainLoss,
         gainLossPercent
@@ -539,10 +544,19 @@ const Assets: React.FC = () => {
         <AssetForm 
           asset={assetToEdit}
           onSave={async (assetData) => {
+            // Convert local Asset interface to AssetType
+            const assetTypeData: AssetType = {
+              id: assetToEdit?.id || '',
+              name: assetData.name || '',
+              type: assetData.type || 'Other',
+              value: assetData.value || 0,
+              purchasePrice: assetData.purchaseValue,
+              goalId: assetData.goalId
+            };
             if (assetToEdit) {
-              await updateAsset({ ...assetToEdit, ...assetData } as AssetType);
+              await updateAsset({ ...assetToEdit, ...assetTypeData });
             } else {
-              await addAsset(assetData as AssetType);
+              await addAsset(assetTypeData);
             }
             setIsAssetModalOpen(false);
             setAssetToEdit(null);
@@ -555,10 +569,21 @@ const Assets: React.FC = () => {
         <CommodityForm 
           commodity={commodityToEdit}
           onSave={async (commodityData) => {
+            // Convert local CommodityHolding interface to CommodityHoldingType
+            const commodityTypeData: Omit<CommodityHoldingType, 'id' | 'user_id'> = {
+              name: (commodityData.name === 'Gold' || commodityData.name === 'Silver' || commodityData.name === 'Bitcoin' ? commodityData.name : 'Other') as 'Gold' | 'Silver' | 'Bitcoin' | 'Other',
+              quantity: commodityData.quantity || 0,
+              unit: 'unit' as const,
+              purchaseValue: (commodityData.purchasePrice || 0) * (commodityData.quantity || 0),
+              currentValue: (commodityData.currentPrice || 0) * (commodityData.quantity || 0),
+              symbol: commodityData.symbol || '',
+              zakahClass: 'Zakatable' as const,
+              goalId: undefined
+            };
             if (commodityToEdit) {
-              await updateCommodityHolding({ ...commodityToEdit, ...commodityData } as CommodityHoldingType);
+              await updateCommodityHolding({ ...commodityToEdit, ...commodityTypeData });
             } else {
-              await addCommodityHolding(commodityData as Omit<CommodityHoldingType, 'id' | 'user_id'>);
+              await addCommodityHolding(commodityTypeData);
             }
             setIsCommodityModalOpen(false);
             setCommodityToEdit(null);
@@ -705,7 +730,9 @@ const CommodityForm: React.FC<{ commodity: CommodityHolding | null; onSave: (dat
         purchasePrice: purchasePriceNum,
         currentPrice: price,
         currency: 'SAR',
-        currentValue: qty * price
+        totalValue: qty * price,
+        gainLoss: (qty * price) - (qty * purchasePriceNum),
+        gainLossPercent: purchasePriceNum > 0 ? (((price - purchasePriceNum) / purchasePriceNum) * 100) : 0
       });
     } catch (error) {
       alert(`Failed to save commodity: ${error instanceof Error ? error.message : String(error)}`);

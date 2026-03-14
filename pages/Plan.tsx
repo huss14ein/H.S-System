@@ -292,7 +292,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         // Use weighted average if we have data, otherwise use simple average of non-zero months
         const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
         // For months with no data, use average; for months with data, use actual (more accurate)
-        const incomePlanned = incomeActuals.map((actual, idx) => {
+        const incomePlanned = incomeActuals.map((actual) => {
             if (actual > 0) return actual;
             // If we have historical data, use average; otherwise use 0 to avoid overestimation
             return incomeMonthsWithData >= 3 ? incomeAvg : 0;

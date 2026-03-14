@@ -3,8 +3,8 @@
  * Automatically categorizes expenses, learns from patterns, and provides dynamic recommendations
  */
 
-import { Transaction, Budget, FinancialData } from '../types';
-import { getGeminiAnalysis } from './geminiService';
+import { Transaction, Budget } from '../types';
+import { invokeAI } from './geminiService';
 
 export interface SpendingPattern {
   category: string;
@@ -57,17 +57,7 @@ export async function autoCategorizeExpense(
     )
     .slice(0, 10);
 
-  const context = {
-    description: transaction.description,
-    amount: transaction.amount,
-    date: transaction.date,
-    similarTransactions: similarTransactions.map(t => ({
-      description: t.description,
-      category: t.budgetCategory,
-      amount: t.amount
-    })),
-    existingCategories: existingBudgets.map(b => b.category)
-  };
+  // Context is used in the prompt below
 
   const prompt = `Analyze this expense transaction and suggest the most appropriate budget category.
 
@@ -102,8 +92,12 @@ Respond in JSON format:
 }`;
 
   try {
-    const response = await getGeminiAnalysis(prompt, 'budget-categorization');
-    const parsed = JSON.parse(response);
+    const response = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+    const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
+    const parsed = JSON.parse(text);
     
     return {
       transactionId: transaction.id,
@@ -175,7 +169,7 @@ function fallbackCategorization(
  */
 export async function analyzeSpendingPatternsAI(
   transactions: Transaction[],
-  budgets: Budget[]
+  _budgets: Budget[]
 ): Promise<SpendingPattern[]> {
   const expenses = transactions.filter(t => t.type === 'expense' && t.budgetCategory);
   const categoryGroups = new Map<string, Transaction[]>();
@@ -333,8 +327,12 @@ Provide refined recommendations considering:
 
 Respond with JSON array of refined recommendations with enhanced reasoning.`;
 
-      const aiResponse = await getGeminiAnalysis(prompt, 'budget-recommendations');
-      const aiRecommendations = JSON.parse(aiResponse);
+      const aiResponse = await invokeAI({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+      const text = aiResponse?.candidates?.[0]?.content?.parts?.[0]?.text || aiResponse?.text || '';
+      const aiRecommendations = JSON.parse(text);
       
       // Merge AI insights with existing recommendations
       return recommendations.map((rec, idx) => {
@@ -361,7 +359,7 @@ Respond with JSON array of refined recommendations with enhanced reasoning.`;
  */
 export async function predictFutureExpenses(
   transactions: Transaction[],
-  budgets: Budget[],
+  _budgets: Budget[],
   monthsAhead: number = 3
 ): Promise<PredictiveInsight[]> {
   const insights: PredictiveInsight[] = [];
@@ -450,8 +448,12 @@ Consider KSA-specific factors:
 
 Provide refined predictions with enhanced confidence and factors.`;
 
-    const aiResponse = await getGeminiAnalysis(prompt, 'expense-prediction');
-    const aiInsights = JSON.parse(aiResponse);
+    const aiResponse = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+    const text = aiResponse?.candidates?.[0]?.content?.parts?.[0]?.text || aiResponse?.text || '';
+    const aiInsights = JSON.parse(text);
     
     return insights.map((insight, idx) => {
       const aiInsight = aiInsights[idx];
