@@ -12,6 +12,7 @@ import SectionCard from '../components/SectionCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 
 
@@ -262,6 +263,7 @@ const Forecast: React.FC = () => {
         <PageLayout
             title="Financial Forecast"
             description="Project your financial future based on your current savings habits and market assumptions."
+            action={<DemoDataButton page="Forecast" />}
         >
             <div className="alert-info mb-6">
                 <h2 className="text-base font-semibold text-blue-900 mb-2">How Scenario Planning Works</h2>

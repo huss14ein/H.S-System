@@ -21,6 +21,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 
 // A more visual progress bar specific for goals
@@ -451,6 +452,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
       action={
         <div className="flex items-center gap-2">
+          <DemoDataButton page="Goals" options={{ includeGoals: true }} />
           {setActivePage && (
             <button type="button" onClick={() => setActivePage('Plan')} className="btn-outline flex items-center gap-1.5">
               <LinkIcon className="h-4 w-4" /> See impact in Plan
