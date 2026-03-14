@@ -824,7 +824,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             title="Cash Flow"
             action={
                 <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
-                </div>
             }
         >
             <SectionCard
