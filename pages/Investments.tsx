@@ -237,7 +237,9 @@ const RecordTradeModal: React.FC<{
     );
     const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
-    const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
+    const portfoliosForAccount = useMemo(() => {
+        return accountId ? portfolios.filter(p => p.accountId === accountId) : [];
+    }, [accountId, portfolios]);
     
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
