@@ -12,6 +12,14 @@ import { AcademicCapIcon } from './components/icons/AcademicCapIcon';
 import { PiggyBankIcon } from './components/icons/PiggyBankIcon';
 import { BellIcon } from './components/icons/BellIcon';
 import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
+import { PresentationChartLineIcon } from './components/icons/PresentationChartLineIcon';
+import { RocketLaunchIcon } from './components/icons/RocketLaunchIcon';
+import { SparklesIcon } from './components/icons/SparklesIcon';
+import { GiftIcon } from './components/icons/GiftIcon';
+import { EyeIcon } from './components/icons/EyeIcon';
+import { ChartPieIcon } from './components/icons/ChartPieIcon';
+import { HomeModernIcon } from './components/icons/HomeModernIcon';
+import { ClipboardDocumentListIcon } from './components/icons/ClipboardDocumentListIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
@@ -26,4 +34,13 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Summary', icon: UsersIcon },
   { name: 'Notifications', icon: BellIcon },
   { name: 'Settings', icon: Cog6ToothIcon },
+  // Strategy pages
+  { name: 'Investment Plan', icon: PresentationChartLineIcon },
+  { name: 'Recovery Plan', icon: RocketLaunchIcon },
+  { name: 'AI Rebalancer', icon: SparklesIcon },
+  { name: 'Dividend Tracker', icon: GiftIcon },
+  { name: 'Watchlist', icon: EyeIcon },
+  { name: 'Investments', icon: ChartPieIcon },
+  { name: 'Assets', icon: HomeModernIcon },
+  { name: 'Plan', icon: ClipboardDocumentListIcon },
 ];
