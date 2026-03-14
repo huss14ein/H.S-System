@@ -6,7 +6,7 @@ import PageLayout from '../components/PageLayout';
 import { CurrencyContext } from '../context/CurrencyContext';
 import { format } from 'date-fns';
 import { 
-  BuildingOfficeIcon, 
+  BuildingLibraryIcon, 
   TruckIcon, 
   CurrencyDollarIcon,
   BanknotesIcon,
@@ -14,7 +14,7 @@ import {
   PencilIcon,
   TrashIcon,
   ChartBarIcon,
-  AcademicCapIcon
+  ServerStackIcon
 } from '../components/icons';
 
 interface Asset {
@@ -152,7 +152,7 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
   const getAssetIcon = (type: Asset['type']) => {
     switch (type) {
       case 'Property':
-        return <BuildingOfficeIcon className="h-6 w-6 text-blue-500" />;
+        return <BuildingLibraryIcon className="h-6 w-6 text-blue-500" />;
       case 'Vehicle':
         return <TruckIcon className="h-6 w-6 text-green-500" />;
       case 'Sukuk':
