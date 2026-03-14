@@ -62,8 +62,8 @@ export function analyzeSpendingTrends(
     const curr = months[i];
     
     // Get category amount from buckets (simplified - would need proper mapping)
-    const prevAmount = (prev.buckets as any)[categoryKey] || 0;
-    const currAmount = (curr.buckets as any)[categoryKey] || 0;
+    const prevAmount = (prev.buckets && categoryKey in prev.buckets ? prev.buckets[categoryKey] : 0) || 0;
+    const currAmount = (curr.buckets && categoryKey in curr.buckets ? curr.buckets[categoryKey] : 0) || 0;
     
     if (prevAmount > 0) {
       const changePct = ((currAmount - prevAmount) / prevAmount) * 100;
@@ -72,11 +72,11 @@ export function analyzeSpendingTrends(
       else if (changePct < -5) trend = 'decreasing';
       
       trends.push({
-        month: curr.month,
+        month: curr.month ?? curr.monthIndex + 1,
         category,
         amount: currAmount,
         trend,
-        changePct,
+        changePct: Number.isFinite(changePct) ? changePct : 0,
       });
     }
   }
@@ -104,13 +104,13 @@ export function predictFutureMonths(
     }, 0) / recentMonths.length;
     
     const avgExpense = recentMonths.reduce((sum, m) => {
-      const expense = m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow;
+      const expense = (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0);
       return sum + Math.max(0, expense);
     }, 0) / recentMonths.length;
     
     // Calculate trend (use actual if available)
     const incomeValues = recentMonths.map(m => m.incomeActual > 0 ? m.incomeActual : m.incomePlanned);
-    const expenseValues = recentMonths.map(m => m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow);
+    const expenseValues = recentMonths.map(m => (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0));
     
     const incomeTrend = incomeValues.length >= 2
       ? (incomeValues[incomeValues.length - 1] - incomeValues[0]) / incomeValues.length
@@ -172,19 +172,21 @@ export function analyzeScenario(
   goals: Array<{ name: string; remaining: number }>
 ): ScenarioAnalysis {
   const currentYearEndBalance = result.balanceProjection.projectedYearEndLiquid;
-  const avgMonthlySalary = result.months.reduce((sum, m) => sum + m.incomePlanned, 0) / result.months.length;
-  const avgMonthlyExpense = result.months.reduce((sum, m) => sum + m.totalPlannedOutflow, 0) / result.months.length;
+  const numMonths = result.months.length || 1;
+  const avgMonthlySalary = result.months.reduce((sum, m) => sum + m.incomePlanned, 0) / numMonths;
+  const avgMonthlyExpense = result.months.reduce((sum, m) => sum + (m.totalPlannedOutflow ?? m.expensePlanned ?? 0), 0) / numMonths;
   
   const newAvgSalary = avgMonthlySalary + monthlySalaryChange;
   const newAvgExpense = avgMonthlyExpense + monthlyExpenseChange;
   const newMonthlyNet = newAvgSalary - newAvgExpense;
   
-  const projectedYearEndBalance = result.balanceProjection.openingLiquid + (newMonthlyNet * 12);
+  const openingLiquid = result.balanceProjection.openingLiquid ?? result.balanceProjection.projectedYearEndLiquid ?? 0;
+  const projectedYearEndBalance = openingLiquid + (newMonthlyNet * 12);
   const projectedYearEndBalanceChange = projectedYearEndBalance - currentYearEndBalance;
   
   // Calculate goal achievement impact
   const goalAchievementImpact = goals.map(goal => {
-    const currentSurplus = result.months.reduce((sum, m) => sum + (m.routedGoalAmount + m.buckets.goalSavings), 0);
+    const currentSurplus = result.months.reduce((sum, m) => sum + (m.routedGoalAmount ?? 0) + (m.buckets?.goalSavings ?? 0), 0);
     const newSurplus = Math.max(0, newMonthlyNet * 12);
     const currentMonthsToGoal = currentSurplus > 0 ? goal.remaining / (currentSurplus / 12) : 999;
     const newMonthsToGoal = newSurplus > 0 ? goal.remaining / (newSurplus / 12) : 999;
@@ -232,7 +234,7 @@ export function detectAnomalies(
   const categoryStdDevs: Record<string, number> = {};
   
   // Group by category (simplified - would need proper category mapping)
-  const categoryKeys = Object.keys(months[0].buckets);
+  const categoryKeys = Object.keys(months[0].buckets ?? {});
   
   categoryKeys.forEach(key => {
     const amounts = months.map(m => (m.buckets as any)[key] || 0);
@@ -262,7 +264,7 @@ export function detectAnomalies(
           else if (zScore > 2.5) severity = 'medium';
           
           anomalies.push({
-            month: month.month,
+            month: month.month ?? month.monthIndex + 1,
             category: key,
             expectedAmount: expected,
             actualAmount: actual,
@@ -326,12 +328,12 @@ export function detectSeasonality(
   const categoryTotals: Record<string, Record<number, number[]>> = {};
   
   months.forEach(month => {
-    const monthNum = month.month;
+    const monthNum = month.month ?? month.monthIndex + 1;
     if (!byMonth[monthNum]) {
       byMonth[monthNum] = [];
     }
     
-    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
+    const expense = (month.totalActualOutflow ?? 0) > 0 ? (month.totalActualOutflow ?? 0) : (month.totalPlannedOutflow ?? 0);
     byMonth[monthNum].push(expense);
     
     // Track by category
@@ -350,7 +352,7 @@ export function detectSeasonality(
   // Calculate overall monthly averages
   const monthlyAverages: Record<number, number> = {};
   const overallAverage = months.reduce((sum, m) => {
-    const expense = m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow;
+    const expense = (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0);
     return sum + expense;
   }, 0) / months.length;
   

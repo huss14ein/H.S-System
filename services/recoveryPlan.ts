@@ -266,7 +266,7 @@ export function buildRecoveryPlan(
   else state = 'QUALIFIED';
 
   return {
-    symbol: holding.symbol,
+    symbol: holding.symbol ?? '',
     state,
     qualified: eligibility.qualified,
     reason: eligibility.reason,

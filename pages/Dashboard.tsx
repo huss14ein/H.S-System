@@ -70,16 +70,16 @@ const AIExecutiveSummary: React.FC = () => {
                 <button
                     type="button"
                     onClick={handleGenerate}
-                    disabled={isLoading}
-                    title="Generate a new summary"
-                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    disabled={!isAiAvailable || isLoading}
+                    title={!isAiAvailable ? "AI features are disabled" : "Generate a new summary"}
+                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <ArrowPathIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                     {isLoading ? 'Summarizing...' : (summary ? 'Refresh Summary' : 'Generate Summary')}
                 </button>
             </div>
             
-            {isLoading && <div className="text-center p-8 text-gray-500">Analyzing your financial picture...</div>}
+            {isLoading && <div className="text-center p-8 text-slate-500">Analyzing your financial picture...</div>}
             
             {!isLoading && error && (
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
@@ -89,11 +89,17 @@ const AIExecutiveSummary: React.FC = () => {
                 </div>
             )}
 
-            {!summary && !isLoading && !error && (
-                <div className="text-center p-8 text-gray-500">
-                    Click "Generate Summary" to run the executive summary.
-                    {!isAiAvailable && <p className="mt-1 text-xs text-amber-700">AI provider unavailable right now — deterministic executive summary fallback remains active.</p>}
+            {!isAiAvailable ? (
+                <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
+                    <p className="font-semibold">AI Features Disabled</p>
+                    <p className="text-sm">Please set your Gemini API key to enable this feature.</p>
                 </div>
+            ) : (
+                !summary && !isLoading && !error && (
+                    <div className="text-center p-8 text-slate-500">
+                        Click &quot;Generate Summary&quot; for a high-level overview and strategic advice from your expert advisor.
+                    </div>
+                )
             )}
             
             {summary && !isLoading && !error && (
@@ -115,7 +121,7 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
                     <li key={acc.id} className="flex justify-between items-center text-sm">
                         <div>
                             <p className="font-medium text-dark">{acc.name}</p>
-                            <p className="text-xs text-gray-500">{acc.type}</p>
+                            <p className="text-xs text-slate-500">{acc.type}</p>
                         </div>
                         <p className={`font-semibold ${acc.balance >= 0 ? 'text-success' : 'text-danger'}`}>{formatCurrencyString(acc.balance)}</p>
                     </li>
@@ -173,7 +179,7 @@ const UpcomingBills: React.FC = () => {
                         <li key={bill.name} className="flex justify-between items-center text-sm">
                             <div>
                                 <p className="font-medium text-dark">{bill.name}</p>
-                                <p className="text-xs text-gray-500">
+                                <p className="text-xs text-slate-500">
                                     Due: {formatDate(bill.date)} • Typical: {formatCurrencyString(bill.avgAmount)}
                                 </p>
                             </div>
@@ -182,7 +188,7 @@ const UpcomingBills: React.FC = () => {
                     ))}
                 </ul>
             ) : (
-                <p className="text-sm text-center text-gray-500 py-4">No upcoming recurring bills detected this month.</p>
+                <p className="text-sm text-center text-slate-500 py-4">No upcoming recurring bills detected this month.</p>
             )}
         </div>
     );
@@ -204,7 +210,7 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], onClick: () =>
                     >
                         <div>
                             <p className="font-medium text-dark">{t.description}</p>
-                            <p className="text-sm text-gray-500">{formatDate(t.date)}</p>
+                            <p className="text-sm text-slate-500">{formatDate(t.date)}</p>
                         </div>
                         <p className="font-semibold">
                             {formatCurrency(t.amount, { colorize: true })}
@@ -244,10 +250,10 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
                                 </span>
                             </div>
                             <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? budget.limit} color={status.colorClass} />
-                            <div className="flex justify-between items-baseline text-xs text-gray-500 mt-1">
+                            <div className="flex justify-between items-baseline text-xs text-slate-500 mt-1">
                                 <span>
                                     <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.monthlyLimit ?? budget.limit, { digits: 0 })}
-                                    <span className="font-medium text-gray-600"> ({budget.percentage.toFixed(0)}%)</span>
+                                    <span className="font-medium text-slate-600"> ({budget.percentage.toFixed(0)}%)</span>
                                 </span>
                                 <span>
                                     {daysLeft} days left

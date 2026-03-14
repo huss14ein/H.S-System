@@ -2,7 +2,6 @@ import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PageLayout from '../components/PageLayout';
-import { format } from 'date-fns';
 import { 
   BuildingLibraryIcon, 
   TruckIcon, 
@@ -282,7 +281,7 @@ const Assets: React.FC = () => {
                               {formatCurrencyString(asset.purchaseValue)}
                             </p>
                             <p className="text-xs text-gray-500">
-                              {format(new Date(asset.purchaseDate), 'MMM yyyy')}
+                              {new Date(asset.purchaseDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
                             </p>
                           </div>
                         </div>

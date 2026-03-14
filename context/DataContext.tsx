@@ -20,8 +20,13 @@ const initialData: FinancialData = {
             allowFractionalShares: false, minimumOrderSize: 1, roundingRule: 'round', leftoverCashRule: 'hold'
         }
     },
-    portfolioUniverse: [], statusChangeLog: [], executionLogs: [], allTransactions: [], allBudgets: [],
-    wealthUltraConfig: getDefaultWealthUltraSystemConfig()
+    portfolioUniverse: [],
+    statusChangeLog: [],
+    executionLogs: [],
+    allTransactions: [],
+    allBudgets: [],
+    wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
+    budgetRequests: [],
 };
 
 interface DataContextType {
@@ -44,6 +49,8 @@ interface DataContextType {
   addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>) => Promise<void>;
   updateTransaction: (transaction: Transaction) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
+  /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
+  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => Promise<void>;
   addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
@@ -55,6 +62,7 @@ interface DataContextType {
   addPortfolio: (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => Promise<void>;
   updatePortfolio: (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => Promise<void>;
   deletePortfolio: (portfolioId: string) => Promise<void>;
+  addHolding: (holding: Omit<Holding, 'id' | 'user_id'>) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
   recordTrade: (trade: { portfolioId?: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<void>;
@@ -83,6 +91,8 @@ interface DataContextType {
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
   /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). Returns by currency so SAR and USD are not mixed. */
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+  /** Sum of available cash across all investment accounts (SAR + USD converted to SAR). */
+  totalDeployableCash: number;
   /** Admin-only: All users' transactions for approval notifications */
   allTransactions: Transaction[];
   /** Admin-only: All users' budgets for tracking */
@@ -245,16 +255,18 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
 }
 
 /** Map holding to DB row (snake_case). Schema uses avg_cost, current_value, realized_pnl, zakah_class, portfolio_id. */
-function holdingToRow(holding: Partial<Holding> & { symbol: string; quantity: number }): Record<string, unknown> {
+function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<string, unknown> {
+    const holdingType = holding.holdingType ?? (holding as any).holding_type ?? 'ticker';
     const row: Record<string, unknown> = {
         portfolio_id: holding.portfolio_id ?? (holding as any).portfolioId,
-        symbol: holding.symbol,
+        symbol: holding.symbol ?? (holdingType === 'manual_fund' ? null : ''),
         name: holding.name ?? '',
         quantity: Number(holding.quantity ?? 0),
         avg_cost: Number(holding.avgCost ?? (holding as any).avg_cost ?? 0),
         current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
         realized_pnl: Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
+        holding_type: holdingType,
     };
     if (holding.assetClass != null || (holding as any).asset_class != null) {
         row.asset_class = holding.assetClass ?? (holding as any).asset_class;
@@ -264,9 +276,12 @@ function holdingToRow(holding: Partial<Holding> & { symbol: string; quantity: nu
 
 /** Normalize DB holding row to app Holding shape (camelCase). */
 function normalizeHoldingFromRow(row: any): Holding {
+    const holdingType = row.holding_type ?? row.holdingType ?? 'ticker';
     return {
         ...row,
         portfolio_id: row.portfolio_id ?? row.portfolioId,
+        symbol: row.symbol ?? (holdingType === 'manual_fund' ? '' : ''),
+        holdingType,
         avgCost: row.avg_cost ?? row.avgCost ?? 0,
         currentValue: row.current_value ?? row.currentValue ?? 0,
         realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
@@ -339,18 +354,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const transactionsRef = useRef<FinancialData['transactions']>(data.transactions);
     transactionsRef.current = data.transactions;
 
-    const normalizeHolding = (holding: any): Holding => ({
-        ...holding,
-        portfolio_id: holding.portfolio_id || holding.portfolioId,
-        avgCost: holding.avgCost ?? holding.avg_cost ?? 0,
-        currentValue: holding.currentValue ?? holding.current_value ?? 0,
-        goalId: holding.goalId ?? holding.goal_id,
-        assetClass: holding.assetClass ?? holding.asset_class,
-        realizedPnL: holding.realizedPnL ?? holding.realized_pnl ?? 0,
-        dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
-        dividendYield: holding.dividendYield ?? holding.dividend_yield,
-        zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
-    });
+    const normalizeHolding = (holding: any): Holding => {
+        const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
+        return {
+            ...holding,
+            portfolio_id: holding.portfolio_id || holding.portfolioId,
+            symbol: holding.symbol ?? '',
+            holdingType,
+            avgCost: holding.avgCost ?? holding.avg_cost ?? 0,
+            currentValue: holding.currentValue ?? holding.current_value ?? 0,
+            goalId: holding.goalId ?? holding.goal_id,
+            assetClass: holding.assetClass ?? holding.asset_class,
+            realizedPnL: holding.realizedPnL ?? holding.realized_pnl ?? 0,
+            dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
+            dividendYield: holding.dividendYield ?? holding.dividend_yield,
+            zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
+        };
+    };
 
     const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => ({
         ...transaction,
@@ -492,13 +512,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
                 db.from('planned_trades').select('*').eq('user_id', auth.user.id),
+                // Do not fetch by other user id; privacy requirement.
                 db.from('investment_plan').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
-                recurringPromise
+                recurringPromise,
+                db.from('budget_requests').select('*').eq('user_id', auth.user.id)
             ];
-            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions'] as const;
+            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests'] as const;
             const settled = await Promise.allSettled(fetchPromises);
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
             const results = settled.map((s, i) => {
@@ -506,8 +528,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 console.error(`Error fetching ${keys[i]}:`, s.reason);
                 return emptyResult(s.reason);
             });
-            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions] = results;
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions };
+            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests] = results;
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests };
             Object.entries(allFetches).forEach(([key, value]) => {
               if (value?.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error);
             });
@@ -559,7 +581,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
                     return resolved ? { ...norm, accountId: resolved } : norm;
                 }),
-                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional' })),
+                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional', destinationAccountId: b.destination_account_id ?? undefined })),
                 commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
                 watchlist: filterOwnedRows(watchlist.data as any[]),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
@@ -576,6 +598,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
                     normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
                 ),
+                budgetRequests: ((budgetRequests as any).data || []).map((r: any) => ({
+                    id: r.id,
+                    userId: r.user_id ?? r.userId,
+                    requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
+                    categoryId: r.category_id ?? r.categoryId,
+                    categoryName: r.category_name ?? r.categoryName,
+                    amount: Number(r.amount ?? 0),
+                    note: r.note ?? r.request_note,
+                    status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
+                })),
                 allTransactions: allTransactionsData.map(normalizeTransaction),
                 allBudgets: allBudgetsData,
             });
@@ -855,8 +887,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Budgets ---
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
+      if (budget.limit <= 0) {
+        alert('Budget amount must be greater than zero.');
+        return;
+      }
       const db = supabase;
-      const payload = withUser(budget);
+      const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
+      if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
       // Retry once with same payload. Do not convert yearly limit to monthly or reload will show wrong value (DB would store monthly amount with period=yearly).
       if (error && (payload as any).period) {
@@ -869,7 +906,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error;
       }
       if (newBudget) {
-        const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier };
+        const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier, destinationAccountId: (newBudget as any).destination_account_id ?? undefined };
         if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
       }
@@ -877,12 +914,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateBudget = async (budget: Budget) => {
       if (!supabase || !auth?.user) return;
       const db = supabase;
-      const { category, month, year, limit, period, tier } = budget;
+      const { category, month, year, limit, period, tier, destinationAccountId } = budget;
       const payload: Record<string, unknown> = {
         limit,
         period,
         tier,
       };
+      if (destinationAccountId !== undefined) payload.destination_account_id = destinationAccountId;
       const { error } = await db
         .from('budgets')
         .update(payload)
@@ -895,7 +933,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ...prev,
         budgets: prev.budgets.map((b) =>
           b.category === category && b.month === month && b.year === year
-            ? { ...b, limit, period, tier }
+            ? { ...b, limit, period, tier, destinationAccountId }
             : b
         ),
       }));
@@ -923,7 +961,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .filter((b: any) => !existingTargetCategories.has(b.category))
             .map((b: any) => {
                 const { id, user_id, ...rest } = b;
-                return { ...rest, month: targetMonth, year: targetYear, period: b.period ?? 'monthly' };
+                return { ...rest, month: targetMonth, year: targetYear, period: b.period ?? 'monthly', destination_account_id: b.destination_account_id ?? undefined };
             });
 
         if (budgetsToInsert.length === 0) { alert("All budgets from last month already exist for the selected month."); return; }
@@ -931,7 +969,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert.map(b => withUser(b))).select();
         if (insertError) { console.error("Error copying budgets:", insertError); alert("Failed to copy budgets."); }
         else {
-            setData(prev => ({ ...prev, budgets: [...prev.budgets, ...insertedData] }));
+            const normalized = (insertedData || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional', destinationAccountId: b.destination_account_id ?? undefined }));
+            setData(prev => ({ ...prev, budgets: [...prev.budgets, ...normalized] }));
             alert(`${insertedData.length} budget(s) copied successfully.`);
         }
     };
@@ -1024,6 +1063,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
             await syncSharedBudgetTransactionMirror(normalized as any);
         }
+    };
+    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => {
+        if (!supabase || !auth?.user) return;
+        const absAmount = Math.abs(amount);
+        if (absAmount <= 0) {
+            alert('Transfer amount must be greater than zero.');
+            return;
+        }
+        const fromAcc = data.accounts.find((a) => a.id === fromAccountId);
+        const toAcc = data.accounts.find((a) => a.id === toAccountId);
+        const fromName = fromAcc?.name ?? fromAccountId;
+        const toName = toAcc?.name ?? toAccountId;
+        const dateStr = date ?? new Date().toISOString().split('T')[0];
+        const descOut = note ? `Transfer to ${toName}: ${note}` : `Transfer to ${toName}`;
+        const descIn = note ? `Transfer from ${fromName}: ${note}` : `Transfer from ${fromName}`;
+        await addTransaction({
+            date: dateStr,
+            description: descOut,
+            amount: -absAmount,
+            type: 'expense',
+            accountId: fromAccountId,
+            category: 'Transfer',
+        });
+        await addTransaction({
+            date: dateStr,
+            description: descIn,
+            amount: absAmount,
+            type: 'income',
+            accountId: toAccountId,
+            category: 'Transfer',
+        });
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
@@ -1853,7 +1923,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return bank + platformCash;
     }, [data.accounts, getAvailableCashForAccount]);
 
-    const value = { data, loading, dataResetKey, allTransactions: data.transactions, allBudgets: data.budgets, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data, loading, dataResetKey, allTransactions: data.transactions, allBudgets: data.budgets, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

@@ -885,11 +885,11 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
 
 
 export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
-  const cacheKey = `getInvestmentAIAnalysis:${holdings.map(h => h.symbol + h.quantity).join(',')}`;
+  const cacheKey = `getInvestmentAIAnalysis:${holdings.map(h => (h.symbol ?? '') + h.quantity).join(',')}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
-    const prompt = `You are Finova AI, a very clever expert investment advisor. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Be direct and insightful; do not give specific buy/sell advice. No HTML. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+    const prompt = `You are Finova AI, a very clever expert investment advisor. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Be direct and insightful; do not give specific buy/sell advice. No HTML. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || "Could not retrieve analysis.";
     setToCache(cacheKey, result);
@@ -907,7 +907,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
-        const prompt = `You are Finova AI, a very clever expert investment advisor. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Speak as a senior advisor; do not give specific buy/sell advice. Holdings: ${holdings.map(h => h.symbol).join(', ')}`;
+        const prompt = `You are Finova AI, a very clever expert investment advisor. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Speak as a senior advisor; do not give specific buy/sell advice. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { return formatAiError(error); }
@@ -915,8 +915,8 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
 
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<{ content: string, groundingChunks: any[] }> => {
     try {
-        const finnhubBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol));
-        const prompt = `You are Finova AI, a very clever expert investment analyst. For stocks: ${stocks.map(s => s.symbol).join(', ')}. Use Google Search and the Finnhub digest below. Return a concise Markdown summary (no HTML). Use ### for each symbol and one short section ### Calendar Watch for major macro events. Be direct; one paragraph or 2-3 bullets per symbol.\n\n${finnhubBrief ? `Reference:\n${finnhubBrief}` : ''}`;
+        const finnhubBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol ?? '').filter(Boolean));
+        const prompt = `You are Finova AI, a very clever expert investment analyst. For stocks: ${stocks.map(s => s.symbol ?? '').join(', ')}. Use Google Search and the Finnhub digest below. Return a concise Markdown summary (no HTML). Use ### for each symbol and one short section ### Calendar Watch for major macro events. Be direct; one paragraph or 2-3 bullets per symbol.\n\n${finnhubBrief ? `Reference:\n${finnhubBrief}` : ''}`;
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
@@ -929,7 +929,7 @@ export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Pr
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         return { content, groundingChunks };
     } catch (error) {
-        const fallbackBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol));
+        const fallbackBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol ?? '').filter(Boolean));
         const errorMessage = formatAiError(error);
         return {
             content: fallbackBrief
@@ -1230,13 +1230,13 @@ export function buildFallbackAnalystReport(holding: Holding): string {
     const value = holding.currentValue ?? 0;
     const gainLoss = value - cost;
     const gainLossPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
-    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n### Coverage status\n- AI analyst engine was unavailable for this request.\n- Showing a resilient fallback summary now.\n- If configured, Finnhub headlines are attached below.`;
+    return `## Position Summary\n\n**${holding.symbol ?? ''}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n### Coverage status\n- AI analyst engine was unavailable for this request.\n- Showing a resilient fallback summary now.\n- If configured, Finnhub headlines are attached below.`;
 }
 
 async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<string> {
     const base = buildFallbackAnalystReport(holding);
     try {
-        const headlines = await getFinnhubCompanyNews([holding.symbol]);
+        const headlines = await getFinnhubCompanyNews([holding.symbol ?? '']);
         if (headlines.length === 0) {
             return `${base}\n\n### Finnhub latest headlines\n- No recent headlines were available for this symbol right now.`;
         }
@@ -1261,7 +1261,7 @@ export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefr
         Number(holding.avgCost || 0).toFixed(2),
         Number(holding.currentValue || 0).toFixed(2),
     ].join(':');
-    const cacheKey = `getAIStockAnalysis:${holding.symbol}:${dayKey}:${positionSnapshotKey}`;
+    const cacheKey = `getAIStockAnalysis:${holding.symbol ?? ''}:${dayKey}:${positionSnapshotKey}`;
     const cached = getFromCache(cacheKey);
     if (!options?.forceRefresh && cached) return cached;
 
@@ -1269,7 +1269,7 @@ export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefr
         ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
         : Number(holding.avgCost || 0);
     const primaryPrompt = `You are Finova AI, a very clever expert investment analyst.
-Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol}) using Google Search.
+Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol ?? ''}) using Google Search.
 Treat stale/outdated references as low confidence and prefer latest items.
 
 Portfolio snapshot context (for relevance only):
@@ -1307,8 +1307,8 @@ Return Markdown only (no HTML):
 
         // Retry once without search tool, using Finnhub brief as context, to keep analyst report available.
         try {
-            const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol]);
-            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
+            const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol ?? '']);
+            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol ?? ''}), produce a concise Markdown analyst update (no HTML).
 
 Structure:
 ### TL;DR

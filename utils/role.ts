@@ -1,5 +1,8 @@
 import type { User } from '@supabase/supabase-js';
 
+/**
+ * Role helpers for admin checks.
+ */
 export function inferIsAdmin(user: User | null | undefined, dbRole?: string | null): boolean {
   if (String(dbRole || '').trim().toLowerCase() === 'admin') return true;
   if (dbRole === 'Admin') return true;

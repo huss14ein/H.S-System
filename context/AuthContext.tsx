@@ -511,8 +511,7 @@ class SecurityLogger {
     
     // Console log for development
     if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
-      console.log('Security Event:', logEntry);
+      console.warn('Security Event:', logEntry);
     }
     
     // In production, send to secure logging service

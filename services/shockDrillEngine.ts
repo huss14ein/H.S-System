@@ -50,9 +50,11 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
     monthlyActualExpense: (input.monthlyActualExpense ?? []).map(v => v * (1 + template.expenseShockPct / 100)),
   });
 
+  const baseOpening = baseHousehold.balanceProjection.openingLiquid ?? baseHousehold.balanceProjection.projectedYearEndLiquid ?? 0;
+  const shockedOpening = shockedHousehold.balanceProjection.openingLiquid ?? shockedHousehold.balanceProjection.projectedYearEndLiquid ?? 0;
   const householdProjectedYearEndDelta =
-    (shockedHousehold.balanceProjection.projectedYearEndLiquid - shockedHousehold.balanceProjection.openingLiquid) -
-    (baseHousehold.balanceProjection.projectedYearEndLiquid - baseHousehold.balanceProjection.openingLiquid);
+    (shockedHousehold.balanceProjection.projectedYearEndLiquid - shockedOpening) -
+    (baseHousehold.balanceProjection.projectedYearEndLiquid - baseOpening);
 
   const allHoldings = (data.investments ?? []).flatMap(p => p.holdings ?? []);
   const priceMap: Record<string, number> = {};

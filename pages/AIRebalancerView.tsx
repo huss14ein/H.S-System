@@ -54,7 +54,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
         const marketValue = Number(h.currentValue || 0);
         const fallbackValue = quantity > 0 && avgCost > 0 ? quantity * avgCost : 0;
         const effectiveValue = marketValue > 0 ? marketValue : fallbackValue;
-        return { name: h.symbol, value: effectiveValue };
+        return { name: h.symbol ?? '', value: effectiveValue };
       })
       .filter((row) => Number.isFinite(row.value) && row.value > 0);
   }, [selectedPortfolio]);

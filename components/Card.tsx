@@ -58,7 +58,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
 
   const isPositive = displayTrend?.includes('+') || (displayTrend && /(surplus|under|healthy)/i.test(displayTrend));
   const isNegative = displayTrend?.includes('-') || (displayTrend && /(deficit|over|critical|low)/i.test(displayTrend));
-  let trendColor = 'text-gray-500';
+  let trendColor = 'text-slate-500';
   if (isPositive) trendColor = 'text-green-700';
   if (isNegative) trendColor = 'text-red-700';
 
@@ -68,16 +68,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       ? 'text-red-700'
       : (valueColor || 'text-dark');
 
-  const cardToneClass = indicatorColor
-    ? (indicatorColor === 'green' ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200' :
-       indicatorColor === 'yellow' ? 'from-amber-50/80 via-white to-yellow-50/80 border-amber-200' :
-       indicatorColor === 'red' ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200' :
-       'from-sky-50 via-white to-indigo-50 border-slate-200')
-    : isPositive
-      ? 'from-emerald-50/80 via-white to-green-50/80 border-emerald-200'
-      : isNegative
-        ? 'from-rose-50/80 via-white to-red-50/80 border-rose-200'
-        : 'from-sky-50 via-white to-indigo-50 border-slate-200';
+  const cardToneClass = 'bg-white border-slate-200';
 
   useEffect(() => {
     const numericValue = toFiniteNumber(displayValue);
@@ -115,24 +106,21 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? (ariaLabel ?? title) : undefined}
-      className={`bg-gradient-to-br ${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
+      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
       onClick={onClick}
       onKeyDown={handleKeyDown}
-      style={{
-        backgroundImage: 'radial-gradient(circle at top right, rgba(239, 246, 255, 0.4) 0%, transparent 50%)',
-      }}
     >
       {/* Header: title + icon/tooltip — same layout for all cards */}
       <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
-        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 uppercase tracking-wide`}>{title}</h3>
+        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide`}>{title}</h3>
         <div className="flex-shrink-0 flex items-center gap-0.5">
           {icon}
           {tooltip && (
             <div className="relative group inline-flex items-center">
-              <InformationCircleIcon className="h-4 w-4 text-gray-400" />
-              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-gray-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none left-1/2 -translate-x-1/2 z-20 leading-relaxed shadow-lg">
+              <InformationCircleIcon className="h-4 w-4 text-slate-400" />
+              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-slate-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none left-1/2 -translate-x-1/2 z-20 leading-relaxed shadow-lg">
                 {tooltip}
-                <svg className="absolute text-gray-800 h-2 w-3 left-1/2 -translate-x-1/2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
+                <svg className="absolute text-slate-800 h-2 w-3 left-1/2 -translate-x-1/2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
               </div>
             </div>
           )}

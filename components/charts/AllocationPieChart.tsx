@@ -40,6 +40,15 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
     return null;
 };
 
+const formatCompactAmount = (value: number): string => {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(1)}T`;
+  if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toFixed(0);
+};
+
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const { formatCurrencyString } = useFormatCurrency();
   const chartHostRef = useRef<HTMLDivElement | null>(null);
@@ -65,6 +74,8 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
     [data]
   );
   const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
+  const totalDisplay = useMemo(() => formatCompactAmount(totalValue), [totalValue]);
+  const totalFull = useMemo(() => formatCurrencyString(totalValue, { digits: 0 }), [formatCurrencyString, totalValue]);
   const isEmpty = !sanitizedData.length || totalValue <= 0;
   const tooltipPosition = chartSize.width >= 640
     ? { x: Math.max(8, chartSize.width - 220), y: Math.max(10, Math.round(chartSize.height * 0.24)) }
@@ -108,7 +119,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
         <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[82%]">
           <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
-          <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrencyString(totalValue, { digits: 0 })}</p>
+          <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis" title={totalFull}>{totalDisplay}</p>
           {sanitizedData.length === 1 && <p className="text-xs text-slate-500 mt-0.5">{sanitizedData[0].name}</p>}
         </div>
       </div>

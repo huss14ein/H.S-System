@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -15,28 +15,25 @@ import { inferIsAdmin } from '../utils/role';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
+import { DemoDataButton } from '../components/DemoDataButton';
 import SectionCard from '../components/SectionCard';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import {
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
-    HOUSEHOLD_ENGINE_PROFILES,
+    DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
-    generateSaudiBudgetCategories,
+    type HouseholdEngineConfig,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
+    type HouseholdMonthResult,
 } from '../services/householdBudgetEngine';
 import {
     predictFutureMonths,
     generateCommonScenarios,
     detectAnomalies,
     detectSeasonality,
-    type PredictiveForecast,
-    type ScenarioAnalysis,
-    type BudgetAnomaly,
-    type SeasonalityPattern,
 } from '../services/householdBudgetAnalytics';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 
 
@@ -193,6 +190,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
+    const [engineSectionsOpen, setEngineSectionsOpen] = useState({ monthlyOverrides: true, scenarios: false, validation: true });
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -205,27 +203,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
-    const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
-    const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
-    const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
-    
-    // Update shared transaction month filter when current month changes
-    useEffect(() => {
-        setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
-    }, [currentYear, currentMonth]);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
-    const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
+    const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | undefined>(undefined);
+    const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
     const [selectedScenario, setSelectedScenario] = useState('custom');
-    const [showPredictiveAnalytics, setShowPredictiveAnalytics] = useState(false);
-    const [showScenarioPlanning, setShowScenarioPlanning] = useState(false);
-    const [showSeasonality, setShowSeasonality] = useState(false);
-    const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
-    const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
-    const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
-    const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
+    const [, setPredictiveForecasts] = useState<any[]>([]);
+    const [, setScenarios] = useState<any[]>([]);
+    const [, setAnomalies] = useState<any[]>([]);
+    const [, setSeasonalityPatterns] = useState<any[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -374,7 +362,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 const forecasts = predictFutureMonths(result.months, 3);
                 setPredictiveForecasts(forecasts);
                 
-                const commonScenarios = generateCommonScenarios(result, input.goals);
+                const goalsForScenarios = input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - (g.currentAmount ?? 0)) }));
+                const commonScenarios = generateCommonScenarios(result, goalsForScenarios);
                 setScenarios(commonScenarios);
                 
                        const detectedAnomalies = detectAnomalies(result.months);
@@ -399,18 +388,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
-    const suggestedMonthlySalary = useMemo(() => {
-        const incomeByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== currentYear || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const withData = incomeByMonth.filter((v) => v > 0);
-        return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [data?.transactions, currentYear]);
-
-
     React.useEffect(() => {
         const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
         if (engineProfile === 'Moderate') {
@@ -420,6 +397,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     }, [(data as any)?.settings?.riskProfile]);
 
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
+    const availableIncreaseCategories = useMemo((): Array<{ value: string; label: string; category: string }> => governanceCategories.map((c) => ({ value: c.id, label: c.name, category: c.name })), [governanceCategories]);
     const resolveRequestCategory = (request: any) => request.category_name || categoryNameById.get(request.category_id) || request.category_id || 'N/A';
     const requestStatusClasses: Record<string, string> = {
         Pending: 'bg-amber-100 text-amber-800',
@@ -636,26 +614,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
             .filter(b => isAdmin || permittedCategories.includes(b.category));
 
-        const syntheticRestrictedBudgets: Budget[] = !isAdmin
-            ? permittedCategories
-                .filter((cat) => !ownScopedBudgets.some((b) => b.category === cat))
-                .map((cat) => {
-                    const meta = governanceCategories.find((g) => g.name === cat);
-                    const fallbackLimit = Number(meta?.monthly_limit) || 0;
-                    return {
-                        id: `synthetic-${cat}-${currentYear}-${currentMonth}`,
-                        user_id: auth?.user?.id,
-                        category: cat,
-                        limit: fallbackLimit,
-                        month: currentMonth,
-                        year: currentYear,
-                        period: 'monthly',
-                        tier: 'Optional' as const,
-                    } as Budget;
-                })
-            : [];
-
-        const scopedBudgets = [...ownScopedBudgets, ...syntheticRestrictedBudgets];
+        const scopedBudgets = ownScopedBudgets;
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -695,7 +654,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
+    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -856,20 +815,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         );
     }, [sharedBudgetCards]);
 
-    const availableIncreaseCategories = useMemo(() => {
-        const ownCategories = budgetData.map((b) => ({ value: `OWN::${b.category}`, label: b.category, category: b.category, source: 'own' as const }));
-        const sharedCategories = sharedBudgetCards.map((b) => ({
-            value: `SHARED::${(b as any).owner_user_id || b.user_id || (b as any).ownerEmail || 'owner'}::${b.category}`,
-            label: `${b.category} (shared from ${sharedBudgetOwnerByCardId.get(b.id) || 'Owner'})`,
-            category: b.category,
-            source: 'shared' as const,
-        }));
-        const merged = [...ownCategories, ...sharedCategories];
-        const dedup = new Map<string, typeof merged[number]>();
-        merged.forEach((item) => dedup.set(item.value, item));
-        return Array.from(dedup.values()).sort((a, b) => a.label.localeCompare(b.label));
-    }, [budgetData, sharedBudgetCards, sharedBudgetOwnerByCardId]);
-
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const budgetInsights = useMemo(() => {
@@ -889,12 +834,24 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         setHouseholdOverrides((prev) => {
             const existing = prev.find((o) => o.month === month) || { month };
             const next = { ...existing, ...patch };
-            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => a.month - b.month);
+            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
             return merged;
         });
     };
 
-    const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
+    const copyPriorMonthDefaults = () => {
+        setHouseholdOverrides((prev) => {
+            const map = new Map(prev.map((o) => [o.month, o]));
+            for (let m = 2; m <= 12; m++) {
+                if (map.has(m)) continue;
+                const prior = map.get(m - 1);
+                if (prior) map.set(m, { ...prior, month: m });
+            }
+            return Array.from(map.values()).sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
+        });
+    };
+
+    const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum: number, m: HouseholdMonthResult) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
 
     const handleOpenModal = (budget: Budget | null = null) => {
         if (!isAdmin) return;
@@ -1657,540 +1614,154 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
-            <SectionCard title="Household Budget Engine">
-                <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm text-slate-700 font-medium">
-                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
-                    </p>
-                    {triggerPageAction && (
-                        <button
-                            type="button"
-                            onClick={() => triggerPageAction('Market Events', 'focus-macro')}
-                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
-                        >
-                            Check Market Events
-                        </button>
-                    )}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-4 items-end">
-                    <div>
-                        <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
-                        <select
-                            value={engineProfile}
-                            onChange={(e) => setEngineProfile(e.target.value as HouseholdEngineProfile)}
-                            className="p-2 border border-slate-200 rounded-lg bg-white text-sm min-w-[140px]"
-                        >
-                            {(Object.keys(HOUSEHOLD_ENGINE_PROFILES) as HouseholdEngineProfile[]).map((key) => (
-                                <option key={key} value={key}>{HOUSEHOLD_ENGINE_PROFILES[key].label}</option>
-                            ))}
-                        </select>
-                        <p className="text-xs text-slate-500 mt-1 max-w-[200px]">{HOUSEHOLD_ENGINE_PROFILES[engineProfile].description}</p>
-                        {householdBudgetEngine.suggestedProfile && householdBudgetEngine.suggestedProfile !== engineProfile && (
-                            <p className="text-xs text-amber-700 mt-1">Suggested: {householdBudgetEngine.suggestedProfile} (income variance)</p>
-                        )}
-                    </div>
-                    <div>
-                        <label className="block text-xs font-medium text-slate-500 mb-1">Expected monthly salary (optional)</label>
-                        <input
-                            type="number"
-                            min={0}
-                            step={100}
-                            value={expectedMonthlySalary}
-                            onChange={(e) => setExpectedMonthlySalary(e.target.value === '' ? '' : Number(e.target.value))}
-                            placeholder={suggestedMonthlySalary ? `Auto: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : 'From transactions'}
-                            className="p-2 border border-slate-200 rounded-lg w-36 text-sm"
-                        />
-                        <p className="text-xs text-slate-500 mt-1">Leave empty to use actuals + average</p>
-                    </div>
-                    <div className="flex gap-3">
-                        <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Adults</label>
-                            <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="p-2 border border-slate-200 rounded-lg w-16 text-sm" />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Kids</label>
-                            <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="p-2 border border-slate-200 rounded-lg w-16 text-sm" />
-                        </div>
+            <SectionCard title="Auto Household Budget Engine">
+                <p className="text-sm text-slate-600">Budget-driven household automation moved here as requested. Plan/Transactions consume its outputs through shared data (budgets, transactions, goals, accounts).</p>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editable inputs</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <label className="text-sm text-slate-600">Operating mode
+                            <select value={engineConfig.operatingMode || 'Balanced'} onChange={(e) => setEngineConfig((prev: HouseholdEngineConfig) => ({ ...prev, operatingMode: e.target.value as any }))} className="ml-2 p-1.5 border rounded">
+                                <option>Balanced</option>
+                                <option>Aggressive Goal</option>
+                                <option>Protection First</option>
+                                <option>Growth/Investing Support</option>
+                            </select>
+                        </label>
+                        <button type="button" className="btn-outline text-xs" onClick={copyPriorMonthDefaults}>Copy prior month defaults</button>
                     </div>
                 </div>
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-                        <p className="text-xs text-slate-500">Planned annual net</p>
-                        <p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-                        <p className="text-xs text-slate-500">Actual annual net</p>
-                        <p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p>
-                    </div>
-                    <div className="rounded-lg border border-emerald-200 p-3 bg-emerald-50">
-                        <p className="text-xs text-slate-600">Projected year-end liquid</p>
-                        <p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p>
-                    </div>
-                    <div className="rounded-lg border border-indigo-200 p-3 bg-indigo-50">
-                        <p className="text-xs text-slate-600">Auto-routed goal</p>
-                        <p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'None'}</p>
-                    </div>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Planned annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-slate-50"><p className="text-xs text-slate-500">Actual annual net</p><p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-emerald-50"><p className="text-xs text-slate-500">Projected year-end liquid</p><p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p></div>
+                    <div className="rounded-lg border p-3 bg-indigo-50"><p className="text-xs text-slate-500">Auto-routed goal</p><p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m: HouseholdMonthResult) => m.routedGoalName)?.routedGoalName || 'No active goal'}</p></div>
                 </div>
-                {householdBudgetEngine.recommendations.length > 0 && (
-                    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
-                        <p className="text-xs font-semibold text-slate-600 mb-2">Recommendations</p>
-                        <ul className="text-sm text-slate-700 list-disc pl-5 space-y-1">
-                            {householdBudgetEngine.recommendations.slice(0, 4).map((item, idx) => <li key={`hh-rec-${idx}`}>{item}</li>)}
-                        </ul>
-                    </div>
-                )}
-                {criticalValidationCount > 0 && (
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-xs font-semibold text-amber-800">Issues in {criticalValidationCount} month(s)</p>
-                        <ul className="mt-1 list-disc pl-5 text-xs text-amber-800 space-y-0.5">
-                            {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 3).map((m) => (
-                                <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
-                <div className="mt-4 flex items-center gap-3">
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!isAdmin) {
-                                alert('Only admins can create budgets from household engine.');
-                                return;
-                            }
-                            if (!window.confirm(`This will create/update budgets for ${currentYear}-${currentMonth} based on the household engine output. Existing budgets for this month will be updated. Continue?`)) {
-                                return;
-                            }
-                            const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
-                            if (!currentMonthPlan) {
-                                alert('No household engine plan available for current month.');
-                                return;
-                            }
-                            const buckets = currentMonthPlan.buckets || {};
-                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                            const categoryMap: Record<string, string> = {
-                                'Fixed Obligations': 'Housing',
-                                'Household Essentials': 'Food',
-                                'Household Operations': 'Utilities',
-                                'Transport': 'Transportation',
-                                'Personal Support': 'Personal Care',
-                                'Reserve Savings': 'Savings & Investments',
-                                'Emergency Savings': 'Savings & Investments',
-                                'Goal Savings': 'Savings & Investments',
-                                'Kids Future Savings': 'Education',
-                                'Retirement Savings': 'Savings & Investments',
-                                'Investing': 'Savings & Investments',
-                            };
-                            let created = 0;
-                            let updated = 0;
-                            for (const [bucketName, amount] of Object.entries(buckets)) {
-                                if (!amount || amount <= 0) continue;
-                                const category = categoryMap[bucketName] || bucketName;
-                                const existing = existingBudgets.find((b) => b.category === category);
-                                if (existing) {
-                                    updateBudget({ ...existing, limit: amount });
-                                    updated++;
-                                } else {
-                                    addBudget({
-                                        category,
-                                        limit: amount,
-                                        month: currentMonth,
-                                        year: currentYear,
-                                        period: 'monthly',
-                                        tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
-                                    });
-                                    created++;
-                                }
-                            }
-                            alert(`Household engine budgets applied: ${created} created, ${updated} updated.`);
-                        }}
-                        className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isAdmin}
-                    >
-                        Apply Household Engine Budgets to Current Month
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, monthlyOverrides: !prev.monthlyOverrides }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly overrides (minimum-entry model)</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.monthlyOverrides ? 'Collapse' : 'Expand'}</span>
                     </button>
-                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
-                </div>
-
-                <div className="mt-4 flex items-center gap-3">
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!isAdmin) {
-                                alert('Only admins can create budgets from household engine.');
-                                return;
-                            }
-                            
-                            // Use the expected monthly salary or auto-detect from transactions
-                            const monthlySalary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 
-                                ? expectedMonthlySalary 
-                                : suggestedMonthlySalary;
-                                
-                            if (!monthlySalary || monthlySalary <= 0) {
-                                alert('Please enter an expected monthly salary to generate budget categories.');
-                                return;
-                            }
-                            
-                            if (!window.confirm(`This will create budget categories for a Saudi household with ${householdAdults} adult(s) and ${householdKids} kid(s) based on ${formatCurrencyString(monthlySalary)} monthly salary. Existing budgets for ${currentYear}-${currentMonth} will be updated. Continue?`)) {
-                                return;
-                            }
-                            
-                            const categories = generateSaudiBudgetCategories(householdAdults, householdKids, monthlySalary, engineProfile);
-                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                            
-                            let created = 0;
-                            let updated = 0;
-                            for (const cat of categories) {
-                                const existing = existingBudgets.find((b) => b.category === cat.category);
-                                if (existing) {
-                                    updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
-                                    updated++;
-                                } else {
-                                    addBudget({
-                                        category: cat.category,
-                                        limit: cat.limit,
-                                        month: currentMonth,
-                                        year: currentYear,
-                                        period: cat.period,
-                                        tier: cat.tier,
-                                    });
-                                    created++;
-                                }
-                            }
-                            alert(`Saudi household budgets created: ${created} created, ${updated} updated.`);
-                        }}
-                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isAdmin}
-                    >
-                        Auto-Create Saudi Household Budgets
-                    </button>
-                    <InfoHint text="Generates budget categories for Saudi households based on family size (adults/kids) and monthly salary. Considers realistic Saudi living costs including utilities, transport, and spouse allowance." />
-                </div>
-
-                {/* Predictive Analytics Section */}
-                {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Predictive Analytics (Next 3 Months)</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowPredictiveAnalytics(false)}
-                                className="text-xs text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {predictiveForecasts.map((forecast) => (
-                                <div key={forecast.month} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
-                                        Month {forecast.month} ({MONTHS[(forecast.month - 1) % 12]})
-                                    </p>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Predicted Income:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedIncome)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Predicted Expense:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedExpense)}</span>
-                                        </div>
-                                        <div className="flex justify-between pt-2 border-t border-slate-200">
-                                            <span className="text-slate-700 font-medium">Net:</span>
-                                            <span className={`font-bold ${forecast.predictedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                {forecast.predictedNet >= 0 ? '+' : ''}{formatCurrencyString(forecast.predictedNet)}
-                                            </span>
-                                        </div>
-                                        <div className="pt-2 border-t border-slate-200">
-                                            <span className={`text-xs px-2 py-1 rounded ${
-                                                forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                                forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                                'bg-rose-100 text-rose-700'
-                                            }`}>
-                                                {forecast.confidence.charAt(0).toUpperCase() + forecast.confidence.slice(1)} confidence
-                                            </span>
-                                            {forecast.factors.length > 0 && (
-                                                <ul className="mt-2 text-xs text-slate-600 list-disc list-inside space-y-0.5">
-                                                    {forecast.factors.map((factor, idx) => (
-                                                        <li key={idx}>{factor}</li>
-                                                    ))}
-                                                </ul>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Scenario Planning Section */}
-                {showScenarioPlanning && scenarios.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Scenario Planning</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowScenarioPlanning(false)}
-                                className="text-xs text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            {scenarios.map((scenario, idx) => (
-                                <div key={idx} className={`rounded-lg border-2 p-4 ${
-                                    scenario.riskLevel === 'high' ? 'border-rose-200 bg-rose-50' :
-                                    scenario.riskLevel === 'medium' ? 'border-amber-200 bg-amber-50' :
-                                    'border-emerald-200 bg-emerald-50'
-                                }`}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <p className="text-sm font-bold text-slate-900">{scenario.name}</p>
-                                        <span className={`text-xs px-2 py-1 rounded ${
-                                            scenario.riskLevel === 'high' ? 'bg-rose-100 text-rose-700' :
-                                            scenario.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                            'bg-emerald-100 text-emerald-700'
-                                        }`}>
-                                            {scenario.riskLevel.toUpperCase()} RISK
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-slate-600 mb-3">{scenario.description}</p>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Projected Year-End Balance:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(scenario.projectedYearEndBalance)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Change from Baseline:</span>
-                                            <span className={`font-bold ${scenario.projectedYearEndBalanceChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange)}
-                                            </span>
-                                        </div>
-                                        {scenario.goalAchievementImpact.length > 0 && (
-                                            <div className="pt-2 border-t border-slate-200">
-                                                <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
-                                                {scenario.goalAchievementImpact.map((impact, i) => (
-                                                    <p key={i} className="text-xs text-slate-600">
-                                                        {impact.goalName}: {impact.achievementDelayMonths >= 0 ? '+' : ''}{impact.achievementDelayMonths.toFixed(1)} months
-                                                    </p>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Anomaly Detection */}
-                {anomalies.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <h4 className="text-sm font-bold text-slate-900 mb-3">Spending Anomalies Detected</h4>
-                        <div className="space-y-2">
-                            {anomalies.slice(0, 5).map((anomaly, idx) => (
-                                <div key={idx} className={`rounded-lg border p-3 ${
-                                    anomaly.severity === 'high' ? 'border-rose-200 bg-rose-50' :
-                                    anomaly.severity === 'medium' ? 'border-amber-200 bg-amber-50' :
-                                    'border-slate-200 bg-slate-50'
-                                }`}>
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-semibold text-slate-900">
-                                                {MONTHS[anomaly.month - 1]} - {anomaly.category}
-                                            </p>
-                                            <p className="text-xs text-slate-600 mt-1">{anomaly.explanation}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-sm font-bold text-slate-900">{formatCurrencyString(anomaly.actualAmount)}</p>
-                                            <p className="text-xs text-slate-500">Expected: {formatCurrencyString(anomaly.expectedAmount)}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Spending Trends Visualization */}
-                {householdBudgetEngine.months.length >= 3 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <h4 className="text-sm font-bold text-slate-900 mb-4">Spending Trends (Last 6 Months)</h4>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                            <div className="h-48 flex items-end justify-between gap-1">
-                                {householdBudgetEngine.months.slice(-6).map((month, idx) => {
-                                    const maxExpense = Math.max(...householdBudgetEngine.months.slice(-6).map(m => 
-                                        m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow
-                                    ));
-                                    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
-                                    const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
-                                    const income = month.incomeActual > 0 ? month.incomeActual : month.incomePlanned;
-                                    const net = income - expense;
-                                    
-                                    return (
-                                        <div key={idx} className="flex-1 flex flex-col items-center gap-1">
-                                            <div className="w-full flex flex-col items-center gap-0.5" style={{ height: '180px' }}>
-                                                {/* Income bar */}
-                                                <div
-                                                    className="w-full rounded-t bg-emerald-500 transition-all"
-                                                    style={{ height: `${maxExpense > 0 ? (income / maxExpense) * 100 : 0}%`, minHeight: income > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(month.month - 1) % 12]}: Income ${formatCurrencyString(income)}`}
-                                                />
-                                                {/* Expense bar */}
-                                                <div
-                                                    className={`w-full rounded-b transition-all ${
-                                                        net >= 0 ? 'bg-rose-400' : 'bg-rose-600'
-                                                    }`}
-                                                    style={{ height: `${height}%`, minHeight: expense > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(month.month - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
-                                                />
-                                            </div>
-                                            <p className="text-[10px] text-slate-600 font-medium mt-1">
-                                                {MONTHS[(month.month - 1) % 12].substring(0, 3)}
-                                            </p>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-emerald-500 rounded"></div>
-                                    <span className="text-slate-600">Income</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-rose-400 rounded"></div>
-                                    <span className="text-slate-600">Expense</span>
-                                </div>
+                    {engineSectionsOpen.monthlyOverrides && (
+                        <div className="mt-2 overflow-x-auto">
+                            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 overflow-x-auto">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-2">Monthly overrides (minimum-entry model)</p>
+                                <table className="min-w-full text-xs">
+                                    <thead>
+                                        <tr className="text-slate-500 border-b">
+                                            <th className="text-left py-1 pr-2">Month</th>
+                                            <th className="text-left py-1 pr-2">Salary (opt)</th>
+                                            <th className="text-left py-1 pr-2">Adults</th>
+                                            <th className="text-left py-1 pr-2">Kids</th>
+                                            <th className="text-left py-1 pr-2">Uber/support override</th>
+                                            <th className="text-left py-1 pr-2">Unusual month override</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {MONTHS.map((label, idx) => {
+                                            const month = idx + 1;
+                                            const ov = householdOverrides.find((o) => o.month === month);
+                                            return (
+                                                <tr key={`hh-month-${month}`} className="border-b border-slate-100">
+                                                    <td className="py-1 pr-2">{label}</td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-16 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-16 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.rideSupportOverride ?? ''} onChange={(e) => updateMonthlyOverride(month, { rideSupportOverride: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                    <td className="py-1 pr-2"><input type="number" value={ov?.unusualMonthExtra ?? ''} onChange={(e) => updateMonthlyOverride(month, { unusualMonthExtra: Number(e.target.value) || undefined })} className="w-24 p-1 border rounded" /></td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
-                    </div>
-                )}
-
-                {/* Seasonality Detection */}
-                {showSeasonality && seasonalityPatterns.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Seasonal Spending Patterns</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowSeasonality(false)}
-                                className="text-xs px-2 py-1 text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
-                        </div>
-                        <div className="space-y-3">
-                            {seasonalityPatterns.slice(0, 10).map((pattern, idx) => (
-                                <div
-                                    key={idx}
-                                    className={`rounded-lg border p-3 ${
-                                        pattern.pattern === 'peak' ? 'border-rose-200 bg-rose-50' :
-                                        pattern.pattern === 'trough' ? 'border-emerald-200 bg-emerald-50' :
-                                        'border-slate-200 bg-slate-50'
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-semibold text-slate-900">
-                                                {pattern.monthName} - {pattern.category}
-                                            </p>
-                                            <p className="text-xs text-slate-600 mt-1">
-                                                {pattern.pattern === 'peak' ? 'Peak spending month' :
-                                                 pattern.pattern === 'trough' ? 'Low spending month' :
-                                                 'Normal spending'}
-                                                {' '}
-                                                ({pattern.confidence} confidence)
-                                            </p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-sm font-bold text-slate-900">
-                                                {formatCurrencyString(pattern.averageAmount)}
-                                            </p>
-                                            <p className={`text-xs ${pattern.deviationPct >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                {pattern.deviationPct >= 0 ? '+' : ''}{pattern.deviationPct.toFixed(1)}% from average
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
-                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowPredictiveAnalytics(true)}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-                        >
-                            Show Predictive Analytics
-                        </button>
-                    )}
-                    {!showScenarioPlanning && scenarios.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowScenarioPlanning(true)}
-                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
-                        >
-                            Show Scenario Planning
-                        </button>
-                    )}
-                    {!showSeasonality && seasonalityPatterns.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowSeasonality(true)}
-                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
-                        >
-                            Show Seasonality Patterns
-                        </button>
                     )}
                 </div>
-
-                <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
-                    <summary className="p-3 cursor-pointer text-sm font-medium text-slate-600">Advanced: monthly overrides & scenarios</summary>
-                    <div className="p-3 pt-0 space-y-3">
-                        <div className="flex flex-wrap gap-2">
-                            {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario) => (
-                                <button
-                                    key={scenario.id}
-                                    type="button"
-                                    className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
-                                    onClick={() => {
-                                        setSelectedScenario(scenario.id);
-                                        setHouseholdAdults(scenario.defaults.adults);
-                                        setHouseholdKids(scenario.defaults.kids);
-                                        setHouseholdOverrides(scenario.overrides);
-                                    }}
-                                >
-                                    {scenario.label}
-                                </button>
-                            ))}
-                            <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <label className="text-sm text-slate-600">Adults
+                        <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="ml-2 w-16 p-1.5 border rounded" />
+                    </label>
+                    <label className="text-sm text-slate-600">Kids
+                        <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="ml-2 w-16 p-1.5 border rounded" />
+                    </label>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Derived (read-only) values</p>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Reserve pool (latest)</p>
+                            <p className="font-semibold text-slate-900">{formatCurrencyString(householdBudgetEngine.months[householdBudgetEngine.months.length - 1]?.reservePoolAfterDeductions || 0, { digits: 0 })}</p>
                         </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-xs">
-                                <thead>
-                                    <tr className="text-slate-500 border-b"><th className="text-left py-1 pr-2">Month</th><th className="text-left py-1 pr-2">Salary</th><th className="text-left py-1 pr-2">Adults</th><th className="text-left py-1 pr-2">Kids</th></tr>
-                                </thead>
-                                <tbody>
-                                    {MONTHS.map((label, idx) => {
-                                        const month = idx + 1;
-                                        const ov = householdOverrides.find((o) => o.month === month);
-                                        return (
-                                            <tr key={`hh-month-${month}`} className="border-b border-slate-100">
-                                                <td className="py-1 pr-2">{label}</td>
-                                                <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-20 p-1 border rounded" /></td>
-                                                <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-12 p-1 border rounded" /></td>
-                                                <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-12 p-1 border rounded" /></td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Pressure months</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.filter((m: HouseholdMonthResult) => m.warnings.length > 0).length}</p>
+                        </div>
+                        <div className="rounded border bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-slate-500">Validation flags</p>
+                            <p className="font-semibold text-slate-900">{householdBudgetEngine.months.reduce((sum: number, m: HouseholdMonthResult) => sum + (m.validationErrors?.length || 0), 0)}</p>
                         </div>
                     </div>
-                </details>
+                    <p className="mt-2 text-xs text-slate-500">Editable values are salary/adults/kids/monthly overrides. Calculated fields are intentionally read-only and update automatically.</p>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, scenarios: !prev.scenarios }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Scenarios & recommendations</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.scenarios ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.scenarios && (
+                        <>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS.map((scenario: (typeof HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS)[number]) => (
+                                    <button
+                                        key={scenario.id}
+                                        type="button"
+                                        className={`px-3 py-1.5 rounded-lg border text-sm ${selectedScenario === scenario.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-700'}`}
+                                        onClick={() => {
+                                            setSelectedScenario(scenario.id);
+                                            setHouseholdAdults(scenario.defaults.adults);
+                                            setHouseholdKids(scenario.defaults.kids);
+                                            setHouseholdOverrides(scenario.overrides);
+                                            setEngineConfig((prev) => ({ ...prev, ...(scenario.config || {}) }));
+                                        }}
+                                    >
+                                        {scenario.label}
+                                    </button>
+                                ))}
+                                <button type="button" className="px-3 py-1.5 rounded-lg border text-sm bg-white border-slate-200 text-slate-700" onClick={() => setSelectedScenario('custom')}>Custom</button>
+                            </div>
+                            {householdBudgetEngine.recommendations.length > 0 && (
+                                <ul className="mt-3 text-sm text-slate-700 list-disc pl-5 space-y-1">
+                                    {householdBudgetEngine.recommendations.slice(0, 4).map((item: string, idx: number) => <li key={`hh-rec-${idx}`}>{item}</li>)}
+                                </ul>
+                            )}
+                        </>
+                    )}
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button type="button" onClick={() => setEngineSectionsOpen((prev: { monthlyOverrides: boolean; scenarios: boolean; validation: boolean }) => ({ ...prev, validation: !prev.validation }))} className="w-full flex items-center justify-between text-left">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Validation & controls</p>
+                        <span className="text-xs text-slate-500">{engineSectionsOpen.validation ? 'Collapse' : 'Expand'}</span>
+                    </button>
+                    {engineSectionsOpen.validation && (
+                        <>
+                            <p className="text-sm text-slate-700 mt-1">Critical validation months: <span className="font-semibold">{criticalValidationCount}</span></p>
+                            {criticalValidationCount > 0 && (
+                                <ul className="mt-2 list-disc pl-5 text-xs text-rose-700 space-y-1">
+                                    {householdBudgetEngine.months.filter((m: HouseholdMonthResult) => (m.validationErrors?.length || 0) > 0).slice(0, 4).map((m: HouseholdMonthResult) => (
+                                        <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
+                                    ))}
+                                </ul>
+                            )}
+                            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                {householdBudgetEngine.months.filter((m: HouseholdMonthResult) => m.warnings.some((w: string) => w.toLowerCase().includes('reserve pool'))).slice(0, 4).map((m: HouseholdMonthResult) => (
+                                    <div key={`res-track-${m.month}`} className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                                        M{m.month}: reserve after deductions {formatCurrencyString(m.reservePoolAfterDeductions, { digits: 0 })}
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
             </SectionCard>
             </div>
 
@@ -2295,302 +1866,40 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 )}
             </SectionCard>
 
-            {isAdmin && (
-                <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
-                    <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
-                        <h3 className="text-sm font-semibold text-indigo-900 mb-3">Approved Budgets Overview</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm mb-4">
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Categories</span>
-                                <p className="font-bold text-indigo-900 text-lg">{budgetData.length}</p>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Budget Limit</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</p>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Spent</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</p>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + (b.monthlyLimit - b.spent), 0), { digits: 0 })}</p>
-                            </div>
-                        </div>
-
-                        {budgetData.length > 0 && (
-                            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                                <table className="min-w-full text-sm">
-                                    <thead className="bg-slate-50">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Tier</th>
-                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Monthly Limit</th>
-                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Spent</th>
-                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Remaining</th>
-                                            <th className="px-3 py-2 text-center font-medium text-slate-700">Utilization</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {budgetData.map((b) => {
-                                            const remaining = b.monthlyLimit - b.spent;
-                                            const percentage = b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0;
-                                            return (
-                                                <tr key={`admin-budget-${b.id}`} className="border-t border-slate-100">
-                                                    <td className="px-3 py-2 font-medium text-slate-900">{b.category}</td>
-                                                    <td className="px-3 py-2">
-                                                        <span className={`text-xs px-2 py-0.5 rounded ${b.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : b.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>
-                                                            {b.budgetTier}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.monthlyLimit, { digits: 0 })}</td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.spent, { digits: 0 })}</td>
-                                                    <td className={`px-3 py-2 text-right tabular-nums ${remaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                        {remaining >= 0 ? formatCurrencyString(remaining, { digits: 0 }) : `-${formatCurrencyString(Math.abs(remaining), { digits: 0 })}`}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-center">
-                                                        <div className="flex items-center justify-center gap-2">
-                                                            <div className="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
-                                                                <div className={`h-full ${percentage > 100 ? 'bg-rose-500' : percentage > 90 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(percentage, 100)}%` }} />
-                                                            </div>
-                                                            <span className={`text-xs ${percentage > 100 ? 'text-rose-600 font-medium' : percentage > 90 ? 'text-amber-600' : 'text-slate-600'}`}>
-                                                                {percentage.toFixed(0)}%
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
-                        <h3 className="text-sm font-semibold text-emerald-900 mb-2">Shared Account Transaction Tracking</h3>
-                        <p className="text-xs text-emerald-700 mb-3">
-                            Transactions from shared accounts that affect shared budgets are tracked below. Approved transactions are deducted from budget totals.
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-4">
-                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
-                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Approved Shared Tx</span>
-                                <p className="font-bold text-emerald-900 text-lg">
-                                    {ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Approved').length}
-                                </p>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
-                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Pending Shared Tx</span>
-                                <p className="font-bold text-emerald-900 text-lg">
-                                    {ownerSharedTransactions.filter(tx => (tx.status ?? 'Approved') === 'Pending').length}
-                                </p>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-emerald-100">
-                                <span className="text-emerald-600 text-xs uppercase tracking-wide">Total from Shared</span>
-                                <p className="font-bold text-emerald-900 text-lg">
-                                    {formatCurrencyString(
-                                        ownerSharedTransactions
-                                            .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
-                                        { digits: 0 }
-                                    )}
-                                </p>
-                            </div>
-                        </div>
-
-                        {ownerSharedTransactions.length > 0 && (
-                            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                                <table className="min-w-full text-sm">
-                                    <thead className="bg-slate-50">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Date</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Contributor</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
-                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Amount</th>
-                                            <th className="px-3 py-2 text-center font-medium text-slate-700">Deducted</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {ownerSharedTransactions
-                                            .sort((a, b) => new Date(b.transaction_date || b.date).getTime() - new Date(a.transaction_date || a.date).getTime())
-                                            .map((tx, idx) => {
-                                                const isApproved = (tx.status ?? 'Approved') === 'Approved';
-                                                const isPending = (tx.status ?? 'Approved') === 'Pending';
-                                                return (
-                                                    <tr key={`shared-tx-${tx.id || idx}`} className="border-t border-slate-100">
-                                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
-                                                        <td className="px-3 py-2 font-medium text-slate-900">{tx.budget_category}</td>
-                                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
-                                                        <td className="px-3 py-2">
-                                                            <span className={`text-xs px-2 py-0.5 rounded ${isApproved ? 'bg-emerald-100 text-emerald-700' : isPending ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                                {tx.status ?? 'Approved'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
-                                                        <td className="px-3 py-2 text-center">
-                                                            <span className={`text-xs ${isApproved ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
-                                                                {isApproved ? 'Yes' : 'No'}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                </SectionCard>
-            )}
-
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
-                <SectionCard title="Shared Budget Transactions">
-                    <div className="mb-4">
-                        <p className="text-xs text-slate-500 mb-3">
-                            Track all transactions from shared accounts affecting your budgets. Approved transactions are deducted from budget totals.
-                        </p>
-                        
-                        {/* Filters */}
-                        <div className="flex flex-wrap items-center gap-3 mb-3">
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs text-slate-600 font-medium">Month:</label>
-                                <input
-                                    type="month"
-                                    value={sharedTxMonthFilter}
-                                    onChange={(e) => setSharedTxMonthFilter(e.target.value)}
-                                    className="p-1.5 border border-slate-300 rounded text-sm"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`)}
-                                    className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600"
-                                >
-                                    Current
-                                </button>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs text-slate-600 font-medium">Status:</label>
-                                <select
-                                    value={sharedTxStatusFilter}
-                                    onChange={(e) => setSharedTxStatusFilter(e.target.value as 'All' | 'Approved' | 'Pending' | 'Rejected')}
-                                    className="p-1.5 border border-slate-300 rounded text-sm"
-                                >
-                                    <option value="All">All</option>
-                                    <option value="Approved">Approved</option>
-                                    <option value="Pending">Pending</option>
-                                    <option value="Rejected">Rejected</option>
-                                </select>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs text-slate-600 font-medium">Category:</label>
-                                <select
-                                    value={sharedTxCategoryFilter}
-                                    onChange={(e) => setSharedTxCategoryFilter(e.target.value)}
-                                    className="p-1.5 border border-slate-300 rounded text-sm"
-                                >
-                                    <option value="All">All Categories</option>
-                                    {[...new Set([...ownerSharedTransactions, ...mySharedBudgetTransactions].map(tx => tx.budget_category).filter(Boolean))].sort().map(cat => (
-                                        <option key={cat} value={cat}>{cat}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-                        
-                        {/* Stats Cards */}
-                        {(() => {
-                            const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
-                            const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
-                                const txDate = new Date(tx.transaction_date || tx.date);
-                                const matchesMonth = txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
-                                const matchesStatus = sharedTxStatusFilter === 'All' || (tx.status ?? 'Approved') === sharedTxStatusFilter;
-                                const matchesCategory = sharedTxCategoryFilter === 'All' || tx.budget_category === sharedTxCategoryFilter;
-                                return matchesMonth && matchesStatus && matchesCategory;
-                            });
-                            
-                            const approvedTotal = filteredTxs
-                                .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
-                            const pendingTotal = filteredTxs
-                                .filter(tx => (tx.status ?? 'Approved') === 'Pending')
-                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
-                            
-                            return (
-                                <>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-                                        <div className="bg-emerald-50 rounded-lg p-2 border border-emerald-100">
-                                            <span className="text-emerald-600 text-xs uppercase tracking-wide">Approved</span>
-                                            <p className="font-bold text-emerald-900 text-lg">{formatCurrencyString(approvedTotal, { digits: 0 })}</p>
-                                            <span className="text-xs text-emerald-600">{filteredTxs.filter(tx => (tx.status ?? 'Approved') === 'Approved').length} transactions</span>
-                                        </div>
-                                        <div className="bg-amber-50 rounded-lg p-2 border border-amber-100">
-                                            <span className="text-amber-600 text-xs uppercase tracking-wide">Pending</span>
-                                            <p className="font-bold text-amber-900 text-lg">{formatCurrencyString(pendingTotal, { digits: 0 })}</p>
-                                            <span className="text-xs text-amber-600">{filteredTxs.filter(tx => (tx.status ?? 'Approved') === 'Pending').length} transactions</span>
-                                        </div>
-                                        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                                            <span className="text-slate-600 text-xs uppercase tracking-wide">Total Transactions</span>
-                                            <p className="font-bold text-slate-900 text-lg">{filteredTxs.length}</p>
-                                            <span className="text-xs text-slate-600">Showing filtered</span>
-                                        </div>
-                                        <div className="bg-primary/5 rounded-lg p-2 border border-primary/10">
-                                            <span className="text-primary text-xs uppercase tracking-wide">Deducted from Budget</span>
-                                            <p className="font-bold text-primary text-lg">{formatCurrencyString(approvedTotal, { digits: 0 })}</p>
-                                            <span className="text-xs text-primary/80">Approved only</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div className="overflow-x-auto rounded-lg border border-slate-200">
-                                        <table className="min-w-full text-sm">
-                                            <thead className="bg-slate-50">
-                                                <tr>
-                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Date</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Contributor</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-slate-700">Description</th>
-                                                    <th className="px-3 py-2 text-center font-medium text-slate-700">Status</th>
-                                                    <th className="px-3 py-2 text-center font-medium text-slate-700">Deducted</th>
-                                                    <th className="px-3 py-2 text-right font-medium text-slate-700">Amount</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {filteredTxs.length > 0 ? (
-                                                    filteredTxs.sort((a, b) => new Date(b.transaction_date || b.date).getTime() - new Date(a.transaction_date || a.date).getTime()).map((tx, idx) => {
-                                                        const isApproved = (tx.status ?? 'Approved') === 'Approved';
-                                                        const isPending = (tx.status ?? 'Approved') === 'Pending';
-                                                        return (
-                                                            <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100 hover:bg-slate-50">
-                                                                <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
-                                                                <td className="px-3 py-2 font-medium text-slate-900">{tx.budget_category}</td>
-                                                                <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
-                                                                <td className="px-3 py-2 text-slate-500">{tx.description || '—'}</td>
-                                                                <td className="px-3 py-2 text-center">
-                                                                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${isApproved ? 'bg-emerald-100 text-emerald-700' : isPending ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                                                        {tx.status ?? 'Approved'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-3 py-2 text-center">
-                                                                    <span className={`text-xs ${isApproved ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
-                                                                        {isApproved ? 'Yes' : 'No'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
-                                                            </tr>
-                                                        );
-                                                    })
-                                                ) : (
-                                                    <tr>
-                                                        <td colSpan={7} className="px-3 py-4 text-center text-slate-500">No transactions found for selected filters</td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </>
-                            );
-                        })()}
+                <SectionCard title="Shared-budget transaction visibility">
+                    <p className="text-xs text-slate-500 mb-3">
+                        Owner view: you can see contributors' transactions for budgets you shared. Approved rows are counted in budget totals, while Pending rows stay visible for tracking.
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Date</th>
+                                    <th className="px-3 py-2 text-left">Category</th>
+                                    <th className="px-3 py-2 text-left">Contributor</th>
+                                    <th className="px-3 py-2 text-left">Description</th>
+                                    <th className="px-3 py-2 text-left">Status</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).slice(0, 50).map((tx, idx) => (
+                                    <tr key={`${tx.source_transaction_id || idx}`} className="border-t border-slate-100">
+                                        <td className="px-3 py-2">{new Date(tx.transaction_date || tx.date).toLocaleDateString()}</td>
+                                        <td className="px-3 py-2">{tx.budget_category}</td>
+                                        <td className="px-3 py-2">{tx.contributor_email || tx.contributor_user_id || 'Contributor'}</td>
+                                        <td className="px-3 py-2">{tx.description || '—'}</td>
+                                        <td className="px-3 py-2">
+                                            <span className={`text-xs px-2 py-0.5 rounded ${(tx.status ?? 'Approved') === 'Approved' ? 'bg-emerald-100 text-emerald-700' : (tx.status ?? 'Approved') === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                                {tx.status ?? 'Approved'}
+                                            </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </SectionCard>
             )}

@@ -22,7 +22,7 @@ export function deriveCashflowStressSummary(result: HouseholdEngineResult): Cash
   const affordabilityPressureMonths = result.months.filter((m) =>
     m.warnings.some((w) => w.toLowerCase().includes('affordability pressure'))
   ).length;
-  const negativePlannedNetMonths = result.months.filter((m) => m.plannedNet < 0).length;
+  const negativePlannedNetMonths = result.months.filter((m) => (m.plannedNet ?? 0) < 0).length;
   const projectedYearEndDelta =
     (result.balanceProjection?.projectedYearEndLiquid ?? 0) -
     (result.balanceProjection?.openingLiquid ?? 0);

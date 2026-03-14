@@ -56,7 +56,10 @@ const DividendTrackerView: React.FC = () => {
 
         const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum, h) => sum + h.projected, 0);
         const averageYield = totalInvestmentValue > 0 ? (projectedAnnualIncome / totalInvestmentValue) * 100 : 0;
-        const topPayers = holdingsWithProjectedDividends.sort((a,b) => b.projected - a.projected).slice(0, 5);
+        const topPayers = holdingsWithProjectedDividends
+            .sort((a, b) => b.projected - a.projected)
+            .slice(0, 5)
+            .map((h) => ({ name: h.name ?? '', projected: h.projected }));
 
         return { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers };
     }, [data, exchangeRate]);

@@ -567,9 +567,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isPermitted;
         });
     }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
@@ -666,20 +665,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
 
-    const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
-        if (!supabase) return;
-        const { data: verifyRow } = await supabase
-            .from('transactions')
-            .select('id, status')
-            .eq('id', transactionId)
-            .maybeSingle();
-        const status = String((verifyRow as any)?.status || '').toLowerCase();
-        if (status && status !== 'pending') return;
-        const patch: Record<string, unknown> = { status: nextStatus };
-        if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
-        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
-    };
-
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
 
@@ -697,6 +682,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             if (approveError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (approveError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
@@ -722,48 +714,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
-            await ensurePendingStatusCleared(transactionId, 'Approved');
-            
-            // Refresh transaction data to get updated status and sync to shared budgets
-            const { data: updatedTx } = await supabase
-                .from('transactions')
-                .select('*')
-                .eq('id', transactionId)
-                .maybeSingle();
-            
-            if (updatedTx) {
-                // Find the transaction in local state and update it, which will trigger sync to shared budgets
-                const existingTx = data?.transactions?.find(t => t.id === transactionId);
-                if (existingTx) {
-                    // Use updateTransaction which handles syncSharedBudgetTransactionMirror
-                    await updateTransaction({
-                        ...existingTx,
-                        status: 'Approved' as const,
-                    });
-                } else {
-                    // If not in local state, add it
-                    const newTx = {
-                        id: updatedTx.id,
-                        date: updatedTx.date,
-                        description: updatedTx.description,
-                        amount: Number(updatedTx.amount),
-                        category: updatedTx.category,
-                        subcategory: updatedTx.subcategory,
-                        budgetCategory: updatedTx.budget_category || updatedTx.budgetCategory,
-                        type: updatedTx.type,
-                        accountId: updatedTx.account_id || updatedTx.accountId,
-                        status: 'Approved' as const,
-                        transactionNature: updatedTx.transaction_nature || updatedTx.transactionNature,
-                        expenseType: updatedTx.expense_type || updatedTx.expenseType,
-                    };
-                    await updateTransaction(newTx as Transaction);
-                }
-            }
-            
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-            setPendingRefreshKey((k) => k + 1);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
             if (reason === null) {
@@ -785,6 +738,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             if (rejectError) {
+                // If transaction not found, it may have been deleted or already processed - remove from UI
+                if (rejectError.message?.includes('not found')) {
+                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                    return;
+                }
+
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet
                 const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
                 if (updateError) {
@@ -799,11 +759,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
-            await ensurePendingStatusCleared(transactionId, 'Rejected', rejectionReason);
             // Successfully rejected - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-            setPendingRefreshKey((k) => k + 1);
         }
     };
 

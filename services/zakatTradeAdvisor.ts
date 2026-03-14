@@ -29,7 +29,7 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
 
   const bySymbol = new Map<string, { value: number; holding: Holding }>();
   zakatableHoldings.forEach(({ holding, portfolioCurrency }) => {
-    const sym = holding.symbol.toUpperCase();
+    const sym = (holding.symbol ?? '').toUpperCase();
     const valueSar = toSAR(holding.currentValue, portfolioCurrency, exchangeRate);
     const prev = bySymbol.get(sym);
     bySymbol.set(sym, {
@@ -68,7 +68,7 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
   });
   const byBuySymbol = new Map<string, { amount: number }>();
   recentBuys.forEach(t => {
-    const sym = t.symbol.toUpperCase();
+    const sym = (t.symbol ?? '').toUpperCase();
     byBuySymbol.set(sym, { amount: (byBuySymbol.get(sym)?.amount ?? 0) + Math.abs(t.total) });
   });
 
