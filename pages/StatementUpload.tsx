@@ -15,7 +15,7 @@ interface StatementUploadProps {
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const { data, addTransaction, recordTrade } = useContext(DataContext)!;
-  const { uploadStatement, processStatement } = useStatementProcessing();
+  const { uploadStatement } = useStatementProcessing();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');
@@ -338,14 +338,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
       return next;
     });
-  };
-
-  const handleRejectTransaction = (index: number, type: 'transaction' | 'investment') => {
-    if (type === 'transaction') {
-      setExtractedTransactions(prev => prev.filter((_, i) => i !== index));
-    } else {
-      setExtractedInvestmentTransactions(prev => prev.filter((_, i) => i !== index));
-    }
   };
 
   return (

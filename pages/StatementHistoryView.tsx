@@ -1,21 +1,17 @@
-import React, { useState, useContext, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
-import { DataContext } from '../context/DataContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, CheckCircleIcon, ExclamationTriangleIcon, ClockIcon, MagnifyingGlassIcon } from '../components/icons';
+import { DocumentArrowUpIcon, MagnifyingGlassIcon } from '../components/icons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import InfoHint from '../components/InfoHint';
 import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 
 const StatementHistoryView: React.FC = () => {
   const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions } = useStatementProcessing();
-  const { data } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'reviewing'>('all');
-  const [selectedStatement, setSelectedStatement] = useState<string | null>(null);
   const [isReconciliationModalOpen, setIsReconciliationModalOpen] = useState(false);
   const [reconciliationResult, setReconciliationResult] = useState<any>(null);
   const [isReconciling, setIsReconciling] = useState(false);
@@ -43,7 +39,6 @@ const StatementHistoryView: React.FC = () => {
 
   const handleReconcile = async (statementId: string) => {
     setIsReconciling(true);
-    setSelectedStatement(statementId);
     try {
       const result = await reconcileTransactions(statementId);
       setReconciliationResult(result);
@@ -305,11 +300,10 @@ const StatementHistoryView: React.FC = () => {
         {/* Reconciliation Modal */}
         <Modal
           isOpen={isReconciliationModalOpen}
-          onClose={() => {
-            setIsReconciliationModalOpen(false);
-            setReconciliationResult(null);
-            setSelectedStatement(null);
-          }}
+              onClose={() => {
+                setIsReconciliationModalOpen(false);
+                setReconciliationResult(null);
+              }}
           title="Reconciliation Results"
           maxWidthClass="max-w-2xl"
         >
@@ -358,11 +352,10 @@ const StatementHistoryView: React.FC = () => {
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsReconciliationModalOpen(false);
-                    setReconciliationResult(null);
-                    setSelectedStatement(null);
-                  }}
+                      onClick={() => {
+                        setIsReconciliationModalOpen(false);
+                        setReconciliationResult(null);
+                      }}
                   className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
                 >
                   Close

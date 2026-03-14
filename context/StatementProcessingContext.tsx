@@ -2,7 +2,6 @@ import React, { createContext, useState, useEffect, ReactNode, useContext } from
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { DataContext } from './DataContext';
-import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
 import { invokeAI } from '../services/geminiService';
 
 export interface FinancialStatement {
@@ -214,13 +213,16 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
 
     // Save to database if available
     if (supabase && auth?.user) {
+      const user = auth.user;
+      if (!user) return;
+      
       statements.forEach(async (statement) => {
         try {
           const { error } = await supabase
             .from('financial_statements')
             .upsert({
               id: statement.id,
-              user_id: auth.user.id,
+              user_id: user.id,
               file_name: statement.fileName,
               file_type: statement.fileType,
               file_size: statement.fileSize,
