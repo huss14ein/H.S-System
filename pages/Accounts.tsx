@@ -24,7 +24,6 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
-import { DemoDataButton } from '../components/DemoDataButton';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -400,12 +399,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         <PageLayout
             title="Accounts"
             description="Track checking, savings, credit, and investment accounts."
-            action={
-                <div className="flex flex-wrap items-center gap-2">
-                    <DemoDataButton page="Accounts" options={{ includeAccounts: true }} />
-                    <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
-                </div>
-            }
+            action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                  <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />

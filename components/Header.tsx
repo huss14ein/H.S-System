@@ -96,8 +96,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Liabilities'] },
-    { name: 'System', items: ['Notifications', 'Settings'] }
+    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Assets', 'Liabilities'] },
+    { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
   const investmentProgress = useMemo(() => {
@@ -175,7 +175,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => setActivePage('Dashboard')}
+              onClick={() => setActivePage('Investments')}
             >
               <div className="flex items-center space-x-2 mb-1">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Monthly Plan</span>

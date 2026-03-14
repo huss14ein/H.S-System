@@ -33,12 +33,12 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Investment & Strategy Pages
+const Investments = lazy(() => import('./pages/Investments'));
 const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
 const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
 const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
 const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
 const WatchlistView = lazy(() => import('./pages/WatchlistView'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 
 // Financial Planning Pages
 const Plan = lazy(() => import('./pages/Plan'));
@@ -55,7 +55,7 @@ const VALID_PAGES: Page[] = [
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System Health'
+  'Assets', 'System & APIs Health'
 ];
 
 function getPageFromHash(): Page | null {
@@ -145,17 +145,17 @@ const App: React.FC = () => {
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'Watchlist': return <WatchlistView />;
-      case 'Investments': return <Commodities />;
+      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages
-      case 'Plan': return <Plan />;
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
       
       // Asset Management Pages
-      case 'Assets': return <Assets />;
+      case 'Assets': return <Assets {...actionProps} />;
       
       // System & Market Pages
       case 'Market Events': return <MarketEvents />;
-      case 'System Health': return <SystemHealth />;
+      case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
       
       default: return <Dashboard setActivePage={setActivePage} />;
