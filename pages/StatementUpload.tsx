@@ -35,22 +35,12 @@ const StatementUpload: React.FC = () => {
     setIsProcessingFile(true);
 
     try {
-      // Upload statement to context
-      const statement = await uploadStatement(file, {
-        bankName: 'Auto-detected',
-        accountNumber: selectedAccount || 'Unknown',
-        accountType: activeTab === 'trading' ? 'investment' : 'checking'
-      });
-
-      // Process the statement
-      await processStatement(statement.id);
-
-      // Parse based on file type
+      // Parse based on file type using real parser
       let transactions: Transaction[] = [];
       let investmentTransactions: InvestmentTransaction[] = [];
 
       if (activeTab === 'trading') {
-        const result = await parseTradingStatement(file);
+        const result = await parseTradingStatement(file, selectedAccount);
         investmentTransactions = result.transactions;
         setExtractedInvestmentTransactions(investmentTransactions);
       } else {
@@ -60,6 +50,18 @@ const StatementUpload: React.FC = () => {
       }
 
       if (transactions.length > 0 || investmentTransactions.length > 0) {
+        // Save statement metadata to context for history tracking
+        try {
+          await uploadStatement(file, {
+            bankName: 'Auto-detected',
+            accountNumber: selectedAccount || 'Unknown',
+            accountType: activeTab === 'trading' ? 'investment' : 'checking'
+          });
+        } catch (error) {
+          console.warn('Failed to save statement metadata:', error);
+          // Continue anyway - transactions can still be imported
+        }
+        
         setIsReviewModalOpen(true);
       } else {
         alert('No transactions found in the uploaded file. Please check the file format.');

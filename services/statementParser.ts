@@ -86,7 +86,7 @@ export async function parseSMSTransactions(
  */
 export async function parseTradingStatement(
   file: File,
-  accountId?: string
+  accountId: string
 ): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[] }> {
   const fileType = getFileType(file.name);
   

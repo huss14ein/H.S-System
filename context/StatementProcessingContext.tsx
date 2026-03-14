@@ -1,4 +1,7 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from './AuthContext';
+import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
 
 export interface FinancialStatement {
   id: string;
@@ -119,10 +122,62 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [currentStatement, setCurrentStatement] = useState<FinancialStatement | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const auth = useContext(AuthContext);
 
-  // Load statements from localStorage
+  // Load statements from database and localStorage (fallback)
   useEffect(() => {
-    const loadStatements = () => {
+    const loadStatements = async () => {
+      // Try to load from database first
+      if (supabase && auth?.user) {
+        try {
+          const { data: dbStatements, error } = await supabase
+            .from('financial_statements')
+            .select('*')
+            .eq('user_id', auth.user.id)
+            .order('uploaded_at', { ascending: false });
+
+          if (!error && dbStatements) {
+            const loaded = dbStatements.map((s: any) => ({
+              id: s.id,
+              fileName: s.file_name,
+              fileType: s.file_type as FinancialStatement['fileType'],
+              fileSize: s.file_size,
+              uploadedAt: new Date(s.uploaded_at),
+              processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
+              status: s.status as FinancialStatement['status'],
+              bankName: s.bank_name,
+              accountNumber: s.account_number,
+              accountType: s.account_type as FinancialStatement['accountType'],
+              statementPeriod: {
+                startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
+                endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date()
+              },
+              openingBalance: s.opening_balance ?? 0,
+              closingBalance: s.closing_balance ?? 0,
+              transactions: [], // Load separately if needed
+              summary: (s.summary as StatementSummary) || {
+                totalCredits: 0,
+                totalDebits: 0,
+                netChange: 0,
+                transactionCount: 0,
+                categories: {},
+                averageTransaction: 0,
+                largestTransaction: 0,
+                smallestTransaction: 0,
+                dailySpending: {}
+              },
+              confidence: s.confidence ?? 0,
+              errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : []
+            }));
+            setStatements(loaded);
+            return;
+          }
+        } catch (error) {
+          console.error('Failed to load statements from database:', error);
+        }
+      }
+
+      // Fallback to localStorage
       try {
         const stored = localStorage.getItem('financialStatements');
         if (stored) {
@@ -136,28 +191,68 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
               startDate: new Date(s.statementPeriod.startDate),
               endDate: new Date(s.statementPeriod.endDate)
             },
-            transactions: s.transactions.map((t: any) => ({
+            transactions: s.transactions?.map((t: any) => ({
               ...t,
               date: new Date(t.date)
-            }))
+            })) || []
           })));
         }
       } catch (error) {
-        console.error('Failed to load statements:', error);
+        console.error('Failed to load statements from localStorage:', error);
       }
     };
 
     loadStatements();
-  }, []);
+  }, [auth?.user]);
 
-  // Save statements to localStorage
+  // Save statements to database (and localStorage as backup)
   useEffect(() => {
+    if (!statements.length) return;
+
+    // Save to database if available
+    if (supabase && auth?.user) {
+      statements.forEach(async (statement) => {
+        try {
+          const { error } = await supabase
+            .from('financial_statements')
+            .upsert({
+              id: statement.id,
+              user_id: auth.user.id,
+              file_name: statement.fileName,
+              file_type: statement.fileType,
+              file_size: statement.fileSize,
+              bank_name: statement.bankName,
+              account_number: statement.accountNumber,
+              account_type: statement.accountType,
+              statement_period_start: statement.statementPeriod.startDate.toISOString().split('T')[0],
+              statement_period_end: statement.statementPeriod.endDate.toISOString().split('T')[0],
+              opening_balance: statement.openingBalance,
+              closing_balance: statement.closingBalance,
+              status: statement.status,
+              confidence: statement.confidence,
+              summary: statement.summary,
+              errors: statement.errors || [],
+              uploaded_at: statement.uploadedAt.toISOString(),
+              processed_at: statement.processedAt?.toISOString(),
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'id' });
+
+          if (error) {
+            console.error('Failed to save statement to database:', error);
+          }
+        } catch (error) {
+          console.error('Error saving statement:', error);
+        }
+      });
+    }
+
+    // Also save to localStorage as backup
     try {
       localStorage.setItem('financialStatements', JSON.stringify(statements));
     } catch (error) {
-      console.error('Failed to save statements:', error);
+      console.error('Failed to save statements to localStorage:', error);
     }
-  }, [statements]);
+  }, [statements, auth?.user]);
 
   const uploadStatement = async (file: File, bankInfo?: BankInfo): Promise<FinancialStatement> => {
     const statement: FinancialStatement = {
