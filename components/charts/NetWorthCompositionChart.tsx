@@ -4,12 +4,15 @@ import { DataContext } from '../../context/DataContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
+import { useCurrency } from '../../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR } from '../../utils/currencyMath';
 
 type TimePeriod = '1Y' | '3Y' | 'All';
 
 
 const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
 
@@ -26,7 +29,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         });
         
         // 2. Get current asset & liability values
-        const currentInvestments = data.investments.reduce((sum, p) => sum + p.holdings.reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const currentInvestments = getAllInvestmentsValueInSAR(data.investments, exchangeRate);
         const currentCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
         const currentProperty = data.assets.filter(a => a.type === 'Property').reduce((sum, asset) => sum + asset.value, 0);
         const currentLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
@@ -87,7 +90,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             default:
                 return finalData;
         }
-    }, [data, timePeriod]);
+    }, [data, timePeriod, exchangeRate]);
 
     const isEmpty = !chartData?.length;
 

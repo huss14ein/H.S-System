@@ -579,8 +579,6 @@ export interface WealthUltraPosition {
   trailingPctOverride?: number;
   applyTrailing: boolean;
   trailingStopPrice?: number;
-  /** Risk score 0–100 (higher = riskier position). Filled by riskScoring. */
-  riskScore?: number;
   /** Execution priority rank for trades (1 = highest). Filled by trade ranking. */
   tradeRank?: number;
 }

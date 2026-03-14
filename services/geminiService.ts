@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, GenerateContentResponse, FunctionDeclaration } from "@google/genai";
-import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult } from '../types';
+import { Type, FunctionDeclaration } from "@google/genai";
+import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
 import { finnhubFetch } from './finnhubService';
 
 // --- Model Constants ---
@@ -28,22 +28,42 @@ function isQuotaOrRateLimitError(message: string, parsed?: { error?: { code?: nu
     return code === 429 || status === 'RESOURCE_EXHAUSTED';
 }
 
+
+function extractErrorMessageParts(error: any): string[] {
+    const parts: string[] = [];
+    const push = (v: any) => {
+        if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    };
+    if (typeof error === 'string') push(error);
+    if (error instanceof Error) push(error.message);
+    if (error && typeof error === 'object') {
+        push((error as any).message);
+        push((error as any).error);
+        if ((error as any).error && typeof (error as any).error === 'object') {
+            push((error as any).error.message);
+            push((error as any).error.status);
+        }
+        if ((error as any).response && typeof (error as any).response === 'object') {
+            push((error as any).response.message);
+            push((error as any).response.error);
+            if ((error as any).response.error && typeof (error as any).response.error === 'object') {
+                push((error as any).response.error.message);
+                push((error as any).response.error.status);
+            }
+        }
+    }
+    return [...new Set(parts)];
+}
+
 export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
-    let message: string;
-    if (typeof error === 'string') {
-        message = error;
-    } else if (error instanceof Error) {
-        message = error.message;
-    } else if (error && typeof error === 'object' && typeof (error as { message?: string }).message === 'string') {
-        message = (error as { message: string }).message;
-    } else {
-        message = String(error ?? '');
-    }
+    const messageParts = extractErrorMessageParts(error);
+    let message = messageParts[0] || String(error ?? '');
+    const mergedMessage = messageParts.join(' | ') || message;
     // Proxy may return stringified JSON in error; parse to detect quota/429
     let parsed: { error?: { code?: number; status?: string; message?: string } | string } | null = null;
     try {
-        const trimmed = message.trim();
+        const trimmed = mergedMessage.trim();
         if (trimmed.startsWith('{')) {
             parsed = JSON.parse(trimmed) as { error?: { code?: number; status?: string; message?: string } | string };
             // Proxy may return { error: "{\"error\":{...}}" }; parse inner string once
@@ -57,10 +77,10 @@ export function formatAiError(error: any): string {
     }
     const parsedForQuota: { error?: { code?: number; status?: string } } | undefined =
         parsed && typeof parsed.error === 'object' ? { error: parsed.error } : undefined;
-    if (isQuotaOrRateLimitError(message, parsedForQuota)) {
+    if (isQuotaOrRateLimitError(mergedMessage, parsedForQuota)) {
         return AI_QUOTA_MESSAGE;
     }
-    if (/GEMINI_API_KEY not set/i.test(message)) {
+    if (/GEMINI_API_KEY not set/i.test(mergedMessage)) {
         return `
 ### AI Service Configuration Error
 The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in your deployment environment.
@@ -72,13 +92,16 @@ The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in
 - Redeploy your site.
 `;
     }
-    if (/API key not valid/i.test(message)) {
+    if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
-    if (/model|404|not found|invalid model|unsupported/i.test(message)) {
-        return `There was an issue with the specified AI model. ${message}`;
+    if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
+        return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
-    if (message) return `AI Service Error: ${message}`;
+    if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
+        return `There was an issue with the specified AI model. ${mergedMessage}`;
+    }
+    if (mergedMessage) return `AI Service Error: ${mergedMessage}`;
     return "An unknown error occurred while communicating with the AI service.";
 }
 
@@ -100,6 +123,114 @@ function setToCache(key: string, result: any) {
     aiAnalysisCache.set(key, { timestamp: Date.now(), result });
 }
 // --- End AI Request Cache ---
+
+
+const fmtSar = (value: number): string => `${Number.isFinite(value) ? value : 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+function buildDirectExecutiveFallback(monthlyPnL: number, overspentBudgets: string, goalProgress: string): string {
+    const direction = monthlyPnL >= 0 ? 'positive' : 'negative';
+    return `### Overall Financial Health
+- Monthly P&L is **${fmtSar(monthlyPnL)} SAR** (${direction} month).
+
+### Key Highlights
+- Budget pressure list: **${overspentBudgets || 'None'}**.
+- Goal tracking snapshot: **${goalProgress || 'No goals set'}**.
+
+### Areas for Attention
+- Protect cash flow if P&L stays negative for 2+ months.
+
+### Strategic Recommendation
+- Set one immediate action this week: cap highest spend bucket and auto-transfer savings on payday.`;
+}
+
+function buildDirectPlanFallback(totals: any, scenarios: any): string {
+    const projectedNet = Number(totals?.projectedNet || 0);
+    const incomeShockPct = Number(scenarios?.incomeShock?.percent || 0);
+    const incomeShockDuration = Number(scenarios?.incomeShock?.duration || 0);
+    const expenseStressPct = Number(scenarios?.expenseStress?.percent || 0);
+    const monthlyImpact = (projectedNet / 12) * ((-incomeShockPct + -expenseStressPct) / 100);
+    const annualImpact = monthlyImpact * Math.max(1, incomeShockDuration);
+    const revised = projectedNet + annualImpact;
+    return `### Scenario Impact
+- Projected annual savings: **${fmtSar(projectedNet)} SAR → ${fmtSar(revised)} SAR** (estimated impact **${fmtSar(annualImpact)} SAR**).
+
+### Strategic Recommendation
+- Keep a dedicated contingency buffer equal to at least one month of essential costs before increasing discretionary allocation.
+
+### Summary
+- Stress-testing now keeps execution disciplined later.`;
+}
+
+function buildDirectAnalysisFallback(
+    spendingData: { name: string; value: number }[],
+    trendData: { name: string; income: number; expenses: number }[],
+    compositionData: { name: string; value: number }[]
+): string {
+    const topSpend = [...spendingData].sort((a, b) => b.value - a.value)[0];
+    const avgIncome = trendData.length ? trendData.reduce((s, r) => s + (r.income || 0), 0) / trendData.length : 0;
+    const avgExpense = trendData.length ? trendData.reduce((s, r) => s + (r.expenses || 0), 0) / trendData.length : 0;
+    const assets = compositionData.filter((x) => x.name !== 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    const debt = compositionData.filter((x) => x.name === 'Debt').reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+    return `### Spending Habits
+- Top spend bucket is **${topSpend?.name || 'N/A'}** at **${fmtSar(topSpend?.value || 0)} SAR**.
+
+### Cash Flow Dynamics
+- Average monthly income vs expense is **${fmtSar(avgIncome)} vs ${fmtSar(avgExpense)} SAR**.
+
+### Balance Sheet Health
+- Assets vs debt snapshot: **${fmtSar(assets)} vs ${fmtSar(debt)} SAR**.`;
+}
+
+function buildDefaultPersonaFallback(
+    savingsRate: number,
+    debtToAssetRatio: number,
+    emergencyFundMonths: number,
+    investmentStyle: string
+): PersonaAnalysis {
+    const savingsPct = Math.max(0, savingsRate * 100);
+    const debtPct = Math.max(0, debtToAssetRatio * 100);
+    const ef = Math.max(0, emergencyFundMonths);
+    const rate = (value: number, good: number, ok: number): 'Excellent' | 'Good' | 'Needs Improvement' =>
+        value >= good ? 'Excellent' : value >= ok ? 'Good' : 'Needs Improvement';
+
+    return {
+        persona: {
+            title: savingsPct >= 25 ? 'The Disciplined Wealth Builder' : savingsPct >= 10 ? 'The Steady Optimizer' : 'The Recovery-Focused Planner',
+            description: `Direct snapshot: savings ${savingsPct.toFixed(1)}%, debt ratio ${debtPct.toFixed(1)}%, emergency fund ${ef.toFixed(1)} months, style ${investmentStyle}.`,
+        },
+        reportCard: [
+            {
+                metric: 'Savings Discipline',
+                value: `${savingsPct.toFixed(1)}%`,
+                rating: rate(savingsPct, 20, 10),
+                analysis: 'Higher recurring savings increases strategic flexibility and compounding capacity.',
+                suggestion: 'Automate a fixed transfer to long-term investing immediately after income posts.',
+            },
+            {
+                metric: 'Debt Pressure',
+                value: `${debtPct.toFixed(1)}%`,
+                rating: debtPct <= 30 ? 'Excellent' : debtPct <= 50 ? 'Good' : 'Needs Improvement',
+                analysis: 'Debt load determines how aggressively you can allocate to growth assets.',
+                suggestion: 'Prioritize highest-cost debt first while preserving a minimum emergency buffer.',
+            },
+            {
+                metric: 'Emergency Preparedness',
+                value: `${ef.toFixed(1)} months`,
+                rating: rate(ef, 6, 3),
+                analysis: 'Emergency runway protects long-term plans from short-term shocks.',
+                suggestion: 'Target 6 months of core expenses in liquid, low-volatility accounts.',
+            },
+            {
+                metric: 'Investment Alignment',
+                value: investmentStyle,
+                rating: 'Good',
+                analysis: 'Style is useful when allocation rules and risk controls are consistently executed.',
+                suggestion: 'Review sleeve drift monthly and execute rebalancing in small controlled steps.',
+            },
+        ],
+    };
+}
+
 
 // --- Robust JSON Parsing ---
 function robustJsonParse(jsonString: string | undefined): any {
@@ -145,6 +276,8 @@ const toFinnhubSymbol = (symbol: string): string => {
     if (!upper) return upper;
     if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
     if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
+    const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+    if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
     return upper;
 };
 
@@ -152,6 +285,8 @@ const fromFinnhubSymbol = (symbol: string): string => {
     const upper = symbol.toUpperCase();
     if (upper === 'BINANCE:BTCUSDT') return 'BTC';
     if (upper === 'BINANCE:ETHUSDT') return 'ETH';
+    const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
+    if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
     return upper;
 };
 
@@ -296,42 +431,64 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    try {
-        const response = await fetch('/api/gemini-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
+    const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+    let lastError: Error | null = null;
 
-        if (!response.ok) {
-            // If we get an error response, we can't assume the body is JSON.
-            const errorBody = await response.text();
-            let errorMessage;
-            try {
-                // Attempt to parse it as our expected JSON error format
-                const jsonError = JSON.parse(errorBody);
-                errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
-            } catch (e) {
-                // If it's not JSON, it's likely an HTML error page from the hosting provider.
-                errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response. This may be due to a server-side configuration error (e.g., missing API key).`;
+    for (const endpoint of endpoints) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                let errorMessage: string;
+                try {
+                    const jsonError = JSON.parse(errorBody);
+                    errorMessage = jsonError.error || `AI proxy failed with status ${response.status}`;
+                } catch (e) {
+                    if (/Inactivity Timeout/i.test(errorBody)) {
+                        errorMessage = 'AI request timed out at the proxy (Inactivity Timeout).';
+                    } else {
+                        errorMessage = `AI proxy failed with status ${response.status}. The server returned an invalid response.`;
+                    }
+                }
+
+                const endpointMissing = response.status === 404 || /not found/i.test(errorBody);
+                if (endpointMissing) {
+                    lastError = new Error(`${errorMessage} Tried endpoint: ${endpoint}`);
+                    continue;
+                }
+                throw new Error(errorMessage);
             }
-            throw new Error(errorMessage);
-        }
-        
-        // If response.ok, we assume it's valid JSON.
-        return await response.json();
 
-    } catch (error) {
-        console.error("Error invoking Netlify function:", error);
-        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
-             const detailedMessage = "Could not connect to the AI proxy function. Please ensure you are connected to the internet and that the Netlify function is deployed correctly.";
-             throw new Error(detailedMessage);
+            return await response.json();
+        } catch (error) {
+            console.error(`Error invoking AI proxy endpoint ${endpoint}:`, error);
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                lastError = new Error('AI request timed out while waiting for proxy response.');
+                continue;
+            }
+            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+                lastError = new Error('Could not connect to the AI proxy function. Please ensure the Netlify function is deployed correctly.');
+                continue;
+            }
+            lastError = error instanceof Error ? error : new Error(String(error));
+            break;
+        } finally {
+            clearTimeout(timeoutId);
         }
-        throw error;
     }
+
+    throw (lastError || new Error('AI proxy invocation failed for all known endpoints.'));
 }
 
-// Unified AI invocation function. Decides whether to use client-side SDK or proxy.
+// Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
     const hasJsonSchema = payload.config?.responseMimeType === 'application/json';
     const mergedPayload = {
@@ -342,25 +499,7 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
         },
     };
 
-    // In dev mode, use the client-side key if available.
-    // In dev mode, use the client-side key if available. Otherwise, fall back to the proxy.
-    if (import.meta.env.DEV && import.meta.env.VITE_GEMINI_API_KEY) {
-        const clientSideApiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        try {
-            const ai = new GoogleGenAI({ apiKey: clientSideApiKey });
-            const response: GenerateContentResponse = await ai.models.generateContent(mergedPayload);
-            return {
-                text: response.text,
-                candidates: response.candidates,
-                functionCalls: response.functionCalls,
-            };
-        } catch (error) {
-            throw new Error(formatAiError(error));
-        }
-    } else {
-        // In production, or for local dev without a specific client-side key, use the proxy.
-        return invokeGeminiProxy(mergedPayload);
-    }
+    return invokeGeminiProxy(mergedPayload);
 }
 
 
@@ -521,14 +660,17 @@ export const getAIFinancialPersona = async (
             }
         });
         const result = robustJsonParse(response.text);
-        if (result) {
+        if (result && result.persona && Array.isArray(result.reportCard)) {
             setToCache(cacheKey, result);
+            return result;
         }
-        return result;
+        const fallback = buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
+        setToCache(cacheKey, fallback);
+        return fallback;
 
     } catch (error) {
-        console.error("Error fetching AI financial persona:", error);
-        throw error;
+        console.warn("[getAIFinancialPersona] AI unavailable, using deterministic fallback.", error);
+        return buildDefaultPersonaFallback(savingsRate, debtToAssetRatio, emergencyFundMonths, investmentStyle);
     }
 };
 
@@ -556,9 +698,61 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch(e) {
-        return formatAiError(e);
+        return buildDirectPlanFallback(totals, scenarios);
     }
 }
+
+export const getAIHouseholdEngineAnalysis = async (householdEngine: any, scenarios: any): Promise<string> => {
+    const months = Array.isArray(householdEngine?.months) ? householdEngine.months : [];
+    const pressureMonths = months.filter((m: any) => (m.warnings || []).length > 0).length;
+    const criticalMonths = months.filter((m: any) => (m.validationErrors || []).length > 0).length;
+    const avgGoal = months.length > 0 ? months.reduce((s: number, m: any) => s + Number(m.routedGoalAmount || 0), 0) / months.length : 0;
+    const projected = Number(householdEngine?.plannedVsActual?.plannedNet || 0);
+    const mode = String(householdEngine?.config?.operatingMode || 'Balanced');
+
+    const fallback = `### Household Engine Summary
+- Mode: **${mode}**; projected annual net: **${fmtSar(projected)}**.
+- Pressure months: **${pressureMonths}**; critical months: **${criticalMonths}**.
+
+### Adjustment Order (recommended)
+1. Reduce unusual-month extras and Uber/support overrides first.
+2. Then reduce flexible operations/personal support.
+3. Keep reserve/emergency minimums protected unless critical pressure persists.
+
+### Goal & Long-Term Outlook
+- Average monthly goal push: **${fmtSar(avgGoal)}**.
+- If pressure rises, switch to Protection First temporarily, then restore goal acceleration when stable.`;
+
+    try {
+        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this household budget engine snapshot and provide direct decision support in Markdown only (no HTML), with concise bullets.
+
+Data:
+- Mode: ${mode}
+- Projected annual net: ${projected}
+- Pressure months: ${pressureMonths}
+- Critical months: ${criticalMonths}
+- Average monthly goal routing amount: ${avgGoal}
+- Scenarios: ${JSON.stringify(scenarios || {})}
+
+Required sections:
+### Why pressure happens
+### Best adjustment order
+### Normal vs heavy-month impact
+### House-goal completion outlook
+### Next-best actions
+
+Rules:
+- Recommend reducing flexible items/Uber/investing only in a practical order.
+- Mention temporary mode switching when appropriate.
+- Keep strategic minimums protected unless critical pressure.
+- Keep response short and operational.`;
+
+        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+        return response.text || fallback;
+    } catch {
+        return fallback;
+    }
+};
 
 export const getAIAnalysisPageInsights = async (
     spendingData: { name: string; value: number }[],
@@ -587,7 +781,7 @@ export const getAIAnalysisPageInsights = async (
         return result;
 
     } catch (error) {
-        return formatAiError(error);
+        return buildDirectAnalysisFallback(spendingData, trendData, compositionData);
     }
 };
 
@@ -685,7 +879,7 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
         setToCache(cacheKey, result);
         return result;
     } catch (e) {
-        return formatAiError(e);
+        return buildDirectExecutiveFallback(monthlyPnL, overspentBudgets, goalProgress);
     }
 }
 
@@ -944,6 +1138,69 @@ One sentence: health of their goal strategy.
     } catch (error) { return formatAiError(error); }
 };
 
+const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): string => {
+    const targetByRisk: Record<'Conservative' | 'Moderate' | 'Aggressive', { stocks: number; sukuk: number; other: number }> = {
+        Conservative: { stocks: 45, sukuk: 45, other: 10 },
+        Moderate: { stocks: 60, sukuk: 30, other: 10 },
+        Aggressive: { stocks: 75, sukuk: 15, other: 10 },
+    };
+
+    const normalized = holdings
+        .map((h) => {
+            const qty = Number(h.quantity || 0);
+            const avgCost = Number(h.avgCost || 0);
+            const marketValue = Number(h.currentValue || 0);
+            const fallback = qty > 0 && avgCost > 0 ? qty * avgCost : 0;
+            const value = marketValue > 0 ? marketValue : fallback;
+            return {
+                ...h,
+                value,
+                assetClass: h.assetClass || 'Other',
+            };
+        })
+        .filter((h) => Number.isFinite(h.value) && h.value > 0);
+
+    const totalValue = normalized.reduce((sum, h) => sum + h.value, 0);
+    if (totalValue <= 0) {
+        return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
+    }
+
+    const bucket = { stocks: 0, sukuk: 0, other: 0 };
+    normalized.forEach((h) => {
+        if (h.assetClass === 'Stock') bucket.stocks += h.value;
+        else if (h.assetClass === 'Sukuk') bucket.sukuk += h.value;
+        else bucket.other += h.value;
+    });
+
+    const toPct = (v: number) => (v / totalValue) * 100;
+    const current = {
+        stocks: toPct(bucket.stocks),
+        sukuk: toPct(bucket.sukuk),
+        other: toPct(bucket.other),
+    };
+
+    const topHolding = normalized.slice().sort((a, b) => b.value - a.value)[0];
+    const topPct = topHolding ? toPct(topHolding.value) : 0;
+    const target = targetByRisk[riskProfile];
+
+    return `### Current Portfolio Analysis
+- Portfolio value analyzed: **${totalValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}**.
+- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'} with top holding **${topHolding?.symbol || 'N/A'} (${topPct.toFixed(1)}%)**.
+- Current mix is **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
+
+### Target Allocation (${riskProfile})
+- Stocks: **${target.stocks}%**
+- Sukuk/Bonds: **${target.sukuk}%**
+- Other assets: **${target.other}%**
+
+### Rebalancing Suggestions
+- Adjust in small monthly steps to reduce drift: prioritize buckets furthest from target (current vs target gap).
+- Cap single-position adds when top holding exceeds 25% until diversification improves.
+- Execute changes through **Investment Plan / Execute & Results** so amounts remain budgeted and traceable.
+
+_Generated with resilient rule-based logic (AI fallback mode)._`;
+};
+
 export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
     try {
         const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
@@ -959,8 +1216,11 @@ export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Co
 - 2-3 concrete, educational steps (no buy/sell advice). One sentence each.
 Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not retrieve plan.";
-    } catch (error) { return formatAiError(error); }
+        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    } catch (error) {
+        console.warn('[getAIRebalancingPlan] AI unavailable, using deterministic fallback.', error);
+        return buildRuleBasedRebalancingPlan(holdings, riskProfile);
+    }
 };
 
 export function buildFallbackAnalystReport(holding: Holding): string {
@@ -970,25 +1230,71 @@ export function buildFallbackAnalystReport(holding: Holding): string {
     const value = holding.currentValue ?? 0;
     const gainLoss = value - cost;
     const gainLossPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
-    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n*AI analyst report was unavailable. Use **Generate Report** again for news and sentiment when available.*`;
+    return `## Position Summary\n\n**${holding.symbol}** — ${name}\n\n- **Shares:** ${qty.toLocaleString()}\n- **Cost basis:** ${cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Market value:** ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n- **Unrealized G/L:** ${gainLoss >= 0 ? '+' : ''}${gainLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${gainLossPct >= 0 ? '+' : ''}${gainLossPct.toFixed(1)}%)\n\n### Coverage status\n- AI analyst engine was unavailable for this request.\n- Showing a resilient fallback summary now.\n- If configured, Finnhub headlines are attached below.`;
 }
 
-export const getAIStockAnalysis = async (holding: Holding): Promise<{ content: string, groundingChunks: any[] }> => {
-    const cacheKey = `getAIStockAnalysis:${holding.symbol}`;
-    const cached = getFromCache(cacheKey);
-    if (cached) return cached;
+async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<string> {
+    const base = buildFallbackAnalystReport(holding);
     try {
-        const prompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), use Google Search and return a short, expert-level analyst summary in Markdown only (no HTML). Be direct, specific, and insightful.
+        const headlines = await getFinnhubCompanyNews([holding.symbol]);
+        if (headlines.length === 0) {
+            return `${base}\n\n### Finnhub latest headlines\n- No recent headlines were available for this symbol right now.`;
+        }
+
+        const top = headlines
+            .slice(0, 3)
+            .map((item) => `- **${item.source}**: ${item.headline} (${item.url})`)
+            .join('\n');
+
+        return `${base}\n\n### Finnhub latest headlines\n${top}`;
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Finnhub fallback unavailable.';
+        return `${base}\n\n### Finnhub latest headlines\n- Fallback data unavailable: ${reason}`;
+    }
+}
+
+
+export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefresh?: boolean }): Promise<{ content: string, groundingChunks: any[] }> => {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const positionSnapshotKey = [
+        Number(holding.quantity || 0).toFixed(4),
+        Number(holding.avgCost || 0).toFixed(2),
+        Number(holding.currentValue || 0).toFixed(2),
+    ].join(':');
+    const cacheKey = `getAIStockAnalysis:${holding.symbol}:${dayKey}:${positionSnapshotKey}`;
+    const cached = getFromCache(cacheKey);
+    if (!options?.forceRefresh && cached) return cached;
+
+    const approxPrice = Number(holding.quantity || 0) > 0
+        ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
+        : Number(holding.avgCost || 0);
+    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst.
+Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol}) using Google Search.
+Treat stale/outdated references as low confidence and prefer latest items.
+
+Portfolio snapshot context (for relevance only):
+- Shares: ${Number(holding.quantity || 0).toLocaleString()}
+- Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
+- Approx latest price from portfolio: ${Number.isFinite(approxPrice) ? approxPrice.toFixed(2) : 'N/A'}
+
+Return Markdown only (no HTML):
+
+### TL;DR
+- One direct sentence with the current thesis in plain language.
 
 ### Recent News Summary
-- 2-3 bullets on the latest significant news. One sentence each.
+- 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
-Markdown only.`;
+
+### What Changed Recently
+- 1-2 bullets highlighting what is new versus prior narrative.`;
+
+    try {
         const response = await invokeAI({
             model: FAST_MODEL,
-            contents: prompt,
+            contents: primaryPrompt,
             config: { tools: [{ googleSearch: {} }] }
         });
         const content = response.text || "Could not retrieve analysis.";
@@ -997,17 +1303,41 @@ Markdown only.`;
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
-        const formatted = formatAiError(error);
-        const isTemporaryAiOutage = /usage limit|quota|temporarily unavailable|resource_exhausted|rate.?limit/i.test(formatted);
-        if (isTemporaryAiOutage) {
-            const result = {
-                content: buildFallbackAnalystReport(holding),
+        const details = formatAiError(error);
+
+        // Retry once without search tool, using Finnhub brief as context, to keep analyst report available.
+        try {
+            const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol]);
+            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol}), produce a concise Markdown analyst update (no HTML).
+
+Structure:
+### TL;DR
+- One direct sentence with current thesis.
+
+### Recent News Summary
+- 2-3 concise bullets.
+
+### Analyst Sentiment
+- One short paragraph (bullish/bearish/neutral) with reasoning.
+
+${finnhubBrief ? `Use this Finnhub reference when relevant:
+${finnhubBrief}` : 'If live headlines are unavailable, rely on position context and provide a neutral status update.'}`;
+
+            const retry = await invokeAI({ model: FAST_MODEL, contents: fallbackAiPrompt });
+            const retryResult = {
+                content: retry.text || await buildFallbackAnalystReportWithFinnhub(holding),
                 groundingChunks: [],
             };
-            setToCache(cacheKey, result);
-            return result;
+            setToCache(cacheKey, retryResult);
+            return retryResult;
+        } catch (_retryError) {
+            return {
+                content: `${await buildFallbackAnalystReportWithFinnhub(holding)}
+
+> Analyst engine note: ${details}`,
+                groundingChunks: [],
+            };
         }
-        throw error;
     }
 };
 
@@ -1060,7 +1390,7 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
 }
 
 /** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
-export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ symbol: string; price: number }[]> {
+export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
     if (!token) return [];
     const out: { symbol: string; price: number }[] = [];
@@ -1069,17 +1399,20 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
         let finnhubSym = '';
         let priceMultiplier = SAR_PER_USD;
         let normalizedSym = sym;
+        const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
+        const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
+        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0.5, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
             finnhubSym = 'BINANCE:BTCUSDT';
             normalizedSym = 'BTC';
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
             finnhubSym = 'BINANCE:ETHUSDT';
             normalizedSym = 'ETH';
-        } else if (sym === 'XAU_GRAM' || sym === 'XAU') {
+        } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
-        } else if (sym === 'XAG_GRAM' || sym === 'XAG') {
+        } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
@@ -1091,7 +1424,7 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
             const row = await res.json();
             const priceUsd = Number(row?.c ?? row?.pc ?? row?.p);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier });
+            out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier * karatFactor });
         } catch {
             // skip
         }
@@ -1108,7 +1441,7 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
 }
 
 /** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
+export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
     let prices = await getFinnhubCommodityPrices(commodities);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));
@@ -1204,7 +1537,13 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     try {
-        if (provider === 'finnhub') return await tryFinnhub();
+        if (provider === 'finnhub') {
+            try {
+                return await tryFinnhub();
+            } catch {
+                return await tryStooq();
+            }
+        }
         if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
 
@@ -1239,13 +1578,137 @@ export type SuggestedAnalystEligibility = {
     min_coverage_threshold: number;
     redirect_policy: 'pro-rata' | 'priority';
     target_provider: string;
+    source: 'ai' | 'fallback';
 };
 
 /** Suggest analyst & eligibility parameters from AI based on universe and context. Use to auto-fill the plan; no manual entry required. */
+export const getAIMarketEventInsight = async (
+    event: {
+        title: string;
+        description: string;
+        category: string;
+        impact: string;
+        symbol?: string;
+        date: string;
+        id?: string;
+        detailedInfo?: {
+            meetingType?: string;
+            historicalContext?: string;
+            keyMetrics?: string[];
+            marketImpactHistory?: string;
+            preparationTips?: string[];
+        };
+    },
+    portfolio: { holdings: Array<{ symbol: string; quantity: number; currentValue: number }>; watchlist: string[] }
+): Promise<{ insight: string; action: string; relevance: string }> => {
+    const eventId = event.id || `${event.title}-${event.date}-${event.symbol || 'general'}`;
+    const cacheKey = `marketEventInsight:${eventId}:${new Date().toISOString().slice(0, 10)}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) return cached;
+
+    const holdingsSummary = portfolio.holdings.length > 0
+        ? portfolio.holdings.slice(0, 5).map(h => `${h.symbol} (${h.quantity} shares)`).join(', ')
+        : 'No holdings';
+    const watchlistSummary = portfolio.watchlist.length > 0
+        ? portfolio.watchlist.slice(0, 5).join(', ')
+        : 'No watchlist';
+
+    const detailedContext = event.detailedInfo ? `
+**Detailed Event Information:**
+${event.detailedInfo.meetingType ? `- Meeting Type: ${event.detailedInfo.meetingType}` : ''}
+${event.detailedInfo.historicalContext ? `- Historical Context: ${event.detailedInfo.historicalContext}` : ''}
+${event.detailedInfo.keyMetrics && event.detailedInfo.keyMetrics.length > 0 ? `- Key Metrics: ${event.detailedInfo.keyMetrics.join(', ')}` : ''}
+${event.detailedInfo.marketImpactHistory ? `- Market Impact History: ${event.detailedInfo.marketImpactHistory}` : ''}
+${event.detailedInfo.preparationTips && event.detailedInfo.preparationTips.length > 0 ? `- Preparation Tips: ${event.detailedInfo.preparationTips.join('; ')}` : ''}
+` : '';
+
+    const prompt = `${EXPERT_ADVISOR_PERSONA}
+
+Analyze this market event and provide personalized insights:
+
+**Event:** ${event.title}
+**Date:** ${event.date}
+**Category:** ${event.category}
+**Impact:** ${event.impact}
+**Description:** ${event.description}
+${event.symbol ? `**Symbol:** ${event.symbol}` : ''}
+${detailedContext}
+**Your Portfolio Context:**
+- Holdings: ${holdingsSummary}
+- Watchlist: ${watchlistSummary}
+
+Provide a comprehensive analysis in JSON format:
+{
+  "insight": "One clear, detailed sentence explaining how this event impacts your portfolio specifically, considering the historical context and market impact patterns",
+  "action": "One specific, actionable step you should take (e.g., 'Review AAPL position before earnings', 'Reduce leverage before FOMC meeting', 'Consider tax-loss harvesting before year-end tax policy changes'). Reference the preparation tips if applicable.",
+  "relevance": "Brief explanation of why this matters to your investments (High/Medium/Low relevance). Consider both direct portfolio impact and broader market implications."
+}
+
+Be specific, actionable, and leverage the detailed event information provided. If the event doesn't directly impact the portfolio, explain general market implications and how they might affect your holdings indirectly.`;
+
+    try {
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        insight: { type: Type.STRING },
+                        action: { type: Type.STRING },
+                        relevance: { type: Type.STRING },
+                    },
+                    required: ['insight', 'action', 'relevance'],
+                },
+            },
+        });
+
+        const parsed = robustJsonParse(response?.text) || {
+            insight: 'Market event may impact broader market sentiment and your portfolio indirectly.',
+            action: 'Monitor market reaction and review your positions if volatility increases.',
+            relevance: 'Medium',
+        };
+
+        const result = {
+            insight: parsed.insight || 'Market event may impact broader market sentiment.',
+            action: parsed.action || 'Monitor market reaction.',
+            relevance: parsed.relevance || 'Medium',
+        };
+
+        setToCache(cacheKey, result);
+        return result;
+    } catch (error) {
+        console.warn('AI market event insight failed:', error);
+        return {
+            insight: `${event.category} event with ${event.impact.toLowerCase()} impact. ${event.symbol ? `Directly affects ${event.symbol}.` : 'May impact broader market.'}`,
+            action: event.impact === 'High' ? 'Monitor closely and be prepared for volatility.' : 'Stay informed about market developments.',
+            relevance: event.symbol && portfolio.watchlist.includes(event.symbol) ? 'High' : event.impact === 'High' ? 'Medium' : 'Low',
+        };
+    }
+};
+
 export async function getSuggestedAnalystEligibility(
     universe: UniverseTicker[],
     currentPlan?: Partial<InvestmentPlanSettings>
 ): Promise<SuggestedAnalystEligibility> {
+    const fallbackFromUniverse = (): SuggestedAnalystEligibility => {
+        const coreCount = universe.filter(t => t.status === 'Core').length;
+        const upsideCount = universe.filter(t => t.status === 'High-Upside').length;
+        const total = Math.max(1, coreCount + upsideCount);
+        const upsideRatio = upsideCount / total;
+        const baseUpside = currentPlan?.minimumUpsidePercentage ?? DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage;
+        const tunedUpside = Math.round(Math.min(35, Math.max(18, baseUpside + (upsideRatio >= 0.5 ? 3 : 0))));
+        return {
+            minimumUpsidePercentage: tunedUpside,
+            stale_days: Math.min(90, Math.max(14, Math.round(currentPlan?.stale_days ?? DEFAULT_ANALYST_ELIGIBILITY.stale_days))),
+            min_coverage_threshold: Math.min(5, Math.max(2, Math.round(currentPlan?.min_coverage_threshold ?? DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold))),
+            redirect_policy: (currentPlan?.redirect_policy === 'priority' ? 'priority' : 'pro-rata'),
+            target_provider: String(currentPlan?.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider,
+            source: 'fallback',
+        };
+    };
+
     try {
         const tickers = universe.slice(0, 30).map(t => t.ticker).join(', ') || 'none';
         const prompt = `You are Finova AI, an expert investment analyst. Suggest sensible default parameters for an investment plan's "Analyst & eligibility" rules.
@@ -1274,20 +1737,56 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
             },
         });
         const raw = robustJsonParse(response.text);
-        if (!raw || typeof raw !== 'object') return DEFAULT_ANALYST_ELIGIBILITY;
+        if (!raw || typeof raw !== 'object') return { ...DEFAULT_ANALYST_ELIGIBILITY, source: 'fallback' };
         const minUpside = Math.min(50, Math.max(10, Number(raw.minimumUpsidePercentage) || DEFAULT_ANALYST_ELIGIBILITY.minimumUpsidePercentage));
         const staleDays = Math.min(365, Math.max(7, Math.round(Number(raw.stale_days) || DEFAULT_ANALYST_ELIGIBILITY.stale_days)));
         const minCov = Math.min(10, Math.max(1, Math.round(Number(raw.min_coverage_threshold) || DEFAULT_ANALYST_ELIGIBILITY.min_coverage_threshold)));
         const redirect = (raw.redirect_policy === 'priority' ? 'priority' : 'pro-rata') as 'pro-rata' | 'priority';
         const provider = String(raw.target_provider || DEFAULT_ANALYST_ELIGIBILITY.target_provider).trim() || DEFAULT_ANALYST_ELIGIBILITY.target_provider;
-        return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider };
+        return { minimumUpsidePercentage: minUpside, stale_days: staleDays, min_coverage_threshold: minCov, redirect_policy: redirect, target_provider: provider, source: 'ai' };
     } catch (_) {
-        return DEFAULT_ANALYST_ELIGIBILITY;
+        return fallbackFromUniverse();
     }
 }
 
 /** Rule-based execution (no AI): allocates budget by plan weights. Use when AI is unavailable or as fallback. */
-export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, universe: UniverseTicker[]): InvestmentPlanExecutionResult {
+type ExecutionCurrencyOptions = {
+    planCurrency?: TradeCurrency;
+    tickerCurrencyMap?: Record<string, TradeCurrency>;
+    fxRate?: number;
+};
+
+const inferTradeCurrencyFromTicker = (ticker: string): TradeCurrency => (/(\.SR|\.SA)$/i.test(ticker) ? 'SAR' : 'USD');
+
+const toTradeWithCurrency = (
+    trade: ProposedTrade,
+    opts: ExecutionCurrencyOptions
+): ProposedTrade => {
+    const planCurrency = opts.planCurrency ?? 'SAR';
+    const ticker = (trade.ticker || '').trim().toUpperCase();
+    const tradeCurrency = opts.tickerCurrencyMap?.[ticker] ?? inferTradeCurrencyFromTicker(trade.ticker);
+    const rate = opts.fxRate && opts.fxRate > 0 ? opts.fxRate : 3.75;
+    let converted = trade.amount;
+    if (tradeCurrency !== planCurrency) {
+        converted = tradeCurrency === 'USD' ? trade.amount / rate : trade.amount * rate;
+    }
+    return {
+        ...trade,
+        tradeCurrency,
+        amountInTradeCurrency: Math.max(0, Number(converted.toFixed(2))),
+    };
+};
+
+const enrichTradesWithCurrency = (result: InvestmentPlanExecutionResult, opts: ExecutionCurrencyOptions): InvestmentPlanExecutionResult => ({
+    ...result,
+    trades: (result.trades ?? []).map((trade) => toTradeWithCurrency(trade, opts)),
+});
+
+export function executeInvestmentPlanRuleBased(
+    plan: InvestmentPlanSettings,
+    universe: UniverseTicker[],
+    options?: ExecutionCurrencyOptions
+): InvestmentPlanExecutionResult {
     const date = new Date().toISOString();
     const coreTickers = universe.filter(t => t.status === 'Core');
     const upsideTickers = universe.filter(t => t.status === 'High-Upside');
@@ -1385,7 +1884,7 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
 - Tickers: Core ${coreTickers.length}, High-Upside ${upsideTickers.length}, Speculative ${speculativeTickers.length}.
 - No analyst targets or eligibility checks; allocation by weights only. Use AI execution for full logic.`;
 
-    return {
+    return enrichTradesWithCurrency({
         date,
         totalInvestment,
         coreInvestment,
@@ -1396,16 +1895,16 @@ export function executeInvestmentPlanRuleBased(plan: InvestmentPlanSettings, uni
         trades,
         status: totalInvestment > 0 ? 'success' : 'failure',
         log_details,
-    };
+    }, { planCurrency: options?.planCurrency ?? plan.budgetCurrency, tickerCurrencyMap: options?.tickerCurrencyMap, fxRate: options?.fxRate ?? 3.75 });
 }
 
 export async function executeInvestmentPlanStrategy(
     plan: InvestmentPlanSettings,
     universe: UniverseTicker[],
-    options?: { forceRuleBased?: boolean }
+    options?: { forceRuleBased?: boolean } & ExecutionCurrencyOptions
 ): Promise<InvestmentPlanExecutionResult> {
     if (options?.forceRuleBased) {
-        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe));
+        return Promise.resolve(executeInvestmentPlanRuleBased(plan, universe, options));
     }
 
     const coreTickers = universe.filter(t => t.status === 'Core');
@@ -1526,13 +2025,22 @@ export async function executeInvestmentPlanStrategy(
         });
         if (result.functionCalls && result.functionCalls.length > 0) {
             const args = result.functionCalls[0].args;
-            return {
+            return enrichTradesWithCurrency({
                 date: new Date().toISOString(),
                 ...args,
-            } as InvestmentPlanExecutionResult;
+            } as InvestmentPlanExecutionResult, {
+                planCurrency: options?.planCurrency ?? plan.budgetCurrency,
+                tickerCurrencyMap: options?.tickerCurrencyMap,
+                fxRate: options?.fxRate ?? 3.75,
+            });
         }
         throw new Error('AI did not return the expected function call.');
     };
+
+    const withAiFallbackNote = (result: InvestmentPlanExecutionResult, details: string): InvestmentPlanExecutionResult => ({
+        ...result,
+        log_details: `${result.log_details || ''}\n\n> AI execution unavailable. Automatically switched to rule-based mode.\n> Reason: ${details}`.trim(),
+    });
 
     try {
         return await executeWithModel(FAST_MODEL);
@@ -1545,10 +2053,107 @@ export async function executeInvestmentPlanStrategy(
                 return await executeWithModel(FAST_MODEL);
             } catch (retryError) {
                 console.warn('AI execution failed (retry failed), falling back to rule-based:', retryError);
-                return executeInvestmentPlanRuleBased(plan, universe);
+                return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), formatAiError(retryError));
             }
         }
         console.warn('AI execution failed, falling back to rule-based (no AI):', error);
-        return executeInvestmentPlanRuleBased(plan, universe);
+        return withAiFallbackNote(executeInvestmentPlanRuleBased(plan, universe), details);
+    }
+}
+
+
+export async function suggestRecoveryParameters(input: {
+    symbol: string;
+    sleeveType: 'Core' | 'Upside' | 'Spec';
+    riskTier: 'Low' | 'Med' | 'High' | 'Spec';
+    plPct: number;
+    deployableCash: number;
+    currentPrice: number;
+    avgCost: number;
+}): Promise<{ lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }> {
+    const buildRuleBasedSuggestion = () => {
+        const lossMagnitude = Math.max(0, Math.abs(Number(input.plPct) || 0));
+        const baseTrigger = input.riskTier === 'Low' ? 12 : input.riskTier === 'Med' ? 15 : input.riskTier === 'High' ? 18 : 22;
+        const tightenedTrigger = baseTrigger - Math.min(4, lossMagnitude / 10);
+        const lossTriggerPct = Number(Math.max(8, Math.min(30, tightenedTrigger)).toFixed(1));
+
+        const sleeveCap = input.sleeveType === 'Core' ? 0.22 : input.sleeveType === 'Upside' ? 0.16 : 0.1;
+        const riskCap = input.riskTier === 'Low' ? 0.2 : input.riskTier === 'Med' ? 0.16 : input.riskTier === 'High' ? 0.12 : 0.08;
+        const lossBoost = 1 + Math.min(0.3, lossMagnitude / 100);
+        const rawCap = Math.max(500, (Number(input.deployableCash) || 0) * Math.min(sleeveCap, riskCap) * lossBoost);
+        const cashCap = Number(Math.max(500, Math.min(rawCap, (Number(input.deployableCash) || 0) * 0.35)).toFixed(2));
+
+        const recoveryEnabled = input.sleeveType !== 'Spec';
+        const notes = `Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.`;
+
+        return { lossTriggerPct, cashCap, recoveryEnabled, notes };
+    };
+
+    const ruleBased = buildRuleBasedSuggestion();
+    const deployable = Math.max(0, Number(input.deployableCash) || 0);
+    if (deployable <= 0) return ruleBased;
+
+    const prompt = `You are a portfolio risk-control optimizer. Propose conservative recovery parameters for one position.
+Return JSON with:
+- lossTriggerPct (number between 8 and 30)
+- cashCap (number between 500 and deployableCash*0.35)
+- recoveryEnabled (boolean)
+- notes (short string)
+
+Context:
+- symbol: ${input.symbol}
+- sleeveType: ${input.sleeveType}
+- riskTier: ${input.riskTier}
+- plPct: ${Number(input.plPct || 0).toFixed(2)}
+- deployableCash: ${deployable.toFixed(2)}
+- currentPrice: ${Number(input.currentPrice || 0).toFixed(4)}
+- avgCost: ${Number(input.avgCost || 0).toFixed(4)}
+
+Priorities:
+1) Avoid oversized averaging and protect cash.
+2) Higher risk tier => smaller cashCap and stricter trigger.
+3) For Spec sleeve, recoveryEnabled should usually be false.
+4) Keep notes specific and practical.`;
+
+    try {
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        lossTriggerPct: { type: Type.NUMBER },
+                        cashCap: { type: Type.NUMBER },
+                        recoveryEnabled: { type: Type.BOOLEAN },
+                        notes: { type: Type.STRING },
+                    },
+                    required: ['lossTriggerPct', 'cashCap', 'recoveryEnabled'],
+                },
+            },
+        });
+
+        const parsed = robustJsonParse(response?.text) || {};
+        const rawTrigger = Number(parsed.lossTriggerPct);
+        const rawCap = Number(parsed.cashCap);
+
+        const maxCap = deployable * 0.35;
+        const safeTrigger = Number(Math.max(8, Math.min(30, Number.isFinite(rawTrigger) ? rawTrigger : ruleBased.lossTriggerPct)).toFixed(1));
+        const safeCap = Number(Math.max(500, Math.min(maxCap, Number.isFinite(rawCap) ? rawCap : ruleBased.cashCap)).toFixed(2));
+        const safeEnabled = typeof parsed.recoveryEnabled === 'boolean' ? parsed.recoveryEnabled : ruleBased.recoveryEnabled;
+        const safeNotes = typeof parsed.notes === 'string' && parsed.notes.trim().length > 0
+            ? parsed.notes.trim()
+            : `AI-optimized recovery tuning for ${input.symbol}.`;
+
+        return {
+            lossTriggerPct: safeTrigger,
+            cashCap: safeCap,
+            recoveryEnabled: safeEnabled,
+            notes: safeNotes,
+        };
+    } catch (error) {
+        console.warn('suggestRecoveryParameters AI failed; using rule-based fallback.', error);
+        return { ...ruleBased, notes: `${ruleBased.notes} AI unavailable, applied resilient fallback.` };
     }
 }

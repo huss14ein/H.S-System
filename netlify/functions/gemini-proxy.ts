@@ -10,6 +10,11 @@ const corsHeaders: Record<string, string> = {
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
 const FALLBACK_MODEL = 'gemini-2.0-flash';
 
+function isQuotaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /quota|resource_exhausted|429|rate.?limit/i.test(msg);
+}
+
 function isModelError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -47,29 +52,42 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
     const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown };
     const { model: requestedModel, contents, config } = body;
-    const apiKey = process.env.GEMINI_API_KEY;
+    const primaryApiKey = process.env.GEMINI_API_KEY;
+    const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
 
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY not set in Netlify environment variables.");
+    if (!primaryApiKey && !backupApiKey) {
+      throw new Error("GEMINI_API_KEY (or GEMINI_API_KEY_BACKUP) is not set in Netlify environment variables.");
     }
 
     if (!requestedModel || !contents) {
       throw new Error("Request body must include 'model' and 'contents'.");
     }
 
-    const ai = new GoogleGenAI({ apiKey });
     const payload = { model: requestedModel, contents, config };
+
+    const generateWithKey = async (apiKey: string): Promise<GenerateContentResponse> => {
+      const ai = new GoogleGenAI({ apiKey });
+      try {
+        return await ai.models.generateContent(payload);
+      } catch (firstError) {
+        if (isModelError(firstError) && requestedModel !== FALLBACK_MODEL) {
+          console.warn("Gemini proxy: primary model failed, retrying with fallback:", (firstError as Error).message);
+          return await ai.models.generateContent({ ...payload, model: FALLBACK_MODEL });
+        }
+        throw firstError;
+      }
+    };
 
     let response: GenerateContentResponse;
     try {
-      response = await ai.models.generateContent(payload);
-    } catch (firstError) {
-      if (isModelError(firstError) && requestedModel !== FALLBACK_MODEL) {
-        console.warn("Gemini proxy: primary model failed, retrying with fallback:", (firstError as Error).message);
-        response = await ai.models.generateContent({ ...payload, model: FALLBACK_MODEL });
-      } else {
-        throw firstError;
+      if (!primaryApiKey) throw new Error('Primary key missing.');
+      response = await generateWithKey(primaryApiKey);
+    } catch (primaryError) {
+      if (!backupApiKey || !isQuotaError(primaryError)) {
+        throw primaryError;
       }
+      console.warn('Gemini proxy: primary key quota-limited, retrying with backup key.');
+      response = await generateWithKey(backupApiKey);
     }
 
     const text = extractText(response);

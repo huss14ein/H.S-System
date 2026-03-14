@@ -3,11 +3,7 @@ import { AuthContext } from '../context/AuthContext';
 import { HSLogo } from '../components/icons/HSLogo';
 import { supabase } from '../services/supabaseClient';
 
-interface LoginPageProps {
-  onSwitchToSignup: () => void;
-}
-
-const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
+const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -75,12 +71,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToSignup }) => {
                     {loading ? 'Logging in...' : 'Log In'}
                 </button>
                 </form>
-                <p className="mt-6 text-center text-sm text-gray-600">
-                Don't have an account?{' '}
-                <button onClick={onSwitchToSignup} className="font-medium text-primary hover:text-secondary">
-                    Sign up
-                </button>
-                </p>
+                <p className="mt-6 text-center text-sm text-gray-500">Sign-up is currently disabled on this deployment. Please contact your administrator.</p>
             </>
         )}
       </div>

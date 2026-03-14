@@ -1,10 +1,10 @@
--- =============================================================================
+-- -----------------------------------------------------------------------------
 -- Full schema and migrations for H.S-System app (Supabase) — Option B.
 -- Run this in the Supabase SQL editor. Safe to run multiple times (idempotent).
 -- Use this when you already have tables: it adds missing columns and indexes.
 -- If "create table" fails (e.g. auth.users missing), create tables without
 -- "references auth.users(id)", then run this script again to add columns.
--- =============================================================================
+-- -----------------------------------------------------------------------------
 
 -- 1. Settings: ensure all columns exist (snake_case for DB)
 do $$

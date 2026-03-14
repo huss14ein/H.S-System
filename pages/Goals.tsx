@@ -19,6 +19,10 @@ import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import { useCurrency } from '../context/CurrencyContext';
+import { toSAR } from '../utils/currencyMath';
+import { DemoDataButton } from '../components/DemoDataButton';
+import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -137,6 +141,7 @@ const GoalStatus: React.FC<{ status: 'On Track' | 'Needs Attention' | 'At Risk' 
 
 const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -153,11 +158,11 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         investments.forEach(p => {
             const holdings = p.holdings ?? [];
             if (p.goalId === goal.id) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
                 linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
             } else {
                 holdings.filter(h => h.goalId === goal.id).forEach(h => {
-                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: h.currentValue });
+                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue, p.currency, exchangeRate) });
                 });
             }
         });
@@ -165,7 +170,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
-    }, [data?.assets, data?.investments, goal.id]);
+    }, [data?.assets, data?.investments, goal.id, exchangeRate]);
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
@@ -306,6 +311,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
 const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -353,12 +359,12 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         investments.forEach(p => {
             const holdings = p.holdings ?? [];
             if (p.goalId) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + h.currentValue, 0);
+                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
                 goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
             } else {
                 holdings.forEach(h => {
                     if (h.goalId) {
-                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + h.currentValue);
+                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue, p.currency, exchangeRate));
                     }
                 });
             }
@@ -370,9 +376,28 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         });
 
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent };
-    }, [data?.goals, data?.assets, data?.investments]);
+    }, [data?.goals, data?.assets, data?.investments, exchangeRate]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
+
+    const projectedAnnualSurplus = useMemo(() => {
+        const monthlyNet = new Map<string, number>();
+        const year = new Date().getFullYear();
+        (data?.transactions ?? []).forEach(t => {
+            const d = new Date(t.date);
+            if (d.getFullYear() !== year) return;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + t.amount);
+        });
+        if (monthlyNet.size === 0) return averageMonthlySavings * 12;
+        const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);
+        return totalNet;
+    }, [data?.transactions, averageMonthlySavings]);
+
+    const fundingPlan = useMemo(
+        () => computeGoalFundingPlan(data, projectedAnnualSurplus),
+        [data, projectedAnnualSurplus]
+    );
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
@@ -426,6 +451,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
       action={
         <div className="flex items-center gap-2">
+          <DemoDataButton page="Goals" options={{ includeGoals: true }} />
           {setActivePage && (
             <button type="button" onClick={() => setActivePage('Plan')} className="btn-outline flex items-center gap-1.5">
               <LinkIcon className="h-4 w-4" /> See impact in Plan
@@ -463,6 +489,32 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         <div className="border-t mt-4 pt-4 flex justify-between items-center">
              <div><span className="font-semibold">Total Allocated: </span><span className={`font-bold ${totalAllocation > 100 ? 'text-danger' : 'text-success'}`}>{totalAllocation}%</span>{totalAllocation > 100 && <p className="text-xs text-danger">Total cannot exceed 100%.</p>}</div>
              <button type="button" onClick={handleSaveAllocations} disabled={totalAllocation > 100} className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed">Save Strategy</button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="System Funding Suggestions" className="bg-white border border-slate-200">
+        <p className="text-xs text-slate-600 mb-3">
+            Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan.totalMonthlySurplus, { digits: 0 })}</span> per month.
+        </p>
+        {(fundingPlan.suggestions.length === 0) && (
+            <p className="text-sm text-slate-500">Add goals with future deadlines to see suggested monthly funding per goal.</p>
+        )}
+        <div className="space-y-2">
+            {fundingPlan.suggestions.map(s => (
+                <div key={s.goalId} className="flex justify-between items-center text-xs border rounded-md px-3 py-2 bg-slate-50">
+                    <div>
+                        <p className="font-semibold text-slate-900">{(data?.goals ?? []).find(g => g.id === s.goalId)?.name ?? s.name}</p>
+                        <p className="text-slate-500 mt-0.5">
+                            Required: {formatCurrencyString(s.requiredPerMonth, { digits: 0 })} / mo · Suggested: {formatCurrencyString(s.suggestedPerMonth, { digits: 0 })} / mo
+                        </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                        s.status === 'on_track' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                        {s.status === 'on_track' ? 'On track' : 'Need more'}
+                    </span>
+                </div>
+            ))}
         </div>
       </SectionCard>
 

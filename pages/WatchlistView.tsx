@@ -19,6 +19,17 @@ import InfoHint from '../components/InfoHint';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { ArrowTrendingDownIcon, XMarkIcon, PlusIcon } from '../components/icons';
+import { toSAR } from '../utils/currencyMath';
+
+
+interface WatchlistBucket {
+    id: string;
+    name: string;
+    currency: PriceAlertCurrency;
+    symbols: string[];
+}
 
 const ALERT_CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'USD', label: 'USD' },
@@ -36,8 +47,12 @@ const AddWatchlistItemModal: React.FC<{
     const [setAlert, setSetAlert] = useState(false);
     const [targetPrice, setTargetPrice] = useState('');
     const [alertCurrency, setAlertCurrency] = useState<PriceAlertCurrency>('USD');
+    const [isLoadingName, setIsLoadingName] = useState(false);
+    const [step, setStep] = useState<'symbol' | 'details'>('symbol');
     const nameRef = useRef(name);
     nameRef.current = name;
+    const symbolInputRef = useRef<HTMLInputElement | null>(null);
+    const priceInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -46,22 +61,48 @@ const AddWatchlistItemModal: React.FC<{
             setSetAlert(false);
             setTargetPrice('');
             setAlertCurrency('USD');
+            setStep('symbol');
+            setIsLoadingName(false);
+            setTimeout(() => {
+                symbolInputRef.current?.focus();
+            }, 100);
         }
     }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
         const sym = symbol.trim().toUpperCase();
-        if (sym.length < 2) return;
+        if (sym.length < 2) {
+            setName('');
+            return;
+        }
+        setIsLoadingName(true);
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((apiName) => {
-                if (apiName && !nameRef.current.trim()) setName(apiName);
-            });
+                if (apiName && !nameRef.current.trim()) {
+                    setName(apiName);
+                }
+                setIsLoadingName(false);
+            }).catch(() => setIsLoadingName(false));
         }, 600);
         return () => clearTimeout(t);
     }, [symbol, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    useEffect(() => {
+        if (setAlert && priceInputRef.current) {
+            setTimeout(() => priceInputRef.current?.focus(), 100);
+        }
+    }, [setAlert]);
+
+    const handleSymbolSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const sym = symbol.toUpperCase().trim();
+        if (!sym) return;
+        if (sym.length < 1) return;
+        setStep('details');
+    };
+
+    const handleFinalSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const sym = symbol.toUpperCase().trim();
         if (!sym) return;
@@ -71,73 +112,175 @@ const AddWatchlistItemModal: React.FC<{
             const price = parseFloat(targetPrice.replace(/,/g, ''));
             if (Number.isFinite(price) && price > 0) onAddAlert(sym, price, alertCurrency);
         }
-        setSymbol('');
-        setName('');
-        setSetAlert(false);
-        setTargetPrice('');
-        setAlertCurrency('USD');
         onClose();
     };
+
     const handleClose = () => {
         setSetAlert(false);
         setTargetPrice('');
         setAlertCurrency('USD');
         onClose();
     };
+
+    const handleBack = () => {
+        setStep('symbol');
+        setSetAlert(false);
+        setTargetPrice('');
+        setTimeout(() => symbolInputRef.current?.focus(), 100);
+    };
+
+    const sym = symbol.toUpperCase().trim();
+    const canProceed = sym.length >= 1;
+
     return (
-        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist">
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label htmlFor="stock-symbol" className="block text-sm font-medium text-gray-700">Stock Symbol</label>
-                    <input type="text" id="stock-symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g. AAPL or 2222.SR" />
-                </div>
-                <div>
-                    <label htmlFor="stock-name" className="block text-sm font-medium text-gray-700">Company Name</label>
-                    <input type="text" id="stock-name" value={name} onChange={e => setName(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="Auto-filled from symbol (edit if needed)" />
-                </div>
-                {onAddAlert && (
-                    <div className="space-y-2 pt-2 border-t border-gray-200">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" checked={setAlert} onChange={e => setSetAlert(e.target.checked)} className="rounded border-gray-300 text-primary" />
-                            <span className="text-sm font-medium text-gray-700">Set a price alert</span>
-                            <BellIcon className="h-4 w-4 text-amber-500" />
-                        </label>
-                        {setAlert && (
-                            <div className="space-y-2">
-                                <div className="flex gap-2 items-end">
-                                    <div className="w-24">
-                                        <label htmlFor="add-alert-currency" className="block text-xs font-medium text-gray-500 mb-0.5">Currency</label>
-                                        <select
-                                            id="add-alert-currency"
-                                            value={alertCurrency}
-                                            onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)}
-                                            className="w-full p-2 border border-gray-300 rounded-md text-sm"
-                                        >
-                                            {ALERT_CURRENCY_OPTIONS.map(opt => (
-                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <label htmlFor="add-alert-price" className="block text-xs font-medium text-gray-500 mb-0.5">Notify when price reaches</label>
-                                        <input
-                                            type="number"
-                                            id="add-alert-price"
-                                            value={targetPrice}
-                                            onChange={e => setTargetPrice(e.target.value)}
-                                            min="0.01"
-                                            step="0.01"
-                                            placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'}
-                                            className="w-full p-2 border border-gray-300 rounded-md text-sm"
-                                        />
+        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist" maxWidthClass="max-w-md">
+            {step === 'symbol' ? (
+                <form onSubmit={handleSymbolSubmit} className="space-y-6">
+                    <div className="text-center">
+                        <div className="w-16 h-16 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <PlusIcon className="h-8 w-8 text-white" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-800">Add Stock Symbol</h3>
+                        <p className="text-sm text-slate-500 mt-1">Enter a ticker symbol to start tracking</p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label htmlFor="stock-symbol" className="block text-sm font-medium text-slate-700">Stock Symbol</label>
+                        <div className="relative">
+                            <input
+                                ref={symbolInputRef}
+                                type="text"
+                                id="stock-symbol"
+                                value={symbol}
+                                onChange={e => setSymbol(e.target.value.toUpperCase())}
+                                required
+                                className="w-full p-3 border border-slate-300 rounded-lg text-lg font-semibold tracking-wide uppercase focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                                placeholder="e.g. AAPL"
+                                maxLength={10}
+                            />
+                            {symbol && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setSymbol(''); symbolInputRef.current?.focus(); }}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                >
+                                    <XMarkIcon className="h-5 w-5" />
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-xs text-slate-500">Popular: AAPL, MSFT, GOOGL, 2222.SR</p>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={!canProceed}
+                        className="w-full py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Continue
+                    </button>
+                </form>
+            ) : (
+                <form onSubmit={handleFinalSubmit} className="space-y-5">
+                    <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+                        <button
+                            type="button"
+                            onClick={handleBack}
+                            className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                        >
+                            <ArrowTrendingDownIcon className="h-5 w-5 text-slate-600" />
+                        </button>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl font-bold text-slate-900 tracking-wide">{sym}</span>
+                                {isLoadingName && <div className="w-4 h-4 border-2 border-slate-300 border-t-primary rounded-full animate-spin" />}
+                            </div>
+                            <p className="text-xs text-slate-500">Step 2 of 2 • Confirm details</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label htmlFor="stock-name" className="block text-sm font-medium text-slate-700">Company Name</label>
+                        <input
+                            type="text"
+                            id="stock-name"
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                            placeholder={isLoadingName ? 'Looking up...' : 'Company name (auto-filled)'}
+                        />
+                    </div>
+
+                    {onAddAlert && (
+                        <div className="space-y-3 pt-2">
+                            <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={setAlert}
+                                        onChange={e => setSetAlert(e.target.checked)}
+                                        className="peer sr-only"
+                                    />
+                                    <div className="w-5 h-5 border-2 border-slate-300 rounded peer-checked:bg-primary peer-checked:border-primary transition-all" />
+                                    <BellIcon className="h-3 w-3 text-white absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 peer-checked:opacity-100" />
+                                </div>
+                                <div className="flex-1">
+                                    <span className="text-sm font-medium text-slate-700">Set price alert</span>
+                                    <p className="text-xs text-slate-500">Get notified when price hits your target</p>
+                                </div>
+                                <BellIcon className="h-5 w-5 text-amber-500" />
+                            </label>
+
+                            {setAlert && (
+                                <div className="space-y-3 p-4 bg-slate-50 rounded-lg animate-fadeIn">
+                                    <div className="flex gap-3">
+                                        <div className="w-28">
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
+                                            <select
+                                                value={alertCurrency}
+                                                onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)}
+                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
+                                            >
+                                                {ALERT_CURRENCY_OPTIONS.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Target Price</label>
+                                            <input
+                                                ref={priceInputRef}
+                                                type="number"
+                                                value={targetPrice}
+                                                onChange={e => setTargetPrice(e.target.value)}
+                                                min="0.01"
+                                                step="0.01"
+                                                placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'}
+                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={handleBack}
+                            className="flex-1 py-3 px-4 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+                        >
+                            Back
+                        </button>
+                        <button
+                            type="submit"
+                            className="flex-1 py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary transition-colors"
+                        >
+                            Add to Watchlist
+                        </button>
                     </div>
-                )}
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Add to Watchlist</button>
-            </form>
+                </form>
+            )}
         </Modal>
     );
 };
@@ -149,14 +292,26 @@ const WatchlistItemRow: React.FC<{
     historical1M?: CandlePoint[] | null;
     fundamentals?: HoldingFundamentals | null;
     fundamentalsLoading?: boolean;
+    preferredCurrency?: 'USD' | 'SAR';
+    exchangeRate: number;
     onOpenAlertModal: (item: WatchlistItem) => void;
     onOpenDeleteModal: (item: WatchlistItem) => void;
-}> = ({ item, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, onOpenAlertModal, onOpenDeleteModal }) => {
+}> = ({ item, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal }) => {
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
+    const displayCurrency: 'USD' | 'SAR' = preferredCurrency || priceCurrency;
+    const convertCurrency = (value: number, from: 'USD' | 'SAR', to: 'USD' | 'SAR') => {
+        if (!Number.isFinite(value)) return 0;
+        if (from === to) return value;
+        if (from === 'USD' && to === 'SAR') return value * exchangeRate;
+        if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+        return value;
+    };
     const formatInCurrency = (value: number, currency: 'USD' | 'SAR', digits = 2) =>
         new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
-    const formatPrice = (p: number) => formatInCurrency(p, priceCurrency);
+    const displayPrice = convertCurrency(priceInfo.price, priceCurrency, displayCurrency);
+    const displayChange = convertCurrency(priceInfo.change, priceCurrency, displayCurrency);
+    const formatPrice = (p: number) => formatInCurrency(p, displayCurrency);
     const fundamentalsCurrencyRaw = (fundamentals?.currency || '').toUpperCase();
     const fundamentalsCurrency: 'USD' | 'SAR' = fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
     const formatFundamentalValue = (value: number, digits = 0) =>
@@ -169,11 +324,11 @@ const WatchlistItemRow: React.FC<{
         const price = typeof raw === 'string' ? parseFloat(raw) : Number(raw);
         return { price: Number.isFinite(price) ? price : 0, currency: (a.currency ?? 'USD') as 'USD' | 'SAR' };
     }).filter(t => t.price > 0);
-    const targetsSameCurrency = targetValues.filter(t => t.currency === priceCurrency).map(t => t.price);
-    const nearestTarget = targetsSameCurrency.length > 0 ? targetsSameCurrency.reduce((a, b) => (Math.abs(priceInfo.price - a) < Math.abs(priceInfo.price - b) ? a : b)) : null;
+    const targetsSameCurrency = targetValues.filter(t => t.currency === displayCurrency).map(t => t.price);
+    const nearestTarget = targetsSameCurrency.length > 0 ? targetsSameCurrency.reduce((a, b) => (Math.abs(displayPrice - a) < Math.abs(displayPrice - b) ? a : b)) : null;
     const targetPrice = nearestTarget;
     const formatTarget = (p: number, curr: 'USD' | 'SAR') => `${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${curr}`;
-    const targetDistancePercent = targetPrice && targetPrice > 0 ? ((priceInfo.price - targetPrice) / targetPrice) * 100 : null;
+    const targetDistancePercent = targetPrice && targetPrice > 0 ? ((displayPrice - targetPrice) / targetPrice) * 100 : null;
     const targetStatusClass = !targetPrice
         ? 'bg-gray-100 text-gray-600'
         : Math.abs(targetDistancePercent || 0) <= 1
@@ -212,14 +367,15 @@ const WatchlistItemRow: React.FC<{
                 <div className="text-xs text-gray-500 break-words max-w-[220px]">{item.name}{market ? ` · ${market.exchange}` : ''}</div>
             </td>
             <td className="px-4 py-2 w-36">
-                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} />
+                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} realDataOnly />
             </td>
             <td className="px-4 py-2 text-right font-semibold text-dark whitespace-nowrap tabular-nums">
-                {formatInCurrency(priceInfo.price, priceCurrency)}
+                {formatInCurrency(displayPrice, displayCurrency)}
                 {market && <span className="block text-[10px] text-slate-500 font-normal">{market.exchange}</span>}
             </td>
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(priceInfo.change, priceCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
+                {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(displayChange, displayCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
+                <span className="block text-[10px] text-slate-500 font-normal">Period: 1D</span>
             </td>
             <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[220px]">
                 {fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">Loading events…</span>}
@@ -241,13 +397,13 @@ const WatchlistItemRow: React.FC<{
                                     )}
                                 </>
                             ) : (
-                                <span className="text-[11px] text-slate-400">No upcoming earnings</span>
+                                <span className="text-[11px] text-slate-400">No upcoming earnings from market data</span>
                             )}
                         </div>
                         {typeof fundamentals.nextEarnings?.revenueEstimate === 'number' &&
                             fundamentals.nextEarnings.revenueEstimate > 0 && (
                                 <div className="text-[11px] text-slate-500">
-                                    Rev est ({fundamentalsCurrency}):{' '}
+                                    Revenue est ({fundamentalsCurrency}):{' '}
                                     {formatFundamentalValue(fundamentals.nextEarnings.revenueEstimate, 0)}
                                 </div>
                             )}
@@ -255,16 +411,16 @@ const WatchlistItemRow: React.FC<{
                             (typeof fundamentals.dividend.dividendYieldPct === 'number' ||
                                 typeof fundamentals.dividend.dividendPerShareAnnual === 'number') && (
                                 <div className="text-[11px] text-slate-500">
-                                    Div
+                                    Dividend est.
                                     {typeof fundamentals.dividend.dividendYieldPct === 'number' &&
                                         fundamentals.dividend.dividendYieldPct > 0 &&
-                                        ` ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
+                                        ` yield ${fundamentals.dividend.dividendYieldPct.toFixed(2)}%`}
                                     {typeof fundamentals.dividend.dividendPerShareAnnual === 'number' &&
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <>
                                                 {' '}
                                                 · {formatFundamentalValue(fundamentals.dividend.dividendPerShareAnnual, 2)}
-                                                /sh
+                                                per share
                                             </>
                                         )}
                                 </div>
@@ -304,6 +460,7 @@ interface WatchlistViewProps {
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -320,6 +477,12 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const [historicalBySymbol, setHistoricalBySymbol] = useState<Record<string, CandlePoint[] | null>>({});
     const [fundamentalsBySymbol, setFundamentalsBySymbol] = useState<Record<string, HoldingFundamentals | null>>({});
     const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [marketFilter, setMarketFilter] = useState<'All' | 'US' | 'SAR'>('All');
+    const [watchlistBuckets, setWatchlistBuckets] = useState<WatchlistBucket[]>([]);
+    const [activeBucketId, setActiveBucketId] = useState('all');
+    const [newBucketName, setNewBucketName] = useState('');
+    const [newBucketCurrency, setNewBucketCurrency] = useState<PriceAlertCurrency>('USD');
 
     const watchlistSymbolKey = useMemo(() => data.watchlist.map((w) => w.symbol.trim().toUpperCase()).filter(Boolean).join(','), [data.watchlist]);
     useEffect(() => {
@@ -386,6 +549,52 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
         };
     }, [watchlistSymbolKey]);
 
+
+    const bucketStorageKey = 'watchlist-buckets:v1';
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(bucketStorageKey);
+            if (!raw) return;
+            const parsed = JSON.parse(raw) as WatchlistBucket[];
+            if (Array.isArray(parsed)) {
+                setWatchlistBuckets(parsed.filter((b) => b && b.id && b.name));
+            }
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(bucketStorageKey, JSON.stringify(watchlistBuckets));
+        } catch {
+            // ignore
+        }
+    }, [watchlistBuckets]);
+
+    useEffect(() => {
+        const symbols = new Set((data.watchlist || []).map((w) => (w.symbol || '').toUpperCase()));
+        setWatchlistBuckets((prev) => prev.map((b) => ({ ...b, symbols: b.symbols.filter((s) => symbols.has((s || '').toUpperCase())) })));
+    }, [data.watchlist]);
+
+    const activeBucket = useMemo(() => watchlistBuckets.find((b) => b.id === activeBucketId) || null, [watchlistBuckets, activeBucketId]);
+
+    const filteredWatchlist = useMemo(() => {
+        const q = searchQuery.trim().toUpperCase();
+        const bucketSymbolSet = activeBucket ? new Set((activeBucket.symbols || []).map((s) => s.toUpperCase())) : null;
+        return (data.watchlist || []).filter((item) => {
+            const symbol = (item.symbol || '').toUpperCase();
+            const name = (item.name || '').toUpperCase();
+            const market = getExchangeAndCurrencyForSymbol(symbol);
+            const marketBucket = market?.currency === 'SAR' ? 'SAR' : 'US';
+            const marketOk = marketFilter === 'All' || marketFilter === marketBucket;
+            const queryOk = !q || symbol.includes(q) || name.includes(q);
+            const bucketOk = !bucketSymbolSet || bucketSymbolSet.has(symbol);
+            return marketOk && queryOk && bucketOk;
+        });
+    }, [data.watchlist, searchQuery, marketFilter, activeBucket]);
+
     const watchlistInsights = useMemo(() => {
         const rows = data.watchlist.map((item) => ({
             ...item,
@@ -399,14 +608,14 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     }, [data.watchlist, data.priceAlerts, simulatedPrices]);
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
-    const handleConfirmDelete = () => { if (itemToDelete) { deleteWatchlistItem(itemToDelete.symbol); setIsDeleteModalOpen(false); setItemToDelete(null); } };
+    const handleConfirmDelete = () => { if (!itemToDelete) return; if (activeBucket) { handleRemoveFromActiveBucket(itemToDelete.symbol); } else { deleteWatchlistItem(itemToDelete.symbol); } setIsDeleteModalOpen(false); setItemToDelete(null); };
     const handleOpenAlertModal = (item: WatchlistItem) => { setStockForAlert({ ...item, price: simulatedPrices[item.symbol]?.price || 0 }); setIsAlertModalOpen(true); };
 
     const recentTransactions = (data.investmentTransactions ?? []).slice(0, 10);
     const analysisContext = useMemo(() => {
-        const holdings = (data.investments ?? []).flatMap(p => p.holdings ?? []);
+        const holdings = (data.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency })));
         const bySymbol = new Map<string, number>();
-        holdings.forEach(h => bySymbol.set(h.symbol, (bySymbol.get(h.symbol) ?? 0) + h.currentValue));
+        holdings.forEach(h => bySymbol.set(h.symbol, (bySymbol.get(h.symbol) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate)));
         const summary = Array.from(bySymbol.entries()).map(([s, v]) => `${s}: ${v.toFixed(0)}`).join('; ') || 'None';
         const watchlistSymbols = (data.watchlist ?? []).map(w => w.symbol);
         const plan = data.investmentPlan;
@@ -417,7 +626,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             corePct: plan?.coreAllocation,
             upsidePct: plan?.upsideAllocation,
         };
-    }, [data.investments, data.watchlist, data.investmentPlan]);
+    }, [data.investments, data.watchlist, data.investmentPlan, exchangeRate]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);
@@ -453,6 +662,41 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => { addPriceAlert({ symbol, targetPrice, currency }); };
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
+    const handleCreateBucket = () => {
+        const name = newBucketName.trim();
+        if (!name) {
+            alert('Please enter a name for the new watchlist before adding it.');
+            return;
+        }
+        const id = `bucket-${Date.now()}`;
+        setWatchlistBuckets((prev) => [...prev, { id, name, currency: newBucketCurrency, symbols: [] }]);
+        setActiveBucketId(id);
+        setNewBucketName('');
+        setNewBucketCurrency('USD');
+    };
+
+    const handleRemoveBucket = (bucketId: string) => {
+        setWatchlistBuckets((prev) => prev.filter((b) => b.id !== bucketId));
+        setActiveBucketId('all');
+    };
+
+    const handleAddToActiveBucket = (symbol: string) => {
+        if (!activeBucket) return;
+        const sym = symbol.trim().toUpperCase();
+        setWatchlistBuckets((prev) => prev.map((b) => b.id === activeBucket.id ? { ...b, symbols: Array.from(new Set([...(b.symbols || []), sym])) } : b));
+    };
+
+    const handleRemoveFromActiveBucket = (symbol: string) => {
+        if (!activeBucket) return;
+        const sym = symbol.trim().toUpperCase();
+        setWatchlistBuckets((prev) => prev.map((b) => b.id === activeBucket.id ? { ...b, symbols: (b.symbols || []).filter((s) => s.toUpperCase() !== sym) } : b));
+    };
+
+    const handleAddWatchlistItemWithBucket = (item: WatchlistItem) => {
+        addWatchlistItem(item);
+        handleAddToActiveBucket(item.symbol);
+    };
+
     return (
         <div className="mt-6 space-y-6">
             {/* Hero */}
@@ -473,6 +717,26 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                 )}
             </section>
 
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <button type="button" onClick={() => setActiveBucketId('all')} className={`px-3 py-1.5 text-xs rounded-full border ${activeBucketId === 'all' ? 'bg-primary text-white border-primary' : 'bg-white text-slate-700 border-slate-200'}`}>All symbols</button>
+                    {watchlistBuckets.map((b) => (
+                        <div key={b.id} className="inline-flex items-center gap-1">
+                            <button type="button" onClick={() => setActiveBucketId(b.id)} className={`px-3 py-1.5 text-xs rounded-full border ${activeBucketId === b.id ? 'bg-primary text-white border-primary' : 'bg-white text-slate-700 border-slate-200'}`}>{b.name} ({b.currency})</button>
+                            <button type="button" onClick={() => handleRemoveBucket(b.id)} className="text-xs text-rose-600">×</button>
+                        </div>
+                    ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <input value={newBucketName} onChange={(e) => setNewBucketName(e.target.value)} placeholder="New watchlist name" className="input-base max-w-xs" />
+                    <select value={newBucketCurrency} onChange={(e) => setNewBucketCurrency(e.target.value as PriceAlertCurrency)} className="select-base w-auto">
+                        {ALERT_CURRENCY_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </select>
+                    <button type="button" onClick={handleCreateBucket} className="btn-outline text-xs">Add watchlist</button>
+                    {activeBucket && <span className="text-xs text-slate-500">Active watchlist currency: {activeBucket.currency}</span>}
+                </div>
+            </section>
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-4"><p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Positive Movers</p><p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{watchlistInsights.positiveMovers}</p></div>
                 <div className="rounded-xl border border-rose-100 bg-gradient-to-br from-white to-rose-50 p-4"><p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Negative Movers</p><p className="text-2xl font-bold text-rose-700 tabular-nums mt-1">{watchlistInsights.negativeMovers}</p></div>
@@ -488,10 +752,20 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     </div>
                     <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary text-sm w-full sm:w-auto">Add Stock</button>
                 </div>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search symbol or name..." className="input-base max-w-xs" />
+                    <select value={marketFilter} onChange={(e) => setMarketFilter(e.target.value as any)} className="select-base w-auto">
+                        <option value="All">All markets</option>
+                        <option value="US">US / Non-SAR</option>
+                        <option value="SAR">Saudi (SAR)</option>
+                    </select>
+                    <button type="button" className="btn-outline text-xs" onClick={() => { setSearchQuery(''); setMarketFilter('All'); }}>Clear filters</button>
+                    <span className="text-xs text-slate-500">Showing {filteredWatchlist.length} of {(data.watchlist || []).length}</span>
+                </div>
                 <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Day's Change</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {data.watchlist.map((item) => {
+                        {filteredWatchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
                             const activeAlerts = data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             const symKey = item.symbol.trim().toUpperCase();
@@ -504,6 +778,8 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                                   historical1M={historicalBySymbol[symKey] ?? undefined}
                                   fundamentals={fundamentalsBySymbol[symKey] ?? undefined}
                                   fundamentalsLoading={fundamentalsLoading && !fundamentalsBySymbol[symKey]}
+                                  preferredCurrency={activeBucket?.currency}
+                                  exchangeRate={exchangeRate}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                />
@@ -511,7 +787,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                         })}
                     </tbody>
                 </table>
-                {data.watchlist.length === 0 && (<div className="text-center py-10 text-slate-500">Your watchlist is empty. Add symbols to track prices and get AI tips.</div>)}</div>
+                {(data.watchlist.length === 0 || filteredWatchlist.length === 0) && (<div className="text-center py-10 text-slate-500">{data.watchlist.length === 0 ? "Your watchlist is empty. Add symbols to track prices and get AI tips." : "No symbols match the selected filters."}</div>)}</div>
             </div>
 
             <div className="lg:col-span-1 space-y-4">
@@ -520,7 +796,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     <p className="text-xs text-slate-600 mb-3">Educational feedback on your recent trades, patterns, and portfolio impact.</p>
                     {recentTransactions.length > 0 ? (
                         <>
-                            <button onClick={handleAnalyzeTrades} disabled={aiTradeLoading || !isAiAvailable} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
+                            <button onClick={handleAnalyzeTrades} disabled={aiTradeLoading} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
                                 <SparklesIcon className="h-4 w-4" /> {aiTradeLoading ? 'Analyzing...' : 'Analyze Trades'}
                             </button>
                             {aiTradeError && <div className="mt-2"><p className="text-xs text-red-600">{aiTradeError}</p><button type="button" onClick={handleAnalyzeTrades} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}
@@ -533,17 +809,17 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-amber-500"/>Watchlist Tips</h4>
                     <p className="text-xs text-slate-600 mb-3">AI suggestions for your watchlist symbols (diversification, themes, concepts).</p>
-                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length || !isAiAvailable} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
+                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
                         <SparklesIcon className="h-4 w-4" /> {aiWatchlistLoading ? 'Generating...' : 'Get Recommendations'}
                     </button>
                     {aiWatchlistError && <div className="mt-2"><p className="text-xs text-red-600">{aiWatchlistError}</p><button type="button" onClick={handleGetWatchlistTips} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}
                     {aiWatchlistTips && <div className="mt-3 prose prose-sm max-w-none text-left max-h-[220px] overflow-y-auto rounded-lg bg-amber-50/80 p-3 border border-amber-100"><SafeMarkdownRenderer content={aiWatchlistTips} /></div>}
                 </div>
-                {!isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Core watchlist tracking and alerts continue to work.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
+                {!isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Actions still run with deterministic fallback logic.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
             </div>
             </div>
 
-            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={addWatchlistItem} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />
+            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
         </div>

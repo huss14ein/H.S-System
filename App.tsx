@@ -11,7 +11,6 @@ import { NotificationsProvider } from './context/NotificationsContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
-import { SystemActivityGuard } from './components/SystemActivityGuard';
 import AppErrorBoundary from './components/AppErrorBoundary';
 
 import { StatementProcessingProvider } from './context/StatementProcessingContext';

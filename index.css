@@ -125,7 +125,7 @@
         animation: flash-red-bg 1s ease-out;
     }
 
-    /* ========== Design system: consistent UI across pages ========== */
+    /* Design system: consistent UI across pages */
     .page-container {
         @apply space-y-6 sm:space-y-8 w-full max-w-full min-w-0 overflow-x-hidden;
     }
@@ -212,12 +212,12 @@
         hyphens: auto;
     }
     .platform-card .platform-metrics .metric-value {
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         word-break: normal;
-        overflow-wrap: anywhere;
-        hyphens: auto;
+        overflow-wrap: normal;
+        hyphens: none;
     }
     .platform-card .platform-card-body {
         padding: var(--card-pad);

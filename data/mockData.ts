@@ -24,8 +24,15 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
         min_coverage_threshold: 3,
         redirect_policy: 'pro-rata',
         target_provider: 'Default',
-        corePortfolio: [],
-        upsideSleeve: [],
+        corePortfolio: [
+            { ticker: '2222.SR', weight: 0.4 },
+            { ticker: '1120.SR', weight: 0.35 },
+            { ticker: 'MSFT', weight: 0.25 },
+        ],
+        upsideSleeve: [
+            { ticker: 'NVDA', weight: 0.55 },
+            { ticker: 'TSLA', weight: 0.45 },
+        ],
         brokerConstraints: {
             allowFractionalShares: true,
             minimumOrderSize: 100,
@@ -33,9 +40,53 @@ export const getMockData = (): Omit<FinancialData, 'zakatPayments' | 'priceAlert
             leftoverCashRule: 'reinvest_core'
         }
     },
-    portfolioUniverse: [],
-    statusChangeLog: [],
-    executionLogs: [],
+    portfolioUniverse: [
+      { id: 'u1', ticker: '2222.SR', name: 'Saudi Aramco', status: 'Core', monthly_weight: 0.4, max_position_weight: 0.35 },
+      { id: 'u2', ticker: '1120.SR', name: 'Al Rajhi Bank', status: 'Core', monthly_weight: 0.35, max_position_weight: 0.3 },
+      { id: 'u3', ticker: 'MSFT', name: 'Microsoft Corp', status: 'Core', monthly_weight: 0.25, max_position_weight: 0.25 },
+      { id: 'u4', ticker: 'NVDA', name: 'NVIDIA Corp', status: 'High-Upside', monthly_weight: 0.55, max_position_weight: 0.2, min_upside_threshold_override: 18 },
+      { id: 'u5', ticker: 'TSLA', name: 'Tesla, Inc.', status: 'High-Upside', monthly_weight: 0.45, max_position_weight: 0.18, min_upside_threshold_override: 22 },
+      { id: 'u6', ticker: 'REITF.SR', name: 'AlJazira REIT', status: 'Watchlist', max_position_weight: 0.15 },
+      { id: 'u7', ticker: 'VOO', name: 'Vanguard S&P 500 ETF', status: 'Speculative', monthly_weight: 0.25, max_position_weight: 0.1 },
+    ],
+    statusChangeLog: [
+      {
+        id: 'sc1',
+        ticker: 'NVDA',
+        timestamp: new Date(new Date().getTime() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+        from_status: 'Watchlist',
+        to_status: 'High-Upside',
+      },
+      {
+        id: 'sc2',
+        ticker: 'REITF.SR',
+        timestamp: new Date(new Date().getTime() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+        from_status: 'Core',
+        to_status: 'Watchlist',
+      },
+    ],
+    executionLogs: [
+      {
+        id: 'el1',
+        user_id: 'demo',
+        created_at: new Date(new Date().getTime() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        date: new Date(new Date().getTime() - 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        totalInvestment: 5000,
+        coreInvestment: 3500,
+        upsideInvestment: 1300,
+        speculativeInvestment: 200,
+        redirectedInvestment: 0,
+        unusedUpsideFunds: 0,
+        trades: [
+          { ticker: '2222.SR', amount: 1800, reason: 'Core' },
+          { ticker: '1120.SR', amount: 1700, reason: 'Core' },
+          { ticker: 'NVDA', amount: 1300, reason: 'Upside' },
+          { ticker: 'VOO', amount: 200, reason: 'Speculative' },
+        ],
+        status: 'success',
+        log_details: 'Demo execution log for validation across Investments, Wealth Ultra, and history pages.',
+      },
+    ],
     accounts: [
         { id: 'acc1', name: 'Al Rajhi (Current)', type: 'Checking', balance: 25430.50 },
         { id: 'acc2', name: 'SNB (Savings)', type: 'Savings', balance: 152000 },

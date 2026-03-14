@@ -419,11 +419,30 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         month: new Date().toISOString().slice(0, 7),
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
+        budgetCategory: 'all' as 'all' | string,
     });
 
     useEffect(() => {
+        if (!pageAction) return;
         if (pageAction === 'open-transaction-modal') {
             handleOpenTransactionModal();
+            clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-by-budget:')) {
+            const [, rawCategory, rawPeriod, rawYear, rawMonth] = pageAction.split(':');
+            const category = rawCategory || '';
+            const period = String(rawPeriod || 'monthly').toLowerCase();
+            const year = Number(rawYear) || new Date().getFullYear();
+            const month = Math.min(12, Math.max(1, Number(rawMonth) || new Date().getMonth() + 1));
+            const monthIso = period === 'yearly'
+                ? `${year.toString().padStart(4, '0')}-01`
+                : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
+            setFilters((prev) => ({
+                ...prev,
+                month: monthIso,
+                budgetCategory: category || 'all',
+            }));
             clearPageAction?.();
         }
     }, [pageAction, clearPageAction]);
@@ -607,7 +626,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
         addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
-        triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
+        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
     const handleConfirmDelete = () => {
@@ -644,13 +663,36 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { day: 'numeric', month: 'long', year: 'numeric', numberingSystem: 'latn' }).format(date);
     };
 
+
+    const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
+        if (!supabase) return;
+        const { data: verifyRow } = await supabase
+            .from('transactions')
+            .select('id, status')
+            .eq('id', transactionId)
+            .maybeSingle();
+        const status = String((verifyRow as any)?.status || '').toLowerCase();
+        if (status && status !== 'pending') return;
+        const patch: Record<string, unknown> = { status: nextStatus };
+        if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
+        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
+    };
+
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
 
         if (status === 'Approved') {
-            const { error: approveError } = await supabase.rpc('approve_pending_transaction', {
+            const { data: approved, error: approveError } = await supabase.rpc('approve_pending_transaction', {
                 p_transaction_id: transactionId,
             });
+
+            // DB returns false when transaction not found (no exception); or we get P0001 from old DB
+            const notFound = approved === false || approveError?.code === 'P0001' || approveError?.message?.includes('not found');
+            if (notFound) {
+                setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                return;
+            }
 
             if (approveError) {
                 // If transaction not found, it may have been deleted or already processed - remove from UI
@@ -700,6 +742,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 p_reason: rejectionReason,
             });
 
+            // DB returns false when transaction not found (no exception); or we get P0001 from old DB
+            const notFoundReject = rejected === false || rejectError?.code === 'P0001' || rejectError?.message?.includes('not found');
+            if (notFoundReject) {
+                setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
+                setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+                return;
+            }
+
             if (rejectError) {
                 // If transaction not found, it may have been deleted or already processed - remove from UI
                 if (rejectError.message?.includes('not found')) {
@@ -744,7 +794,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     return (
         <PageLayout
             title="Cash Flow"
-            action={<button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>}
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    <DemoDataButton page="Transactions" options={{ includeTransactions: true }} />
+                    <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                </div>
+            }
         >
             <SectionCard
                 title="Recurring (monthly) transactions"

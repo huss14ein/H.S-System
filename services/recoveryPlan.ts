@@ -146,6 +146,24 @@ export function allocateLadderQty(
 
 // --- RecoveryPlanBuilder: full ladder + new avg ---
 
+
+
+function capLadderByMaxShares(
+  ladder: RecoveryLadderLevel[],
+  maxAddShares?: number
+): RecoveryLadderLevel[] {
+  if (!Number.isFinite(maxAddShares) || (maxAddShares ?? 0) <= 0) return ladder;
+  let remaining = Math.floor(maxAddShares as number);
+  return ladder.map((level) => {
+    if (remaining <= 0 || level.qty <= 0) {
+      return { ...level, qty: 0, cost: 0 };
+    }
+    const qty = Math.min(level.qty, remaining);
+    remaining -= qty;
+    return { ...level, qty, cost: qty * level.price };
+  });
+}
+
 export function computeNewAverage(
   shares: number,
   avgCost: number,
@@ -165,14 +183,16 @@ export function buildRecoveryLadder(
   currentPrice: number,
   totalBudget: number,
   riskTier: WealthUltraRiskTier,
-  config: RecoveryGlobalConfig
+  config: RecoveryGlobalConfig,
+  maxAddShares?: number
 ): RecoveryLadderLevel[] {
   const prices = buildLadderPrices(currentPrice, riskTier, config);
   const cappedBudget = Math.min(
     totalBudget,
     config.deployableCash * config.recoveryBudgetPct
   );
-  return allocateLadderQty(cappedBudget, prices, config.ladderWeights);
+  const ladder = allocateLadderQty(cappedBudget, prices, config.ladderWeights);
+  return capLadderByMaxShares(ladder, maxAddShares);
 }
 
 // --- ExitPlanGenerator ---
@@ -210,13 +230,15 @@ export function buildRecoveryPlan(
   const metrics = positionMetrics(holding, currentPrice);
   const totalBudget = Math.min(
     positionConfig.cashCap,
-    config.deployableCash * config.recoveryBudgetPct
+    config.deployableCash * config.recoveryBudgetPct,
+    positionConfig.maxAddCost ?? Number.MAX_SAFE_INTEGER
   );
   const ladder = buildRecoveryLadder(
     currentPrice,
     totalBudget,
     positionConfig.riskTier,
-    config
+    config,
+    positionConfig.maxAddShares
   );
   const totalPlannedCost = ladder.reduce((sum, l) => sum + l.cost, 0);
   const { newShares, newAvgCost } = computeNewAverage(
@@ -244,7 +266,7 @@ export function buildRecoveryPlan(
   else state = 'QUALIFIED';
 
   return {
-    symbol: holding.symbol,
+    symbol: holding.symbol ?? '',
     state,
     qualified: eligibility.qualified,
     reason: eligibility.reason,

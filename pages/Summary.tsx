@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { getAIFinancialPersona, formatAiError } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
@@ -15,6 +16,18 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
+import { useCurrency } from '../context/CurrencyContext';
+import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
+import type { Page } from '../types';
+import { DemoDataButton } from '../components/DemoDataButton';
+import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
+import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
+import { computeRiskLaneFromData } from '../services/riskLaneEngine';
+import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
+import { computeDisciplineScore } from '../services/disciplineScoreEngine';
+import { runShockDrill, SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -48,12 +61,31 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
   </svg>
 );
 
-const Summary: React.FC = () => {
+interface SummaryProps {
+  setActivePage?: (page: Page) => void;
+}
+
+const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    useEffect(() => {
+        const loadRole = async () => {
+            if (!auth?.user || !supabase) {
+                setIsAdmin(false);
+                return;
+            }
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
+        };
+        loadRole();
+    }, [auth?.user?.id]);
 
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
         const now = new Date();
@@ -77,7 +109,7 @@ const Summary: React.FC = () => {
         const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
         const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
         const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
-        const totalInvestmentsValue = investments.reduce((sum, p) => sum + (p.holdings ?? []).reduce((hSum, h) => hSum + h.currentValue, 0), 0);
+        const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
                            cashAndSavingsPositive +
                            totalCommodities +
@@ -88,7 +120,7 @@ const Summary: React.FC = () => {
         const netWorthPrevMonth = netWorth - monthlyPnL;
         const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
         
-        const allHoldings = investments.flatMap(p => p.holdings || []);
+        const allHoldings = investments.flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })));
         const investmentTreemapData = allHoldings.map(h => {
              const totalCost = h.avgCost * h.quantity;
              const gainLoss = h.currentValue - totalCost;
@@ -96,8 +128,10 @@ const Summary: React.FC = () => {
              return { ...h, gainLoss, gainLossPercent };
         });
 
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + h.currentValue, 0);
-        const individualStocksValue = investmentTreemapData.filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type))).reduce((sum, h) => sum + h.currentValue, 0);
+        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+        const individualStocksValue = investmentTreemapData
+            .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
+            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
         const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
         let investmentStyle = 'Balanced';
         if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
@@ -107,7 +141,7 @@ const Summary: React.FC = () => {
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
             investmentTreemapData
         };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const emergencyFund = useEmergencyFund(data);
     const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
@@ -120,6 +154,46 @@ const Summary: React.FC = () => {
         emergencyShortfall: emergencyFund.shortfall,
         emergencyTargetAmount: emergencyFund.targetAmount,
     }), [financialMetrics, emergencyFund.monthsCovered, emergencyFund.shortfall, emergencyFund.targetAmount, efStatus, efTrend]);
+
+    const householdStress = useMemo(() => {
+        if (!data) return null;
+        const year = new Date().getFullYear();
+        const input = buildHouseholdEngineInputFromData(
+            (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+            (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            (data.goals ?? []) as any[],
+            {
+                year,
+                expectedMonthlySalary: undefined,
+                adults: 2,
+                kids: 0,
+                profile: 'Moderate',
+                monthlyOverrides: [],
+            }
+        );
+        const result = buildHouseholdBudgetPlan(input);
+        return deriveCashflowStressSummary(result);
+    }, [data]);
+
+    const riskLane = useMemo(
+        () => computeRiskLaneFromData(data, emergencyFund.monthsCovered),
+        [data, emergencyFund.monthsCovered]
+    );
+
+    const liquidityRunway = useMemo(
+        () => computeLiquidityRunwayFromData(data),
+        [data]
+    );
+
+    const discipline = useMemo(
+        () => computeDisciplineScore(data),
+        [data]
+    );
+
+    const shockDrill = useMemo(
+        () => (data ? runShockDrill(data, 'job_loss') : null),
+        [data]
+    );
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsLoading(true);
@@ -148,17 +222,62 @@ const Summary: React.FC = () => {
     }
 
     return (
-        <PageLayout title="Financial Summary" description="Net worth, key metrics, and AI-generated financial persona with report card and suggestions.">
+        <PageLayout 
+            title="Financial Summary" 
+            description="Key metrics and AI-generated financial persona with report card and suggestions."
+            action={
+                setActivePage && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <DemoDataButton page="Summary" />
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Dashboard')}
+                            className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
+                        >
+                            Wealth Ultra
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Dashboard')}
+                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
+                        >
+                            Market Events
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Dashboard')}
+                            className="text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5"
+                        >
+                            Investments
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Budgets')}
+                            className="text-xs px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50"
+                        >
+                            Budgets
+                        </button>
+                    </div>
+                )
+            }
+        >
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
-                    <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
-                    <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
-                    <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
-                        {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
-                    </p>
-                </div>
+                {isAdmin ? (
+                    <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
+                        <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
+                        <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
+                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
+                            {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
+                        </p>
+                    </div>
+                ) : (
+                    <div className="lg:col-span-1 section-card border-l-4 border-amber-400">
+                        <h2 className="text-lg font-medium text-gray-700">Net Worth</h2>
+                        <p className="text-sm text-slate-600 mt-2">Net worth visibility is restricted to Admin only.</p>
+                    </div>
+                )}
 
-                <div className="lg:col-span-2 cards-grid grid grid-cols-2">
+                <div className="lg:col-span-2 cards-grid grid grid-cols-1 sm:grid-cols-2">
                     <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
                     <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
                     <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
@@ -173,9 +292,15 @@ const Summary: React.FC = () => {
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
-                <div className="section-card flex flex-col h-[450px]">
-                    <NetWorthCompositionChart title="Historical Net Worth" />
-                </div>
+                {isAdmin ? (
+                    <div className="section-card flex flex-col h-[450px]">
+                        <NetWorthCompositionChart title="Historical Net Worth" />
+                    </div>
+                ) : (
+                    <div className="section-card flex flex-col h-[450px] justify-center">
+                        <p className="text-sm text-slate-600 text-center px-6">Historical net worth chart is available for Admin only.</p>
+                    </div>
+                )}
                 <div className="section-card flex flex-col h-[450px]">
                     <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
                     <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
@@ -188,13 +313,91 @@ const Summary: React.FC = () => {
                 </div>
             </div>
             
+            {householdStress && (
+                <div className="section-card mt-6">
+                    <h3 className="section-title mb-2">Household Cashflow Stress</h3>
+                    <p className="text-sm text-slate-700 mb-1">
+                        Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
+                    </p>
+                    <p className="text-xs text-slate-600 mb-2">
+                        {householdStress.summary}
+                    </p>
+                    {householdStress.flags.length > 0 && (
+                        <ul className="text-xs text-slate-500 list-disc pl-5 space-y-0.5">
+                            {householdStress.flags.slice(0, 3).map(flag => (
+                                <li key={flag}>{flag}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 mt-6">
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Risk Lane</h3>
+                    <p className="text-sm text-slate-700">
+                        Current lane: <span className="font-semibold">{riskLane.lane}</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                        Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
+                    </p>
+                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
+                        {riskLane.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                    </ul>
+                </div>
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Liquidity Runway</h3>
+                    {liquidityRunway ? (
+                        <>
+                            <p className="text-sm text-slate-700">
+                                Runway: <span className="font-semibold">{liquidityRunway.monthsOfRunway.toFixed(1)} months</span>
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1">
+                                Portfolio drawdown: <span className="font-semibold">{liquidityRunway.drawdownPct.toFixed(1)}%</span>
+                            </p>
+                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons[0]}</p>
+                        </>
+                    ) : (
+                        <p className="text-sm text-slate-500">Not enough data.</p>
+                    )}
+                </div>
+                <div className="section-card">
+                    <h3 className="section-title mb-2">Discipline Score</h3>
+                    <p className="text-sm text-slate-700">
+                        Score: <span className="font-semibold">{discipline.score}/100</span> ({discipline.label})
+                    </p>
+                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
+                        {discipline.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                    </ul>
+                </div>
+            </div>
+
+            <div className="section-card mt-6">
+                <h3 className="section-title mb-2">Shock Drill (Auto)</h3>
+                <p className="text-xs text-slate-500 mb-2">
+                    Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label}</span>
+                </p>
+                {shockDrill ? (
+                    <>
+                        <p className="text-sm text-slate-700">
+                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta, { digits: 0 })}</span>
+                        </p>
+                        <p className="text-sm text-slate-700 mt-1">
+                            Wealth Ultra value delta: <span className="font-semibold">{shockDrill.wealthUltraPortfolioValueDeltaPct.toFixed(1)}%</span>
+                        </p>
+                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote}</p>
+                    </>
+                ) : (
+                    <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
+                )}
+            </div>
 
             <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Your Financial Persona</h2></div><p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p></div>
+                    <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
                     <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                         <SparklesIcon className="h-5 w-5 mr-2" />
-                        {isLoading ? 'Analyzing...' : (analysis ? 'Regenerate Analysis' : 'Generate My Analysis')}
+                        {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
                     </button>
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
@@ -205,7 +408,7 @@ const Summary: React.FC = () => {
                          <button type="button" onClick={handleGenerateAnalysis} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
                     </div>
                 )}
-                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click the button to generate your expert financial persona and report card.</div>}
+                {!isLoading && !analysis && !error && <div className="text-center p-8 text-gray-500">Click "Generate Advisor Summary" to run the advisor manually.</div>}
                 {analysis && !isLoading && !error && (
                     <div className="space-y-8 mt-4">
                         <div className="text-center bg-blue-50 p-6 rounded-lg border border-blue-200">

@@ -210,7 +210,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform, addTransfer, addTransaction } = useContext(DataContext)!;
+    const { data, addPlatform, updatePlatform, deletePlatform, addTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();

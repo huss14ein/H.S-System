@@ -63,16 +63,31 @@ export interface HouseholdMonthResult {
   warnings: string[];
   baselineExpense: number;
   cashflowStress: 'healthy' | 'caution' | 'stress' | 'critical';
+  plannedNet?: number;
+  totalPlannedOutflow?: number;
+  totalActualOutflow?: number;
+  routedGoalAmount?: number;
+  buckets?: Record<string, number>;
 }
 
 export interface HouseholdBudgetPlanResult {
   months: HouseholdMonthResult[];
   plannedVsActual: { plannedNet: number; actualNet: number };
-  balanceProjection: { projectedYearEndLiquid: number };
+  balanceProjection: { projectedYearEndLiquid: number; openingLiquid?: number };
   recommendations: string[];
   stressSignals?: unknown;
   dynamicBaseline?: unknown;
+  emergencyGap?: number;
+  reserveGap?: number;
 }
+
+/** Alias for consumers that expect HouseholdMonthPlan (e.g. analytics). */
+export type HouseholdMonthPlan = HouseholdMonthResult;
+
+/** Alias for consumers that expect HouseholdEngineResult (e.g. stress, shock drill). */
+export type HouseholdEngineResult = HouseholdBudgetPlanResult;
+
+export type HouseholdEngineProfile = 'Moderate' | 'Conservative' | 'Aggressive' | string;
 
 export const DEFAULT_HOUSEHOLD_ENGINE_CONFIG: HouseholdEngineConfig = {
   operatingMode: 'Balanced',
@@ -115,28 +130,69 @@ export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number 
     .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
 }
 
+export function buildHouseholdEngineInputFromData(
+  _transactions: Array<{ date: string; type?: string; amount?: number }>,
+  accounts: Array<{ type?: string; balance?: number }>,
+  goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>,
+  options: {
+    year?: number;
+    expectedMonthlySalary?: number;
+    adults?: number;
+    kids?: number;
+    profile?: HouseholdEngineProfile;
+    monthlyOverrides?: HouseholdMonthlyOverride[];
+  }
+): HouseholdBudgetPlanInput {
+  const salary = options?.expectedMonthlySalary ?? 0;
+  const monthlySalaryPlan = Array(12).fill(salary);
+  const monthlyActualIncome = monthlySalaryPlan.slice();
+  const monthlyActualExpense = Array(12).fill(0);
+  const liquidBalance = sumLiquidCash(accounts);
+  const goalsMapped = mapGoalsForRouting(goals);
+  return {
+    monthlySalaryPlan,
+    monthlyActualIncome,
+    monthlyActualExpense,
+    householdDefaults: { adults: options?.adults ?? 2, kids: options?.kids ?? 0 },
+    monthlyOverrides: options?.monthlyOverrides ?? [],
+    liquidBalance,
+    emergencyBalance: 0,
+    reserveBalance: 0,
+    goals: goalsMapped,
+    config: DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+  };
+}
+
 export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): HouseholdBudgetPlanResult {
   const { monthlySalaryPlan, monthlyActualIncome, monthlyActualExpense, liquidBalance } = input;
   const plannedNet = monthlySalaryPlan.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
   const actualNet = monthlyActualIncome.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
-  const months: HouseholdMonthResult[] = (monthlySalaryPlan.length ? monthlySalaryPlan : Array(12).fill(0)).map((_, i) => ({
-    monthIndex: i,
-    month: i + 1,
-    incomePlanned: Number(monthlySalaryPlan[i] ?? 0),
-    incomeActual: Number(monthlyActualIncome[i] ?? 0),
-    expensePlanned: Number(monthlyActualExpense[i] ?? 0),
-    expenseActual: Number(monthlyActualExpense[i] ?? 0),
-    surplus: Number(monthlyActualIncome[i] ?? 0) - Number(monthlyActualExpense[i] ?? 0),
-    reservePoolAfterDeductions: Math.max(0, liquidBalance),
-    validationErrors: [],
-    warnings: [],
-    baselineExpense: Number(monthlyActualExpense[i] ?? 0),
-    cashflowStress: 'healthy' as const,
-  }));
+  const months: HouseholdMonthResult[] = (monthlySalaryPlan.length ? monthlySalaryPlan : Array(12).fill(0)).map((_, i) => {
+    const inc = Number(monthlySalaryPlan[i] ?? 0);
+    const exp = Number(monthlyActualExpense[i] ?? 0);
+    const plannedNetMonth = inc - exp;
+    return {
+      monthIndex: i,
+      month: i + 1,
+      incomePlanned: inc,
+      incomeActual: Number(monthlyActualIncome[i] ?? 0),
+      expensePlanned: exp,
+      expenseActual: exp,
+      surplus: Number(monthlyActualIncome[i] ?? 0) - exp,
+      reservePoolAfterDeductions: Math.max(0, liquidBalance),
+      validationErrors: [],
+      warnings: [],
+      baselineExpense: exp,
+      cashflowStress: 'healthy' as const,
+      plannedNet: plannedNetMonth,
+      totalPlannedOutflow: exp,
+      totalActualOutflow: exp,
+    };
+  });
   return {
     months,
     plannedVsActual: { plannedNet, actualNet },
-    balanceProjection: { projectedYearEndLiquid: liquidBalance },
+    balanceProjection: { projectedYearEndLiquid: liquidBalance, openingLiquid: liquidBalance },
     recommendations: [],
   };
 }

@@ -2,7 +2,6 @@ import React, { useState, useMemo, useCallback, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIRebalancingPlan, formatAiError } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
-import SectionCard from '../components/SectionCard';
 import InfoHint from '../components/InfoHint';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
@@ -48,7 +47,16 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
 
   const currentAllocation = useMemo(() => {
     if (!selectedPortfolio) return [];
-    return selectedPortfolio.holdings.map(h => ({ name: h.symbol, value: h.currentValue }));
+    return selectedPortfolio.holdings
+      .map((h) => {
+        const quantity = Number(h.quantity || 0);
+        const avgCost = Number(h.avgCost || 0);
+        const marketValue = Number(h.currentValue || 0);
+        const fallbackValue = quantity > 0 && avgCost > 0 ? quantity * avgCost : 0;
+        const effectiveValue = marketValue > 0 ? marketValue : fallbackValue;
+        return { name: h.symbol, value: effectiveValue };
+      })
+      .filter((row) => Number.isFinite(row.value) && row.value > 0);
   }, [selectedPortfolio]);
 
   if (!data.investments || data.investments.length === 0) {
@@ -69,140 +77,285 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }
 
   return (
-    <div className="mt-6 space-y-6">
-      {/* Hero */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Portfolios</p><p className="mt-1 text-2xl font-bold text-slate-900">{data.investments.length}</p></div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Selected holdings</p><p className="mt-1 text-2xl font-bold text-slate-900">{selectedPortfolio?.holdings?.length ?? 0}</p></div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">AI status</p><p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} {isAiAvailable ? 'Operational' : 'Unavailable'}</p></div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      {/* Enhanced Hero Section */}
+      <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <ScaleIcon className="h-8 w-8 text-white" />
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">AI Portfolio Rebalancer</h2>
+              <p className="text-lg text-slate-600 mt-2">Educational portfolio analysis and rebalancing suggestions</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">AI Powered</span>
+          </div>
+        </div>
+        <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
+          <p className="text-slate-700 leading-relaxed">
+            Get educational suggestions to align your portfolio with your risk tolerance. Select a portfolio and risk profile, then generate a rebalancing plan. 
+            Use with <span className="font-bold text-indigo-700">Investment Plan</span> and <span className="font-bold text-indigo-700">Wealth Ultra</span> for allocation and execution.
+          </p>
+          <p className="text-xs text-amber-700 font-medium mt-3">Disclaimer: Not financial advice. For educational purposes only.</p>
+        </div>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
-        <h2 className="text-xl font-bold text-slate-800">AI Portfolio Rebalancer</h2>
-        <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-          Get educational suggestions to align your portfolio with your risk tolerance. Select a portfolio and risk profile, then generate a rebalancing plan. Use with <strong>Investment Plan</strong> and <strong>Wealth Ultra</strong> for allocation and execution.
-        </p>
-        <p className="text-xs text-amber-700 mt-2 font-medium">Disclaimer: Not financial advice. For educational purposes only.</p>
-        {(onNavigateToTab || onOpenWealthUltra) && (
-          <div className="flex flex-wrap items-center gap-2 pt-3">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Related:</span>
+      {/* Enhanced Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+        <div className="bg-gradient-to-br from-slate-50 to-slate-100 border-2 border-slate-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-slate-500 to-slate-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">📁</span>
+            </div>
+            <div className="w-3 h-3 bg-slate-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-2">Portfolios</p>
+          <p className="text-4xl font-black text-slate-900 tabular-nums">{data.investments.length}</p>
+          <p className="text-sm text-slate-600 mt-2">Available portfolios</p>
+        </div>
+        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-indigo-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <span className="text-white font-bold text-lg">📊</span>
+            </div>
+            <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
+          </div>
+          <p className="text-sm font-bold text-indigo-800 uppercase tracking-wider mb-2">Selected Holdings</p>
+          <p className="text-4xl font-black text-indigo-900 tabular-nums">{selectedPortfolio?.holdings?.length ?? 0}</p>
+          <p className="text-sm text-indigo-600 mt-2">Current positions</p>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg">
+              {isAiAvailable ? <CheckCircleIcon className="h-7 w-7 text-white" /> : <ExclamationTriangleIcon className="h-7 w-7 text-white" />}
+            </div>
+            <div className={`w-3 h-3 rounded-full animate-pulse ${
+              isAiAvailable ? 'bg-emerald-500' : 'bg-amber-500'
+            }`}></div>
+          </div>
+          <p className="text-sm font-bold text-emerald-800 uppercase tracking-wider mb-2">AI Status</p>
+          <p className={`text-2xl font-bold tabular-nums ${
+            isAiAvailable ? 'text-emerald-900' : 'text-amber-900'
+          }`}>
+            {isAiAvailable ? 'Operational' : 'Fallback Active'}
+          </p>
+          <p className="text-sm text-emerald-600 mt-2">Service status</p>
+        </div>
+      </div>
+
+      {/* Enhanced Navigation Links */}
+      {(onNavigateToTab || onOpenWealthUltra) && (
+        <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300 mb-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-slate-700 uppercase tracking-wider">Related Pages:</span>
             {onNavigateToTab && (
               <>
-                <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="text-sm font-medium text-primary hover:underline">Portfolios</button>
-                <span className="text-slate-300">·</span>
-                <button type="button" onClick={() => onNavigateToTab('Investment Plan')} className="text-sm font-medium text-primary hover:underline">Investment Plan</button>
-                <span className="text-slate-300">·</span>
-                <button type="button" onClick={() => onNavigateToTab('Execution History')} className="text-sm font-medium text-primary hover:underline">Execution History</button>
+                <button 
+                  type="button" 
+                  onClick={() => onNavigateToTab('Portfolios')} 
+                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
+                >
+                  Portfolios
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => onNavigateToTab('Investment Plan')} 
+                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
+                >
+                  Investment Plan
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => onNavigateToTab('Execution History')} 
+                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
+                >
+                  Execution History
+                </button>
               </>
             )}
             {onOpenWealthUltra && (
-              <>
-                <span className="text-slate-300">·</span>
-                <button type="button" onClick={onOpenWealthUltra} className="text-sm font-medium text-primary hover:underline">Wealth Ultra</button>
-              </>
+              <button 
+                type="button" 
+                onClick={onOpenWealthUltra} 
+                className="px-4 py-2 text-sm font-bold bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors duration-200"
+              >
+                Wealth Ultra
+              </button>
             )}
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Configuration */}
-        <SectionCard title="Configuration" className="space-y-5 lg:col-span-1">
-          <div>
-            <label htmlFor="portfolio-select" className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
-              1. Select Portfolio
-              <InfoHint text="Choose which portfolio to analyze. Holdings and current allocation are taken from your Portfolios data." />
-            </label>
-            <select
-              id="portfolio-select"
-              value={selectedPortfolioId}
-              onChange={(e) => setSelectedPortfolioId(e.target.value)}
-              className="mt-1 block w-full p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary text-slate-800"
-            >
-              {data.investments.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col min-h-[260px]">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2 text-left flex items-center gap-1">
-              Current Allocation
-              <InfoHint text="Pie chart of current holdings by market value. Use this to see concentration before rebalancing." />
-            </h4>
-            <div className="flex-1 min-h-[220px] w-full rounded-xl overflow-hidden border border-slate-100 flex flex-col items-stretch">
-              <AllocationPieChart data={currentAllocation} />
+      {/* Enhanced Main Content */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Enhanced Configuration Section */}
+        <div className="lg:col-span-1">
+          <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-8 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center shadow-lg">
+                <span className="text-white font-bold text-lg">⚙️</span>
+              </div>
+              <h3 className="text-xl font-bold text-slate-900">Configuration</h3>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-1">
-              2. Risk Profile
-              <InfoHint text="Conservative: lower volatility focus. Moderate: balanced. Aggressive: higher growth tolerance. AI suggestions adapt to your choice." />
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
-                <button
-                  key={profile}
-                  type="button"
-                  onClick={() => setRiskProfile(profile)}
-                  className={`px-3 py-2.5 text-sm font-medium rounded-xl transition-colors ${
-                    riskProfile === profile
-                      ? 'bg-primary text-white shadow'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+            
+            <div className="space-y-6">
+              {/* Portfolio Selection */}
+              <div>
+                <label htmlFor="portfolio-select" className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <span className="text-lg">1️⃣</span>
+                  Select Portfolio
+                  <InfoHint text="Choose which portfolio to analyze. Holdings and current allocation are taken from your Portfolios data." />
+                </label>
+                <select
+                  id="portfolio-select"
+                  value={selectedPortfolioId}
+                  onChange={(e) => setSelectedPortfolioId(e.target.value)}
+                  className="w-full p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800 font-medium bg-white shadow-sm"
                 >
-                  {profile}
-                </button>
-              ))}
+                  {data.investments.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Current Allocation Chart */}
+              <div className="bg-white rounded-2xl p-6 border border-slate-200">
+                <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                  <span className="text-lg">📊</span>
+                  Current Allocation
+                  <InfoHint text="Pie chart of current holdings by market value. Use this to see concentration before rebalancing." />
+                </h4>
+                <div className="h-64 w-full">
+                  <AllocationPieChart data={currentAllocation} />
+                </div>
+              </div>
+
+              {/* Risk Profile Selection */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <span className="text-lg">2️⃣</span>
+                  Risk Profile
+                  <InfoHint text="Conservative: lower volatility focus. Moderate: balanced. Aggressive: higher growth tolerance. AI suggestions adapt to your choice." />
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
+                    <button
+                      key={profile}
+                      type="button"
+                      onClick={() => setRiskProfile(profile)}
+                      className={`px-4 py-3 text-sm font-bold rounded-xl transition-all duration-200 shadow-md hover:shadow-lg ${
+                        riskProfile === profile
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
+                          : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200'
+                      }`}
+                    >
+                      {profile}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Generate Button */}
+              <button
+                type="button"
+                onClick={handleGeneratePlan}
+                disabled={isLoading}
+                className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed font-bold text-lg shadow-lg hover:shadow-xl transition-all duration-200"
+              >
+                <ScaleIcon className="h-6 w-6" />
+                {isLoading ? 'Generating…' : 'Generate Rebalancing Plan'}
+              </button>
             </div>
           </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={handleGeneratePlan}
-            disabled={isLoading || !isAiAvailable}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed font-semibold text-sm"
-          >
-            <ScaleIcon className="h-5 w-5" />
-            {isLoading ? 'Generating…' : 'Generate Rebalancing Plan'}
-          </button>
-        </SectionCard>
-
-        {/* Results */}
+        {/* Enhanced Results Section */}
         <div className="lg:col-span-2">
-          <SectionCard
-            title="Rebalancing Suggestions"
-            icon={<LightBulbIcon className="h-5 w-5 text-amber-500" />}
-            className="min-h-[360px]"
-          >
-            <p className="text-xs text-slate-500 mb-4">From your expert investment advisor</p>
-            {!isAiAvailable && !isLoading && (<div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI features are disabled. Re-enable AI provider/API key for live rebalancing suggestions.</div>)}
+          <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-lg hover:shadow-xl transition-all duration-300 min-h-[600px]">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+                  <LightBulbIcon className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-indigo-900">Rebalancing Suggestions</h3>
+                  <p className="text-sm text-indigo-600 mt-1">From your expert investment advisor</p>
+                </div>
+              </div>
+              {!isAiAvailable && !isLoading && (
+                <div className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold">
+                  AI Fallback Active
+                </div>
+              )}
+            </div>
+            
+            {!isAiAvailable && !isLoading && (
+              <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-6 mb-6">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <ExclamationTriangleIcon className="h-5 w-5 text-white" />
+                  </div>
+                  <p className="text-sm text-amber-800 font-medium leading-relaxed">
+                    Live AI is unavailable right now. Rebalancer will still generate a deterministic, portfolio-based fallback plan.
+                  </p>
+                </div>
+              </div>
+            )}
+            
             {planError && !isLoading && (
-              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-                <SafeMarkdownRenderer content={planError} />
-                <button type="button" onClick={handleGeneratePlan} className="mt-3 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button>
+              <div className="rounded-2xl border-2 border-rose-200 bg-gradient-to-r from-rose-50 to-red-50 p-6 mb-6">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-rose-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <span className="text-white font-bold text-sm">!</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-rose-800 font-medium leading-relaxed mb-4">
+                      <SafeMarkdownRenderer content={planError} />
+                    </p>
+                    <button 
+                      type="button" 
+                      onClick={handleGeneratePlan} 
+                      className="px-4 py-2 text-sm font-bold bg-rose-100 text-rose-800 rounded-lg hover:bg-rose-200 transition-colors duration-200"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
+            
             {isLoading && (
-              <div className="flex flex-col justify-center items-center min-h-[320px] text-slate-500">
-                <p className="font-medium">Analyzing your portfolio…</p>
-                <p className="text-sm mt-1">Generating educational suggestions based on your risk profile.</p>
+              <div className="flex flex-col justify-center items-center min-h-[400px] text-center">
+                <div className="w-16 h-16 bg-indigo-200 rounded-full animate-pulse mb-6"></div>
+                <p className="text-lg font-bold text-indigo-900 mb-2">Analyzing your portfolio…</p>
+                <p className="text-sm text-indigo-600 max-w-md">Generating educational suggestions based on your risk profile and current allocation.</p>
               </div>
             )}
+            
             {rebalancingPlan && !isLoading && (
-              <div className="prose prose-sm max-w-none text-slate-700">
-                <SafeMarkdownRenderer content={rebalancingPlan} />
+              <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-8 border border-indigo-100">
+                <div className="prose prose-sm max-w-none text-slate-700">
+                  <SafeMarkdownRenderer content={rebalancingPlan} />
+                </div>
               </div>
             )}
+            
             {!rebalancingPlan && !isLoading && !planError && (
-              <div className="flex flex-col justify-center items-center min-h-[320px] text-center text-slate-500">
-                <LightBulbIcon className="h-12 w-12 text-slate-300 mb-3" />
-                <p className="font-medium">No plan yet</p>
-                <p className="text-sm mt-1 max-w-sm">Select a portfolio and risk profile, then click <strong>Generate Rebalancing Plan</strong> to see educational rebalancing ideas.</p>
+              <div className="flex flex-col justify-center items-center min-h-[400px] text-center">
+                <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mb-6">
+                  <LightBulbIcon className="h-10 w-10 text-indigo-400" />
+                </div>
+                <p className="text-lg font-bold text-slate-900 mb-2">No plan yet</p>
+                <p className="text-sm text-slate-600 max-w-md">
+                  Select a portfolio and risk profile, then click <span className="font-bold text-indigo-700">Generate Rebalancing Plan</span> to see educational rebalancing ideas.
+                </p>
               </div>
             )}
-          </SectionCard>
+          </div>
         </div>
       </div>
     </div>

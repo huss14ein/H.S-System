@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -15,18 +15,25 @@ import { inferIsAdmin } from '../utils/role';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
+import { DemoDataButton } from '../components/DemoDataButton';
 import SectionCard from '../components/SectionCard';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import {
     buildHouseholdBudgetPlan,
+    buildHouseholdEngineInputFromData,
     DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
-    mapGoalsForRouting,
-    sumLiquidCash,
     type HouseholdEngineConfig,
+    type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
     type HouseholdMonthResult,
 } from '../services/householdBudgetEngine';
+import {
+    predictFutureMonths,
+    generateCommonScenarios,
+    detectAnomalies,
+    detectSeasonality,
+} from '../services/householdBudgetAnalytics';
 
 
 
@@ -199,8 +206,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
+    const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
+    const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | undefined>(undefined);
     const [engineConfig, setEngineConfig] = useState(DEFAULT_HOUSEHOLD_ENGINE_CONFIG);
     const [selectedScenario, setSelectedScenario] = useState('custom');
+    const [, setPredictiveForecasts] = useState<any[]>([]);
+    const [, setScenarios] = useState<any[]>([]);
+    const [, setAnomalies] = useState<any[]>([]);
+    const [, setSeasonalityPatterns] = useState<any[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
@@ -349,7 +362,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 const forecasts = predictFutureMonths(result.months, 3);
                 setPredictiveForecasts(forecasts);
                 
-                const commonScenarios = generateCommonScenarios(result, input.goals);
+                const goalsForScenarios = input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - (g.currentAmount ?? 0)) }));
+                const commonScenarios = generateCommonScenarios(result, goalsForScenarios);
                 setScenarios(commonScenarios);
                 
                        const detectedAnomalies = detectAnomalies(result.months);
@@ -374,18 +388,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         return result;
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
-    const suggestedMonthlySalary = useMemo(() => {
-        const incomeByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== currentYear || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const withData = incomeByMonth.filter((v) => v > 0);
-        return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [data?.transactions, currentYear]);
-
-
     React.useEffect(() => {
         const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
         if (engineProfile === 'Moderate') {
@@ -394,65 +396,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         }
     }, [(data as any)?.settings?.riskProfile]);
 
-    const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
-
-    React.useEffect(() => {
-        try {
-            const raw = localStorage.getItem(householdProfileStorageKey);
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            setHouseholdAdults(Math.max(1, Number(parsed?.adults) || 2));
-            setHouseholdKids(Math.max(0, Number(parsed?.kids) || 0));
-            setHouseholdOverrides(Array.isArray(parsed?.overrides) ? parsed.overrides : []);
-            setEngineConfig((prev: HouseholdEngineConfig) => ({ ...prev, ...(parsed?.config || {}) }));
-        } catch {
-            // no-op
-        }
-    }, [householdProfileStorageKey]);
-
-    React.useEffect(() => {
-        try {
-            localStorage.setItem(householdProfileStorageKey, JSON.stringify({
-                adults: householdAdults,
-                kids: householdKids,
-                overrides: householdOverrides,
-                config: engineConfig,
-            }));
-        } catch {
-            // no-op
-        }
-    }, [householdAdults, householdKids, householdOverrides, engineConfig, householdProfileStorageKey]);
-
-    const householdBudgetEngine = useMemo(() => {
-        const incomeByMonth = Array(12).fill(0);
-        const expenseByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== currentYear) return;
-            const m = d.getMonth();
-            const amount = Number(t.amount) || 0;
-            if (t.type === 'income') incomeByMonth[m] += Math.max(0, amount);
-            if (t.type === 'expense') expenseByMonth[m] += Math.abs(amount);
-        });
-
-        const liquidCash = sumLiquidCash((data?.accounts ?? []) as any[]);
-        const goalsForRouting = mapGoalsForRouting((data?.goals ?? []) as any[]);
-
-        return buildHouseholdBudgetPlan({
-            monthlySalaryPlan: incomeByMonth,
-            monthlyActualIncome: incomeByMonth,
-            monthlyActualExpense: expenseByMonth,
-            householdDefaults: { adults: householdAdults, kids: householdKids },
-            monthlyOverrides: householdOverrides,
-            liquidBalance: liquidCash,
-            emergencyBalance: liquidCash,
-            reserveBalance: liquidCash * 0.35,
-            goals: goalsForRouting,
-            config: engineConfig,
-        });
-    }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineConfig]);
-
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
+    const availableIncreaseCategories = useMemo((): Array<{ value: string; label: string; category: string }> => governanceCategories.map((c) => ({ value: c.id, label: c.name, category: c.name })), [governanceCategories]);
     const resolveRequestCategory = (request: any) => request.category_name || categoryNameById.get(request.category_id) || request.category_id || 'N/A';
     const requestStatusClasses: Record<string, string> = {
         Pending: 'bg-amber-100 text-amber-800',
@@ -1339,6 +1284,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
+                    <DemoDataButton page="Budgets" options={{ includeBudgets: true }} />
                     <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
                         <SparklesIcon className="h-5 w-5" />
                         Smart-fill from history
@@ -1483,7 +1429,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                 <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Submit request</button>
                             </div>
                         </div>
-                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked.</p>
+                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked. Admins also see the original amount and period.</p>
                     </div>
                 );
             })()}
@@ -1496,7 +1442,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Proposed: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="text-xs text-gray-500">Proposed (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
@@ -1507,25 +1453,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 </div>
             )}
 
-
-            {!isAdmin && respondedRequests.length > 0 && (
-                <div className="bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow p-5 border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-3">Reviewed Requests</h2>
-                    <div className="space-y-2">
-                        {respondedRequests.map((r) => (
-                            <div key={r.id} className="p-3 border rounded flex items-center justify-between">
-                                <div>
-                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Amount: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
-                                    {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
-                                    <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
-                                </div>
-                                <span className={`text-xs px-2 py-1 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {isAdmin && pendingRequests.length > 0 && (
                 <div className="bg-gradient-to-br from-white via-amber-50 to-orange-50 rounded-lg shadow p-5 border border-amber-200">
@@ -1535,7 +1462,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
                                     <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
-                                    <p className="text-xs text-gray-500">Requested (monthly normalized): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
+                                    <p className="text-xs text-gray-500">
+                                        {(() => {
+                                            const meta = parseRequestedAmountMeta(r);
+                                            if (meta.rawAmount && meta.rawPeriod) {
+                                                return <>Requested: {formatCurrencyString(meta.rawAmount, { digits: 0 })} ({meta.rawPeriod}) · Monthly equivalent: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                            }
+                                            return <>Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                        })()}
+                                    </p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
                                 </div>
@@ -1565,53 +1500,107 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
 
             {isAdmin && (pendingRequests.length > 0 || allRespondedRequests.length > 0) && (
                 <div className="bg-gradient-to-br from-white via-violet-50 to-purple-50 rounded-lg shadow p-5 border border-violet-200">
-                    <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="w-full flex items-center justify-between gap-3 mb-2 text-left">
-                        <div>
-                            <h2 className="text-lg font-semibold">Request History</h2>
-                            <p className="text-xs text-gray-600 mt-0.5">{historyCollapsed ? 'Click to expand and view past decisions' : 'Single timeline of all past decisions — not tied to any month.'}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h2 className="text-lg font-semibold">Budget Request Review & History</h2>
+                        <div className="flex items-center gap-2">
+                            <select value={requestStatusFilter} onChange={(e) => setRequestStatusFilter(e.target.value as any)} className="p-2 border rounded text-sm">
+                                <option value="All">All statuses</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Finalized">Finalized</option>
+                                <option value="Rejected">Rejected</option>
+                            </select>
                         </div>
-                        <span className="text-xs text-violet-700 bg-violet-100 px-2 py-1 rounded shrink-0">{allRespondedRequests.length} total</span>
-                        <span className="text-violet-600 shrink-0">{historyCollapsed ? '▼ Expand' : '▲ Collapse'}</span>
-                    </button>
-                    {!historyCollapsed && (
-                        <>
-                            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                                <table className="w-full text-sm border-collapse">
-                                    <thead className="sticky top-0 bg-violet-50/95 z-10">
-                                        <tr className="border-b border-violet-200">
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
-                                            <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
-                                            <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {visibleHistoryRequests.map((r) => (
-                                            <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
-                                                <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
-                                                <td className="py-2 px-2">{r.request_type}</td>
-                                                <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
-                                                <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
-                                                <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
-                                                <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
-                                                    <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                    </div>
+                    {pendingRequests.length > 0 && requestStatusFilter === 'All' && (
+                        <div className="mb-4 space-y-3">
+                            <h3 className="text-sm font-semibold text-amber-800">Pending Review</h3>
+                            {pendingRequests.map((r) => (
+                                <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2 bg-white">
+                                    <div>
+                                        <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                        <p className="text-xs text-gray-500">
+                                            {(() => {
+                                                const meta = parseRequestedAmountMeta(r);
+                                                if (meta.rawAmount && meta.rawPeriod) {
+                                                    return <>Requested: {formatCurrencyString(meta.rawAmount, { digits: 0 })} ({meta.rawPeriod}) · Monthly equivalent: {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                                }
+                                                return <>Requested (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</>;
+                                            })()}
+                                        </p>
+                                        {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
+                                        <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => finalizeBudgetRequest(r)} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Finalize</button>
+                                        <button onClick={() => {
+                                            const requestedMeta = parseRequestedAmountMeta(r);
+                                            const suggestedAmount = requestedMeta.rawAmount && requestedMeta.rawPeriod
+                                                ? normalizeToMonthly(requestedMeta.rawAmount, requestedMeta.rawPeriod)
+                                                : Number(r.amount || 0);
+                                            const nextAmount = window.prompt('Approve with custom monthly limit (monthly equivalent):', String(suggestedAmount || ''));
+                                            if (nextAmount == null) return;
+                                            const parsed = Number(nextAmount);
+                                            if (!Number.isFinite(parsed) || parsed <= 0) {
+                                                alert('Please enter a valid amount greater than 0.');
+                                                return;
+                                            }
+                                            finalizeBudgetRequest(r, parsed);
+                                        }} className="px-3 py-1 text-xs rounded bg-emerald-700 text-white">Adjust & Finalize</button>
+                                        <button onClick={() => rejectBudgetRequest(r.id)} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {allRespondedRequests.length > 0 && (requestStatusFilter === 'All' || requestStatusFilter === 'Finalized' || requestStatusFilter === 'Rejected') && (
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-sm font-semibold text-violet-800">Request History</h3>
+                                <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="text-xs text-violet-600 hover:text-violet-800">
+                                    {historyCollapsed ? '▼ Expand' : '▲ Collapse'}
+                                </button>
                             </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                                {hasMoreHistory && (
-                                    <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
-                                )}
-                                {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
-                                    <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
-                                )}
-                            </div>
-                        </>
+                            {!historyCollapsed && (
+                                <>
+                                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                                        <table className="w-full text-sm border-collapse">
+                                            <thead className="sticky top-0 bg-violet-50/95 z-10">
+                                                <tr className="border-b border-violet-200">
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Type</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Category</th>
+                                                    <th className="text-right py-2 px-2 font-medium text-gray-700">Amount</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Status</th>
+                                                    <th className="text-left py-2 px-2 font-medium text-gray-700">Note</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {visibleHistoryRequests.filter((r) => requestStatusFilter === 'All' || r.status === requestStatusFilter).map((r) => (
+                                                    <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
+                                                        <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
+                                                        <td className="py-2 px-2">{r.request_type}</td>
+                                                        <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
+                                                        <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
+                                                        <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
+                                                        <td className="py-2 px-2 text-gray-600 max-w-[260px] align-top" title={r.note || r.request_note || ''}>
+                                                            <span className="clamp-2-lines break-words">{r.note || r.request_note || '—'}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        {hasMoreHistory && (
+                                            <button onClick={() => setHistoryItemsToShow((prev) => prev + HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded bg-violet-600 text-white hover:bg-violet-700">Load {Math.min(HISTORY_PAGE_SIZE, allRespondedRequests.length - historyItemsToShow)} more</button>
+                                        )}
+                                        {!hasMoreHistory && allRespondedRequests.length > HISTORY_PAGE_SIZE && (
+                                            <button onClick={() => setHistoryItemsToShow(HISTORY_PAGE_SIZE)} className="px-3 py-1.5 text-xs rounded border border-violet-300 text-violet-700 hover:bg-violet-50">Show less</button>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -1957,8 +1946,28 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                             <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-gray-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
                                 <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
                             </button>
-                            <button type="button" disabled={budgetView === 'Yearly'} onClick={() => handleOpenModal({ ...budget, limit: budget.displayLimit })} className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"><PencilIcon className="h-4 w-4"/></button>
-                            <button type="button" disabled={!isAdmin || budgetView === 'Yearly'} onClick={() => deleteBudget(budget.category, budget.month, budget.year)} className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"><TrashIcon className="h-4 w-4"/></button>
+                            <button
+                                type="button"
+                                disabled={budgetView === 'Yearly'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenModal({ ...budget, limit: budget.displayLimit });
+                                }}
+                                className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"
+                            >
+                                <PencilIcon className="h-4 w-4"/>
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!isAdmin || budgetView === 'Yearly'}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteBudget(budget.category, budget.month, budget.year);
+                                }}
+                                className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"
+                            >
+                                <TrashIcon className="h-4 w-4"/>
+                            </button>
                         </div>
                     </button>
                 ))}

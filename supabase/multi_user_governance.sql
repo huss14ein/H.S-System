@@ -1,5 +1,6 @@
 begin;
 
+drop table if exists public.users cascade;
 create table if not exists public.users (
   id uuid primary key,
   name text,
@@ -7,6 +8,7 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
+drop table if exists public.categories cascade;
 create table if not exists public.categories (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -15,6 +17,7 @@ create table if not exists public.categories (
   created_at timestamptz not null default now()
 );
 
+drop table if exists public.permissions cascade;
 create table if not exists public.permissions (
   user_id uuid not null,
   category_id uuid not null references public.categories(id) on delete cascade,
@@ -22,6 +25,7 @@ create table if not exists public.permissions (
   primary key (user_id, category_id)
 );
 
+drop table if exists public.budget_requests cascade;
 create table if not exists public.budget_requests (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
@@ -61,9 +65,9 @@ begin
 end;
 $$;
 
-
+drop function if exists public.approve_pending_transaction(uuid);
 create or replace function public.approve_pending_transaction(p_transaction_id uuid)
-returns void
+returns boolean
 language plpgsql
 as $$
 declare
@@ -80,7 +84,7 @@ begin
   for update;
 
   if not found then
-    raise exception 'Transaction % not found', p_transaction_id;
+    return false;  -- transaction not found (e.g. deleted); no exception
   end if;
 
   tx_json := to_jsonb(tx);
@@ -101,12 +105,13 @@ begin
     set total_spent = coalesce(total_spent, 0) + abs(tx_amount)
     where name = budget_category_name;
   end if;
+  return true;
 end;
 $$;
 
-
+drop function if exists public.reject_pending_transaction(uuid, text);
 create or replace function public.reject_pending_transaction(p_transaction_id uuid, p_reason text default null)
-returns void
+returns boolean
 language plpgsql
 as $$
 declare
@@ -119,7 +124,7 @@ begin
   for update;
 
   if not found then
-    raise exception 'Transaction % not found', p_transaction_id;
+    return false;  -- transaction not found (e.g. deleted); no exception
   end if;
 
   if tx_status <> 'Pending' then
@@ -130,6 +135,7 @@ begin
   set status = 'Rejected',
       rejection_reason = nullif(trim(coalesce(p_reason, '')), '')
   where id = p_transaction_id;
+  return true;
 end;
 $$;
 

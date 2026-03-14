@@ -52,11 +52,23 @@ export function buildWealthUltraPositions(
     else if (plPct <= -30) strategyMode = 'Exit';
     else if (plPct <= -15 && sleeve !== 'Spec') strategyMode = 'DipBuy';
 
+    // Simple composite risk score (0–100). Can be refined later with richer inputs.
+    const normalizedVolProxy = Math.min(1, Math.max(0, Math.abs(plPct) / 60)); // 0 at 0%, 1 at |60%+|
+    const tierWeight =
+      riskTier === 'Low' ? 0.2 :
+      riskTier === 'Med' ? 0.5 :
+      riskTier === 'High' ? 0.75 :
+      1;
+    const lossPenalty = plPct < -20 ? Math.min(1, Math.abs(plPct + 20) / 40) : 0; // kicks in after -20%
+    const rawRiskScore = 100 * (0.5 * normalizedVolProxy + 0.3 * tierWeight + 0.2 * lossPenalty);
+    const riskScore = Math.round(Math.min(100, Math.max(0, rawRiskScore)));
+
     return {
       ticker: sym,
       sleeveType: sleeve,
       riskTier,
       strategyMode,
+      riskScore,
       currentShares: qty,
       avgCost,
       currentPrice,

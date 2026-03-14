@@ -1,10 +1,10 @@
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { RiskProfile, Page } from '../types';
 import InfoHint from '../components/InfoHint';
-import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, updateSettings, loadDemoData, resetData } = useContext(DataContext)!;
@@ -20,28 +20,62 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setLocalSettings(newSettings);
         updateSettings({ [key]: value });
     };
-    
+
     const hasData = data && data.accounts.length > 0;
+    const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data.wealthUltraConfig || {}) }), [data.wealthUltraConfig]);
 
     return (
-        <PageLayout
-            title="Settings"
-            description="Manage your profile, preferences, and application data."
-        >
-            <SectionCard title="User Profile">
-                <div className="space-y-3">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-500">Email Address</label>
-                        <p className="text-base text-dark">{auth.user?.email}</p>
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+            {/* Enhanced Hero Section */}
+            <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+                            <span className="text-white font-bold text-lg">⚙️</span>
+                        </div>
+                        <div>
+                            <h2 className="text-3xl font-bold text-slate-900">Settings</h2>
+                            <p className="text-lg text-slate-600 mt-2">Control your profile, automation defaults, notifications, and data management.</p>
+                        </div>
                     </div>
-                     <div>
-                        <label className="block text-sm font-medium text-gray-500">User ID</label>
-                        <p className="text-xs text-gray-400 font-mono">{auth.user?.id}</p>
+                    <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
+                        <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">System Config</span>
+                    </div>
+                </div>
+                <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
+                    <p className="text-slate-700 leading-relaxed">
+                        Customize your financial experience with personalized settings, risk preferences, and automation controls. 
+                        Manage your profile, configure notifications, and control data management options.
+                    </p>
+                </div>
+            </div>
+
+            {/* Enhanced Main Content */}
+            <div className="space-y-8">
+            <SectionCard title="Settings Snapshot" className="border-2 border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <SnapCard label="Risk profile" value={localSettings.riskProfile} />
+                    <SnapCard label="Budget alert" value={`${localSettings.budgetThreshold}%`} />
+                    <SnapCard label="Drift threshold" value={`${localSettings.driftThreshold}%`} />
+                    <SnapCard label="Email summary" value={localSettings.enableEmails ? 'Enabled' : 'Disabled'} />
+                </div>
+            </SectionCard>
+
+            <SectionCard title="User Profile">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold uppercase text-slate-500">Email Address</label>
+                        <p className="text-base text-slate-800 mt-1">{auth.user?.email}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <label className="block text-xs font-semibold uppercase text-slate-500">User ID</label>
+                        <p className="text-xs text-slate-500 font-mono mt-1 break-all">{auth.user?.id}</p>
                     </div>
                 </div>
             </SectionCard>
 
-            <SectionCard title="Financial Preferences">
+            <SectionCard title="Financial Preferences" className="border border-slate-200">
                 <div className="space-y-6">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">Investment Risk Profile <InfoHint text="Guides AI and plan suggestions: Conservative (stability), Moderate (balanced), Aggressive (growth)." /></label>
@@ -54,58 +88,46 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             ))}
                         </div>
                     </div>
-                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
-                        <div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
                             <input id="budget-threshold" type="number" value={localSettings.budgetThreshold}
                                 onChange={(e) => handleSettingChange('budgetThreshold', Number(e.target.value))}
-                                className="input-base mt-1"/>
+                                className="input-base mt-2"/>
                         </div>
-                        <div>
+                        <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="drift-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Portfolio Drift Threshold (%) <InfoHint text="Rebalancing alerts when an asset’s weight drifts from target by more than this percent." /></label>
                             <input id="drift-threshold" type="number" value={localSettings.driftThreshold}
                                 onChange={(e) => handleSettingChange('driftThreshold', Number(e.target.value))}
-                                className="input-base mt-1"/>
+                                className="input-base mt-2"/>
                         </div>
                     </div>
                 </div>
             </SectionCard>
 
-            <SectionCard title="Default Parameters">
+            <SectionCard title="Enhanced Default Parameters">
                 <p className="text-sm text-gray-600 mb-3 flex items-center">
-                    <InfoHint text="These values drive Investment Plan, Wealth Ultra, and Recovery Plan. Sleeve targets and tickers are set in Investment Plan." />
-                    Source: App defaults (front-end config)
+                    <InfoHint text="These are the baseline defaults used by Wealth Ultra and related planning workflows. The engine can auto-adapt from your live portfolio signals." />
+                    Source: system defaults + your current overrides
                 </p>
-                <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 text-sm min-w-0">
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">FX rate (USD→SAR)</p>
-                        <p className="metric-value font-semibold w-full">{(data.wealthUltraConfig?.fxRate ?? 0.27).toFixed(4)}</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Cash reserve %</p>
-                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.cashReservePct ?? 10}%</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Max per ticker %</p>
-                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.maxPerTickerPct ?? 20}%</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Target 1 (exit %)</p>
-                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTarget1Pct ?? 15}%</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Target 2 (exit %)</p>
-                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTarget2Pct ?? 25}%</p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-gray-500 w-full">Trailing stop %</p>
-                        <p className="metric-value font-semibold w-full">{data.wealthUltraConfig?.defaultTrailingPct ?? 10}%</p>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                    <ParamCard label="FX rate (USD→SAR)" value={defaultWealthUltra.fxRate.toFixed(4)} hint="Conversion baseline" />
+                    <ParamCard label="Monthly deposit" value={`$${Math.round(defaultWealthUltra.monthlyDeposit).toLocaleString()}`} hint="Deployment budget" />
+                    <ParamCard label="Cash reserve" value={`${defaultWealthUltra.cashReservePct}%`} hint="Liquidity guardrail" />
+                    <ParamCard label="Max per ticker" value={`${defaultWealthUltra.maxPerTickerPct}%`} hint="Concentration cap" />
+                    <ParamCard label="Core target" value={`${defaultWealthUltra.targetCorePct}%`} hint="Stability sleeve" />
+                    <ParamCard label="Upside target" value={`${defaultWealthUltra.targetUpsidePct}%`} hint="Growth sleeve" />
+                    <ParamCard label="Spec target" value={`${defaultWealthUltra.targetSpecPct}%`} hint="High-risk sleeve" />
+                    <ParamCard label="Target 1" value={`${defaultWealthUltra.defaultTarget1Pct}%`} hint="First profit trigger" />
+                    <ParamCard label="Target 2" value={`${defaultWealthUltra.defaultTarget2Pct}%`} hint="Second profit trigger" />
+                    <ParamCard label="Trailing stop" value={`${defaultWealthUltra.defaultTrailingPct}%`} hint="Downside lock" />
+                    <ParamCard label="Risk weight (Low/Med)" value={`${defaultWealthUltra.riskWeightLow} / ${defaultWealthUltra.riskWeightMed}`} hint="Sizing multiplier" />
+                    <ParamCard label="Risk weight (High/Spec)" value={`${defaultWealthUltra.riskWeightHigh} / ${defaultWealthUltra.riskWeightSpec}`} hint="Sizing multiplier" />
                 </div>
                 {setActivePage && (
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setActivePage('Investments')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
-                        <button type="button" onClick={() => setActivePage('Wealth Ultra')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Wealth Ultra</button>
+                        <button type="button" onClick={() => setActivePage('Dashboard')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
+                        <button type="button" onClick={() => setActivePage('Dashboard')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra Autopilot</button>
                     </div>
                 )}
             </SectionCard>
@@ -158,8 +180,28 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
                  </div>
             </SectionCard>
-        </PageLayout>
+            </div>
+        </div>
     );
 };
+
+function SnapCard({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-lg border border-white/70 bg-white/90 px-3 py-2">
+            <p className="text-[11px] text-slate-500">{label}</p>
+            <p className="text-sm font-semibold text-slate-800">{value}</p>
+        </div>
+    );
+}
+
+function ParamCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+    return (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
+            <p className="text-xs uppercase tracking-wide text-slate-500 w-full">{label}</p>
+            <p className="text-base font-semibold text-slate-800 w-full mt-1">{value}</p>
+            <p className="text-xs text-slate-500 mt-1">{hint}</p>
+        </div>
+    );
+}
 
 export default Settings;

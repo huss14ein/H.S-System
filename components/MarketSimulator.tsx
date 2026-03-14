@@ -13,25 +13,9 @@ const MarketSimulator: React.FC = () => {
 
     const previousPricesRef = useRef<Record<string, number>>({});
 
-    const investmentSymbolsSignature = (dataContext?.data?.investments || [])
-        .flatMap(p => p.holdings.map(h => h.symbol))
-        .sort()
-        .join('|');
-    const watchlistSymbolsSignature = (dataContext?.data?.watchlist || [])
-        .map(w => w.symbol)
-        .sort()
-        .join('|');
-    const plannedTradeSymbolsSignature = (dataContext?.data?.plannedTrades || [])
-        .map(t => t.symbol)
-        .sort()
-        .join('|');
-    const commoditySymbolsSignature = (dataContext?.data?.commodityHoldings || [])
-        .map(c => c.symbol)
-        .sort()
-        .join('|');
-
     useEffect(() => {
         if (!marketContext) return;
+        if (marketContext.refreshTrigger === 0) return;
         
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
@@ -46,12 +30,12 @@ const MarketSimulator: React.FC = () => {
             const allCommodities = data.commodityHoldings;
             
             const uniqueSymbols = Array.from(new Set([
-                ...allHoldings.map(h => h.symbol),
-                ...allWatchlistItems.map(w => w.symbol),
-                ...allPlannedTrades.map(t => t.symbol)
+                ...allHoldings.map(h => h.symbol).filter((s): s is string => s != null && s !== ''),
+                ...allWatchlistItems.map(w => w.symbol).filter((s): s is string => s != null && s !== ''),
+                ...allPlannedTrades.map(t => t.symbol).filter((s): s is string => s != null && s !== '')
             ]));
 
-            const commoditySymbols = allCommodities.map(c => c.symbol);
+            const commoditySymbols = allCommodities.map(c => c.symbol).filter((s): s is string => s != null && s !== '');
 
             let newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             let liveStatus = false;
@@ -112,10 +96,12 @@ const MarketSimulator: React.FC = () => {
             const commodityUpdates: { id: string, currentValue: number }[] = [];
             const activeAlertsBySymbol = new Map<string, PriceAlert[]>();
             data.priceAlerts.filter(a => a.status === 'active').forEach(alert => {
-                if (!activeAlertsBySymbol.has(alert.symbol)) {
-                    activeAlertsBySymbol.set(alert.symbol, []);
+                const sym = alert.symbol;
+                if (sym == null) return;
+                if (!activeAlertsBySymbol.has(sym)) {
+                    activeAlertsBySymbol.set(sym, []);
                 }
-                activeAlertsBySymbol.get(alert.symbol)!.push(alert);
+                activeAlertsBySymbol.get(sym)!.push(alert);
             });
             const triggeredAlerts: PriceAlert[] = [];
 
@@ -141,19 +127,21 @@ const MarketSimulator: React.FC = () => {
             setIsLive(liveStatus);
 
             allHoldings.forEach(holding => {
-                if (holding.id && newPrices[holding.symbol]) {
+                const sym = holding.symbol;
+                if (holding.id && sym != null && newPrices[sym]) {
                     holdingUpdates.push({
                         id: holding.id,
-                        currentValue: newPrices[holding.symbol].price * holding.quantity
+                        currentValue: newPrices[sym].price * holding.quantity
                     });
                 }
             });
 
             allCommodities.forEach(commodity => {
-                if (commodity.id && newPrices[commodity.symbol]) {
+                const sym = commodity.symbol;
+                if (commodity.id && sym != null && newPrices[sym]) {
                     commodityUpdates.push({
                         id: commodity.id,
-                        currentValue: newPrices[commodity.symbol].price * commodity.quantity
+                        currentValue: newPrices[sym].price * commodity.quantity
                     });
                 }
             });
@@ -174,7 +162,7 @@ const MarketSimulator: React.FC = () => {
 
         runSimulationTick(true);
 
-    }, [marketContext?.refreshTrigger, investmentSymbolsSignature, watchlistSymbolsSignature, plannedTradeSymbolsSignature, commoditySymbolsSignature]);
+    }, [marketContext?.refreshTrigger]);
 
     return null;
 };

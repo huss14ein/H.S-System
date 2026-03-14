@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 
@@ -52,6 +52,14 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
 const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
+
+    const bindContainerRef = useCallback((node: HTMLDivElement | null) => {
+        containerRef.current = node;
+        setContainerNode(node);
+    }, []);
 
     useEffect(() => {
         if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -61,6 +69,25 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
         mediaQuery.addEventListener('change', syncPreference);
         return () => mediaQuery.removeEventListener('change', syncPreference);
     }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (!containerNode) {
+            setContainerWidth(0);
+            return;
+        }
+
+        const node = containerNode;
+        const syncSize = () => setContainerWidth(node.getBoundingClientRect().width);
+        syncSize();
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => syncSize()) : null;
+        observer?.observe(node);
+        window.addEventListener('resize', syncSize);
+        return () => {
+            observer?.disconnect();
+            window.removeEventListener('resize', syncSize);
+        };
+    }, [containerNode]);
 
     const getColor = (percentage: number) => {
         if (isNaN(percentage) || !isFinite(percentage)) {
@@ -91,39 +118,78 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     
     const processedData = useMemo(() => (
         data
-            .filter(item => item.currentValue > 0)
-            .map(item => ({
-                name: item.symbol,
-                size: item.currentValue,
-                gainLossPercent: item.gainLossPercent,
-                color: getColor(item.gainLossPercent),
-            }))
+            .map(item => {
+                const marketValue = Number(item.currentValue ?? 0);
+                const fallbackCostValue = Number(item.avgCost ?? 0) * Number(item.quantity ?? 0);
+                const size = Number.isFinite(marketValue) && marketValue > 0
+                    ? marketValue
+                    : Number.isFinite(fallbackCostValue) && fallbackCostValue > 0
+                    ? fallbackCostValue
+                    : 0;
+
+                if (size <= 0) return null;
+
+                return {
+                    name: item.symbol || item.name || 'Unknown',
+                    size,
+                    gainLossPercent: Number.isFinite(item.gainLossPercent) ? item.gainLossPercent : 0,
+                    color: getColor(item.gainLossPercent),
+                };
+            })
+            .filter((item): item is { name: string; size: number; gainLossPercent: number; color: string } => Boolean(item))
     ), [data]);
 
     const enableAnimation = processedData.length <= 60 && !prefersReducedMotion;
 
     if (!processedData.length) {
         return (
-            <div className="flex items-center justify-center h-full w-full bg-gray-50 rounded-lg text-gray-500 text-sm">
-                No investment data available.
+            <div className="flex h-full min-h-[320px] w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600 px-6">
+                No priced holdings yet. Add live prices (or cost basis) to render the performance treemap.
+            </div>
+        );
+    }
+
+    if (processedData.length === 1) {
+        const item = processedData[0];
+        return (
+            <div className="h-full min-h-[320px] w-full rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between">
+                <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Single holding view</p>
+                    <p className="mt-2 text-lg font-bold text-slate-800 break-words">{item.name}</p>
+                    <p className="text-sm text-slate-600 mt-1">Market value: {formatCurrencyString(item.size, { digits: 0 })}</p>
+                    <p className={`text-sm font-semibold mt-1 ${item.gainLossPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        Performance: {item.gainLossPercent.toFixed(2)}%
+                    </p>
+                </div>
+                <div className="mt-4 h-24 rounded-lg" style={{ background: item.color }} />
+            </div>
+        );
+    }
+
+    if (containerWidth < 120) {
+        return (
+            <div ref={bindContainerRef} className="flex h-full min-h-[320px] w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600 px-6">
+                Preparing holdings chart…
             </div>
         );
     }
 
     return (
-        <ResponsiveContainer width="100%" height="100%">
-            <Treemap
-                isAnimationActive={enableAnimation}
-                animationDuration={enableAnimation ? 800 : 0}
-                data={processedData}
-                dataKey="size"
-                aspectRatio={4 / 3}
-                stroke="#fff"
-                content={<CustomizedContent />}
-            >
-                <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
-            </Treemap>
-        </ResponsiveContainer>
+        <div ref={bindContainerRef} className="h-full min-h-[320px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+                <Treemap
+                    isAnimationActive={enableAnimation}
+                    animationDuration={enableAnimation ? 800 : 0}
+                    data={processedData}
+                    dataKey="size"
+                    aspectRatio={4 / 3}
+                    stroke="#fff"
+                    content={<CustomizedContent />}
+                >
+                    <Tooltip content={<TreemapTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                </Treemap>
+            </ResponsiveContainer>
+        </div>
     );
 };
 
