@@ -17,7 +17,13 @@ import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngin
 
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const toMonthlyRate = (annualPct: number) => Math.pow(1 + annualPct / 100, 1 / 12) - 1;
+const toMonthlyRate = (annualPct: number) => {
+    // Handle negative growth rates correctly
+    if (annualPct < 0) {
+        return -Math.pow(1 + Math.abs(annualPct) / 100, 1 / 12) + 1;
+    }
+    return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
+};
 
 const Forecast: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -150,12 +156,14 @@ const Forecast: React.FC = () => {
             for (let i = 0; i < horizon * 12; i++) {
                 const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
                 
-                if (monthDate.getMonth() === 0 && i > 0) {
-                    currentMonthlySavings *= (1 + clamp(incomeGrowth, -20, 40) / 100);
+                // Apply income growth monthly (more accurate than yearly)
+                const monthlyIncomeGrowth = toMonthlyRate(clamp(incomeGrowth, -20, 40));
+                if (i > 0) {
+                    currentMonthlySavings *= (1 + monthlyIncomeGrowth);
                 }
 
                 const normalizedMonthlySavings = Math.max(0, currentMonthlySavings);
-                const monthlyGrowthRate = toMonthlyRate(clamp(investmentGrowth, -40, 40) );
+                const monthlyGrowthRate = toMonthlyRate(clamp(investmentGrowth, -40, 40));
 
                 currentInvestmentValue += normalizedMonthlySavings;
                 const investmentGain = currentInvestmentValue * monthlyGrowthRate;
@@ -180,7 +188,7 @@ const Forecast: React.FC = () => {
 
             setForecastData(results);
             if (results.length > 0) {
-                const finalEntry = results[results.length-1];
+                const finalEntry = results[results.length - 1];
                 const computedSummary = {
                     projectedNetWorth: finalEntry["Net Worth"],
                     projectedInvestments: finalEntry["Investment Value"],

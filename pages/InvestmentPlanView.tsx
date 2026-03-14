@@ -62,21 +62,57 @@ const PlanTradeModal: React.FC<{
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        
+        // Validations
+        if (!symbol || symbol.trim() === '') {
+            alert('Symbol is required.');
+            return;
+        }
+        
         if (!quantity && !amount) {
             alert("Please specify either a quantity of shares or a total amount in SAR for the trade.");
             return;
         }
         
+        if (quantity && (parseFloat(quantity) <= 0 || !Number.isFinite(parseFloat(quantity)))) {
+            alert('Quantity must be a positive number.');
+            return;
+        }
+        
+        if (amount && (parseFloat(amount) <= 0 || !Number.isFinite(parseFloat(amount)))) {
+            alert('Amount must be a positive number.');
+            return;
+        }
+        
+        if (conditionType === 'price') {
+            const price = parseFloat(targetValue);
+            if (!Number.isFinite(price) || price <= 0) {
+                alert('Target price must be a positive number.');
+                return;
+            }
+        } else {
+            const targetDate = new Date(targetValue);
+            if (isNaN(targetDate.getTime())) {
+                alert('Invalid target date.');
+                return;
+            }
+            if (targetDate < new Date()) {
+                if (!confirm('Target date is in the past. Continue anyway?')) {
+                    return;
+                }
+            }
+        }
+        
         const planData = {
             symbol: symbol.toUpperCase().trim(),
-            name,
+            name: name.trim() || symbol.toUpperCase().trim(),
             tradeType,
             conditionType,
             targetValue: conditionType === 'date' ? new Date(targetValue).getTime() : parseFloat(targetValue),
             quantity: quantity ? parseFloat(quantity) : undefined,
             amount: amount ? parseFloat(amount) : undefined,
             priority,
-            notes,
+            notes: notes.trim(),
             status: 'Planned' as const
         };
         
