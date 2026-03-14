@@ -923,21 +923,49 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                  if (!hasBuckets) return null;
                  
                  const bucketToCategoryMap: Record<string, string> = {
+                     // Savings
                      'emergencySavings': 'Emergency Savings',
                      'reserveSavings': 'Reserve Savings',
                      'goalSavings': 'Goal Savings',
                      'kidsFutureSavings': 'Kids Future',
                      'retirementSavings': 'Retirement',
                      'investing': 'Investing',
-                     'housing': 'Housing',
-                     'utilities': 'Utilities',
-                     'food': 'Food',
+                     // Monthly Expenses (KSA)
+                     'housing': 'Housing Rent',
+                     'housingSemiAnnual': 'Housing Rent (6-month)',
+                     'groceries': 'Groceries & Supermarket',
+                     'food': 'Groceries & Supermarket',
+                     'utilities': 'Utilities (SEC/NWC)',
+                     'telecommunications': 'Telecommunications',
                      'transportation': 'Transportation',
-                     'health': 'Health',
+                     'domesticHelp': 'Domestic Help',
+                     'diningEntertainment': 'Dining & Entertainment',
+                     'entertainment': 'Dining & Entertainment',
+                     'insuranceCoPay': 'Insurance Co-pay',
+                     'health': 'Insurance Co-pay',
+                     'debtLoans': 'Debt/Loans',
+                     'remittances': 'Remittances',
+                     'pocketMoney': 'Pocket Money',
                      'personalCare': 'Personal Care',
-                     'entertainment': 'Entertainment',
                      'shopping': 'Shopping',
                      'miscellaneous': 'Miscellaneous',
+                     // Semi-Annual
+                     'schoolTuition': 'School Tuition',
+                     'householdMaintenance': 'Household Maintenance',
+                     // Annual (Sinking Funds)
+                     'iqamaRenewal': 'Iqama Renewal',
+                     'dependentFees': 'Dependent Fees',
+                     'exitReentryVisa': 'Exit/Re-entry Visa',
+                     'vehicleInsurance': 'Vehicle Insurance',
+                     'istimara': 'Istimara (Registration)',
+                     'fahas': 'Fahas (MVPI)',
+                     'schoolUniformsBooks': 'School Uniforms & Books',
+                     'zakat': 'Zakat',
+                     'annualVacation': 'Annual Vacation',
+                     // Weekly
+                     'freshProduce': 'Fresh Produce',
+                     'householdHelpHourly': 'Household Help (Hourly)',
+                     'leisureWeekly': 'Leisure (Weekly)',
                  };
                  
                  const savingsTotal = (buckets.emergencySavings ?? 0) + (buckets.reserveSavings ?? 0) + (buckets.goalSavings ?? 0) + (buckets.retirementSavings ?? 0) + (buckets.investing ?? 0);

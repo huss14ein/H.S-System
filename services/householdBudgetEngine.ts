@@ -243,23 +243,65 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
   const adults = householdDefaults?.adults ?? 2;
   const kids = householdDefaults?.kids ?? 0;
 
-  // Calculate expense category allocations based on household size and income
+  // Calculate expense category allocations based on household size and income (KSA-specific)
   const getExpenseAllocations = (income: number, expense: number, monthIndex: number) => {
     const override = monthlyOverrides.find(o => (o.monthIndex === monthIndex || o.month === monthIndex + 1));
     const baseExpense = expense || (income * 0.6); // Default 60% of income for expenses if no expense data
     
-    // Base allocations as percentages of total expenses
+    // KSA-specific monthly expense allocations (as percentages of total monthly expenses)
     const allocations: Record<string, number> = {
-      housing: baseExpense * 0.30,      // 30% - rent/mortgage
-      utilities: baseExpense * 0.08,     // 8% - electricity, water, internet
-      food: baseExpense * (0.15 + (adults * 0.05) + (kids * 0.03)), // 15% base + per person
-      transportation: baseExpense * 0.12, // 12% - car, fuel, public transport
-      health: baseExpense * 0.08,        // 8% - insurance, medical
-      personalCare: baseExpense * 0.05,  // 5% - grooming, hygiene
-      entertainment: baseExpense * 0.06, // 6% - leisure, dining out
-      shopping: baseExpense * 0.08,      // 8% - clothing, household items
-      miscellaneous: baseExpense * 0.08, // 8% - other expenses
+      // Monthly Recurring Expenses
+      housing: baseExpense * 0.30,      // 30% - Housing Rent (if paid monthly)
+      groceries: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // 12% base + per person - Groceries & Supermarket
+      utilities: baseExpense * 0.08,     // 8% - Electricity (SEC), Water (NWC) - spikes in summer
+      telecommunications: baseExpense * 0.04, // 4% - Home Fiber/5G internet and Mobile data plans
+      transportation: baseExpense * 0.10, // 10% - Petrol/Fuel, Riyadh Metro, Uber/Careem
+      domesticHelp: baseExpense * 0.08,  // 8% - Salary for live-in housemaids or drivers
+      diningEntertainment: baseExpense * 0.06, // 6% - Restaurants, cafes, streaming (Netflix/Shahid)
+      insuranceCoPay: baseExpense * 0.02, // 2% - Small fees at clinics during doctor visits
+      debtLoans: baseExpense * 0.05,    // 5% - Personal loan installments or Credit Card minimums
+      remittances: baseExpense * 0.08,   // 8% - Funds sent to family outside KSA (for expats)
+      pocketMoney: baseExpense * 0.02,   // 2% - Cash for small daily needs (tea, snacks, parking)
+      
+      // Legacy category mappings for backward compatibility
+      food: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // Alias for groceries
+      health: baseExpense * 0.02,        // Alias for insuranceCoPay
+      personalCare: baseExpense * 0.03,  // 3% - Grooming, hygiene (part of groceries)
+      entertainment: baseExpense * 0.06,  // Alias for diningEntertainment
+      shopping: baseExpense * 0.03,       // 3% - Clothing, household items
+      miscellaneous: baseExpense * 0.02,  // 2% - Other expenses
     };
+
+    // Semi-Annual Expenses (6-month) - allocate monthly sinking fund
+    // These are divided by 6 to get monthly allocation
+    const semiAnnualExpenses = {
+      housingSemiAnnual: (baseExpense * 0.30) / 6, // Housing Rent (2 checks per year)
+      schoolTuition: (baseExpense * 0.10) / 6,     // School fees per semester (if applicable)
+      householdMaintenance: (baseExpense * 0.03) / 6, // AC cleaning/servicing before and after summer
+    };
+    Object.assign(allocations, semiAnnualExpenses);
+
+    // Annual Expenses - allocate monthly sinking fund (divided by 12)
+    const annualExpenses = {
+      iqamaRenewal: (income * 0.02) / 12,          // Government fee for residency (expats)
+      dependentFees: (kids * 4800) / 12,           // SAR 4,800 per person per year
+      exitReentryVisa: (income * 0.01) / 12,       // For vacations outside the Kingdom
+      vehicleInsurance: (income * 0.03) / 12,     // Mandatory TPL or Comprehensive insurance
+      istimara: (income * 0.01) / 12,              // Car registration renewal (every 3 years, budgeted yearly)
+      fahas: (income * 0.005) / 12,                // Annual periodic vehicle inspection fee
+      schoolUniformsBooks: (kids * 2000) / 12,     // Typically in August/September
+      zakat: (income * 0.025) / 12,                // Religious almsgiving (2.5% of annual savings)
+      annualVacation: (income * 0.08) / 12,         // Flights and travel expenses
+    };
+    Object.assign(allocations, annualExpenses);
+
+    // Weekly Expenses - convert to monthly (multiply by 4.33)
+    const weeklyExpenses = {
+      freshProduce: (baseExpense * 0.03) * 4.33,   // Fruit, vegetables, bread from local markets
+      householdHelpHourly: (baseExpense * 0.02) * 4.33, // Hourly cleaning services (Mudarri or Java)
+      leisureWeekly: (baseExpense * 0.02) * 4.33,  // Weekend outings, cinema, family gatherings
+    };
+    Object.assign(allocations, weeklyExpenses);
 
     // Apply overrides if present
     if (override?.expenseAdjustment) {
@@ -267,6 +309,11 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       Object.keys(allocations).forEach(key => {
         allocations[key] = allocations[key] * (1 + adjustment / 100);
       });
+    }
+
+    // Apply summer utility spike (June, July, August in KSA - months 6, 7, 8)
+    if (monthIndex >= 5 && monthIndex <= 7) {
+      allocations.utilities = allocations.utilities * 1.5; // 50% increase in summer
     }
 
     return allocations;

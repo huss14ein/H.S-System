@@ -880,23 +880,51 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             return;
         }
 
-        // Map household engine bucket names to budget categories
+        // Map household engine bucket names to budget categories (KSA-specific)
         const bucketToCategoryMap: Record<string, string> = {
+            // Savings
             'emergencySavings': 'Savings & Investments',
             'reserveSavings': 'Savings & Investments',
             'goalSavings': 'Savings & Investments',
             'kidsFutureSavings': 'Education',
             'retirementSavings': 'Savings & Investments',
             'investing': 'Savings & Investments',
+            // Monthly Expenses
             'housing': 'Housing',
-            'utilities': 'Utilities',
+            'housingSemiAnnual': 'Housing',
+            'groceries': 'Food',
             'food': 'Food',
+            'utilities': 'Utilities',
+            'telecommunications': 'Utilities',
             'transportation': 'Transportation',
-            'health': 'Health',
-            'personalCare': 'Personal Care',
+            'domesticHelp': 'Miscellaneous',
+            'diningEntertainment': 'Entertainment',
             'entertainment': 'Entertainment',
+            'insuranceCoPay': 'Health',
+            'health': 'Health',
+            'debtLoans': 'Miscellaneous',
+            'remittances': 'Miscellaneous',
+            'pocketMoney': 'Miscellaneous',
+            'personalCare': 'Personal Care',
             'shopping': 'Shopping',
             'miscellaneous': 'Miscellaneous',
+            // Semi-Annual
+            'schoolTuition': 'Education',
+            'householdMaintenance': 'Miscellaneous',
+            // Annual (Sinking Funds)
+            'iqamaRenewal': 'Miscellaneous',
+            'dependentFees': 'Miscellaneous',
+            'exitReentryVisa': 'Miscellaneous',
+            'vehicleInsurance': 'Miscellaneous',
+            'istimara': 'Miscellaneous',
+            'fahas': 'Miscellaneous',
+            'schoolUniformsBooks': 'Education',
+            'zakat': 'Miscellaneous',
+            'annualVacation': 'Entertainment',
+            // Weekly
+            'freshProduce': 'Food',
+            'householdHelpHourly': 'Miscellaneous',
+            'leisureWeekly': 'Entertainment',
         };
 
         const buckets = monthResult.buckets;
@@ -1917,7 +1945,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                 };
 
                                 const savingsBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'savings');
-                                const expenseBuckets = Object.entries(buckets).filter(([key]) => bucketToCategoryMap[key]?.type === 'expense');
+                                const expenseBuckets = Object.entries(buckets).filter(([key]) => 
+                                    bucketToCategoryMap[key]?.type === 'expense' || 
+                                    bucketToCategoryMap[key]?.type === 'semi-annual' ||
+                                    bucketToCategoryMap[key]?.type === 'annual' ||
+                                    bucketToCategoryMap[key]?.type === 'weekly'
+                                );
                                 const totalSavings = savingsBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
                                 const totalExpenses = expenseBuckets.reduce((sum, [_, amount]) => sum + (amount as number), 0);
                                 const income = monthResult?.incomePlanned ?? 0;
@@ -2011,13 +2044,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                                     .filter(([_, amount]) => (amount as number) > 0)
                                                     .sort(([_, a], [__, b]) => (b as number) - (a as number))
                                                     .map(([bucketKey, amount]) => {
-                                                        const info = bucketToCategoryMap[bucketKey] || { name: bucketKey };
+                                                        const info = bucketToCategoryMap[bucketKey] || { name: bucketKey, color: 'bg-slate-100' };
                                                         const pct = totalAllocated > 0 ? ((amount as number) / totalAllocated * 100) : 0;
+                                                        const expenseType = bucketToCategoryMap[bucketKey]?.type || 'expense';
+                                                        const typeLabel = expenseType === 'semi-annual' ? ' (6-month)' : 
+                                                                         expenseType === 'annual' ? ' (annual)' : 
+                                                                         expenseType === 'weekly' ? ' (weekly)' : '';
                                                         return (
                                                             <div key={bucketKey} className="flex items-center gap-2">
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="flex items-center justify-between mb-1">
-                                                                        <span className="text-xs font-medium text-slate-700 truncate">{info.name}</span>
+                                                                        <span className="text-xs font-medium text-slate-700 truncate">{info.name}{typeLabel}</span>
                                                                         <span className="text-xs text-slate-600 ml-2">{formatCurrencyString(amount as number, { digits: 0 })}</span>
                                                                     </div>
                                                                     <div className="w-full bg-slate-200 rounded-full h-2">
