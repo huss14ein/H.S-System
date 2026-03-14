@@ -403,9 +403,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         events.forEach(event => {
             const monthIndex = event.month - 1;
             if (event.type === 'income' && incomeRow) {
-                incomeRow.monthly_planned[monthIndex] += event.amount;
+                incomeRow.monthly_planned[monthIndex] += (event.amount ?? 0);
             } else if (event.type === 'expense' && eventsRow) {
-                eventsRow.monthly_planned[monthIndex] += event.amount;
+                eventsRow.monthly_planned[monthIndex] += (event.amount ?? 0);
             }
         });
         
@@ -552,21 +552,21 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     
-    const monthlyIncome = data.transactions
+    const monthlyIncome = (data?.transactions ?? [])
       .filter(t => t.type === 'income' && 
                    new Date(t.date).getMonth() === currentMonth && 
                    new Date(t.date).getFullYear() === currentYear)
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
 
-    const monthlyExpenses = data.transactions
+    const monthlyExpenses = (data?.transactions ?? [])
       .filter(t => t.type === 'expense' && 
                    new Date(t.date).getMonth() === currentMonth && 
                    new Date(t.date).getFullYear() === currentYear)
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
 
     const netSavings = monthlyIncome - monthlyExpenses;
     
-    const emergencyFund = (data.accounts || [])
+    const emergencyFund = (data?.accounts ?? [])
       .filter(a => a.type === 'Checking' || a.type === 'Savings')
       .reduce((sum, a) => sum + (a.balance || 0), 0);
 
@@ -576,8 +576,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const scenarioExpenses = monthlyExpenses * currentScenario.expenseMultiplier;
     const scenarioNetSavings = scenarioIncome - scenarioExpenses;
 
-    const goalsProgress = (data.goals || [])
-      .reduce((sum, goal) => sum + (goal.currentAmount / goal.targetAmount), 0) / (data.goals.length || 1);
+    const goalsProgress = (data?.goals ?? [])
+      .reduce((sum, goal) => sum + ((goal.targetAmount ?? 0) > 0 ? (goal.currentAmount ?? 0) / (goal.targetAmount ?? 1) : 0), 0) / ((data?.goals ?? []).length || 1);
 
     return {
       monthlyIncome,
@@ -775,7 +775,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     </span>
                                 </div>
                                 <div className="mt-2 text-sm text-gray-600 space-y-0.5">
-                                    <p>Target: {formatCurrencyString(g.targetAmount)} · Current: {formatCurrencyString(g.currentAmount)}</p>
+                                    <p>Target: {formatCurrencyString(g.targetAmount ?? 0)} · Current: {formatCurrencyString(g.currentAmount ?? 0)}</p>
                                     {g.shortfall > 0 && (
                                         <>
                                             <p>Shortfall: {formatCurrencyString(g.shortfall)} by {g.deadline ? g.deadline.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '—'}</p>
@@ -904,7 +904,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
                         <label className="font-medium text-sm flex items-center">Major Life Events <InfoHint text="One-time income or expense events (e.g. bonus, wedding) that affect the plan; add via the button below." /></label>
                         <div className="text-xs space-y-1">
-                            {events.map(e => <div key={e.id} className="flex justify-between"><span>{e.name} ({MONTHS[e.month-1]})</span><span>{formatCurrencyString(e.amount)}</span></div>)}
+                            {events.map(e => <div key={e.id} className="flex justify-between"><span>{e.name} ({MONTHS[e.month-1]})</span><span>{formatCurrencyString(e.amount ?? 0)}</span></div>)}
                         </div>
                         <button onClick={() => setIsEventModalOpen(true)} className="flex items-center text-sm text-primary hover:underline mt-1"><PlusIcon className="h-4 w-4 mr-1"/>Add Event</button>
                      </div>
@@ -919,7 +919,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             <div className="space-y-2">
                 <p className="text-xs text-slate-500">Grid: <span className="text-gray-600">top</span> = actual (Transactions) · <span className="font-medium text-slate-700">bottom</span> = planned (Budgets + recurring). Investment row planned from Investment Plan, actual from buy trades.</p>
                 <div className="bg-white shadow rounded-lg overflow-x-auto">
-                <table className="min-w-full text-sm">
+                <div className="table-responsive">
+                <table className="min-w-full text-sm" role="grid">
                     <thead className="bg-gray-100 text-dark">
                         <tr>
                             <th className="sticky left-0 bg-gray-100 p-2 text-left font-semibold">Category</th>
@@ -975,6 +976,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         })}
                     </tbody>
                 </table>
+                </div>
                 </div>
             </div>
             
@@ -1174,20 +1176,20 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
           <h2 className="text-xl font-semibold text-gray-900 mb-6">Goals Overview</h2>
           
           <div className="space-y-4">
-            {data.goals?.slice(0, 5).map(goal => (
+            {(data?.goals ?? []).slice(0, 5).map(goal => (
               <div key={goal.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                 <div className="flex-1">
                   <h3 className="font-medium text-gray-900">{goal.name}</h3>
                   <p className="text-sm text-gray-600">
-                    Target: {formatCurrencyString(goal.targetAmount)} by {goal.deadline ? formatPlanDate(new Date(goal.deadline)) : '—'}
+                    Target: {formatCurrencyString(goal.targetAmount ?? 0)} by {goal.deadline ? formatPlanDate(new Date(goal.deadline)) : '—'}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium text-gray-900">
-                    {formatCurrencyString(goal.currentAmount)}
+                    {formatCurrencyString(goal.currentAmount ?? 0)}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {Math.round((goal.currentAmount / goal.targetAmount) * 100)}% complete
+                    {Math.round(((goal.targetAmount ?? 0) > 0 ? ((goal.currentAmount ?? 0) / (goal.targetAmount ?? 1)) * 100 : 0))}% complete
                   </p>
                 </div>
               </div>

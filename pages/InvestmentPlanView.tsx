@@ -50,7 +50,7 @@ const PlanTradeModal: React.FC<{
                 setTargetValue(String(planToEdit.targetValue));
             }
             setQuantity(String(planToEdit.quantity || ''));
-            setAmount(String(planToEdit.amount || ''));
+            setAmount(String(planToEdit?.amount ?? ''));
             setPriority(planToEdit.priority);
             setNotes(planToEdit.notes || '');
         } else {
@@ -275,7 +275,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     
     const priorityClass = (p: PlannedTrade['priority']) => ({ High: 'bg-red-100 text-red-800', Medium: 'bg-yellow-100 text-yellow-800', Low: 'bg-blue-100 text-blue-800' }[p]);
     const getPlannedExecutionPrice = (plan: PlannedTrade): number | null => {
-        if (plan.quantity && plan.amount && plan.quantity > 0) return plan.amount / plan.quantity;
+        if ((plan.quantity ?? 0) > 0 && (plan.amount ?? 0) > 0) return (plan.amount ?? 0) / (plan.quantity ?? 1);
         return plan.conditionType === 'price' ? plan.targetValue : null;
     };
 
@@ -317,11 +317,11 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
 
 
     const planAlignment = useMemo(() => {
-        const universe = data.portfolioUniverse ?? [];
-        const plannedTrades = data.plannedTrades ?? [];
+        const universe = data?.portfolioUniverse ?? [];
+        const plannedTrades = data?.plannedTrades ?? [];
         const statusBySymbol = new Map(universe.map((t: any) => [String(t.ticker || '').toUpperCase(), t.status]));
         const rows = plannedTrades.map(plan => {
-            const universeStatus = statusBySymbol.get(plan.symbol.toUpperCase()) || 'Untracked';
+            const universeStatus = statusBySymbol.get((plan.symbol ?? '').toUpperCase()) || 'Untracked';
             const isBuy = plan.tradeType === 'buy';
             const recommendation = universeStatus === 'Core' || universeStatus === 'High-Upside'
                 ? 'Accumulate'
@@ -364,14 +364,14 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
             conflictCount: rows.filter(r => r.aligned === false).length,
             untrackedCount: rows.filter(r => r.aligned === null).length,
         };
-    }, [data.plannedTrades, data.portfolioUniverse, alignmentFilter]);
+    }, [data?.plannedTrades, data?.portfolioUniverse, alignmentFilter]);
 
 
 
 
     const handleAddToUniverse = async (plan: PlannedTrade) => {
-        const universe = data.portfolioUniverse ?? [];
-        const exists = universe.some((t: { ticker: string }) => t.ticker.toUpperCase() === plan.symbol.toUpperCase());
+        const universe = data?.portfolioUniverse ?? [];
+        const exists = universe.some((t: { ticker?: string }) => (t.ticker ?? '').toUpperCase() === (plan.symbol ?? '').toUpperCase());
         if (exists) {
             setAlignmentFilter('All');
             setSymbolFocus(plan.symbol);
@@ -379,8 +379,8 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
         }
 
         await addUniverseTicker({
-            ticker: plan.symbol.toUpperCase(),
-            name: plan.name || plan.symbol.toUpperCase(),
+            ticker: (plan.symbol ?? '').toUpperCase(),
+            name: plan.name ?? (plan.symbol ?? '').toUpperCase(),
             status: 'Watchlist',
             max_position_weight: 0.1,
         });
@@ -443,9 +443,9 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     ] as const;
 
     const aiPlanCandidates = useMemo(() => {
-        const plannedTrades = data.plannedTrades ?? [];
-        const universe = data.portfolioUniverse ?? [];
-        const plannedSymbols = new Set(plannedTrades.map(p => p.symbol.toUpperCase()));
+        const plannedTrades = data?.plannedTrades ?? [];
+        const universe = data?.portfolioUniverse ?? [];
+        const plannedSymbols = new Set(plannedTrades.map(p => (p.symbol ?? '').toUpperCase()));
         return universe
             .filter((ticker: any) => ['Core', 'High-Upside', 'Quarantine'].includes(ticker.status))
             .filter((ticker: any) => !plannedSymbols.has(String(ticker.ticker || '').toUpperCase()))
@@ -457,11 +457,11 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                 monthlyWeight: ticker.monthly_weight ?? 0,
                 suggestion: ticker.status === 'Quarantine' ? 'sell' as const : 'buy' as const,
             }));
-    }, [data.portfolioUniverse, data.plannedTrades]);
+    }, [data?.portfolioUniverse, data?.plannedTrades]);
 
     const handleCreatePlanFromAi = async (candidate: { symbol: string; name: string; status: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
-        const plannedTrades = data.plannedTrades ?? [];
-        const existing = plannedTrades.some(plan => plan.symbol.toUpperCase() === candidate.symbol.toUpperCase());
+        const plannedTrades = data?.plannedTrades ?? [];
+        const existing = plannedTrades.some(plan => (plan.symbol ?? '').toUpperCase() === candidate.symbol.toUpperCase());
         if (existing) {
             setSymbolFocus(candidate.symbol);
             return;
@@ -484,20 +484,20 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     };
 
     const visiblePlans = useMemo(() => {
-        const plannedTrades = data.plannedTrades ?? [];
+        const plannedTrades = data?.plannedTrades ?? [];
         if (!symbolFocus) return plannedTrades;
-        return plannedTrades.filter(plan => plan.symbol.toUpperCase() === symbolFocus.toUpperCase());
-    }, [data.plannedTrades, symbolFocus]);
+        return plannedTrades.filter(plan => (plan.symbol ?? '').toUpperCase() === symbolFocus.toUpperCase());
+    }, [data?.plannedTrades, symbolFocus]);
 
     const isTriggered = (plan: PlannedTrade) => {
         if (plan.status === 'Executed') return false;
         if (plan.conditionType === 'price') {
             const priceInfo = simulatedPrices[plan.symbol];
             if (!priceInfo) return false;
-            return (plan.tradeType === 'buy' && priceInfo.price <= plan.targetValue) || (plan.tradeType === 'sell' && priceInfo.price >= plan.targetValue);
+            return (plan.tradeType === 'buy' && priceInfo.price <= (plan.targetValue ?? 0)) || (plan.tradeType === 'sell' && priceInfo.price >= (plan.targetValue ?? 0));
         }
         if (plan.conditionType === 'date') {
-            return new Date().getTime() >= plan.targetValue;
+            return new Date().getTime() >= (plan.targetValue ?? 0);
         }
         return false;
     }
@@ -849,10 +849,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                                 <div className="flex-1">
                                     <div className="flex items-center gap-4 mb-3">
                                         <div className="w-12 h-12 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
-                                            <span className="font-bold text-slate-700 text-lg">{plan.symbol.slice(0, 2)}</span>
+                                            <span className="font-bold text-slate-700 text-lg">{(plan.symbol ?? '').slice(0, 2)}</span>
                                         </div>
                                         <div className="flex-1">
-                                            <span className="font-bold text-slate-900 text-lg">{plan.symbol}</span>
+                                            <span className="font-bold text-slate-900 text-lg">{plan.symbol ?? '—'}</span>
                                             <span className="mx-2 text-slate-400">•</span>
                                             <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${
                                                 plan.tradeType === 'buy' 
@@ -940,7 +940,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-blue-800 uppercase tracking-wide mb-2">Planned Trades</p>
-                                <p className="text-4xl font-bold text-blue-900 mb-1">{(data.plannedTrades ?? []).length}</p>
+                                <p className="text-4xl font-bold text-blue-900 mb-1">{(data?.plannedTrades ?? []).length}</p>
                                 <p className="text-sm text-blue-700 font-medium">Total strategic plans</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
@@ -959,7 +959,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-amber-800 uppercase tracking-wide mb-2">Triggered</p>
-                                <p className="text-4xl font-bold text-amber-900 mb-1">{(data.plannedTrades ?? []).filter(isTriggered).length}</p>
+                                <p className="text-4xl font-bold text-amber-900 mb-1">{(data?.plannedTrades ?? []).filter(isTriggered).length}</p>
                                 <p className="text-sm text-amber-700 font-medium">Ready to execute</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
@@ -978,7 +978,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-emerald-800 uppercase tracking-wide mb-2">Executed</p>
-                                <p className="text-4xl font-bold text-emerald-900 mb-1">{(data.plannedTrades ?? []).filter(p => p.status === 'Executed').length}</p>
+                                <p className="text-4xl font-bold text-emerald-900 mb-1">{(data?.plannedTrades ?? []).filter(p => p.status === 'Executed').length}</p>
                                 <p className="text-sm text-emerald-700 font-medium">Completed trades</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
@@ -1041,7 +1041,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
                                     <tr key={plan.id} className={`${isTriggered(plan) ? 'bg-yellow-50' : ''} hover:bg-gray-50 transition-colors`}>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div>
-                                                <div className="font-medium text-gray-900">{plan.symbol}</div>
+                                                <div className="font-medium text-gray-900">{plan.symbol ?? '—'}</div>
                                                 <div className="text-sm text-gray-500">{plan.name}</div>
                                             </div>
                                         </td>

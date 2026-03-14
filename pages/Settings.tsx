@@ -9,11 +9,11 @@ import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, updateSettings, loadDemoData, resetData } = useContext(DataContext)!;
     const auth = useContext(AuthContext)!;
-    const [localSettings, setLocalSettings] = useState(data.settings);
+    const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
 
     useEffect(() => {
-        setLocalSettings(data.settings);
-    }, [data.settings]);
+        setLocalSettings(data?.settings ?? {});
+    }, [data?.settings]);
 
     const handleSettingChange = <K extends keyof typeof localSettings>(key: K, value: (typeof localSettings)[K]) => {
         const newSettings = { ...localSettings, [key]: value };
@@ -21,8 +21,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         updateSettings({ [key]: value });
     };
 
-    const hasData = data && data.accounts.length > 0;
-    const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data.wealthUltraConfig || {}) }), [data.wealthUltraConfig]);
+    const hasData = data && (data?.accounts?.length ?? 0) > 0;
+    const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
@@ -55,10 +55,10 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             <div className="space-y-8">
             <SectionCard title="Settings Snapshot" className="border-2 border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <SnapCard label="Risk profile" value={localSettings.riskProfile} />
-                    <SnapCard label="Budget alert" value={`${localSettings.budgetThreshold}%`} />
-                    <SnapCard label="Drift threshold" value={`${localSettings.driftThreshold}%`} />
-                    <SnapCard label="Email summary" value={localSettings.enableEmails ? 'Enabled' : 'Disabled'} />
+                    <SnapCard label="Risk profile" value={localSettings?.riskProfile ?? '—'} />
+                    <SnapCard label="Budget alert" value={`${localSettings?.budgetThreshold ?? 0}%`} />
+                    <SnapCard label="Drift threshold" value={`${localSettings?.driftThreshold ?? 0}%`} />
+                    <SnapCard label="Email summary" value={localSettings?.enableEmails ? 'Enabled' : 'Disabled'} />
                 </div>
             </SectionCard>
 
@@ -82,7 +82,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-1">
                             {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
                                 <button key={profile} onClick={() => handleSettingChange('riskProfile', profile)}
-                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${localSettings.riskProfile === profile ? 'bg-white shadow text-primary' : 'text-gray-600 hover:bg-white/50'}`}>
+                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${(localSettings?.riskProfile ?? '') === profile ? 'bg-white shadow text-primary' : 'text-gray-600 hover:bg-white/50'}`}>
                                     {profile}
                                 </button>
                             ))}
@@ -91,13 +91,13 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
-                            <input id="budget-threshold" type="number" value={localSettings.budgetThreshold}
+                            <input id="budget-threshold" type="number" value={localSettings?.budgetThreshold ?? 0}
                                 onChange={(e) => handleSettingChange('budgetThreshold', Number(e.target.value))}
                                 className="input-base mt-2"/>
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="drift-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Portfolio Drift Threshold (%) <InfoHint text="Rebalancing alerts when an asset’s weight drifts from target by more than this percent." /></label>
-                            <input id="drift-threshold" type="number" value={localSettings.driftThreshold}
+                            <input id="drift-threshold" type="number" value={localSettings?.driftThreshold ?? 0}
                                 onChange={(e) => handleSettingChange('driftThreshold', Number(e.target.value))}
                                 className="input-base mt-2"/>
                         </div>
@@ -111,18 +111,18 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     Source: system defaults + your current overrides
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-                    <ParamCard label="FX rate (USD→SAR)" value={defaultWealthUltra.fxRate.toFixed(4)} hint="Conversion baseline" />
-                    <ParamCard label="Monthly deposit" value={`$${Math.round(defaultWealthUltra.monthlyDeposit).toLocaleString()}`} hint="Deployment budget" />
-                    <ParamCard label="Cash reserve" value={`${defaultWealthUltra.cashReservePct}%`} hint="Liquidity guardrail" />
-                    <ParamCard label="Max per ticker" value={`${defaultWealthUltra.maxPerTickerPct}%`} hint="Concentration cap" />
-                    <ParamCard label="Core target" value={`${defaultWealthUltra.targetCorePct}%`} hint="Stability sleeve" />
-                    <ParamCard label="Upside target" value={`${defaultWealthUltra.targetUpsidePct}%`} hint="Growth sleeve" />
-                    <ParamCard label="Spec target" value={`${defaultWealthUltra.targetSpecPct}%`} hint="High-risk sleeve" />
-                    <ParamCard label="Target 1" value={`${defaultWealthUltra.defaultTarget1Pct}%`} hint="First profit trigger" />
-                    <ParamCard label="Target 2" value={`${defaultWealthUltra.defaultTarget2Pct}%`} hint="Second profit trigger" />
-                    <ParamCard label="Trailing stop" value={`${defaultWealthUltra.defaultTrailingPct}%`} hint="Downside lock" />
-                    <ParamCard label="Risk weight (Low/Med)" value={`${defaultWealthUltra.riskWeightLow} / ${defaultWealthUltra.riskWeightMed}`} hint="Sizing multiplier" />
-                    <ParamCard label="Risk weight (High/Spec)" value={`${defaultWealthUltra.riskWeightHigh} / ${defaultWealthUltra.riskWeightSpec}`} hint="Sizing multiplier" />
+                    <ParamCard label="FX rate (USD→SAR)" value={(defaultWealthUltra?.fxRate ?? 0).toFixed(4)} hint="Conversion baseline" />
+                    <ParamCard label="Monthly deposit" value={`$${Math.round(defaultWealthUltra?.monthlyDeposit ?? 0).toLocaleString()}`} hint="Deployment budget" />
+                    <ParamCard label="Cash reserve" value={`${defaultWealthUltra?.cashReservePct ?? 0}%`} hint="Liquidity guardrail" />
+                    <ParamCard label="Max per ticker" value={`${defaultWealthUltra?.maxPerTickerPct ?? 0}%`} hint="Concentration cap" />
+                    <ParamCard label="Core target" value={`${defaultWealthUltra?.targetCorePct ?? 0}%`} hint="Stability sleeve" />
+                    <ParamCard label="Upside target" value={`${defaultWealthUltra?.targetUpsidePct ?? 0}%`} hint="Growth sleeve" />
+                    <ParamCard label="Spec target" value={`${defaultWealthUltra?.targetSpecPct ?? 0}%`} hint="High-risk sleeve" />
+                    <ParamCard label="Target 1" value={`${defaultWealthUltra?.defaultTarget1Pct ?? 0}%`} hint="First profit trigger" />
+                    <ParamCard label="Target 2" value={`${defaultWealthUltra?.defaultTarget2Pct ?? 0}%`} hint="Second profit trigger" />
+                    <ParamCard label="Trailing stop" value={`${defaultWealthUltra?.defaultTrailingPct ?? 0}%`} hint="Downside lock" />
+                    <ParamCard label="Risk weight (Low/Med)" value={`${defaultWealthUltra?.riskWeightLow ?? 0} / ${defaultWealthUltra?.riskWeightMed ?? 0}`} hint="Sizing multiplier" />
+                    <ParamCard label="Risk weight (High/Spec)" value={`${defaultWealthUltra?.riskWeightHigh ?? 0} / ${defaultWealthUltra?.riskWeightSpec ?? 0}`} hint="Sizing multiplier" />
                 </div>
                 {setActivePage && (
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -139,10 +139,10 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <p className="text-xs text-gray-500 mt-0.5">Receive a summary of your financial health every week.</p>
                     </span>
                     <div className="relative">
-                        <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings.enableEmails}
+                        <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings?.enableEmails ?? false}
                                 onChange={(e) => handleSettingChange('enableEmails', e.target.checked)} />
-                        <div className={`block w-10 h-6 rounded-full transition ${localSettings.enableEmails ? 'bg-primary' : 'bg-gray-200'}`}></div>
-                        <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${localSettings.enableEmails ? 'transform translate-x-full' : ''}`}></div>
+                        <div className={`block w-10 h-6 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'bg-primary' : 'bg-gray-200'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'transform translate-x-full' : ''}`}></div>
                     </div>
                 </label>
             </SectionCard>
@@ -154,7 +154,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             <p className="text-sm text-gray-600">Export a JSON backup of all your data (accounts, transactions, goals, budgets, investments, etc.) for safekeeping.</p>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 <button type="button" onClick={() => {
-                                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                                    const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' });
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement('a');
                                     a.href = url;

@@ -38,7 +38,7 @@ const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ p
         <div className="relative h-5 bg-gray-200 rounded-full overflow-hidden">
             <div 
                 className={`absolute top-0 left-0 h-full rounded-full ${colorClass} transition-all duration-1000 ease-out`}
-                style={{ width: `${Math.min(width, 100)}%` }}
+                style={{ width: `${Math.min(Number(width) || 0, 100)}%` }}
             ></div>
             <div className="absolute inset-0 flex items-center justify-center">
                 <span className="text-xs font-bold text-white" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.5)' }}>
@@ -152,7 +152,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const investments = data?.investments ?? [];
 
         assets.filter(a => a.goalId === goal.id).forEach(a => {
-            linkedItems.push({ name: a.name, value: a.value });
+            linkedItems.push({ name: a.name ?? '—', value: a.value ?? 0 });
         });
 
         investments.forEach(p => {
@@ -167,7 +167,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             }
         });
 
-        const totalValue = linkedItems.reduce((sum, item) => sum + item.value, 0);
+        const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
     }, [data?.assets, data?.investments, goal.id, exchangeRate]);
@@ -185,8 +185,9 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const deadline = new Date(goal.deadline);
         const now = new Date();
         const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
-        const progressPercent = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
-        const remainingAmount = Math.max(0, goal.targetAmount - currentAmount);
+        const targetAmt = goal.targetAmount ?? 0;
+        const progressPercent = targetAmt > 0 ? (currentAmount / targetAmt) * 100 : 0;
+        const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
         const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
 
@@ -215,7 +216,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     <div>
                         <div className="flex items-center gap-2"><h3 className="text-xl font-semibold text-dark">{goal.name}</h3><span className={`text-xs px-2 py-0.5 rounded-full ${goal.priority === 'High' ? 'bg-red-100 text-red-700' : goal.priority === 'Low' ? 'bg-slate-100 text-slate-700' : 'bg-amber-100 text-amber-700'}`}>{goal.priority || 'Medium'}</span></div>
                         <p className="text-sm text-gray-500">
-                            Target: <span className="font-medium text-dark">{formatCurrencyString(goal.targetAmount)}</span> by {new Date(goal.deadline).toLocaleDateString()}
+                            Target: <span className="font-medium text-dark">{formatCurrencyString(goal.targetAmount ?? 0)}</span> by {goal.deadline ? new Date(goal.deadline).toLocaleDateString() : '—'}
                         </p>
                     </div>
                      <div className="flex-shrink-0 flex items-center -mt-2 -mr-2">
@@ -235,7 +236,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     </div>
                     <div>
                         <span className="text-gray-500">Remaining: </span>
-                        <span className="font-semibold text-dark">{formatCurrencyString(Math.max(0, goal.targetAmount - calculatedCurrentAmount))}</span>
+                        <span className="font-semibold text-dark">{formatCurrencyString(Math.max(0, (goal.targetAmount ?? 0) - calculatedCurrentAmount))}</span>
                     </div>
                 </div>
             </div>
@@ -245,9 +246,9 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 <div className="text-center md:text-left space-y-1">
                     <p className="text-sm text-gray-600 mb-2">Status ({monthsLeft} months left)</p>
                     <GoalStatus status={status} />
-                    {projectedMonthlyContribution > 0 && (goal.targetAmount - calculatedCurrentAmount) > 0 && (
+                    {projectedMonthlyContribution > 0 && ((goal.targetAmount ?? 0) - calculatedCurrentAmount) > 0 && (
                         <p className="text-xs text-slate-600 mt-2">
-                            At current rate: <span className="font-semibold text-dark">~{Math.ceil((goal.targetAmount - calculatedCurrentAmount) / projectedMonthlyContribution)} months</span> to goal
+                            At current rate: <span className="font-semibold text-dark">~{Math.ceil(((goal.targetAmount ?? 0) - calculatedCurrentAmount) / projectedMonthlyContribution)} months</span> to goal
                         </p>
                     )}
                 </div>
@@ -333,7 +334,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         (data?.transactions ?? []).filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
-            monthlyNet.set(monthKey, currentNet + t.amount); // amount is positive for income, negative for expense
+            monthlyNet.set(monthKey, currentNet + (Number(t.amount) ?? 0)); // amount is positive for income, negative for expense
         });
         
         if (monthlyNet.size === 0) return 7500; // Default if no recent transactions
@@ -352,7 +353,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
         assets.forEach(a => {
             if (a.goalId) {
-                goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + a.value);
+                goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + (a.value ?? 0));
             }
         });
 
@@ -371,7 +372,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         });
 
         goals.forEach(goal => {
-            totalTarget += goal.targetAmount;
+            totalTarget += (goal.targetAmount ?? 0);
             totalCurrent += goalAssetValues.get(goal.id) || 0;
         });
 
@@ -387,7 +388,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
             const d = new Date(t.date);
             if (d.getFullYear() !== year) return;
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + t.amount);
+            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + (Number(t.amount) ?? 0));
         });
         if (monthlyNet.size === 0) return averageMonthlySavings * 12;
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);
@@ -401,7 +402,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
-        return [...(data?.goals ?? [])].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || a.name.localeCompare(b.name));
+        return [...(data?.goals ?? [])].sort((a, b) => (rank[a.priority || 'Medium'] - rank[b.priority || 'Medium']) || (a.name ?? '').localeCompare(b.name ?? ''));
     }, [data?.goals]);
     
     const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
@@ -494,13 +495,13 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
       <SectionCard title="System Funding Suggestions" className="bg-white border border-slate-200">
         <p className="text-xs text-slate-600 mb-3">
-            Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan.totalMonthlySurplus, { digits: 0 })}</span> per month.
+            Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span> per month.
         </p>
         {(fundingPlan.suggestions.length === 0) && (
             <p className="text-sm text-slate-500">Add goals with future deadlines to see suggested monthly funding per goal.</p>
         )}
         <div className="space-y-2">
-            {fundingPlan.suggestions.map(s => (
+            {(fundingPlan?.suggestions ?? []).map(s => (
                 <div key={s.goalId} className="flex justify-between items-center text-xs border rounded-md px-3 py-2 bg-slate-50">
                     <div>
                         <p className="font-semibold text-slate-900">{(data?.goals ?? []).find(g => g.id === s.goalId)?.name ?? s.name}</p>

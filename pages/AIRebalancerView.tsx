@@ -20,15 +20,15 @@ interface AIRebalancerViewProps {
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra }) => {
   const { data } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data.investments[0]?.id || '');
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data?.investments?.[0]?.id ?? '');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
   const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
   const [planError, setPlanError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const selectedPortfolio = useMemo(() => {
-    return data.investments.find(p => p.id === selectedPortfolioId) || data.investments[0];
-  }, [selectedPortfolioId, data.investments]);
+    return (data?.investments ?? []).find(p => p.id === selectedPortfolioId) ?? (data?.investments ?? [])[0];
+  }, [selectedPortfolioId, data?.investments]);
 
   const handleGeneratePlan = useCallback(async () => {
     if (!selectedPortfolio) return;
@@ -47,7 +47,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
 
   const currentAllocation = useMemo(() => {
     if (!selectedPortfolio) return [];
-    return selectedPortfolio.holdings
+    return (selectedPortfolio?.holdings ?? [])
       .map((h) => {
         const quantity = Number(h.quantity || 0);
         const avgCost = Number(h.avgCost || 0);
@@ -59,7 +59,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
       .filter((row) => Number.isFinite(row.value) && row.value > 0);
   }, [selectedPortfolio]);
 
-  if (!data.investments || data.investments.length === 0) {
+  if (!data?.investments?.length) {
     return (
       <div className="mt-6 space-y-4">
         <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 text-center">
@@ -114,7 +114,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             <div className="w-3 h-3 bg-slate-500 rounded-full animate-pulse"></div>
           </div>
           <p className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-2">Portfolios</p>
-          <p className="text-4xl font-black text-slate-900 tabular-nums">{data.investments.length}</p>
+          <p className="text-4xl font-black text-slate-900 tabular-nums">{(data?.investments ?? []).length}</p>
           <p className="text-sm text-slate-600 mt-2">Available portfolios</p>
         </div>
         <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-indigo-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
@@ -216,7 +216,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   onChange={(e) => setSelectedPortfolioId(e.target.value)}
                   className="w-full p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800 font-medium bg-white shadow-sm"
                 >
-                  {data.investments.map(p => (
+                  {(data?.investments ?? []).map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>

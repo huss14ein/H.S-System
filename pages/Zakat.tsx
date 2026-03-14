@@ -133,12 +133,12 @@ const Zakat: React.FC = () => {
         const accounts = data?.accounts ?? [];
         const investments = data?.investments ?? [];
         const commodityHoldings = data?.commodityHoldings ?? [];
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
         const invValue = investments
             .flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })))
             .filter(h => h.zakahClass === 'Zakatable')
             .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
-        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + c.currentValue, 0);
+        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + (c.currentValue ?? 0), 0);
         const total = cash + invValue + commodities;
         return { cash, investments: invValue, commodities, total };
     }, [data?.accounts, data?.investments, data?.commodityHoldings, exchangeRate]);
@@ -156,7 +156,7 @@ const Zakat: React.FC = () => {
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
-    const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
+    const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + (p.amount ?? 0), 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
 
     const zakatAdvice = useMemo(
@@ -481,7 +481,7 @@ const Zakat: React.FC = () => {
                                                     <BanknotesIcon className="h-5 w-5 text-green-600" />
                                                 </div>
                                                 <div>
-                                                    <p className="font-semibold text-gray-900">{formatCurrencyString(p.amount)}</p>
+                                                    <p className="font-semibold text-gray-900">{formatCurrencyString(p.amount ?? 0)}</p>
                                                     <p className="text-xs text-gray-500">{new Date(p.date).toLocaleDateString()}</p>
                                                 </div>
                                             </div>

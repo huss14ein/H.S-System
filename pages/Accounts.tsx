@@ -193,7 +193,7 @@ const AccountCardComponent: React.FC<{
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
                     return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${(account.balance ?? 0) >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance ?? 0)}</p>
                     ) : (
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
@@ -266,27 +266,29 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             }
         };
         loadSharingState();
-    }, [auth?.user?.id, data.accounts.length]);
+    }, [auth?.user?.id, data?.accounts?.length]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
-        const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
-        const credit = data.accounts.filter(a => a.type === 'Credit');
-        const investments = data.accounts.filter(a => a.type === 'Investment');
+        const accounts = data?.accounts ?? [];
+        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
+        const credit = accounts.filter(a => a.type === 'Credit');
+        const investments = accounts.filter(a => a.type === 'Investment');
 
-        const totalCash = cash.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalCredit = credit.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalCash = cash.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalCredit = credit.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
 
+        const investmentsList = data?.investments ?? [];
         const investmentsWithUpdatedBalance = investments.map(acc => {
-            const portfolioValue = data.investments
+            const portfolioValue = investmentsList
                 .filter(p => p.accountId === acc.id)
                 .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
             return { ...acc, balance: portfolioValue };
         });
 
-        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + acc.balance, 0);
+        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
 
         return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
-    }, [data.accounts, data.investments, exchangeRate]);
+    }, [data?.accounts, data?.investments, exchangeRate]);
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
@@ -348,14 +350,15 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert('Please enter a valid positive amount.');
             return;
         }
-        const fromAccount = data.accounts.find(a => a.id === transferFromAccount);
-        const toAccount = data.accounts.find(a => a.id === transferToAccount);
+        const accounts = data?.accounts ?? [];
+        const fromAccount = accounts.find(a => a.id === transferFromAccount);
+        const toAccount = accounts.find(a => a.id === transferToAccount);
         if (!fromAccount || !toAccount) {
             alert('Selected accounts not found.');
             return;
         }
-        if (fromAccount.balance < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance)}`);
+        if ((fromAccount.balance ?? 0) < amount) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance ?? 0)}`);
             return;
         }
         if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
@@ -429,7 +432,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <label className="block text-xs text-slate-500 mb-1">Account</label>
                             <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base">
                                 <option value="">Select account</option>
-                                {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                {(data?.accounts ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                             </select>
                         </div>
                         <div>
@@ -497,8 +500,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             <section>
                 <h2 className="section-title text-xl mb-4">Investment Platforms</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedInvestmentAccounts.map((acc) => {
-                        const linkedCount = data.investments.filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
+                        {orderedInvestmentAccounts.map((acc) => {
+                        const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
                             <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} />
                         );
@@ -517,7 +520,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 </section>
             )}
 
-            <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} allAccounts={data.accounts} />
+            <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} allAccounts={data?.accounts ?? []} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             
             <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">
@@ -533,17 +536,17 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             className="select-base"
                         >
                             <option value="">Select source account</option>
-                            {data.accounts.filter(a => a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                    {acc.name} ({formatCurrencyString(acc.balance ?? 0)})
                                 </option>
                             ))}
                         </select>
                         {transferFromAccount && (() => {
-                            const acc = data.accounts.find(a => a.id === transferFromAccount);
+                            const acc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
                             return acc && (
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Available balance: {formatCurrencyString(acc.balance)}
+                                    Available balance: {formatCurrencyString(acc.balance ?? 0)}
                                 </p>
                             );
                         })()}
@@ -559,9 +562,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             className="select-base"
                         >
                             <option value="">Select destination account</option>
-                            {data.accounts.filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                    {acc.name} ({formatCurrencyString(acc.balance ?? 0)})
                                 </option>
                             ))}
                         </select>

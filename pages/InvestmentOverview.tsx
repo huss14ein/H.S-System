@@ -7,7 +7,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 const InvestmentOverview: React.FC = () => {
   const { data } = React.useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
-  const portfolios = data.investments ?? [];
+  const portfolios = data?.investments ?? [];
   const totalValue = React.useMemo(() => {
     return portfolios.reduce((sum, p) => {
       const portVal = (p.holdings ?? []).reduce((s, h) => s + (h.currentValue ?? 0), 0);

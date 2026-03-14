@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly DEV: boolean;
   readonly VITE_FINNHUB_API_KEY?: string;
   readonly VITE_LIVE_PRICE_PROVIDER?: "auto" | "ai" | "finnhub" | "stooq";
+  /** When 'true', sign-up link is shown on login. Omit or 'false' to disable. */
+  readonly VITE_ALLOW_SIGNUP?: string;
 }
 
 interface ImportMeta {

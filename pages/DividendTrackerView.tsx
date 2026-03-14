@@ -23,18 +23,18 @@ const DividendTrackerView: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
 
     const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
-        const dividendTransactions = data.investmentTransactions.filter(t => t.type === 'dividend');
+        const dividendTransactions = (data?.investmentTransactions ?? []).filter(t => t.type === 'dividend');
         const now = new Date();
 
         const dividendIncomeYTD = dividendTransactions
             .filter(t => new Date(t.date).getFullYear() === now.getFullYear())
-            .reduce((sum, t) => sum + toSAR(t.total, t.currency, exchangeRate), 0);
+            .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency ?? 'USD', exchangeRate), 0);
 
         const monthlyDividends = new Map<string, number>();
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
         dividendTransactions.filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
-            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total, t.currency, exchangeRate));
+            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, t.currency ?? 'USD', exchangeRate));
         });
         
         const monthlyDividendsChartData = Array.from(monthlyDividends.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ 
@@ -44,14 +44,14 @@ const DividendTrackerView: React.FC = () => {
 
         const recentDividendTransactions = dividendTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
 
-        const allHoldings = data.investments.flatMap(p => p.holdings.map(h => ({ ...h, portfolioCurrency: p.currency })));
-        const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+        const allHoldings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
+        const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate), 0);
 
         const holdingsWithProjectedDividends = allHoldings
-            .filter(h => h.dividendYield && h.dividendYield > 0)
+            .filter(h => (h.dividendYield ?? 0) > 0)
             .map(h => ({
-                name: h.name || h.symbol,
-                projected: toSAR(h.currentValue, h.portfolioCurrency, exchangeRate) * (h.dividendYield! / 100),
+                name: h.name ?? h.symbol ?? '—',
+                projected: toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate) * ((h.dividendYield ?? 0) / 100),
             }));
 
         const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum, h) => sum + h.projected, 0);
@@ -305,7 +305,7 @@ const DividendTrackerView: React.FC = () => {
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <span className="inline-flex items-center px-3 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-sm">
-                                                    {formatCurrencyString(t.total)}
+                                                    {formatCurrencyString(t.total ?? 0)}
                                                 </span>
                                             </td>
                                         </tr>

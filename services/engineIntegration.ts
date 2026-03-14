@@ -49,7 +49,7 @@ function detectRecurringBillPatterns(transactions: Transaction[], minOccurrences
       if (existing) {
         existing.count++;
       } else {
-        patterns.push({ description: transaction.description, count: 1, amount: transaction.amount, frequency: 'monthly' });
+        patterns.push({ description: transaction.description ?? '', count: 1, amount: Number(transaction.amount) ?? 0, frequency: 'monthly' });
       }
       return patterns;
     }, [])
@@ -166,7 +166,7 @@ export function buildUnifiedFinancialContext(
 ): UnifiedFinancialContext {
   // Calculate cash constraints
   const cashAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
-  const totalCash = cashAccounts.reduce((sum, a) => sum + a.balance, 0);
+  const totalCash = cashAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
   
   // Get recurring bills
   const recurringBills = detectRecurringBillPatterns(transactions, 2)
@@ -181,7 +181,7 @@ export function buildUnifiedFinancialContext(
   
   const monthlyRecurring = recurringBills
     .filter(b => b.frequency === 'monthly')
-    .reduce((sum, b) => sum + b.amount, 0);
+    .reduce((sum, b) => sum + (b.amount ?? 0), 0);
   
   // Calculate risk constraints
   const portfolioRisk = calculatePortfolioRiskForInvestments(investments);
@@ -196,7 +196,7 @@ export function buildUnifiedFinancialContext(
   
   const totalExpenses = lastMonthTransactions
     .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    .reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
   
   const stressSignals = generateCashflowStressSignals(
     totalCash,
@@ -405,12 +405,13 @@ export function validateInvestmentAction(
   const warnings: string[] = [];
   
   // Cash constraint check
+  const amount = action.amount ?? 0;
   if (action.type === 'buy') {
-    if (action.amount > context.cash.discretionaryBudget) {
+    if (amount > context.cash.discretionaryBudget) {
       reasons.push(`Insufficient discretionary cash (${context.cash.discretionaryBudget.toFixed(0)} available)`);
     }
     
-    if (action.amount > context.cash.availableCash * 0.3) {
+    if (amount > context.cash.availableCash * 0.3) {
       warnings.push('Large purchase may impact liquidity');
     }
     
@@ -420,7 +421,8 @@ export function validateInvestmentAction(
   }
   
   // Risk constraint check
-  const newPositionSize = action.amount / context.cash.availableCash;
+  const availableCash = Math.max(0, context.cash.availableCash);
+  const newPositionSize = availableCash > 0 ? amount / availableCash : 0;
   if (newPositionSize > context.risk.maxPositionConcentration) {
     reasons.push(`Position size (${(newPositionSize * 100).toFixed(1)}%) exceeds max concentration (${(context.risk.maxPositionConcentration * 100).toFixed(1)}%)`);
   }
@@ -431,9 +433,9 @@ export function validateInvestmentAction(
       const daysUntil = Math.floor((b.nextDueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
       return daysUntil > 0 && daysUntil < 30;
     })
-    .reduce((sum, b) => sum + b.amount, 0);
+    .reduce((sum, b) => sum + (b.amount ?? 0), 0);
   
-  if (action.type === 'buy' && action.amount > context.cash.availableCash - upcomingBills - context.household.fixedMonthlyObligations) {
+  if (action.type === 'buy' && amount > context.cash.availableCash - upcomingBills - context.household.fixedMonthlyObligations) {
     warnings.push('Purchase may leave insufficient funds for upcoming obligations');
   }
   

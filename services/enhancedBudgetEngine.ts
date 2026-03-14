@@ -83,7 +83,7 @@ export function calculateDynamicBaselines(
         categoryData[category] = [];
         categoryDates[category] = [];
       }
-      categoryData[category].push(Math.abs(tx.amount));
+      categoryData[category].push(Math.abs(Number(tx.amount) ?? 0));
       categoryDates[category].push(new Date(tx.date));
     }
   });
@@ -307,36 +307,36 @@ export function analyzeSpendingPatterns(transactions: Transaction[]): SpendingPa
   });
   
   return Object.entries(categoryGroups).map(([category, txs]) => {
-    const amounts = txs.map(tx => Math.abs(tx.amount));
+    const amounts = txs.map(tx => Math.abs(Number(tx.amount) ?? 0));
     const dates = txs.map(tx => new Date(tx.date));
     
     // Calculate basic stats
-    const avgMonthly = amounts.reduce((sum, a) => sum + a, 0) / Math.max(1, amounts.length / 30);
+    const avgMonthly = amounts.length === 0 ? 0 : amounts.reduce((sum, a) => sum + a, 0) / Math.max(1, amounts.length / 30);
     
     // Calculate volatility
-    const variance = amounts.reduce((sum, a) => {
+    const variance = amounts.length > 0 ? amounts.reduce((sum, a) => {
       const diff = a - avgMonthly;
       return sum + diff * diff;
-    }, 0) / amounts.length;
-    const volatility = Math.sqrt(variance);
+    }, 0) / amounts.length : 0;
+    const volatility = Math.sqrt(Math.max(0, variance));
     
     // Weekend spend ratio
     const weekendSpends = txs.filter(tx => {
       const day = new Date(tx.date).getDay();
       return day === 0 || day === 6;
     });
-    const weekendRatio = weekendSpends.length / txs.length;
+    const weekendRatio = txs.length > 0 ? weekendSpends.length / txs.length : 0;
     
     // Impulse spend detection (unusual amounts, sporadic timing)
     const sortedAmounts = [...amounts].sort((a, b) => a - b);
     const median = sortedAmounts[Math.floor(sortedAmounts.length / 2)];
     const mad = calculateMAD(amounts, median);
     const impulseTxs = txs.filter(tx => Math.abs(Math.abs(tx.amount) - median) > 2 * mad);
-    const impulseRatio = impulseTxs.length / txs.length;
+    const impulseRatio = txs.length > 0 ? impulseTxs.length / txs.length : 0;
     
     // Recurring vs discretionary
     const recurringAmounts = identifyRecurringAmounts(amounts);
-    const recurringVsDiscretionary = recurringAmounts / amounts.length;
+    const recurringVsDiscretionary = amounts.length > 0 ? recurringAmounts / amounts.length : 0;
     
     // Merchant concentration (simulate based on amount patterns)
     const uniqueAmounts = new Set(amounts.map(a => Math.round(a / 10) * 10)).size;
@@ -368,18 +368,21 @@ export function calculateBudgetHealthMetrics(
 ): BudgetHealthMetrics {
   // Adherence score
   const adherenceScores = budgets.map(b => {
-    if (b.spent <= b.limit) return 100;
-    const overrun = (b.spent - b.limit) / b.limit;
+    const limit = b.limit ?? 0;
+    if (limit <= 0) return 100;
+    const spent = b.spent ?? 0;
+    if (spent <= limit) return 100;
+    const overrun = (spent - limit) / limit;
     return Math.max(0, 100 - overrun * 100);
   });
-  const adherenceScore = adherenceScores.reduce((sum, s) => sum + s, 0) / budgets.length;
+  const adherenceScore = budgets.length > 0 ? adherenceScores.reduce((sum, s) => sum + s, 0) / budgets.length : 50;
   
   // Forecast accuracy
   const actualByCategory: { [category: string]: number } = {};
   transactions.forEach(tx => {
     if (tx.type === 'expense') {
       const cat = tx.budgetCategory || tx.category || 'Uncategorized';
-      actualByCategory[cat] = (actualByCategory[cat] || 0) + Math.abs(tx.amount);
+      actualByCategory[cat] = (actualByCategory[cat] || 0) + Math.abs(Number(tx.amount) ?? 0);
     }
   });
   
@@ -387,7 +390,8 @@ export function calculateBudgetHealthMetrics(
   let forecastCount = 0;
   budgets.forEach(b => {
     const actual = actualByCategory[b.category] || 0;
-    const error = Math.abs(b.limit - actual) / Math.max(b.limit, actual);
+    const limit = b.limit ?? 0;
+    const error = Math.max(limit, actual) > 0 ? Math.abs(limit - actual) / Math.max(limit, actual) : 0;
     forecastErrors += error;
     forecastCount++;
   });
@@ -396,11 +400,13 @@ export function calculateBudgetHealthMetrics(
     : 50;
   
   // Stress resilience
-  const overruns = budgets.filter(b => b.spent > b.limit).length;
-  const stressResilience = Math.max(0, 100 - (overruns / budgets.length) * 100);
+  const overruns = budgets.filter(b => (b.spent ?? 0) > (b.limit ?? 0)).length;
+  const stressResilience = budgets.length > 0 ? Math.max(0, 100 - (overruns / budgets.length) * 100) : 100;
   
   // Optimization potential
-  const avgUtilization = budgets.reduce((sum, b) => sum + (b.spent / b.limit), 0) / budgets.length;
+  const avgUtilization = budgets.length > 0
+    ? budgets.reduce((sum, b) => sum + ((b.limit ?? 0) > 0 ? (b.spent ?? 0) / (b.limit ?? 1) : 0), 0) / budgets.length
+    : 0;
   const optimizationPotential = avgUtilization < 0.7 
     ? Math.round((0.7 - avgUtilization) * 100)
     : 10; // Low potential if already well-utilized
@@ -412,7 +418,7 @@ export function calculateBudgetHealthMetrics(
     p.volatility * 20 + 
     (1 - p.recurringVsDiscretionary) * 25
   );
-  const behavioralRiskScore = behavioralRisks.reduce((sum, r) => sum + r, 0) / patterns.length;
+  const behavioralRiskScore = patterns.length > 0 ? behavioralRisks.reduce((sum, r) => sum + r, 0) / patterns.length : 0;
   
   return {
     adherenceScore: Math.round(adherenceScore),
@@ -440,7 +446,9 @@ export function generateSmartBudgetRecommendations(
     
     if (!baseline || !pattern) return;
     
-    const utilization = budget.spent / budget.limit;
+    const limit = budget.limit ?? 0;
+    const spent = budget.spent ?? 0;
+    const utilization = limit > 0 ? spent / limit : 0;
     
     // Case 1: Consistently under-spending
     if (utilization < 0.7 && baseline.trendDirection !== 'increasing') {
@@ -448,24 +456,24 @@ export function generateSmartBudgetRecommendations(
       recommendations.push({
         type: 'decrease',
         category: budget.category,
-        currentBudget: budget.limit,
+        currentBudget: limit,
         recommendedBudget: recommended,
         rationale: `Consistently under-spending (${(utilization * 100).toFixed(0)}% utilization). Reallocate to higher-priority categories.`,
-        expectedImpact: Math.round(budget.limit - recommended),
+        expectedImpact: Math.round(limit - recommended),
         confidence: 80
       });
     }
     
     // Case 2: Consistently over-spending with increasing trend
     if (utilization > 1.1 && baseline.trendDirection === 'increasing') {
-      const recommended = Math.round(Math.max(budget.spent, baseline.baselineAmount) * 1.1);
+      const recommended = Math.round(Math.max(spent, baseline.baselineAmount) * 1.1);
       recommendations.push({
         type: 'increase',
         category: budget.category,
-        currentBudget: budget.limit,
+        currentBudget: limit,
         recommendedBudget: recommended,
         rationale: `Spending consistently exceeds budget with upward trend. Align budget with actual spending pattern.`,
-        expectedImpact: -(recommended - budget.limit),
+        expectedImpact: -(recommended - limit),
         confidence: 75
       });
     }
@@ -475,8 +483,8 @@ export function generateSmartBudgetRecommendations(
       recommendations.push({
         type: 'monitor',
         category: budget.category,
-        currentBudget: budget.limit,
-        recommendedBudget: budget.limit,
+        currentBudget: limit,
+        recommendedBudget: limit,
         rationale: `High spending volatility detected. Monitor closely and consider splitting into sub-categories.`,
         expectedImpact: 0,
         confidence: 70

@@ -26,7 +26,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
             const assets = data.assets ?? [];
             const accounts = data.accounts ?? [];
             const liabilities = data.liabilities ?? [];
-            const totalCommodities = (data.commodityHoldings ?? []).reduce((sum, ch) => sum + ch.currentValue, 0);
+            const totalCommodities = (data?.commodityHoldings ?? []).reduce((sum, ch) => sum + (ch.currentValue ?? 0), 0);
             const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments ?? [], exchangeRate);
             const cashSavings = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashPositive = cashSavings.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
@@ -35,8 +35,8 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
             const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, l) => sum + Math.abs(l.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashNegative;
             const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
             const netWorth = totalAssets - totalDebt + totalReceivable;
-            const totalInvested = (data.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-            const totalWithdrawn = Math.abs((data.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+            const totalInvested = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + (t.total ?? 0), 0);
+            const totalWithdrawn = Math.abs((data?.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + (t.total ?? 0), 0));
             const netCapital = totalInvested - totalWithdrawn;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
@@ -44,7 +44,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
             return getAIAnalysis(summary);
         }
         case 'investments':
-            return getInvestmentAIAnalysis(data.investments.flatMap(p => p.holdings));
+            return getInvestmentAIAnalysis((data?.investments ?? []).flatMap(p => p.holdings ?? []));
         case 'plan':
              if (contextData?.householdEngine) {
                 return getAIHouseholdEngineAnalysis(contextData.householdEngine, contextData?.scenarios);

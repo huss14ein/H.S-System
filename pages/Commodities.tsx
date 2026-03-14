@@ -37,7 +37,7 @@ const CommodityHoldingModal: React.FC<{
             setUnit(holdingToEdit.unit);
             setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
             setPurchaseValue(String(holdingToEdit.purchaseValue));
-            setCurrentValue(String(holdingToEdit.currentValue));
+            setCurrentValue(String(holdingToEdit.currentValue ?? ''));
             setZakahClass(holdingToEdit.zakahClass);
             setOwner(holdingToEdit.owner || '');
         } else {
@@ -140,7 +140,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                 </div>
                 {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
                 <div className="mt-4 space-y-3 min-w-0 overflow-hidden">
-                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-sm text-gray-500">Current Value</dt><dd className="metric-value font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue)}</dd></div>
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-sm text-gray-500">Current Value</dt><dd className="metric-value font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue ?? 0)}</dd></div>
                     <div className="grid grid-cols-2 gap-4 text-sm min-w-0"><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Purchase Value</dt><dd className="metric-value font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Unrealized G/L</dt><dd className="metric-value font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
                 </div>
             </div>
@@ -160,8 +160,8 @@ const Commodities: React.FC = () => {
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
     const totalCommodityValue = useMemo(() => {
-        return data.commodityHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-    }, [data.commodityHoldings]);
+        return (data?.commodityHoldings ?? []).reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
+    }, [data?.commodityHoldings]);
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
@@ -175,13 +175,13 @@ const Commodities: React.FC = () => {
     const handleConfirmCommodityDelete = () => { if(commodityToDelete) { deleteCommodityHolding(commodityToDelete.id); setCommodityToDelete(null); } };
 
     const handleUpdatePrices = async () => {
-        if (data.commodityHoldings.length === 0) return;
+        if (!(data?.commodityHoldings ?? []).length) return;
         setIsUpdatingPrices(true);
         try {
-            const { prices } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name, goldKarat: c.goldKarat })));
+            const { prices } = await getAICommodityPrices((data?.commodityHoldings ?? []).map(c => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
             const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
-                const updates = data.commodityHoldings
+                const updates = (data?.commodityHoldings ?? [])
                     .map(h => {
                         const newPriceInfo = prices.find(p => match(p, h));
                         return newPriceInfo ? { id: h.id, currentValue: newPriceInfo.price * h.quantity } : null;
@@ -190,8 +190,8 @@ const Commodities: React.FC = () => {
                 
                 if (updates.length > 0) {
                     await batchUpdateCommodityHoldingValues(updates);
-                    if (updates.length < data.commodityHoldings.length) {
-                        console.warn(`Updated ${updates.length} of ${data.commodityHoldings.length} commodity prices.`);
+                    if (updates.length < (data?.commodityHoldings ?? []).length) {
+                        console.warn(`Updated ${updates.length} of ${(data?.commodityHoldings ?? []).length} commodity prices.`);
                     }
                 }
             }
@@ -217,8 +217,8 @@ const Commodities: React.FC = () => {
                     </button>
                 </div>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {data.commodityHoldings.map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
-                    {data.commodityHoldings.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
+                    {(data?.commodityHoldings ?? []).map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
+                    {(data?.commodityHoldings ?? []).length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </div>
             

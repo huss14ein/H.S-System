@@ -36,7 +36,7 @@ const Forecast: React.FC = () => {
         (data?.transactions ?? []).forEach(t => {
             const monthKey = t.date.slice(0, 7);
             if (!monthlyNet.has(monthKey)) return;
-            monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + t.amount);
+            monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + (Number(t.amount) ?? 0));
         });
 
         const values = Array.from(monthlyNet.values());
@@ -97,8 +97,8 @@ const Forecast: React.FC = () => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
         const investments = data?.investments ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) + accounts.reduce((sum, acc) => sum + acc.balance, 0);
-        const totalLiabilities = liabilities.reduce((sum, liab) => sum + liab.amount, 0);
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
         const netWorth = totalAssets + totalLiabilities;
         const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };
@@ -163,7 +163,7 @@ const Forecast: React.FC = () => {
 
                 goalsWithProjections.forEach(goal => {
                     if (goal.metMonth === null) {
-                        const netWorthNeededForGoal = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
+                        const netWorthNeededForGoal = initialValues.netWorth - (goal.currentAmount ?? 0) + (goal.targetAmount ?? 0);
                         if (currentNetWorth >= netWorthNeededForGoal) {
                             goal.metMonth = i + 1;
                         }
@@ -205,7 +205,7 @@ const Forecast: React.FC = () => {
             setGoalProjections(goalsWithProjections.map(g => {
                 const met = g.metMonth !== null;
                 return {
-                    name: g.name,
+                    name: g.name ?? '—',
                     met: met,
                     years: met ? Math.floor(g.metMonth! / 12) : 0,
                     months: met ? g.metMonth! % 12 : 0,
@@ -218,10 +218,10 @@ const Forecast: React.FC = () => {
 
     const goalReferenceLines = useMemo(() => {
         return (data?.goals ?? []).map(goal => {
-            const yValue = initialValues.netWorth - goal.currentAmount + goal.targetAmount;
+            const yValue = initialValues.netWorth - (goal.currentAmount ?? 0) + (goal.targetAmount ?? 0);
             return {
                 y: yValue,
-                label: goal.name
+                label: goal.name ?? '—'
             };
         });
     }, [data?.goals, initialValues.netWorth]);

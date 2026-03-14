@@ -517,13 +517,13 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
 
 
 export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]> => {
-    const cacheKey = `getAIFeedInsights:${data.transactions.length}:${data.goals.length}:${data.budgets.length}`;
+    const cacheKey = `getAIFeedInsights:${(data?.transactions ?? []).length}:${(data?.goals ?? []).length}:${(data?.budgets ?? []).length}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 
     try {
         const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this snapshot and return 4-5 feed items as JSON. Be direct: each title is one short punchy line; each description is one sentence with a number or action.
-Data: Recent tx: ${data.transactions.slice(0, 5).map(t => `${t.description} ${t.amount}`).join('; ')}. Budgets: ${data.budgets.map(b => `${b.category} ${b.limit}`).join('; ')}. Goals: ${data.goals.map(g => `${g.name} ${((g.currentAmount/g.targetAmount)*100).toFixed(0)}%`).join('; ')}. Top holding: ${getTopHoldingSymbol(data.investments)}.
+Data: Recent tx: ${(data?.transactions ?? []).slice(0, 5).map(t => `${t.description ?? ''} ${t.amount ?? 0}`).join('; ')}. Budgets: ${(data?.budgets ?? []).map(b => `${b.category ?? ''} ${b.limit ?? 0}`).join('; ')}. Goals: ${(data?.goals ?? []).map(g => `${g.name ?? ''} ${((g.targetAmount ?? 0) > 0 ? (((g.currentAmount ?? 0) / (g.targetAmount ?? 1)) * 100).toFixed(0) : '0')}%`).join('; ')}. Top holding: ${getTopHoldingSymbol(data?.investments ?? [])}.
 Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, specific), emoji (single). Prioritize what matters most.`;
 
         const response = await invokeAI({
@@ -820,24 +820,24 @@ export const getAIInvestmentOverviewAnalysis = async (
 };
 
 export const getAIExecutiveSummary = async (data: FinancialData): Promise<string> => {
-    const cacheKey = `getAIExecutiveSummary:${data.transactions.length}:${data.investments.length}`;
+    const cacheKey = `getAIExecutiveSummary:${(data?.transactions ?? []).length}:${(data?.investments ?? []).length}`;
     const cached = getFromCache(cacheKey);
     if(cached) return cached;
 
     // Calculate some metrics for the prompt
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthlyTransactions = data.transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
-    const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-    const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const monthlyTransactions = (data?.transactions ?? []).filter(t => new Date(t.date) >= firstDayOfMonth);
+    const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (t.amount ?? 0), 0);
+    const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount ?? 0), 0);
     const monthlyPnL = monthlyIncome - monthlyExpenses;
 
     const budgetMonthlyLimit = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-    const overspentBudgets = data.budgets
+    const overspentBudgets = (data?.budgets ?? [])
         .map(budget => {
             const spent = monthlyTransactions
                 .filter(t => t.type === 'expense' && t.budgetCategory === budget.category)
-                .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+                .reduce((sum, t) => sum + Math.abs(t.amount ?? 0), 0);
             const limit = budgetMonthlyLimit(budget);
             const percentage = limit > 0 ? (spent / limit) * 100 : 0;
             return { ...budget, spent, percentage };
@@ -846,10 +846,11 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
         .map(b => `${b.category} (${b.percentage.toFixed(0)}% used)`)
         .join(', ');
     
-    const goalProgress = data.goals.map(g => {
-        const currentAmount = g.currentAmount; // simplified for prompt
-        const progress = g.targetAmount > 0 ? (currentAmount / g.targetAmount) * 100 : 0;
-        return `${g.name} (${progress.toFixed(0)}%)`;
+    const goalProgress = (data?.goals ?? []).map(g => {
+        const currentAmount = g.currentAmount ?? 0;
+        const targetAmount = g.targetAmount ?? 0;
+        const progress = targetAmount > 0 ? (currentAmount / targetAmount) * 100 : 0;
+        return `${g.name ?? ''} (${progress.toFixed(0)}%)`;
     }).join(', ');
 
     const prompt = `

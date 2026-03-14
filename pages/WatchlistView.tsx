@@ -484,7 +484,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     const [newBucketName, setNewBucketName] = useState('');
     const [newBucketCurrency, setNewBucketCurrency] = useState<PriceAlertCurrency>('USD');
 
-    const watchlistSymbolKey = useMemo(() => data.watchlist.map((w) => w.symbol.trim().toUpperCase()).filter(Boolean).join(','), [data.watchlist]);
+    const watchlistSymbolKey = useMemo(() => (data?.watchlist ?? []).map((w) => (w.symbol ?? '').trim().toUpperCase()).filter(Boolean).join(','), [data?.watchlist]);
     useEffect(() => {
         if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
         const symbols = watchlistSymbolKey ? watchlistSymbolKey.split(',') : [];
@@ -574,16 +574,16 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     }, [watchlistBuckets]);
 
     useEffect(() => {
-        const symbols = new Set((data.watchlist || []).map((w) => (w.symbol || '').toUpperCase()));
+        const symbols = new Set((data?.watchlist ?? []).map((w) => (w.symbol ?? '').toUpperCase()));
         setWatchlistBuckets((prev) => prev.map((b) => ({ ...b, symbols: b.symbols.filter((s) => symbols.has((s || '').toUpperCase())) })));
-    }, [data.watchlist]);
+    }, [data?.watchlist]);
 
     const activeBucket = useMemo(() => watchlistBuckets.find((b) => b.id === activeBucketId) || null, [watchlistBuckets, activeBucketId]);
 
     const filteredWatchlist = useMemo(() => {
         const q = searchQuery.trim().toUpperCase();
         const bucketSymbolSet = activeBucket ? new Set((activeBucket.symbols || []).map((s) => s.toUpperCase())) : null;
-        return (data.watchlist || []).filter((item) => {
+        return (data?.watchlist ?? []).filter((item) => {
             const symbol = (item.symbol || '').toUpperCase();
             const name = (item.name || '').toUpperCase();
             const market = getExchangeAndCurrencyForSymbol(symbol);
@@ -593,35 +593,35 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             const bucketOk = !bucketSymbolSet || bucketSymbolSet.has(symbol);
             return marketOk && queryOk && bucketOk;
         });
-    }, [data.watchlist, searchQuery, marketFilter, activeBucket]);
+    }, [data?.watchlist, searchQuery, marketFilter, activeBucket]);
 
     const watchlistInsights = useMemo(() => {
-        const rows = data.watchlist.map((item) => ({
+        const rows = (data?.watchlist ?? []).map((item) => ({
             ...item,
-            priceInfo: simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 },
-            activeAlerts: data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active'),
+            priceInfo: simulatedPrices[item.symbol ?? ''] || { price: 0, change: 0, changePercent: 0 },
+            activeAlerts: (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active'),
         }));
         const positiveMovers = rows.filter(r => r.priceInfo.changePercent > 0).length;
         const negativeMovers = rows.filter(r => r.priceInfo.changePercent < 0).length;
         const alertCoverage = rows.filter(r => r.activeAlerts.length > 0).length;
         return { positiveMovers, negativeMovers, alertCoverage, total: rows.length };
-    }, [data.watchlist, data.priceAlerts, simulatedPrices]);
+    }, [data?.watchlist, data?.priceAlerts, simulatedPrices]);
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => { if (!itemToDelete) return; if (activeBucket) { handleRemoveFromActiveBucket(itemToDelete.symbol); } else { deleteWatchlistItem(itemToDelete.symbol); } setIsDeleteModalOpen(false); setItemToDelete(null); };
     const handleOpenAlertModal = (item: WatchlistItem) => { const sym = item.symbol ?? ''; setStockForAlert({ ...item, symbol: sym, price: simulatedPrices[sym]?.price || 0 }); setIsAlertModalOpen(true); };
 
-    const recentTransactions = (data.investmentTransactions ?? []).slice(0, 10);
+    const recentTransactions = (data?.investmentTransactions ?? []).slice(0, 10);
     const analysisContext = useMemo(() => {
-        const holdings = (data.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency })));
+        const holdings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
         const bySymbol = new Map<string, number>();
         holdings.forEach(h => {
         const sym = h.symbol ?? '';
         if (sym) bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate));
       });
         const summary = Array.from(bySymbol.entries()).map(([s, v]) => `${s}: ${v.toFixed(0)}`).join('; ') || 'None';
-        const watchlistSymbols = (data.watchlist ?? []).map(w => w.symbol);
-        const plan = data.investmentPlan;
+        const watchlistSymbols = (data?.watchlist ?? []).map(w => w.symbol ?? '');
+        const plan = data?.investmentPlan;
         return {
             holdingsSummary: summary,
             watchlistSymbols: watchlistSymbols.length > 0 ? watchlistSymbols : undefined,
@@ -629,7 +629,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
             corePct: plan?.coreAllocation,
             upsidePct: plan?.upsideAllocation,
         };
-    }, [data.investments, data.watchlist, data.investmentPlan, exchangeRate]);
+    }, [data?.investments, data?.watchlist, data?.investmentPlan, exchangeRate]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);
@@ -653,7 +653,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
         setAiWatchlistError(null);
         setAiWatchlistLoading(true);
         try {
-            const tips = await getAIWatchlistAdvice(data.watchlist.map(w => w.symbol));
+            const tips = await getAIWatchlistAdvice((data?.watchlist ?? []).map(w => w.symbol ?? ''));
             setAiWatchlistTips(tips);
         } catch (err) {
             setAiWatchlistError(formatAiError(err));
@@ -661,7 +661,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
         } finally {
             setAiWatchlistLoading(false);
         }
-    }, [data.watchlist]);
+    }, [data?.watchlist]);
     const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => { addPriceAlert({ symbol, targetPrice, currency }); };
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
@@ -763,14 +763,14 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                         <option value="SAR">Saudi (SAR)</option>
                     </select>
                     <button type="button" className="btn-outline text-xs" onClick={() => { setSearchQuery(''); setMarketFilter('All'); }}>Clear filters</button>
-                    <span className="text-xs text-slate-500">Showing {filteredWatchlist.length} of {(data.watchlist || []).length}</span>
+                    <span className="text-xs text-slate-500">Showing {filteredWatchlist.length} of {(data?.watchlist ?? []).length}</span>
                 </div>
                 <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredWatchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
-                            const activeAlerts = data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
+                            const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             const symKey = item.symbol.trim().toUpperCase();
                             return (
                                <WatchlistItemRow
@@ -790,7 +790,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                         })}
                     </tbody>
                 </table>
-                {(data.watchlist.length === 0 || filteredWatchlist.length === 0) && (<div className="text-center py-10 text-slate-500">{data.watchlist.length === 0 ? "Your watchlist is empty. Add symbols to track prices and get AI tips." : "No symbols match the selected filters."}</div>)}</div>
+                {((data?.watchlist ?? []).length === 0 || filteredWatchlist.length === 0) && (<div className="text-center py-10 text-slate-500">{(data?.watchlist ?? []).length === 0 ? "Your watchlist is empty. Add symbols to track prices and get AI tips." : "No symbols match the selected filters."}</div>)}</div>
             </div>
 
             <div className="lg:col-span-1 space-y-4">
@@ -824,7 +824,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
 
             <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-            <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? data.priceAlerts.filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
+            <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
         </div>
     );
 };

@@ -42,7 +42,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
         if (liabilityToEdit) {
             setName(liabilityToEdit.name);
             setType(liabilityToEdit.type);
-            setAmount(String(Math.abs(liabilityToEdit.amount)));
+            setAmount(String(Math.abs(Number(liabilityToEdit?.amount) || 0)));
             setStatus(liabilityToEdit.status ?? 'Active');
         } else {
             setName('');
@@ -131,8 +131,8 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                 <div className="flex items-center space-x-3">
                     {getIcon(liability.type)}
                     <div>
-                        <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500">{liability.type}{isPaid ? ' · Paid' : ''}</p>
+                        <h3 className="font-bold text-dark text-lg">{liability.name ?? '—'}</h3>
+                        <p className="text-sm text-gray-500">{liability.type ?? 'Loan'}{isPaid ? ' · Paid' : ''}</p>
                     </div>
                 </div>
                 <div className="flex space-x-1 items-center">
@@ -149,7 +149,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">Amount owed</p>
-                <p className="text-2xl font-semibold text-danger">{formatCurrencyString(Math.abs(liability.amount))}</p>
+                <p className="text-2xl font-semibold text-danger">{formatCurrencyString(Math.abs(liability.amount ?? 0))}</p>
             </div>
         </div>
     );
@@ -164,7 +164,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                 <div className="flex items-center space-x-3">
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />
                     <div>
-                        <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
+                        <h3 className="font-bold text-dark text-lg">{liability.name ?? '—'}</h3>
                         <p className="text-sm text-gray-500">{isPaid ? 'Owed to you · Paid' : 'Owed to you'}</p>
                     </div>
                 </div>
@@ -177,7 +177,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">Amount owed to you</p>
-                <p className={`text-2xl font-semibold ${isPaid ? 'text-gray-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount)}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-gray-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount ?? 0)}</p>
             </div>
         </div>
     );
@@ -192,28 +192,32 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
     const allLiabilities: Liability[] = useMemo(() => {
-        const creditCardDebts = data.accounts
-            .filter(a => a.type === 'Credit' && a.balance < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance, status: 'Active' as const }));
-        return [...data.liabilities, ...creditCardDebts];
-    }, [data.liabilities, data.accounts]);
+        const accounts = data?.accounts ?? [];
+        const liabilities = data?.liabilities ?? [];
+        const creditCardDebts = accounts
+            .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
+            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance ?? 0, status: 'Active' as const }));
+        return [...liabilities, ...creditCardDebts];
+    }, [data?.liabilities, data?.accounts]);
 
     const allDebts = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) < 0), [allLiabilities]);
     const allReceivables = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) > 0), [allLiabilities]);
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
-    const liabilityIds = useMemo(() => new Set(data.liabilities.map(l => l.id)), [data.liabilities]);
+    const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
 
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
         const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const assets = data?.assets ?? [];
+        const accountsForRatio = data?.accounts ?? [];
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accountsForRatio.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [allDebts, allReceivables, data.assets, data.accounts]);
+    }, [allDebts, allReceivables, data?.assets, data?.accounts]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);

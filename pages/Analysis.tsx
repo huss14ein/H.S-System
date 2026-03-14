@@ -38,8 +38,8 @@ const buildTrendData = (transactions: Transaction[], months = 6) => {
         const key = getMonthKey(t.date);
         if (!monthMap.has(key)) return;
         const current = monthMap.get(key)!;
-        if (isIncomeTx(t)) current.income += Math.abs(t.amount);
-        if (isExpenseTx(t)) current.expenses += Math.abs(t.amount);
+        if (isIncomeTx(t)) current.income += Math.abs(Number(t.amount) ?? 0);
+        if (isExpenseTx(t)) current.expenses += Math.abs(Number(t.amount) ?? 0);
         monthMap.set(key, current);
     });
 
@@ -60,7 +60,7 @@ const SpendingByCategoryChart: React.FC = () => {
             .forEach((t) => {
                 const rawCategory = (t.budgetCategory || t.category || 'Uncategorized').trim();
                 const category = rawCategory.length > 0 ? rawCategory : 'Uncategorized';
-                spending.set(category, (spending.get(category) || 0) + Math.abs(t.amount));
+                spending.set(category, (spending.get(category) || 0) + Math.abs(Number(t.amount) ?? 0));
             });
         return Array.from(spending, ([name, value]) => ({ name, value }))
             .filter((x) => Number.isFinite(x.value) && x.value > 0)
@@ -170,7 +170,7 @@ const Analysis: React.FC = () => {
         const spendingMap = new Map<string, number>();
         transactions.filter(isExpenseTx).forEach((t) => {
             const category = (t.budgetCategory || t.category || 'Uncategorized').trim() || 'Uncategorized';
-            spendingMap.set(category, (spendingMap.get(category) || 0) + Math.abs(t.amount));
+            spendingMap.set(category, (spendingMap.get(category) || 0) + Math.abs(Number(t.amount) ?? 0));
         });
         const spendingData = Array.from(spendingMap, ([name, value]) => ({ name, value }))
             .filter((x) => x.value > 0)

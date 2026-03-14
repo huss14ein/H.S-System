@@ -17,13 +17,13 @@ const SinkingFunds: React.FC = () => {
             .filter(t => 
                 t.type === 'expense' && 
                 t.transactionNature === 'Fixed' && 
-                Math.abs(t.amount) > 2000 && // Significant amount
+                Math.abs(Number(t.amount) || 0) > 2000 && // Significant amount
                 new Date(t.date) > twoYearsAgo
             )
             .forEach(t => {
-                const existing = recurringExpenses.get(t.description) || { amount: Math.abs(t.amount), dates: [] };
+                const existing = recurringExpenses.get(t.description ?? '') || { amount: Math.abs(Number(t.amount) || 0), dates: [] };
                 existing.dates.push(new Date(t.date));
-                recurringExpenses.set(t.description, existing);
+                recurringExpenses.set(t.description ?? '', existing);
             });
 
         const funds = [];
@@ -54,7 +54,7 @@ const SinkingFunds: React.FC = () => {
             }
         }
         return funds.sort((a,b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow">
