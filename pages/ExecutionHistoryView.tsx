@@ -13,11 +13,15 @@ const ExecutionHistoryView: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
   
   const executionLogs = useMemo(() => {
-    // Get execution logs - they are saved via saveExecutionLog in Investment Plan
-    // Check localStorage for stored execution logs
+    // Get execution logs from data context (loaded from database)
     let logs: any[] = [];
     
-    // Try multiple possible storage keys
+    // Primary source: data.executionLogs from database
+    if (data?.executionLogs && Array.isArray(data.executionLogs)) {
+      logs = [...data.executionLogs];
+    }
+    
+    // Fallback: Check localStorage for any locally stored logs
     const storageKeys = [
       'investment-execution-logs',
       'investmentPlanExecutionLogs',
@@ -32,18 +36,12 @@ const ExecutionHistoryView: React.FC = () => {
           if (Array.isArray(parsed)) {
             logs = [...logs, ...parsed];
           } else if (parsed && typeof parsed === 'object') {
-            // If it's an object with logs array
             logs = [...logs, ...(parsed.logs || [parsed])];
           }
         }
       } catch {
         // Ignore parse errors
       }
-    }
-    
-    // Also check data context if available
-    if ((data as any)?.executionLogs) {
-      logs = [...logs, ...((data as any).executionLogs)];
     }
     
     // Remove duplicates by id or unique combination
@@ -67,7 +65,7 @@ const ExecutionHistoryView: React.FC = () => {
         const dateB = new Date(b.created_at || b.date || b.timestamp || 0).getTime();
         return dateB - dateA; // Most recent first
       });
-  }, [data, filterStatus]);
+  }, [data?.executionLogs, filterStatus]);
 
   return (
     <div className="space-y-6">
@@ -127,9 +125,56 @@ const ExecutionHistoryView: React.FC = () => {
               <ClockIcon className="h-10 w-10 text-slate-400" />
             </div>
             <p className="text-xl font-semibold text-slate-600 mb-2">No execution history yet</p>
-            <p className="text-slate-500">Execute an investment plan to see history here</p>
+            <p className="text-slate-500 mb-4">Execute an investment plan to see history here</p>
+            <button
+              type="button"
+              onClick={() => {
+                // Navigate to Investment Plan tab if available
+                const event = new CustomEvent('navigateToTab', { detail: 'Investment Plan' });
+                window.dispatchEvent(event);
+              }}
+              className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors"
+            >
+              Go to Investment Plan
+            </button>
           </div>
         ) : (
+          <>
+            <div className="mb-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    ['Date', 'Status', 'Total Investment', 'Core', 'High-Upside', 'Speculative', 'Trades Count'].join(','),
+                    ...executionLogs.map((log: any) => {
+                      const date = log.created_at || log.date || log.timestamp;
+                      const dateStr = date ? new Date(date).toISOString().split('T')[0] : '';
+                      return [
+                        dateStr,
+                        log.status || 'unknown',
+                        log.totalInvestment ?? 0,
+                        log.coreInvestment ?? 0,
+                        log.upsideInvestment ?? 0,
+                        log.speculativeInvestment ?? 0,
+                        Array.isArray(log.trades) ? log.trades.length : 0
+                      ].join(',');
+                    })
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `execution-history-${new Date().toISOString().split('T')[0]}.csv`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+              >
+                Export All to CSV
+              </button>
+            </div>
           <div className="space-y-4">
             {executionLogs.map((log: any, index: number) => {
               const executionDate = log.created_at || log.date;
@@ -216,10 +261,26 @@ const ExecutionHistoryView: React.FC = () => {
                       )}
                     </div>
                   )}
+                  {log.trades && Array.isArray(log.trades) && log.trades.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <p className="text-sm font-semibold text-slate-700 mb-2">Proposed Trades ({log.trades.length})</p>
+                      <div className="space-y-1">
+                        {log.trades.slice(0, 5).map((trade: any, idx: number) => (
+                          <div key={idx} className="text-xs text-slate-600 bg-slate-50 rounded p-2">
+                            <span className="font-semibold">{trade.ticker}</span>: {formatCurrencyString(trade.amount ?? 0, { digits: 0 })} - {trade.reason || 'N/A'}
+                          </div>
+                        ))}
+                        {log.trades.length > 5 && (
+                          <p className="text-xs text-slate-500 italic">+ {log.trades.length - 5} more trades</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
+          </>
         )}
       </SectionCard>
     </div>

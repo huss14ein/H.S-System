@@ -901,7 +901,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         }
     }, [holding, isOpen]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!holding) return;
         const trimmedName = name.trim();
@@ -914,7 +914,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             return;
         }
         try {
-            onSave({ ...holding, name: trimmedName, zakahClass, goalId });
+            await onSave({ ...holding, name: trimmedName, zakahClass, goalId });
             onClose();
         } catch (error) {
             alert(`Failed to save holding: ${error instanceof Error ? error.message : String(error)}`);
@@ -1066,34 +1066,82 @@ export const PortfolioModal: React.FC<{
 
 const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, transactions: InvestmentTransaction[], platformName: string }> = ({ isOpen, onClose, transactions, platformName }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const handleExportCSV = () => {
+        const csv = [
+            ['Date', 'Type', 'Symbol', 'Quantity', 'Price', 'Amount', 'Currency'].join(','),
+            ...transactions.map(t => {
+                const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+                return [
+                    t.date,
+                    t.type,
+                    t.symbol === 'CASH' ? '' : (t.symbol || ''),
+                    t.quantity || 0,
+                    t.price || 0,
+                    t.total ?? 0,
+                    cur
+                ].join(',');
+            })
+        ].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `transactions-${platformName}-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
+            <div className="mb-4 flex justify-end">
+                {transactions.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={handleExportCSV}
+                        className="px-4 py-2 text-sm font-medium bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+                    >
+                        Export CSV
+                    </button>
+                )}
+            </div>
             <div className="max-h-[60vh] overflow-y-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
-                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {transactions.map(t => {
-                            const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-                            return (
-                                <tr key={t.id} className="hover:bg-gray-50">
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
-                                    <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                {transactions.length === 0 ? (
+                    <div className="text-center py-12">
+                        <p className="text-sm text-slate-500">No transactions recorded for this platform yet.</p>
+                        <p className="text-xs text-slate-400 mt-2">Record trades to see transaction history here.</p>
+                    </div>
+                ) : (
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {transactions.map(t => {
+                                const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+                                return (
+                                    <tr key={t.id} className="hover:bg-gray-50">
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
+                                        <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-600">{t.quantity || '—'}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-600">{t.price ? formatCurrencyString(t.price, { inCurrency: cur }) : '—'}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                )}
             </div>
         </Modal>
     )
@@ -2885,9 +2933,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
     const handleSaveHolding = async (holding: Holding) => { 
         try {
-            await updateHolding(holding); 
+            await updateHolding(holding);
+            setIsHoldingEditModalOpen(false);
+            setHoldingToEdit(null);
         } catch (error) {
-            // Error already alerted in DataContext
+            alert(`Failed to save holding: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
   
@@ -3072,7 +3122,15 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       </InvestmentTabErrorBoundary>
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
-      <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
+      <HoldingEditModal 
+        isOpen={isHoldingEditModalOpen} 
+        onClose={() => {
+            setIsHoldingEditModalOpen(false);
+            setHoldingToEdit(null);
+        }} 
+        onSave={handleSaveHolding} 
+        holding={holdingToEdit} 
+      />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 
         isOpen={isPortfolioModalOpen} 
