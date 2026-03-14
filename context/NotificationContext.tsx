@@ -252,6 +252,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   const sendSubscriptionToServer = async (subscription: PushSubscription) => {
     try {
       // In a real app, you would send this to your backend
+      // eslint-disable-next-line no-console
       console.log('Sending subscription to server:', subscription);
       
       // Example API call:
@@ -269,6 +270,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   const removeSubscriptionFromServer = async (subscription: PushSubscription) => {
     try {
       // In a real app, you would send this to your backend
+      // eslint-disable-next-line no-console
       console.log('Removing subscription from server:', subscription);
       
       // Example API call:

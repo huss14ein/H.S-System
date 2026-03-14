@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Test Investment Overview calculations and data accuracy
 import { toSAR } from './utils/currencyMath';
 

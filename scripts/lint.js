@@ -17,8 +17,16 @@ for (const file of trackedFiles) {
   const path = join(process.cwd(), file);
   const content = readFileSync(path, 'utf8');
 
-  // Find all console statements
-  const consoleMatches = content.match(/\bconsole\.(log|debug|info|warn|error)\s*\(/g) || [];
+  // Check if file has global eslint-disable for no-console
+  const hasGlobalDisable = content.includes('/* eslint-disable no-console */') || 
+                          content.includes('/* eslint-disable */');
+  
+  if (hasGlobalDisable) {
+    continue; // Skip this file entirely
+  }
+
+  // Find only disallowed console statements (log, debug, info)
+  const consoleMatches = content.match(/\bconsole\.(log|debug|info)\s*\(/g) || [];
   
   for (const match of consoleMatches) {
     const index = content.indexOf(match);

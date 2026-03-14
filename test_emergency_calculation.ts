@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Test emergency fund calculation with gap
 import { buildHouseholdBudgetPlan, HouseholdEngineInput } from './services/householdBudgetEngine';
 

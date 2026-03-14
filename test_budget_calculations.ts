@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Test file to verify Household Budget Engine calculations
 import { buildHouseholdBudgetPlan, HouseholdEngineInput } from './services/householdBudgetEngine';
 

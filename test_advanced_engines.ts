@@ -3,13 +3,8 @@
  * Tests all new engines and integration layer
  */
 
-import {
-  calculatePositionRisk,
-  calculatePortfolioRisk,
-  calculatePositionSizeLimits,
-  calculateSleeveRiskAllocation,
-  RiskMetrics
-} from '../services/advancedRiskScoring';
+/* eslint-disable no-console */
+import { calculatePositionRisk, calculatePositionSizeLimits } from './services/advancedRiskScoring';
 
 import {
   calculateOptimalSleeveAllocation,

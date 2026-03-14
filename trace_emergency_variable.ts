@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Trace the emergency gap variable throughout the calculation
 import { buildHouseholdBudgetPlan, HouseholdEngineInput, DEFAULT_HOUSEHOLD_ENGINE_CONFIG } from './services/householdBudgetEngine';
 

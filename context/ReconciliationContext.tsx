@@ -414,6 +414,7 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
 
   const importTransactions = async (session: ReconciliationSession) => {
     // Simulate importing transactions to the main system
+    // eslint-disable-next-line no-console
     console.log(`Importing ${session.matchedTransactions} transactions from session ${session.id}`);
   };
 

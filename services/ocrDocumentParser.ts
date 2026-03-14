@@ -158,6 +158,7 @@ class OCRDocumentParser {
         // this.tesseractWorker = await Tesseract.createWorker();
         // await this.tesseractWorker.loadLanguage('eng');
         // await this.tesseractWorker.initialize('eng');
+        // eslint-disable-next-line no-console
         console.log('OCR initialized');
       } catch (error) {
         console.warn('OCR initialization failed:', error);

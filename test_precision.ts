@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Test rounding and currency handling precision
 import { buildHouseholdBudgetPlan, HouseholdEngineInput } from './services/householdBudgetEngine';
 

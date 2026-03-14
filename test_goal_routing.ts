@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Test goal routing and surplus allocation logic
 import { buildHouseholdBudgetPlan, HouseholdEngineInput } from './services/householdBudgetEngine';
 
