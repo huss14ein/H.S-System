@@ -107,11 +107,15 @@ export type HoldingAssetClass =
   | 'NFT'
   | 'Other';
 
+/** ticker = listed instrument (symbol required); manual_fund = bank product / unmapped (e.g. Al Rajhi Mashura), no market feed, valuation from current_value. */
+export type HoldingType = 'ticker' | 'manual_fund';
+
 export interface Holding {
   id: string; 
   user_id?: string;
   portfolio_id?: string;
-  symbol: string;
+  /** Required when holdingType is 'ticker'; may be null/empty for manual_fund. */
+  symbol?: string;
   name?: string;
   quantity: number;
   avgCost: number;
@@ -123,6 +127,8 @@ export interface Holding {
   realizedPnL: number;
   dividendDistribution?: 'Reinvest' | 'Payout';
   dividendYield?: number;
+  /** ticker = listed; manual_fund = unmapped bank product (no market feed). Default ticker. */
+  holdingType?: HoldingType;
 }
 
 export interface InvestmentPortfolio {
@@ -167,8 +173,26 @@ export interface Budget {
   period?: 'monthly' | 'yearly' | 'weekly' | 'daily';
   /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
   tier?: BudgetTier;
+  /** Account id where savings for this budget (e.g. Savings & Investments) are directed. Shown as "→ Account name" and used to pre-fill transaction account. */
+  destinationAccountId?: string;
 }
 
+/** Single source of truth for adults, kids, overrides. Used by Plan, Budgets, and Investment Control Tower. */
+export interface HouseholdProfile {
+  user_id: string;
+  adults: number;
+  kids: number;
+  monthly_overrides?: { monthIndex: number; incomeAdjustment?: number; expenseAdjustment?: number; note?: string }[];
+  updated_at?: string;
+}
+
+/** Suggested budget row from household engine (category + limit + period). */
+export interface SuggestedBudgetRow {
+  category: string;
+  limit: number;
+  period: 'monthly' | 'yearly' | 'weekly' | 'daily';
+  tier?: BudgetTier;
+}
 
 export interface GovernanceUser {
   id: string;
@@ -318,6 +342,8 @@ export interface FinancialData {
   statusChangeLog: StatusChangeLog[];
   executionLogs: InvestmentPlanExecutionLog[];
   notifications: Notification[];
+  /** Budget requests for current user (for notifications: finalized/rejected). */
+  budgetRequests?: BudgetRequest[];
 }
 
 export interface KPISummary {
@@ -472,6 +498,13 @@ export type WealthUltraSleeve = 'Core' | 'Upside' | 'Spec';
 export type WealthUltraRiskTier = 'Low' | 'Med' | 'High' | 'Spec';
 export type WealthUltraStrategyMode = 'Hold' | 'Adjust' | 'DipBuy' | 'Trim' | 'Exit';
 
+/** Explicit rebalance policy: when and how to rebalance. */
+export type RebalancePolicy =
+  | 'threshold_only'   // rebalance when drift exceeds threshold
+  | 'calendar'         // rebalance on fixed schedule (e.g. quarterly)
+  | 'threshold_or_calendar'
+  | 'manual_only';
+
 export interface WealthUltraConfig {
   fxRate: number;
   targetCorePct: number;
@@ -492,6 +525,10 @@ export interface WealthUltraConfig {
   coreTickers?: string[];
   upsideTickers?: string[];
   specTickers?: string[];
+  /** Rebalance policy: when to suggest/run rebalance. */
+  rebalancePolicy?: RebalancePolicy;
+  /** Drift threshold % for threshold-based rebalance (default 5). */
+  rebalanceDriftThresholdPct?: number;
 }
 
 export interface WealthUltraPosition {
@@ -524,6 +561,10 @@ export interface WealthUltraPosition {
   trailingPctOverride?: number;
   applyTrailing: boolean;
   trailingStopPrice?: number;
+  /** Risk score 0–100 (higher = riskier position). Filled by riskScoring. */
+  riskScore?: number;
+  /** Execution priority rank for trades (1 = highest). Filled by trade ranking. */
+  tradeRank?: number;
 }
 
 export interface WealthUltraSleeveAllocation {

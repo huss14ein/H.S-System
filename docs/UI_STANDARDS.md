@@ -2,6 +2,13 @@
 
 Use these patterns so all pages look and behave consistently.
 
+## Theme
+
+- The app uses a **single light theme**. No dark hero bands; page and section headers use a light style. Use **slate** (e.g. `text-slate-500`, `bg-slate-50`) for neutrals instead of gray for consistency.
+- **Page/section heroes**: Use the `.page-hero` class (in `index.css`) for page-level or section-level headers: light background, dark text, border, rounded. Do not use dark gradients (e.g. `from-slate-900`) for large header areas.
+- **Cards**: Use `.section-card` for content blocks. Reserve white-on-dark only for primary/secondary/danger buttons and small badges where the design system explicitly uses it.
+- **Expand/collapse**: Use `CollapsibleSection` for long or secondary content; prefer collapsed by default; provide a one-line summary when closed.
+
 ## Page structure
 
 - **PageLayout** (`components/PageLayout.tsx`): Wraps the page with a title, optional description, and optional action (e.g. "Add" button). Use for every main app page.
@@ -45,7 +52,9 @@ Use these patterns so all pages look and behave consistently.
 
 ## Feedback
 
-- `.empty-state` – centered muted text when there’s no data
+- **EmptyState** (`components/EmptyState.tsx`): Reusable empty state with optional `title`, `description`, `icon`, and `action`. Use for lists, sections, and dashboards when there is no data. Aligns with `.empty-state` styling and light theme; includes `role="status"` for screen readers.
+- `.empty-state` – centered muted text when there's no data (or use the EmptyState component for consistency).
+- **LoadingSpinner**: Optional `message` is announced to screen readers via `role="status"` and `aria-live="polite"`; uses `text-slate-500` for theme consistency.
 - `.alert-error`, `.alert-warning`, `.alert-info` – left-border alerts
 - `.badge-success`, `.badge-warning`, `.badge-danger`, `.badge-neutral` – status pills
 
@@ -59,6 +68,7 @@ Use these patterns so all pages look and behave consistently.
 
 ## Accessibility
 
+- **Skip link**: Layout includes a "Skip to main content" link (visible on focus) that moves focus to the main content; ensure `#main-content` and `tabIndex={-1}` on `<main>` are present.
 - Clickable non-buttons: `role="button"`, `tabIndex={0}`, `onKeyDown` for Enter.
 - Icon buttons: `aria-label` (e.g. "Edit", "Delete", "Close").
 - Form controls: associate labels with inputs (e.g. `htmlFor` / `id`).

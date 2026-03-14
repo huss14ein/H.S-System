@@ -28,7 +28,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto' }) => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[11px] font-bold text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
         aria-label="More information"
         title={text.slice(0, 80) + (text.length > 80 ? '…' : '')}
       >

@@ -30,6 +30,7 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
 import SectionCard from '../components/SectionCard';
+import EmptyState from '../components/EmptyState';
 import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
@@ -38,12 +39,11 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
+import InvestmentPlanControlTower from '../components/InvestmentPlanControlTower';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
-
-
-
+import { safeSymbol, holdingDisplayLabel } from '../utils/holdingUtils';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
 
@@ -235,7 +235,8 @@ const RecordTradeModal: React.FC<{
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
-            return !portfolio?.holdings.some(h => h.symbol.toLowerCase() === symbol.toLowerCase().trim());
+            const sym = symbol.toLowerCase().trim();
+            return !portfolio?.holdings.some(h => safeSymbol(h.symbol).toLowerCase() === sym);
         }
         return false;
     }, [type, portfolioId, symbol, portfolios]);
@@ -331,7 +332,7 @@ const RecordTradeModal: React.FC<{
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
-            const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
+            const holding = portfolio?.holdings.find(h => safeSymbol(h.symbol).toUpperCase() === normalized);
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
@@ -544,10 +545,17 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
     useEffect(() => {
         if (!holding || !isOpen) return;
+        const sym = safeSymbol(holding.symbol);
+        if (!sym) {
+            setFundamentals(null);
+            setFundamentalsError(null);
+            setIsFundamentalsLoading(false);
+            return;
+        }
         let cancelled = false;
         setIsFundamentalsLoading(true);
         setFundamentalsError(null);
-        getHoldingFundamentals(holding.symbol)
+        getHoldingFundamentals(sym)
             .then((data) => {
                 if (!cancelled) {
                     setFundamentals(data);
@@ -580,7 +588,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const fmtFundamentals = (val: number, opts?: { digits?: number }) =>
         formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
 
-    const displayName = holding.name || (holding as any).name || holding.symbol;
+    const displayName = holding.name || (holding as any).name || holding.symbol || 'Manual';
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
     const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
@@ -590,13 +598,14 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
     const isSukuk = holding.assetClass === 'Sukuk';
 
+    const symbolOrName = holdingDisplayLabel(holding);
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`${symbolOrName} — Share details`}>
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — in portfolio currency; content contained */}
                 <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 p-5 sm:p-6 min-w-0">
                     <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-x-3 min-w-0">
-                        <span className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</span>
+                        <span className="metric-label text-2xl font-bold text-slate-900 break-words" title={symbolOrName}>{symbolOrName}</span>
                         <span className="hidden sm:inline text-slate-500 shrink-0">·</span>
                         <span className="metric-label text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</span>
                     </div>
@@ -743,15 +752,19 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                 </div>
 
-                {/* Price trend chart */}
+                {/* Price trend chart (ticker only; manual_fund has no market feed) */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <p className="text-sm font-semibold text-slate-700 mb-3 break-words">Price trend</p>
-                    <MiniPriceChart
-                        symbol={holding.symbol}
-                        currentPrice={currentPrice}
-                        changePercent={holding.priceChangePercent ?? holding.gainLossPercent}
-                        formatPrice={(p) => fmt(p)}
-                    />
+                    {safeSymbol(holding.symbol) ? (
+                        <MiniPriceChart
+                            symbol={holding.symbol!}
+                            currentPrice={currentPrice}
+                            changePercent={holding.priceChangePercent ?? holding.gainLossPercent}
+                            formatPrice={(p) => fmt(p)}
+                        />
+                    ) : (
+                        <p className="text-sm text-slate-500 py-4">No price history for manual / bank-product holdings. Value is from your entered amount.</p>
+                    )}
                 </div>
 
                 {/* AI Analyst */}
@@ -814,8 +827,9 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             setName(currentName);
             setZakahClass(holding.zakahClass);
             setGoalId(holding.goalId);
-            if (!currentName.trim() && holding.symbol.trim().length >= 2) {
-                fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
+            const sym = safeSymbol(holding.symbol);
+            if (!currentName.trim() && sym.length >= 2) {
+                fetchCompanyNameForSymbol(sym).then((apiName) => {
                     if (apiName) setName(apiName);
                 });
             }
@@ -830,8 +844,9 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         }
     };
     if (!holding) return null;
+    const editTitle = holdingDisplayLabel(holding);
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${editTitle}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
                 <div><label className="block text-sm font-medium text-gray-700">Holding Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
@@ -1016,7 +1031,11 @@ const PlatformCard: React.FC<{
         let valueSAR = 0, valueUSD = 0;
         portfolios.forEach(p => {
             const cur = (p.currency || 'USD') as TradeCurrency;
-            const v = (p.holdings || []).reduce((s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+            const v = (p.holdings || []).reduce((s, h) => {
+                const sym = safeSymbol(h.symbol);
+                const info = sym ? simulatedPrices[sym] : undefined;
+                return s + (info ? info.price * h.quantity : h.currentValue);
+            }, 0);
             if (cur === 'SAR') valueSAR += v; else valueUSD += v;
         });
         const totalValueInSAR = valueSAR + valueUSD * rate;
@@ -1055,7 +1074,11 @@ const PlatformCard: React.FC<{
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
         const dailyPnL = allHoldings.reduce(
-            (s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].change * h.quantity : 0),
+            (s, h) => {
+                const sym = safeSymbol(h.symbol);
+                const info = sym ? simulatedPrices[sym] : undefined;
+                return s + (info ? info.change * h.quantity : 0);
+            },
             0
         );
 
@@ -1081,7 +1104,8 @@ const PlatformCard: React.FC<{
     }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate, availableCashByCurrency]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
-        const priceInfo = simulatedPrices[h.symbol];
+        const sym = safeSymbol(h.symbol);
+        const priceInfo = sym ? simulatedPrices[sym] : undefined;
         const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
         const liveValue = currentMktPrice * h.quantity;
         const totalCost = h.avgCost * h.quantity;
@@ -1091,20 +1115,24 @@ const PlatformCard: React.FC<{
     
     const getGoalName = (goalId?: string) => goalId ? goals.find(g => g.id === goalId)?.name : undefined;
 
+    /** Resolved symbol for ticker (empty for manual_fund). Use for lookups. */
+    const holdingSymbol = (h: Holding) => safeSymbol(h.symbol);
+
     const symbolsNeedingName = useMemo(() => {
         const set = new Set<string>();
         portfolios.forEach((p) => (p.holdings || []).forEach((h) => {
-            if (!(h.name || (h as any).name)) set.add(h.symbol.trim().toUpperCase());
+            const sym = holdingSymbol(h).toUpperCase();
+            if (!(h.name || (h as any).name) && sym) set.add(sym);
         }));
         return Array.from(set);
     }, [portfolios]);
     const { names: symbolNames } = useCompanyNames(symbolsNeedingName);
 
-    const displayName = (h: Holding) => {
+    const displayName = (h: Holding): string | null => {
         const n = h.name || (h as any).name;
         if (n) return n;
-        const key = h.symbol.trim().toUpperCase();
-        return symbolNames[key] ?? null;
+        const key = holdingSymbol(h).toUpperCase();
+        return key ? (symbolNames[key] ?? null) : null;
     };
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -1238,7 +1266,13 @@ const PlatformCard: React.FC<{
                             {/* Holdings */}
                             <div className="overflow-x-auto max-h-96 overflow-y-auto">
                                 {portfolioHoldings.length === 0 ? (
-                                    <div className="px-5 py-8 text-center text-sm text-slate-500 rounded-b-2xl bg-slate-50/30">No holdings yet. Record a buy from <strong>Record Trade</strong> or the Transaction Log.</div>
+                                    <div className="px-5 py-8 rounded-b-2xl bg-slate-50/30">
+                                        <EmptyState
+                                            title="No holdings yet"
+                                            description={<>Record a buy from <strong>Record Trade</strong> or the Transaction Log.</>}
+                                            icon={<ChartPieIcon className="h-10 w-10 text-slate-300" aria-hidden />}
+                                        />
+                                    </div>
                                 ) : (
                                     <>
                                         <table className="w-full min-w-[640px] border-collapse table-auto" aria-label={`Holdings for ${portfolio.name}`}>
@@ -1258,20 +1292,26 @@ const PlatformCard: React.FC<{
                                             <tbody className="divide-y divide-slate-100">
                                                 {portfolioHoldings.map(h => {
                                                     const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
-                                                    const dailyPnL = simulatedPrices[h.symbol]?.change * h.quantity || 0;
+                                                    const symKey = holdingSymbol(h) || undefined;
+                                                    const dailyPnL = symKey && simulatedPrices[symKey]?.change ? simulatedPrices[symKey].change * h.quantity : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
+                                                    const label = holdingDisplayLabel(h);
+                                                    const resolvedName = displayName(h);
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
                                                             <td className="px-4 py-3 min-w-0 max-w-[200px]">
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: simulatedPrices[h.symbol]?.changePercent ?? 0 }, portfolio)}
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: symKey ? (simulatedPrices[symKey]?.changePercent ?? 0) : 0 }, portfolio)}
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
-                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={h.symbol}>{h.symbol}</span>
-                                                                        {displayName(h) && displayName(h) !== h.symbol && (
-                                                                            <span className="metric-value text-xs text-slate-500 block w-full" title={displayName(h)!}>{displayName(h)}</span>
+                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={label}>{label}</span>
+                                                                        {resolvedName && resolvedName !== label && (
+                                                                            <span className="metric-value text-xs text-slate-500 block w-full" title={resolvedName}>{resolvedName}</span>
+                                                                        )}
+                                                                        {(h as { holdingType?: string }).holdingType === 'manual_fund' && (
+                                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0">Manual</span>
                                                                         )}
                                                                     </button>
                                                                     {h.goalId && <span title={getGoalName(h.goalId)}><LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" aria-hidden /></span>}
@@ -1364,7 +1404,11 @@ const PlatformView: React.FC<{
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
     const aggregateValue = platformsData.reduce((sum, p) => {
         const holdings = p.portfolios.flatMap(port => port.holdings || []);
-        return sum + holdings.reduce((s, h) => s + (props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+        return sum + holdings.reduce((s, h) => {
+            const sym = safeSymbol(h.symbol);
+            const info = sym ? props.simulatedPrices[sym] : undefined;
+            return s + (info ? info.price * h.quantity : h.currentValue);
+        }, 0);
     }, 0);
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = totalPortfolios > 0;
@@ -1510,6 +1554,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
+    const { simulatedPrices } = useMarketData();
 
     const planFromData = data.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -1562,19 +1607,21 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         // 1. Start with explicit universe
         portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
 
-        // 2. Add holdings
+        // 2. Add holdings (only ticker-based; manual_fund holdings have no symbol for universe)
         investments.flatMap(p => p.holdings || []).forEach(h => {
-            if (!universeMap.has(h.symbol)) {
-                universeMap.set(h.symbol, {
+            const sym = safeSymbol(h.symbol);
+            if (!sym) return;
+            if (!universeMap.has(sym)) {
+                universeMap.set(sym, {
                     id: `holding-${h.id}`,
-                    ticker: h.symbol,
-                    name: h.name || h.symbol,
+                    ticker: sym,
+                    name: h.name || sym,
                     status: 'Core',
                     source: 'Holding'
                 });
             } else {
-                const existing = universeMap.get(h.symbol)!;
-                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
+                const existing = universeMap.get(sym)!;
+                universeMap.set(sym, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
             }
         });
 
@@ -1616,6 +1663,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         
         return Array.from(universeMap.values());
     }, [data.portfolioUniverse, data.investments, data.watchlist, data.plannedTrades]);
+
+    const investmentPlanPriceMap = useMemo(() => {
+        const map: Record<string, number> = {};
+        Object.entries(simulatedPrices).forEach(([sym, o]) => { map[sym.toUpperCase()] = (o as { price: number }).price; });
+        return map;
+    }, [simulatedPrices]);
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
@@ -1945,15 +1998,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     return (
         <div className="space-y-6">
-            <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 sm:p-6">
+            <section className="page-hero p-5 sm:p-6">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-white">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
-                        <p className="mt-1 text-sm text-slate-200 max-w-2xl">Design, validate, and execute your monthly allocation in one professional workflow connected to universe signals and Wealth Ultra.</p>
-                        <span className={`mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span>
+                        <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
+                        <p className="mt-1 text-sm text-slate-600 max-w-2xl">Design, validate, and execute your monthly allocation in one professional workflow connected to universe signals and Wealth Ultra.</p>
+                        <span className={`mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span>
                     </div>
                     <div className="flex items-center space-x-2">
-                        <button onClick={handleSave} className="px-6 py-2.5 bg-white text-slate-900 rounded-xl hover:bg-slate-100 transition-colors font-semibold">Save Plan</button>
+                        <button onClick={handleSave} className="px-6 py-2.5 border border-slate-200 bg-white text-slate-800 rounded-xl hover:bg-slate-50 transition-colors font-semibold">Save Plan</button>
                     </div>
                 </div>
             </section>
@@ -1981,6 +2034,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                     {onOpenWealthUltra && <>{onNavigateToTab && <span className="text-slate-300">·</span>}<button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button></>}
                 </div>
             )}
+
+            <InvestmentPlanControlTower
+                accounts={data.accounts ?? []}
+                transactions={data.transactions ?? []}
+                goals={data.goals ?? []}
+                holdings={data.investments?.flatMap((p: InvestmentPortfolio) => p.holdings ?? []) ?? []}
+                priceMap={investmentPlanPriceMap}
+                onOpenWealthUltra={onOpenWealthUltra}
+            />
 
             {/* How it works — Plan → Universe → Execute / Wealth Ultra */}
             <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
@@ -2480,7 +2542,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     let valueSAR = 0, valueUSD = 0;
     data.investments.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
-        const v = (p.holdings || []).reduce((s: number, h: Holding) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
+        const v = (p.holdings || []).reduce((s: number, h: Holding) => {
+            const sym = safeSymbol(h.symbol);
+            const info = sym ? simulatedPrices[sym] : undefined;
+            return s + (info ? info.price * h.quantity : h.currentValue);
+        }, 0);
         if (cur === 'SAR') valueSAR += v; else valueUSD += v;
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
@@ -2626,26 +2692,26 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   return (
     <div className="space-y-6">
-        <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-5 py-6 sm:px-6 shadow-sm">
+        <header className="page-hero px-5 py-6 sm:px-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <div className="flex flex-wrap items-center gap-3">
-                        <h1 className="text-3xl font-bold tracking-tight text-white">Investments</h1>
-                        <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100 backdrop-blur">Unified portfolio workspace</span>
+                        <h1 className="text-3xl font-bold tracking-tight text-slate-800">Investments</h1>
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">Unified portfolio workspace</span>
                     </div>
-                    <p className="mt-2 max-w-2xl text-sm text-slate-200/90">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-600">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
                     <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-100" />
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>
+                        <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-600" />
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                             {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
                         </span>
                     </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
+                    <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                         <SparklesIcon className="h-4 w-4" /> Smart Plan
                     </button>
-                    <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100">
+                    <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90">
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Record Trade
                     </button>
                 </div>

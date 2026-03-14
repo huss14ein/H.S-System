@@ -66,14 +66,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const signup = async (name: string, email: string, pass: string) => {
         if (!supabase) return { ...await noOpPromise('Supabase not configured.'), user: null };
-        // FIX: Use the v2 `signUp` method signature with an `options` object.
+        const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
         const { data, error } = await supabase.auth.signUp({
             email,
             password: pass,
             options: {
-                data: {
-                    full_name: name,
-                }
+                data: { full_name: name },
+                emailRedirectTo: redirectTo,
             }
         });
         return { error, user: data?.user || null };

@@ -44,7 +44,7 @@ const Layout: React.FC<LayoutProps> = ({
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/60 text-gray-800 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/60 text-slate-800 flex flex-col">
       <a
         href="#main-content"
         onClick={(event) => {

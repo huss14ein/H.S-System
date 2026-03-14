@@ -24,3 +24,18 @@ create policy "Users can manage own status_change_log"
 drop policy if exists "Users can manage own execution_logs" on public.execution_logs;
 create policy "Users can manage own execution_logs"
   on public.execution_logs for all using (auth.uid() = user_id);
+
+-- wealth_ultra_config: system-wide row (user_id null) readable by all; per-user rows only by owner
+alter table public.wealth_ultra_config enable row level security;
+drop policy if exists "wealth_ultra_config_select" on public.wealth_ultra_config;
+create policy "wealth_ultra_config_select" on public.wealth_ultra_config
+  for select using (user_id is null or auth.uid() = user_id);
+drop policy if exists "wealth_ultra_config_insert" on public.wealth_ultra_config;
+create policy "wealth_ultra_config_insert" on public.wealth_ultra_config
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "wealth_ultra_config_update_delete" on public.wealth_ultra_config;
+create policy "wealth_ultra_config_update_delete" on public.wealth_ultra_config
+  for update using (auth.uid() = user_id);
+drop policy if exists "wealth_ultra_config_delete" on public.wealth_ultra_config;
+create policy "wealth_ultra_config_delete" on public.wealth_ultra_config
+  for delete using (auth.uid() = user_id);

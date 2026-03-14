@@ -130,13 +130,19 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform } = useContext(DataContext)!;
+    const { data, addPlatform, updatePlatform, deletePlatform, addTransfer } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
 
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
+    const [isTransferOpen, setIsTransferOpen] = useState(false);
+    const [transferFrom, setTransferFrom] = useState('');
+    const [transferTo, setTransferTo] = useState('');
+    const [transferAmount, setTransferAmount] = useState('');
+    const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [transferNote, setTransferNote] = useState('');
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
         const cash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
@@ -183,11 +189,53 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         setItemToDelete(null);
     };
 
+    const handleAddStandardSet = async () => {
+        const standard = [
+            { name: 'Main Checking', type: 'Checking' as const },
+            { name: 'Savings', type: 'Savings' as const },
+            { name: 'Credit Card', type: 'Credit' as const },
+        ];
+        for (const a of standard) {
+            try {
+                await addPlatform(a as Omit<Account, 'id' | 'user_id' | 'balance'>);
+            } catch (_) {}
+        }
+    };
+
+    const allAccountsForTransfer = useMemo(() => [...orderedCashAccounts, ...orderedCreditAccounts, ...orderedInvestmentAccounts], [orderedCashAccounts, orderedCreditAccounts, orderedInvestmentAccounts]);
+
+    const handleTransferSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const amount = parseFloat(transferAmount);
+        if (!transferFrom || !transferTo || transferFrom === transferTo) {
+            alert('Select different From and To accounts.');
+            return;
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Enter a valid amount.');
+            return;
+        }
+        try {
+            await addTransfer(transferFrom, transferTo, amount, transferDate || undefined, transferNote.trim() || undefined);
+            setIsTransferOpen(false);
+            setTransferFrom('');
+            setTransferTo('');
+            setTransferAmount('');
+            setTransferNote('');
+        } catch (_) {}
+    };
+
     return (
         <PageLayout
             title="Accounts"
             description="Track checking, savings, credit, and investment accounts."
-            action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => setIsTransferOpen(true)} className="btn-ghost">Transfer</button>
+                    <button type="button" onClick={handleAddStandardSet} className="btn-ghost">Add standard set</button>
+                    <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
+                </div>
+            }
         >
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
@@ -244,6 +292,41 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             </section>
 
             <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} />
+            <Modal isOpen={isTransferOpen} onClose={() => setIsTransferOpen(false)} title="Transfer between accounts">
+                <form onSubmit={handleTransferSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="transfer-from" className="block text-sm font-medium text-gray-700 mb-1">From account</label>
+                        <select id="transfer-from" value={transferFrom} onChange={(e) => setTransferFrom(e.target.value)} className="select-base w-full" required>
+                            <option value="">Select account</option>
+                            {allAccountsForTransfer.map((a) => (
+                                <option key={a.id} value={a.id}>{a.name} ({a.type})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="transfer-to" className="block text-sm font-medium text-gray-700 mb-1">To account</label>
+                        <select id="transfer-to" value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className="select-base w-full" required>
+                            <option value="">Select account</option>
+                            {allAccountsForTransfer.map((a) => (
+                                <option key={a.id} value={a.id}>{a.name} ({a.type})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="transfer-amount" className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                        <input id="transfer-amount" type="number" step="0.01" min="0.01" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} className="input-base w-full" required />
+                    </div>
+                    <div>
+                        <label htmlFor="transfer-date" className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                        <input id="transfer-date" type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} className="input-base w-full" />
+                    </div>
+                    <div>
+                        <label htmlFor="transfer-note" className="block text-sm font-medium text-gray-700 mb-1">Note (optional)</label>
+                        <input id="transfer-note" type="text" value={transferNote} onChange={(e) => setTransferNote(e.target.value)} className="input-base w-full" placeholder="e.g. Monthly savings" />
+                    </div>
+                    <button type="submit" className="btn-primary w-full">Transfer</button>
+                </form>
+            </Modal>
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>
     );

@@ -89,7 +89,7 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                                 if (!active || !payload?.length) return null;
                                 const p = payload[0].payload?.price;
                                 return (
-                                    <div className="bg-gray-900 text-white text-xs px-2 py-1 rounded shadow-lg">
+                                    <div className="bg-white border border-slate-200 text-slate-800 text-xs px-2 py-1 rounded shadow-lg">
                                         {p != null ? formatPrice(p) : '—'}
                                     </div>
                                 );

@@ -114,6 +114,20 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
+    // Budget requests: finalized or rejected — notify user
+    (data.budgetRequests ?? []).filter((r: { status: string }) => r.status === 'Finalized' || r.status === 'Rejected').forEach((req: { id: string; categoryName?: string; category_name?: string; status: string; updated_at?: string }) => {
+      const label = req.categoryName ?? req.category_name ?? 'request';
+      list.push({
+        id: `budget-request-${req.id}`,
+        category: 'Budget',
+        message: req.status === 'Finalized' ? `Your budget request for "${label}" was approved.` : `Your budget request for "${label}" was rejected.`,
+        date: (req as any).updated_at ?? now.toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: req.status === 'Finalized' ? 'info' : 'warning',
+      });
+    });
+
     // Price alerts triggered
     (data.priceAlerts ?? []).filter(a => a.status === 'triggered').forEach(a => {
       list.push({

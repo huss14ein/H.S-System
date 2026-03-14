@@ -18,7 +18,11 @@ const sizeClasses = {
 const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message, size = 'lg', className = '' }) => (
   <div className={`flex flex-col justify-center items-center gap-3 ${className}`}>
     <div className={`animate-spin rounded-full border-primary ${sizeClasses[size]}`} aria-hidden="true" />
-    {message && <p className="text-sm text-gray-500">{message}</p>}
+    {message && (
+      <p className="text-sm text-slate-500" role="status" aria-live="polite">
+        {message}
+      </p>
+    )}
   </div>
 );
 

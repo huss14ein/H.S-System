@@ -5,6 +5,7 @@ import Card from '../components/Card';
 import Modal from '../components/Modal';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import EmptyState from '../components/EmptyState';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -18,6 +19,7 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
 
+interface BudgetWithDestination { category: string; month: number; year: number; destinationAccountId?: string }
 const TransactionModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
@@ -26,8 +28,9 @@ const TransactionModal: React.FC<{
     transactionToEdit: Transaction | null;
     budgetCategories: string[],
     allCategories: string[],
-    accounts: Account[]
-}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
+    accounts: Account[];
+    budgets?: BudgetWithDestination[];
+}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts, budgets = [] }) => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -83,14 +86,31 @@ const TransactionModal: React.FC<{
             setAmount('');
             setCategory(allCategories[0] || 'Groceries');
             setSubcategory('');
-            setBudgetCategory(budgetCategories[0] || '');
+            const lastAccount = typeof localStorage !== 'undefined' ? localStorage.getItem('finova-last-tx-account') : null;
+            const lastBudgetCat = typeof localStorage !== 'undefined' ? localStorage.getItem('finova-last-tx-budgetCategory') : null;
+            const validAccount = lastAccount && accounts.some((a: Account) => a.id === lastAccount) ? lastAccount : (accounts[0]?.id || '');
+            const validBudgetCat = lastBudgetCat && budgetCategories.includes(lastBudgetCat) ? lastBudgetCat : (budgetCategories[0] || '');
+            setBudgetCategory(validBudgetCat);
             setType('expense');
-            setAccountId(accounts[0]?.id || '');
+            setAccountId(validAccount);
             setTransactionNature('Variable');
             setExpenseType('Core');
         }
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    React.useEffect(() => {
+        if (!isOpen || transactionToEdit) return;
+        if (budgetCategory === 'Savings & Investments' && budgets.length > 0 && accounts.length > 0) {
+            const savingsBudget = budgets.find((b: BudgetWithDestination) => b.category === 'Savings & Investments' && b.month === currentMonth && b.year === currentYear && b.destinationAccountId);
+            if (savingsBudget?.destinationAccountId && accounts.some((a: Account) => a.id === savingsBudget.destinationAccountId)) {
+                setAccountId(savingsBudget.destinationAccountId);
+            }
+        }
+    }, [isOpen, budgetCategory, budgets, accounts, currentMonth, currentYear, transactionToEdit]);
 
     const buildTransactionData = (): Omit<Transaction, 'id'> => ({
         date,
@@ -116,6 +136,12 @@ const TransactionModal: React.FC<{
                 await onSave({ ...transactionData, id: transactionToEdit.id });
             } else {
                 await onSave(transactionData);
+            }
+            if (typeof localStorage !== 'undefined') {
+                try {
+                    localStorage.setItem('finova-last-tx-account', transactionData.accountId || '');
+                    if (transactionData.budgetCategory) localStorage.setItem('finova-last-tx-budgetCategory', transactionData.budgetCategory);
+                } catch (_) {}
             }
             onClose();
         } catch (error) {
@@ -171,20 +197,20 @@ const TransactionModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Date <InfoHint text="Transaction date; used for monthly reports and budget tracking." /></label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Date <InfoHint text="Transaction date; used for monthly reports and budget tracking." /></label>
                         <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="Enter a positive number; the system records income as positive and expense as negative." /></label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Amount <InfoHint text="Enter a positive number; the system records income as positive and expense as negative." /></label>
                         <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
                     </div>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Description <InfoHint text="Short description for the transaction; AI can suggest category from this." /></label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Description <InfoHint text="Short description for the transaction; AI can suggest category from this." /></label>
                     <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Account <InfoHint text="The cash or credit account this transaction affects." /></label>
                     <select id="account" value={accountId} onChange={e => setAccountId(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
                         <option value="" disabled>Select an Account</option>
                         {accounts.filter(a => a.type !== 'Investment').map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
@@ -198,7 +224,7 @@ const TransactionModal: React.FC<{
                      <div className="space-y-4 border-t pt-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Spending category; use AI suggest (sparkle) to auto-fill from description." /></label>
+                                <label htmlFor="category" className="block text-sm font-medium text-slate-700 flex items-center">Category <InfoHint text="Spending category; use AI suggest (sparkle) to auto-fill from description." /></label>
                                 <div className="relative">
                                     <input list="categories" id="category-input" value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md pr-10"/>
                                     <datalist id="categories">{allCategories.map(c => <option key={c} value={c} />)}</datalist>
@@ -213,12 +239,12 @@ const TransactionModal: React.FC<{
                                 )}
                             </div>
                             <div>
-                                <label htmlFor="subcategory" className="block text-sm font-medium text-gray-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
+                                <label htmlFor="subcategory" className="block text-sm font-medium text-slate-700 flex items-center">Subcategory (Optional) <InfoHint text="Optional finer grouping (e.g. Groceries → Supermarket)." /></label>
                                 <input type="text" id="subcategory" value={subcategory} onChange={e => setSubcategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                             </div>
                         </div>
                         <div>
-                            <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
+                            <label htmlFor="budget-category" className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
                             <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
                                 <option value="" disabled>Map to Budget</option>
                                 {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -226,14 +252,14 @@ const TransactionModal: React.FC<{
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Nature <InfoHint text="Fixed: recurring (rent). Variable: changes each month (groceries)." /></label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Nature <InfoHint text="Fixed: recurring (rent). Variable: changes each month (groceries)." /></label>
                                 <select value={transactionNature} onChange={e => setTransactionNature(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
                                     <option value="Variable">Variable Nature</option>
                                     <option value="Fixed">Fixed Nature</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Core: essentials. Discretionary: optional spending for analytics." /></label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center">Type <InfoHint text="Core: essentials. Discretionary: optional spending for analytics." /></label>
                                 <select value={expenseType} onChange={e => setExpenseType(e.target.value as any)} className="w-full p-2 border border-gray-300 rounded-md">
                                     <option value="Core">Core Expense</option>
                                     <option value="Discretionary">Discretionary Expense</option>
@@ -251,7 +277,7 @@ const TransactionModal: React.FC<{
 };
 
 const FilterButton: React.FC<{ label: string, value: string, current: string, onClick: (value: string) => void }> = ({ label, value, current, onClick }) => (
-    <button onClick={() => onClick(value)} className={`px-3 py-1 text-sm font-medium rounded-full transition-colors ${current === value ? 'bg-primary text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+    <button onClick={() => onClick(value)} className={`px-3 py-1 text-sm font-medium rounded-full transition-colors ${current === value ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
         {label}
     </button>
 );
@@ -334,24 +360,24 @@ const RecurringModal: React.FC<{
         <Modal isOpen={isOpen} onClose={onClose} title={recurring ? 'Edit recurring transaction' : 'Add recurring transaction'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
                     <input type="text" value={description} onChange={e => setDescription(e.target.value)} className="input-base" placeholder="e.g. Salary, Rent" required />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
                         <select value={type} onChange={e => setType(e.target.value as 'income' | 'expense')} className="select-base">
                             <option value="income">Income</option>
                             <option value="expense">Expense</option>
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
                         <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)} className="input-base" required />
                     </div>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Account</label>
                     <select value={accountId} onChange={e => setAccountId(e.target.value)} className="select-base" required>
                         <option value="">Select account</option>
                         {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -359,7 +385,7 @@ const RecurringModal: React.FC<{
                 </div>
                 {type === 'expense' && budgetCategories.length > 0 && (
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget category</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Budget category</label>
                         <select value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} className="select-base">
                             <option value="">—</option>
                             {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -367,20 +393,20 @@ const RecurringModal: React.FC<{
                     </div>
                 )}
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Category (e.g. Rent, Salary)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Category (e.g. Rent, Salary)</label>
                     <input type="text" value={category} onChange={e => setCategory(e.target.value)} className="input-base" placeholder="Rent" />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Day of month (1–28)</label>
                     <input type="number" min={1} max={28} value={dayOfMonth} onChange={e => setDayOfMonth(e.target.value)} className="input-base" />
                 </div>
                 <div className="flex items-center gap-2">
                     <input type="checkbox" id="recurring-enabled" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
-                    <label htmlFor="recurring-enabled" className="text-sm text-gray-700">Enabled (include when applying)</label>
+                    <label htmlFor="recurring-enabled" className="text-sm text-slate-700">Enabled (include when applying)</label>
                 </div>
                 <div className="flex items-center gap-2">
                     <input type="checkbox" id="recurring-add-manually" checked={addManually} onChange={e => setAddManually(e.target.checked)} />
-                    <label htmlFor="recurring-add-manually" className="text-sm text-gray-700">Add manually only (do not auto-record on the day)</label>
+                    <label htmlFor="recurring-add-manually" className="text-sm text-slate-700">Add manually only (do not auto-record on the day)</label>
                 </div>
                 <p className="text-xs text-slate-500">When unchecked, the transaction is recorded automatically on the specified day of each month.</p>
                 <div className="flex justify-end gap-2 pt-2">
@@ -638,6 +664,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             setApplyingRecurring(false);
         }
     };
+
+    const handleApplyRecurringNext3Months = async () => {
+        let [y, m] = filters.month.split('-').map(Number);
+        setApplyingRecurring(true);
+        let totalApplied = 0;
+        try {
+            for (let i = 0; i < 3; i++) {
+                const { applied } = await applyRecurringForMonth(y, m);
+                totalApplied += applied;
+                m += 1;
+                if (m > 12) { m = 1; y += 1; }
+            }
+            alert(`Recurring: ${totalApplied} transaction(s) created across the next 3 months.`);
+        } catch (e) {
+            // already alerted in context
+        } finally {
+            setApplyingRecurring(false);
+        }
+    };
     
     const toHijri = (gregorianDateStr: string): string => {
         const date = new Date(gregorianDateStr);
@@ -759,6 +804,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         >
                             {applyingRecurring ? 'Applying…' : `Apply for ${new Date(filters.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
                         </button>
+                        <button
+                            type="button"
+                            onClick={handleApplyRecurringNext3Months}
+                            disabled={applyingRecurring || recurringList.length === 0}
+                            className="btn-ghost disabled:opacity-50"
+                        >
+                            Apply for next 3 months
+                        </button>
                         <button type="button" onClick={() => { setRecurringToEdit(null); setIsRecurringModalOpen(true); }} className="btn-outline">
                             Add recurring
                         </button>
@@ -766,17 +819,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             >
                 {recurringList.length === 0 ? (
-                    <p className="empty-state">No recurring rules yet. Add one (e.g. salary to an account, or rent from an account and budget).</p>
+                    <EmptyState
+                        title="No recurring rules yet"
+                        description="Add one (e.g. salary to an account, or rent from an account and budget)."
+                        action={
+                            <button type="button" onClick={() => { setRecurringToEdit(null); setIsRecurringModalOpen(true); }} className="btn-outline">
+                                Add recurring
+                            </button>
+                        }
+                    />
                 ) : (
                     <ul className="space-y-2">
                         {recurringList.map((r) => (
-                            <li key={r.id} className={`flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg border ${r.enabled ? 'bg-slate-50/50 border-slate-200' : 'bg-gray-100/50 border-gray-200 opacity-75'}`}>
+                            <li key={r.id} className={`flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg border ${r.enabled ? 'bg-slate-50/50 border-slate-200' : 'bg-slate-100/50 border-slate-200 opacity-75'}`}>
                                 <div className="flex-1 min-w-0">
                                     <span className="font-medium text-dark">{r.description}</span>
                                     <span className={`ml-2 text-sm font-medium ${r.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
                                         {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount)}
                                     </span>
-                                    <span className="text-xs text-gray-500 ml-2">
+                                    <span className="text-xs text-slate-500 ml-2">
                                         • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
                                         {r.type === 'expense' && r.budgetCategory && ` • ${r.budgetCategory}`}
                                         {r.addManually ? <span className="ml-1 text-slate-500">(manual)</span> : <span className="ml-1 text-emerald-600">(auto)</span>}
@@ -784,8 +845,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     {!r.enabled && <span className="ml-2 text-xs text-amber-600">(paused)</span>}
                                 </div>
                                 <div className="flex items-center gap-1">
-                                    <button type="button" onClick={() => { setRecurringToEdit(r); setIsRecurringModalOpen(true); }} className="p-1.5 text-gray-500 hover:text-primary rounded" title="Edit"><PencilIcon className="h-4 w-4" /></button>
-                                    <button type="button" onClick={() => deleteRecurringTransaction(r.id)} className="p-1.5 text-gray-500 hover:text-red-600 rounded" title="Delete"><TrashIcon className="h-4 w-4" /></button>
+                                    <button type="button" onClick={() => { setRecurringToEdit(r); setIsRecurringModalOpen(true); }} className="p-1.5 text-slate-500 hover:text-primary rounded" title="Edit"><PencilIcon className="h-4 w-4" /></button>
+                                    <button type="button" onClick={() => deleteRecurringTransaction(r.id)} className="p-1.5 text-slate-500 hover:text-red-600 rounded" title="Delete"><TrashIcon className="h-4 w-4" /></button>
                                 </div>
                             </li>
                         ))}
@@ -821,7 +882,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                             <span className="text-xs text-slate-500">Select</span>
                                         </label>
                                         <p className="font-semibold">{pending.description}</p>
-                                        <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
+                                        <p className="text-xs text-slate-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
@@ -901,6 +962,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategories={budgetCategories}
                 allCategories={allCategories}
                 accounts={data?.accounts ?? []}
+                budgets={data?.budgets ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
             <RecurringModal

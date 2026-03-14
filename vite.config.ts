@@ -8,6 +8,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    test: {
+      globals: true,
+      environment: 'node',
+      include: ['**/*.test.ts', '**/*.test.tsx'],
+    },
     build: {
       rollupOptions: {
         output: {

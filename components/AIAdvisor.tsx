@@ -100,13 +100,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
                     onClick={handleGenerate}
                     disabled={!isAiAvailable || isLoading}
                     title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
-                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Analyzing...' : 'Get AI Insights'}
                 </button>
             </div>
-            {isLoading && <div className="text-center p-4 text-gray-500">Generating personalized insights...</div>}
+            {isLoading && <div className="text-center p-4 text-slate-500">Generating personalized insights...</div>}
             
             {insight && !isLoading && (
                  <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg">
@@ -115,13 +115,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData }) => {
             )}
             
             {!isAiAvailable ? (
-                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                 <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
                     <p className="text-sm">Please set your Gemini API key in the environment variables to enable this feature.</p>
                 </div>
             ) : (
                 !insight && !isLoading && (
-                    <div className="text-center p-4 text-gray-500">
+                    <div className="text-center p-4 text-slate-500">
                         Click "Get AI Insights" for an analysis of your {pageContext} data.
                     </div>
                 )

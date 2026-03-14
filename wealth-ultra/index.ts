@@ -17,12 +17,19 @@ import { runMonthlyCoreDeployment } from './monthlyDeployment';
 import { isSpecBreach, shouldDisableNewSpecBuys } from './specRisk';
 import { rankByCapitalEfficiency } from './capitalEfficiency';
 import { runAlertEngine } from './alertEngine';
+import { attachRiskScores } from './riskScoring';
+import { rankTrades, positionsByTradeRank } from './tradeRanking';
+import { computeDiversification, type DiversificationResult } from './diversification';
 
 export type WealthUltraEngineInput = {
   holdings: Holding[];
   priceMap: PriceMap;
   config?: Partial<WealthUltraConfig>;
   sleeveOverrides?: Record<string, 'Core' | 'Upside' | 'Spec'>;
+  /** Scenario hook: cap deployable cash (e.g. from household engine). */
+  scenarioCashCap?: number;
+  /** Scenario hook: override sleeve targets for stress tests. */
+  scenarioTargetOverrides?: Partial<Record<'Core' | 'Upside' | 'Spec', number>>;
 };
 
 export interface WealthUltraPortfolioHealth {
@@ -44,15 +51,24 @@ export interface WealthUltraEngineState {
   specBreach: boolean;
   specBuysDisabled: boolean;
   capitalEfficiencyRanked: WealthUltraPosition[];
+  /** Positions with riskScore and tradeRank; sorted by trade execution priority. */
+  tradeRankedPositions: WealthUltraPosition[];
+  /** Diversification and concentration analysis. */
+  diversification: DiversificationResult;
   alerts: WealthUltraAlert[];
   portfolioHealth: WealthUltraPortfolioHealth;
 }
 
 export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltraEngineState {
-  const config: WealthUltraConfig = {
+  let config: WealthUltraConfig = {
     ...getDefaultWealthUltraConfig(),
     ...input.config,
   };
+  if (input.scenarioTargetOverrides) {
+    if (input.scenarioTargetOverrides.Core != null) config = { ...config, targetCorePct: input.scenarioTargetOverrides.Core };
+    if (input.scenarioTargetOverrides.Upside != null) config = { ...config, targetUpsidePct: input.scenarioTargetOverrides.Upside };
+    if (input.scenarioTargetOverrides.Spec != null) config = { ...config, targetSpecPct: input.scenarioTargetOverrides.Spec };
+  }
   const validation = validateWealthUltraConfig(config);
   if (!validation.valid) {
     throw new Error(validation.error ?? 'Invalid Wealth Ultra configuration');
@@ -64,13 +80,25 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
 
   const totalPortfolioValue = getTotalPortfolioValue(positions);
   const allocations = computeSleeveAllocations(positions, config, totalPortfolioValue);
-  const { deployableCash, totalPlannedBuyCost, status: cashPlannerStatus } = runCashPlanner(config, positions);
+  let { deployableCash, totalPlannedBuyCost, status: cashPlannerStatus } = runCashPlanner(config, positions);
+  if (input.scenarioCashCap != null && input.scenarioCashCap >= 0) {
+    deployableCash = Math.min(deployableCash, input.scenarioCashCap);
+    if (totalPlannedBuyCost > deployableCash) cashPlannerStatus = 'OVER_BUDGET';
+  }
   const orders = generateOrders(positions);
   const monthlyDeployment = runMonthlyCoreDeployment(config, positions, allocations);
   const specAlloc = allocations.find(a => a.sleeve === 'Spec');
   const specBreach = isSpecBreach(config, specAlloc);
   const specBuysDisabled = shouldDisableNewSpecBuys(config, specAlloc);
   const capitalEfficiencyRanked = rankByCapitalEfficiency(positions, config);
+
+  positions = attachRiskScores(positions, totalPortfolioValue, config);
+  const sleeveDrift: Record<string, number> = {};
+  for (const a of allocations) sleeveDrift[a.sleeve] = a.driftPct;
+  positions = rankTrades(positions, config, sleeveDrift);
+  const tradeRankedPositions = positionsByTradeRank(positions);
+  const diversification = computeDiversification(positions, totalPortfolioValue);
+
   const alerts = runAlertEngine(config, positions, allocations, monthlyDeployment);
 
   const portfolioHealth = computePortfolioHealth(
@@ -94,6 +122,8 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
     specBreach,
     specBuysDisabled,
     capitalEfficiencyRanked,
+    tradeRankedPositions,
+    diversification,
     alerts,
     portfolioHealth,
   };
@@ -176,3 +206,7 @@ export type { MonthlyDeploymentResult } from './monthlyDeployment';
 export { isSpecBreach, shouldDisableNewSpecBuys } from './specRisk';
 export { capitalEfficiencyScore, rankByCapitalEfficiency } from './capitalEfficiency';
 export { runAlertEngine } from './alertEngine';
+export { attachRiskScores, positionRiskScore } from './riskScoring';
+export { rankTrades, positionsByTradeRank } from './tradeRanking';
+export { computeDiversification } from './diversification';
+export type { DiversificationResult } from './diversification';

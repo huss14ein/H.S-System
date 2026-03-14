@@ -63,7 +63,7 @@ const AIFeed: React.FC = () => {
                   onClick={handleGenerate}
                   disabled={!isAiAvailable || isLoading}
                   title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Refresh Feed"}
-                  className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                  className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Thinking...' : 'Refresh Feed'}
@@ -73,10 +73,10 @@ const AIFeed: React.FC = () => {
                  <div className="space-y-4">
                     {[...Array(3)].map((_, i) => (
                         <div key={i} className="flex items-center space-x-4 p-3 animate-pulse">
-                            <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
+                            <div className="w-10 h-10 bg-slate-200 rounded-full"></div>
                             <div className="flex-1 space-y-2">
-                                <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-                                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+                                <div className="h-4 bg-slate-200 rounded w-1/3"></div>
+                                <div className="h-3 bg-slate-200 rounded w-3/4"></div>
                             </div>
                         </div>
                     ))}
@@ -95,7 +95,7 @@ const AIFeed: React.FC = () => {
                     {feedItems.map((item, index) => (
                         <div
                             key={index}
-                            className={`flex items-start space-x-4 p-3 rounded-lg border-l-4 hover:bg-gray-50/80 ${
+                            className={`flex items-start space-x-4 p-3 rounded-lg border-l-4 hover:bg-slate-50/80 ${
                                 item.type === 'BUDGET' ? 'border-amber-500 bg-amber-50/30' :
                                 item.type === 'GOAL' ? 'border-blue-500 bg-blue-50/30' :
                                 item.type === 'INVESTMENT' ? 'border-violet-500 bg-violet-50/30' :
@@ -103,12 +103,12 @@ const AIFeed: React.FC = () => {
                                 'border-primary/50 bg-primary/5'
                             }`}
                         >
-                            <div className="flex-shrink-0 w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm border border-gray-100">
+                            <div className="flex-shrink-0 w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm border border-slate-100">
                                 {item.emoji || <FeedItemIcon type={item.type} />}
                             </div>
                             <div>
                                 <h4 className="font-semibold text-dark">{item.title}</h4>
-                                <p className="text-sm text-gray-600">{item.description}</p>
+                                <p className="text-sm text-slate-600">{item.description}</p>
                             </div>
                         </div>
                     ))}
@@ -116,13 +116,13 @@ const AIFeed: React.FC = () => {
             )}
 
             {!isAiAvailable ? (
-                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                 <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
                     <p className="text-sm">Please set your Gemini API key in the environment variables to enable personalized insights.</p>
                 </div>
             ) : (
                 feedItems.length === 0 && !isLoading && !error && (
-                    <div className="text-center p-4 text-gray-500">
+                    <div className="text-center p-4 text-slate-500">
                         Click "Refresh Feed" for personalized AI insights on your finances.
                     </div>
                 )

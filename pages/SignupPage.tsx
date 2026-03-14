@@ -11,6 +11,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [consent, setConsent] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
@@ -20,10 +21,18 @@ const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
         e.preventDefault();
         setError('');
         setSuccess(false);
+        if (!consent) {
+            setError('You must agree to the Terms of Service and Privacy Policy to create an account.');
+            return;
+        }
+        if (password.length < 8) {
+            setError('Password must be at least 8 characters.');
+            return;
+        }
         setLoading(true);
-        const { error } = await auth!.signup(name, email, password);
-        if (error) {
-            setError(error.message);
+        const { error: err } = await auth!.signup(name, email, password);
+        if (err) {
+            setError(err.message);
         } else {
             setSuccess(true);
         }
@@ -49,9 +58,9 @@ const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
                         <h2 className="text-center text-3xl font-bold text-dark mb-2">Create Account</h2>
                         <p className="text-center text-gray-500 mb-6">Start managing your finances with Finova.</p>
                         {success ? (
-                            <div className="text-center p-4 bg-green-50 text-green-800 rounded-md">
+                            <div className="text-center p-4 bg-green-50 text-green-800 rounded-md" role="status">
                                 <h3 className="font-semibold">Success!</h3>
-                                <p>Please check your email to confirm your account.</p>
+                                <p>Please check your email to confirm your account. You can then log in.</p>
                             </div>
                         ) : (
                             <form onSubmit={handleSubmit} className="space-y-6">
@@ -86,9 +95,25 @@ const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         required
+                                        minLength={8}
                                         className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
                                     />
+                                    <p className="mt-1 text-xs text-gray-500">At least 8 characters.</p>
                                 </div>
+                                <div className="flex items-start">
+                                    <input
+                                        type="checkbox"
+                                        id="consent-signup"
+                                        checked={consent}
+                                        onChange={(e) => setConsent(e.target.checked)}
+                                        className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                        aria-describedby="consent-desc"
+                                    />
+                                    <label id="consent-desc" htmlFor="consent-signup" className="ml-2 text-sm text-gray-700">
+                                        I agree to the <a href="/terms" className="text-primary hover:underline">Terms of Service</a> and <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>.
+                                    </label>
+                                </div>
+                                <p className="text-xs text-gray-500">We use your data only to run your financial dashboard and never sell it to third parties.</p>
                                 <button
                                     type="submit"
                                     disabled={loading}

@@ -28,6 +28,7 @@ Run scripts in the **Supabase SQL editor** in the order below. All scripts are i
 | `all_db_changes_and_enhancements.sql` | Governance + optional planned_trades columns and trade_execution_audit. |
 | `optional_investment_enhancements.sql` | planned_trades analytics columns (planned_entry_price, stop_loss, etc.). |
 | `rebuild_investments_tables_from_scratch.sql` | **Destructive.** Recreates investment_portfolios, holdings, investment_transactions. |
+| **`unified_db_changes.sql`** | **Single file for plan-related changes:** `budgets.destination_account_id` (savings → account), `holdings.holding_type` + nullable `symbol` (manual/unmapped funds e.g. Al Rajhi Mashura), optional `household_profile` table (shared adults/kids). Idempotent; run after core tables exist. |
 
 ## One-time “run all required” (minimal)
 
