@@ -2892,7 +2892,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
     const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
-    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    let roi = 0;
+    if (netCapital > 0) {
+        roi = (totalGainLoss / netCapital) * 100;
+    } else if (netCapital === 0 && totalGainLoss > 0) {
+        roi = Infinity; // Pure gains scenario
+    } else if (netCapital < 0) {
+        roi = totalGainLoss > 0 ? Infinity : -100; // More withdrawn than invested
+    }
 
     const allHoldings = (data?.investments ?? []).flatMap((p: InvestmentPortfolio) => p.holdings ?? []);
     const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => {
@@ -3075,11 +3082,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             />
             <Card
                 title="Portfolio ROI"
-                value={`${roi.toFixed(2)}%`}
-                valueColor={roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}
+                value={Number.isFinite(roi) ? `${roi.toFixed(2)}%` : 'N/A'}
+                valueColor={Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-700' : 'text-rose-700') : 'text-slate-500'}
                 density="compact"
-                indicatorColor={roi >= 0 ? 'green' : 'red'}
-                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
+                indicatorColor={Number.isFinite(roi) ? (roi >= 0 ? 'green' : 'red') : 'gray'}
+                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${Number.isFinite(roi) ? (roi >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-400'}`} aria-hidden />}
                 tooltip="Return on investment based on total capital invested across portfolios."
             />
             <Card
