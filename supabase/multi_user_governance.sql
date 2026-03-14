@@ -65,6 +65,7 @@ begin
 end;
 $$;
 
+-- If you get "cannot change return type of existing function", run supabase/drop_pending_transaction_functions.sql first, then re-run this file.
 drop function if exists public.approve_pending_transaction(uuid);
 create or replace function public.approve_pending_transaction(p_transaction_id uuid)
 returns boolean

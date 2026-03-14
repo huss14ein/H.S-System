@@ -91,6 +91,8 @@ interface DataContextType {
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
   /** Available cash in an investment platform = deposits - withdrawals - buys + sells + dividends (for that account). Returns by currency so SAR and USD are not mixed. */
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+  /** Sum of available cash across all investment accounts (SAR + USD converted to SAR). */
+  totalDeployableCash: number;
   /** Admin-only: All users' transactions for approval notifications */
   allTransactions: Transaction[];
   /** Admin-only: All users' budgets for tracking */
