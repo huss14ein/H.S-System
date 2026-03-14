@@ -97,9 +97,10 @@ const Forecast: React.FC = () => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
         const investments = data?.investments ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const netWorth = totalAssets + totalLiabilities;
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivables = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
+        const netWorth = totalAssets - totalLiabilities + totalReceivables;
         const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };
     }, [data, exchangeRate]);

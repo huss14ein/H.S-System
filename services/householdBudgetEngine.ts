@@ -352,29 +352,36 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
     // 2. Calculate available for savings (income - expenses)
     const availableForSavings = Math.max(0, inc - exp);
     
-    // 3. Emergency savings (priority 1)
+    // 3. Emergency savings (priority 1) - Fixed division by zero and overflow
+    const monthsRemaining = Math.max(1, 12 - i);
+    const emergencyGapPerMonth = remainingEmergencyGap > 0 ? remainingEmergencyGap / monthsRemaining : 0;
+    const emergencyFromProfile = availableForSavings * profilePcts.emergencySavings;
     const emergencyTarget = remainingEmergencyGap > 0 
-      ? Math.min(availableForSavings * profilePcts.emergencySavings, remainingEmergencyGap / (12 - i))
+      ? Math.min(emergencyFromProfile, emergencyGapPerMonth, availableForSavings) // Ensure we don't exceed available
       : availableForSavings * profilePcts.emergencySavings * 0.5; // Maintain 50% of allocation even when funded
-    buckets.emergencySavings = Math.max(0, Math.round(emergencyTarget));
+    buckets.emergencySavings = Math.max(0, Math.min(Math.round(emergencyTarget), availableForSavings));
     remainingEmergencyGap = Math.max(0, remainingEmergencyGap - buckets.emergencySavings);
     
-    // 4. Reserve savings (priority 2)
-    const remainingAfterEmergency = availableForSavings - buckets.emergencySavings;
+    // 4. Reserve savings (priority 2) - Fixed division by zero
+    const remainingAfterEmergency = Math.max(0, availableForSavings - buckets.emergencySavings);
+    const reserveGapPerMonth = remainingReserveGap > 0 ? remainingReserveGap / monthsRemaining : 0;
+    const reserveFromProfile = remainingAfterEmergency * profilePcts.reserveSavings;
     const reserveTarget = remainingReserveGap > 0
-      ? Math.min(remainingAfterEmergency * profilePcts.reserveSavings, remainingReserveGap / (12 - i))
-      : remainingAfterEmergency * profilePcts.reserveSavings;
-    buckets.reserveSavings = Math.max(0, Math.round(reserveTarget));
+      ? Math.min(reserveFromProfile, reserveGapPerMonth, remainingAfterEmergency)
+      : reserveFromProfile;
+    buckets.reserveSavings = Math.max(0, Math.min(Math.round(reserveTarget), remainingAfterEmergency));
     remainingReserveGap = Math.max(0, remainingReserveGap - buckets.reserveSavings);
     
-    // 5. Goal savings (priority 3)
-    const remainingAfterReserve = remainingAfterEmergency - buckets.reserveSavings;
+    // 5. Goal savings (priority 3) - Fixed division by zero
+    const remainingAfterReserve = Math.max(0, remainingAfterEmergency - buckets.reserveSavings);
     if (activeGoal && operatingMode !== 'Protection First') {
-      const goalRemaining = activeGoal.targetAmount - activeGoal.currentAmount;
-      const goalAllocation = Math.min(remainingAfterReserve * profilePcts.goalSavings, goalRemaining / Math.max(1, 12 - i));
-      buckets.goalSavings = Math.max(0, Math.round(goalAllocation));
+      const goalRemaining = Math.max(0, activeGoal.targetAmount - activeGoal.currentAmount);
+      const goalGapPerMonth = goalRemaining / monthsRemaining;
+      const goalFromProfile = remainingAfterReserve * profilePcts.goalSavings;
+      const goalAllocation = Math.min(goalFromProfile, goalGapPerMonth, remainingAfterReserve);
+      buckets.goalSavings = Math.max(0, Math.min(Math.round(goalAllocation), remainingAfterReserve));
     } else {
-      buckets.goalSavings = Math.max(0, Math.round(remainingAfterReserve * profilePcts.goalSavings));
+      buckets.goalSavings = Math.max(0, Math.min(Math.round(remainingAfterReserve * profilePcts.goalSavings), remainingAfterReserve));
     }
     
     // 6. Retirement savings
@@ -393,8 +400,10 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       buckets.kidsFutureSavings = 0;
     }
     
-    // Update cumulative liquid balance
-    cumulativeLiquid += surplus;
+    // Update cumulative liquid balance - account for bucket allocations reducing available cash
+    const totalBucketAllocations = Object.values(buckets).reduce((sum, val) => sum + (val as number), 0);
+    const netCashFlow = surplus - (totalBucketAllocations - expenseAllocations.housing - expenseAllocations.groceries - expenseAllocations.utilities - expenseAllocations.transportation - expenseAllocations.health - expenseAllocations.personalCare - expenseAllocations.entertainment - expenseAllocations.shopping - expenseAllocations.miscellaneous);
+    cumulativeLiquid = Math.max(0, cumulativeLiquid + netCashFlow);
     
     // Calculate cashflow stress
     let cashflowStress: 'healthy' | 'caution' | 'stress' | 'critical' = 'healthy';
@@ -430,7 +439,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       incomePlanned: inc,
       incomeActual: actualInc,
       expensePlanned: exp,
-      expenseActual: exp,
+      expenseActual: Number(monthlyActualExpense[i] ?? exp),
       surplus,
       reservePoolAfterDeductions: Math.max(0, cumulativeLiquid),
       routedGoalName: activeGoal?.name,
@@ -441,8 +450,13 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       baselineExpense: exp,
       cashflowStress,
       plannedNet: plannedNetMonth,
-      totalPlannedOutflow: exp + Object.values(buckets).reduce((a, b) => a + b, 0),
-      totalActualOutflow: exp,
+      totalPlannedOutflow: exp + Object.values(buckets).filter((_, idx, arr) => {
+        // Only count savings buckets, not expense buckets (expenses already in exp)
+        const bucketKeys = Object.keys(buckets);
+        const key = bucketKeys[Object.values(buckets).indexOf(_)];
+        return key && (key.includes('Savings') || key === 'investing' || key === 'retirementSavings' || key === 'kidsFutureSavings');
+      }).reduce((a, b) => a + (b as number), 0),
+      totalActualOutflow: Number(monthlyActualExpense[i] ?? exp),
       buckets,
     };
   });
