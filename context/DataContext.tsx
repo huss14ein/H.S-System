@@ -1235,6 +1235,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Allow explicitly clearing links by sending an empty array, or setting specific links.
             payload.linked_account_ids = platform.linkedAccountIds;
         }
+        // Never send camelCase 'linkedAccountIds' to PostgREST; column is snake_case only.
+        delete payload.linkedAccountIds;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
         if(error) {
             console.error("Error adding platform:", error);
