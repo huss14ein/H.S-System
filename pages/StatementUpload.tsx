@@ -30,6 +30,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
@@ -87,11 +88,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         
         // Save statement metadata to context for history tracking
         try {
-          await uploadStatement(file, {
+          const statement = await uploadStatement(file, {
             bankName: 'Auto-detected',
             accountNumber: selectedAccount || 'Unknown',
             accountType: activeTab === 'trading' ? 'investment' : 'checking'
           });
+          setCurrentStatementId(statement.id);
         } catch (error) {
           console.warn('Failed to save statement metadata:', error);
           // Continue anyway - transactions can still be imported
@@ -136,6 +138,21 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingProgress(70);
       
       if (result.transactions.length > 0) {
+        // Save statement metadata for SMS
+        try {
+          const statement = await uploadStatement(
+            new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
+            {
+              bankName: 'SMS Import',
+              accountNumber: selectedAccount || 'Unknown',
+              accountType: 'checking'
+            }
+          );
+          setCurrentStatementId(statement.id);
+        } catch (error) {
+          console.warn('Failed to save SMS statement metadata:', error);
+        }
+        
         // Check for duplicates
         checkForDuplicates(result.transactions, []);
         setProcessingProgress(100);
@@ -252,7 +269,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
           type: tx.type,
           transactionNature: tx.transactionNature,
           expenseType: tx.expenseType,
-          status: tx.status || 'Approved'
+          status: tx.status || 'Approved',
+          statementId: currentStatementId || undefined
         });
         processed++;
         setProcessingProgress((processed / total) * 100);
@@ -282,6 +300,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setSelectedTransactions(new Set());
       setValidationWarnings([]);
       setValidationErrors([]);
+      setCurrentStatementId(null);
       setProcessingProgress(0);
       setSmsText('');
       setUploadedFile(null);

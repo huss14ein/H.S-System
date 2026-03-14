@@ -93,6 +93,8 @@ export interface Transaction {
   rejectionReason?: string;
   /** Set when transaction was auto-created from a recurring rule. */
   recurringId?: string;
+  /** Set when transaction was imported from a financial statement. */
+  statementId?: string;
 }
 
 export type HoldingAssetClass =

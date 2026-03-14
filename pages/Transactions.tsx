@@ -18,6 +18,8 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
 import { DemoDataButton } from '../components/DemoDataButton';
+import { useStatementProcessing } from '../context/StatementProcessingContext';
+import { DocumentArrowUpIcon } from '../components/icons';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -438,6 +440,7 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
     const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const { getStatementById } = useStatementProcessing();
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
@@ -1047,6 +1050,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     {transaction.status && (
                                         <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
                                     )}
+                                    {transaction.statementId && (() => {
+                                        const statement = getStatementById(transaction.statementId);
+                                        return statement ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs" title={`Imported from: ${statement.fileName}`}>
+                                                <DocumentArrowUpIcon className="h-3 w-3" />
+                                                Statement
+                                            </span>
+                                        ) : null;
+                                    })()}
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 flex-shrink-0">
