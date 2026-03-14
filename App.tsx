@@ -33,6 +33,7 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Investment & Strategy Pages
+const Investments = lazy(() => import('./pages/Investments'));
 const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
 const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
 const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
@@ -145,7 +146,7 @@ const App: React.FC = () => {
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'Watchlist': return <WatchlistView />;
-      case 'Investments': return <Commodities />;
+      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages
       case 'Plan': return <Plan />;
