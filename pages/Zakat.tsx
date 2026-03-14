@@ -10,7 +10,6 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
-import { DemoDataButton } from '../components/DemoDataButton';
 import { buildZakatTradeAdvice } from '../services/zakatTradeAdvisor';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
@@ -176,7 +175,6 @@ const Zakat: React.FC = () => {
         <PageLayout
             title="Zakat Calculator"
             description="Estimate your annual Zakat based on your tracked assets and liabilities."
-            action={<DemoDataButton page="Zakat" options={{ includeAssets: true, includeLiabilities: true }} />}
         >
             {/* Alert Banner */}
             <div className="max-w-7xl mx-auto mb-8">

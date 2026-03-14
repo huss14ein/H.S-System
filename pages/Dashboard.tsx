@@ -29,7 +29,6 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
-import { loadDemoData } from '../services/demoDataService';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -542,24 +541,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
 
             <AIFeed />
             
-            <div className="section-card border-l-4 border-slate-300">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h3 className="section-title text-base">Demo Data</h3>
-                        <p className="text-xs text-slate-500 mt-1">Load demo data for testing all features</p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            loadDemoData({ includeAll: true });
-                            window.location.reload();
-                        }}
-                        className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 text-sm font-medium"
-                    >
-                        Load All Demo Data
-                    </button>
-                </div>
-            </div>
             
             {isAdmin ? (
                 <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">

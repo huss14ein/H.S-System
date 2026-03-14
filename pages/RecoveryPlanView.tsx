@@ -27,7 +27,6 @@ import {
   type RecoveryPlanStatistics,
   type RecoveryTimelineProjection,
 } from '../services/recoveryPlanPerformance';
-import { loadDemoData } from '../services/demoDataService';
 import type { Page } from '../types';
 
 interface RecoveryPlanViewProps {
@@ -486,24 +485,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               }`}>
                 {isAiAvailable ? <CheckCircleIcon className="h-5 w-5" /> : <ExclamationTriangleIcon className="h-5 w-5" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
               </span>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!window.confirm('This will reload the page and load demo data. Continue?')) {
-                    return;
-                  }
-                  try {
-                    await loadDemoData({ includeRecoveryPlan: true });
-                    window.location.reload();
-                  } catch (error) {
-                    alert(`Failed to load demo data: ${error instanceof Error ? error.message : String(error)}`);
-                  }
-                }}
-                className="px-4 py-2 border-2 border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 hover:border-slate-400 font-medium transition-all duration-200 shadow-sm hover:shadow-md"
-                title="Load demo data for testing"
-              >
-                Load Demo Data
-              </button>
               {recoveryStats && recoveryStats.totalExecutions > 0 && (
                 <button
                   type="button"
