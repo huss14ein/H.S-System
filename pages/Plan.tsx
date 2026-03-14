@@ -1,6 +1,5 @@
 import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AuthContext } from '../context/AuthContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PageLayout from '../components/PageLayout';
 import { CurrencyContext } from '../context/CurrencyContext';
@@ -8,21 +7,11 @@ import { format } from 'date-fns';
 import { 
   ChartBarIcon, 
   AcademicCapIcon, 
-  CalendarDaysIcon,
   BanknotesIcon,
   ArrowTrendingUpIcon,
   ShieldCheckIcon,
   ExclamationTriangleIcon
 } from '../components/icons';
-
-interface LifeEvent {
-  id: string;
-  name: string;
-  type: 'income' | 'expense';
-  amount: number;
-  timing: string;
-  description: string;
-}
 
 interface Scenario {
   id: string;
@@ -34,10 +23,9 @@ interface Scenario {
   color: string;
 }
 
-const Plan: React.FC<{ setActivePage: (page: string) => void }> = ({ }) => {
+const Plan: React.FC = () => {
   const { data, loading } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
-  const { currency } = useContext(CurrencyContext);
 
   const [selectedScenario, setSelectedScenario] = useState<string>('none');
 

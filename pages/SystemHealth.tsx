@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
-import { AuthContext } from '../context/AuthContext';
 import { 
   CheckCircleIcon,
   ExclamationTriangleIcon,
@@ -8,8 +7,7 @@ import {
   ClockIcon,
   ArrowPathIcon,
   ServerStackIcon,
-  CircleStackIcon,
-  CpuChipIcon,
+  CubeIcon,
   GlobeAltIcon,
   UsersIcon
 } from '../components/icons';
@@ -32,7 +30,7 @@ interface Incident {
   resolved: boolean;
 }
 
-const SystemHealth: React.FC<{ setActivePage: (page: string) => void }> = ({ }) => {
+const SystemHealth: React.FC = () => {
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -54,7 +52,7 @@ const SystemHealth: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
       responseTime: 23,
       lastCheck: new Date(),
       description: 'Supabase PostgreSQL',
-      icon: CircleStackIcon
+      icon: CubeIcon
     },
     {
       name: 'AI Services API',
@@ -62,7 +60,7 @@ const SystemHealth: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
       responseTime: 156,
       lastCheck: new Date(),
       description: 'Gemini AI Integration',
-      icon: CpuChipIcon
+      icon: CubeIcon
     },
     {
       name: 'Market Data API',
@@ -78,7 +76,7 @@ const SystemHealth: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
       responseTime: 12,
       lastCheck: new Date(),
       description: 'Real-time Collaboration',
-      icon: ServerIcon
+      icon: ServerStackIcon
     }
   ];
 

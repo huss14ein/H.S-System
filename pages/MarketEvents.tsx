@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
-import { AuthContext } from '../context/AuthContext';
-import { DataContext } from '../context/DataContext';
 import { format } from 'date-fns';
 import { 
   BellIcon,
@@ -9,7 +7,7 @@ import {
   ChartBarIcon,
   CurrencyDollarIcon,
   ArrowTrendingUpIcon,
-  BuildingIcon,
+  BuildingLibraryIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   InformationCircleIcon,
@@ -28,7 +26,7 @@ interface MarketEvent {
   portfolioRelevant?: boolean;
 }
 
-const MarketEvents: React.FC<{ setActivePage: (page: string) => void }> = ({ }) => {
+const MarketEvents: React.FC = () => {
   const [events, setEvents] = useState<MarketEvent[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<MarketEvent[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -145,7 +143,7 @@ const MarketEvents: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
       case 'Dividend':
         return <ArrowTrendingUpIcon className="h-5 w-5 text-purple-500" />;
       case 'Portfolio':
-        return <BuildingIcon className="h-5 w-5 text-orange-500" />;
+        return <BuildingLibraryIcon className="h-5 w-5 text-orange-500" />;
       default:
         return <CalendarDaysIcon className="h-5 w-5 text-gray-500" />;
     }
@@ -214,7 +212,7 @@ const MarketEvents: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
                 <p className="text-blue-100 text-sm">Total Events</p>
                 <p className="text-2xl font-bold">{stats.total}</p>
               </div>
-              <CalendarIcon className="h-8 w-8 text-blue-200" />
+              <CalendarDaysIcon className="h-8 w-8 text-blue-200" />
             </div>
           </div>
 
@@ -244,7 +242,7 @@ const MarketEvents: React.FC<{ setActivePage: (page: string) => void }> = ({ }) 
                 <p className="text-purple-100 text-sm">Portfolio Relevant</p>
                 <p className="text-2xl font-bold">{stats.portfolioRelevant}</p>
               </div>
-              <BuildingOfficeIcon className="h-8 w-8 text-purple-200" />
+              <BuildingLibraryIcon className="h-8 w-8 text-purple-200" />
             </div>
           </div>
         </div>

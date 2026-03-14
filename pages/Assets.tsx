@@ -1,6 +1,5 @@
 import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AuthContext } from '../context/AuthContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PageLayout from '../components/PageLayout';
 import { CurrencyContext } from '../context/CurrencyContext';
@@ -13,8 +12,7 @@ import {
   PlusIcon,
   PencilIcon,
   TrashIcon,
-  ChartBarIcon,
-  ServerStackIcon
+  ChartBarIcon
 } from '../components/icons';
 
 interface Asset {
@@ -42,15 +40,10 @@ interface CommodityHolding {
   gainLossPercent: number;
 }
 
-const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActivePage }) => {
+const Assets: React.FC = () => {
   const { data, loading } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
-  const { convertCurrency } = useContext(CurrencyContext);
-  const auth = useContext(AuthContext);
 
-  const [showAssetModal, setShowAssetModal] = useState(false);
-  const [showCommodityModal, setShowCommodityModal] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [activeTab, setActiveTab] = useState<'physical' | 'commodities'>('physical');
 
   // Mock data for demonstration
@@ -109,19 +102,19 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
     const commodities = mockCommodities || [];
 
     const totalPhysicalAssets = assets.reduce((sum, asset) => 
-      sum + convertCurrency(asset.value, asset.currency, 'SAR'), 0
+      sum + asset.value, 0
     );
 
     const totalCommodities = commodities.reduce((sum, commodity) => 
-      sum + convertCurrency(commodity.totalValue, commodity.currency, 'SAR'), 0
+      sum + commodity.totalValue, 0
     );
 
     const totalGainLoss = commodities.reduce((sum, commodity) => 
-      sum + convertCurrency(commodity.gainLoss, commodity.currency, 'SAR'), 0
+      sum + commodity.gainLoss, 0
     );
 
     const totalPurchaseValue = assets.reduce((sum, asset) => 
-      sum + convertCurrency(asset.purchaseValue, asset.currency, 'SAR'), 0
+      sum + asset.purchaseValue, 0
     );
 
     const totalGainLossPercent = totalPurchaseValue > 0 
@@ -137,7 +130,7 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
       assetCount: assets.length,
       commodityCount: commodities.length
     };
-  }, [mockAssets, mockCommodities, convertCurrency]);
+  }, [mockAssets, mockCommodities]);
 
   if (loading || !data) {
     return (
@@ -186,7 +179,7 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
                 <p className="text-green-100 text-sm">Physical Assets</p>
                 <p className="text-2xl font-bold">{formatCurrencyString(calculations.totalPhysicalAssets)}</p>
               </div>
-              <BuildingOfficeIcon className="h-8 w-8 text-green-200" />
+              <BuildingLibraryIcon className="h-8 w-8 text-green-200" />
             </div>
           </div>
 
@@ -244,7 +237,7 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-gray-900">Physical Assets</h3>
                   <button
-                    onClick={() => setShowAssetModal(true)}
+                    onClick={() => {}}
                     className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />
@@ -281,13 +274,13 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
                           <div>
                             <p className="text-sm text-gray-600">Current Value</p>
                             <p className="text-lg font-semibold text-gray-900">
-                              {formatCurrencyString(convertCurrency(asset.value, asset.currency, 'SAR'))}
+                              {formatCurrencyString(asset.value)}
                             </p>
                           </div>
                           <div className="text-right">
                             <p className="text-sm text-gray-600">Purchase</p>
                             <p className="text-sm font-medium text-gray-900">
-                              {formatCurrencyString(convertCurrency(asset.purchaseValue, asset.currency, 'SAR'))}
+                              {formatCurrencyString(asset.purchaseValue)}
                             </p>
                             <p className="text-xs text-gray-500">
                               {format(new Date(asset.purchaseDate), 'MMM yyyy')}
@@ -306,7 +299,7 @@ const Assets: React.FC<{ setActivePage: (page: string) => void }> = ({ setActive
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-gray-900">Commodity Holdings</h3>
                   <button
-                    onClick={() => setShowCommodityModal(true)}
+                    onClick={() => {}}
                     className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />

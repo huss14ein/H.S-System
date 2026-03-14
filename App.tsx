@@ -140,23 +140,23 @@ const App: React.FC = () => {
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       
       // Investment & Strategy Pages
-      case 'Investment Plan': return <InvestmentPlanView setActivePage={setActivePage} />;
-      case 'Recovery Plan': return <RecoveryPlanView setActivePage={setActivePage} />;
-      case 'AI Rebalancer': return <AIRebalancerView setActivePage={setActivePage} />;
-      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
-      case 'Watchlist': return <WatchlistView setActivePage={setActivePage} />;
-      case 'Investments': return <Commodities setActivePage={setActivePage} />;
+      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} />;
+      case 'Recovery Plan': return <RecoveryPlanView />;
+      case 'AI Rebalancer': return <AIRebalancerView />;
+      case 'Dividend Tracker': return <DividendTrackerView />;
+      case 'Watchlist': return <WatchlistView />;
+      case 'Investments': return <Commodities />;
       
       // Financial Planning Pages
-      case 'Plan': return <Plan setActivePage={setActivePage} />;
+      case 'Plan': return <Plan />;
       
       // Asset Management Pages
-      case 'Assets': return <Assets setActivePage={setActivePage} />;
+      case 'Assets': return <Assets />;
       
       // System & Market Pages
-      case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
-      case 'System Health': return <SystemHealth setActivePage={setActivePage} />;
-      case 'Wealth Ultra': return <InvestmentPlanView setActivePage={setActivePage} />; // Temporary mapping
+      case 'Market Events': return <MarketEvents />;
+      case 'System Health': return <SystemHealth />;
+      case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
       
       default: return <Dashboard setActivePage={setActivePage} />;
     }
