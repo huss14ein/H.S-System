@@ -369,7 +369,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     )}
                 </SectionCard>
 
-                <SectionCard title="Liabilities" className="mt-6">
+                <SectionCard title="Receivables" className="mt-6">
                     <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Managed under liabilities so all entries stay in one flow.</p>
                     {receivables.length === 0 ? (
                         <p className="text-center text-gray-500 py-8">No liability entries in this group for this filter. Switch filter to Paid/All to review historical items.</p>
