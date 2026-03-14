@@ -23,7 +23,8 @@ Run scripts in the **Supabase SQL editor** in the order below. All scripts are i
 | `add_price_alert_currency.sql` | `price_alerts.currency`. |
 | `add_deposit_withdrawal_transaction_types.sql` | Allow `deposit` and `withdrawal` in investment_transactions. |
 | `fix_investment_account_fk.sql` | Backfill and FK for investment_transactions.account_id. |
-| `rls_policies_optional.sql` | Row Level Security policies (if using Supabase Auth). |
+| `rls_policies_optional.sql` | Row Level Security policies for investment_* tables (if using Supabase Auth). |
+| `rls_all_user_tables.sql` | **Production:** RLS for all user-scoped tables (accounts, assets, transactions, budgets, goals, etc.). Run after base tables exist. |
 | `multi_user_governance.sql` | Users, categories, permissions, budget_requests, transaction status/approval. |
 | `all_db_changes_and_enhancements.sql` | Governance + optional planned_trades columns and trade_execution_audit. |
 | `optional_investment_enhancements.sql` | planned_trades analytics columns (planned_entry_price, stop_loss, etc.). |

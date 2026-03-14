@@ -351,8 +351,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
-    const transactionsRef = useRef<FinancialData['transactions']>(data.transactions);
-    transactionsRef.current = data.transactions;
+    const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
+    transactionsRef.current = data?.transactions ?? [];
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
@@ -955,7 +955,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (error) { console.error("Error fetching source budgets:", error); alert("Could not fetch last month's budgets."); return; }
         if (!sourceBudgets || sourceBudgets.length === 0) { alert("No budgets found for the previous month to copy."); return; }
 
-        const existingTargetCategories = new Set(data.budgets.filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
+        const existingTargetCategories = new Set((data?.budgets ?? []).filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
         
         const budgetsToInsert = sourceBudgets
             .filter((b: any) => !existingTargetCategories.has(b.category))
@@ -1071,8 +1071,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert('Transfer amount must be greater than zero.');
             return;
         }
-        const fromAcc = data.accounts.find((a) => a.id === fromAccountId);
-        const toAcc = data.accounts.find((a) => a.id === toAccountId);
+        const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
+        const toAcc = (data?.accounts ?? []).find((a) => a.id === toAccountId);
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const dateStr = date ?? new Date().toISOString().split('T')[0];
@@ -1145,7 +1145,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw error;
         }
         if (inserted) {
-            const normalized = normalizeRecurringTransaction(inserted, resolveAccountId((inserted as any).account_id, data.accounts) ?? (inserted as any).account_id);
+            const normalized = normalizeRecurringTransaction(inserted, resolveAccountId((inserted as any).account_id, data?.accounts ?? []) ?? (inserted as any).account_id);
             setData(prev => ({ ...prev, recurringTransactions: [...prev.recurringTransactions, normalized] }));
         }
     };
@@ -1193,7 +1193,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
             const monthPrefix = `${year}-${monthStr}-`;
             // For EOM rules (dayOfMonth 28), treat any transaction on 28–31 in this month as already applied (matches applyRecurringDueToday which uses effectiveDateStr 28th on days 29–31)
-            const already = data.transactions.some(t => {
+            const already = (data?.transactions ?? []).some(t => {
                 const rid = t.recurringId ?? (t as any).recurring_id;
                 if (rid !== rule.id) return false;
                 if (!t.date.startsWith(monthPrefix)) return false;
@@ -1458,9 +1458,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         let investmentAccount: Account | undefined;
         if (isCashFlow) {
-            accountIdForInsert = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            accountIdForInsert = resolveAccountId(trade.accountId, data?.accounts ?? []) ?? trade.accountId;
             if (!accountIdForInsert) throw new Error("Please select the platform (account).");
-            investmentAccount = data.accounts.find((a: Account) => a.id === accountIdForInsert);
+            investmentAccount = (data?.accounts ?? []).find((a: Account) => a.id === accountIdForInsert);
             if (!investmentAccount) throw new Error("Selected account is not in the system.");
             if (investmentAccount.type !== 'Investment') throw new Error("Selected account must be an Investment platform.");
             
@@ -1479,12 +1479,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             normalizedSymbol = 'CASH';
         } else {
-            portfolio = data.investments.find(p => p.id === portfolioId);
+            portfolio = (data?.investments ?? []).find(p => p.id === portfolioId);
             if (!portfolio) throw new Error("Portfolio not found");
             
             // Validate that portfolio belongs to the selected account
-            const portfolioAccountId = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data.accounts);
-            const tradeAccountId = resolveAccountId(trade.accountId, data.accounts) ?? trade.accountId;
+            const portfolioAccountId = resolveAccountId(portfolio.accountId || (portfolio as any).account_id, data?.accounts ?? []);
+            const tradeAccountId = resolveAccountId(trade.accountId, data?.accounts ?? []) ?? trade.accountId;
             
             if (tradeAccountId && portfolioAccountId && tradeAccountId !== portfolioAccountId) {
                 throw new Error(`Portfolio "${portfolio.name}" belongs to a different platform. Please select the correct platform for this portfolio.`);
@@ -1498,7 +1498,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             accountIdForInsert = portfolioAccountId ?? tradeAccountId;
             if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
-            const accountExists = data.accounts.some((a: Account) => a.id === accountIdForInsert);
+            const accountExists = (data?.accounts ?? []).some((a: Account) => a.id === accountIdForInsert);
             if (!accountExists) throw new Error("Selected account is not in the system (or portfolio points to a deleted account).");
         }
 
@@ -1533,7 +1533,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
         if (isCashFlow && linkedCashAccountId && investmentAccount) {
             try {
-                const cashAccount = data.accounts.find((a: Account) => a.id === linkedCashAccountId);
+                const cashAccount = (data?.accounts ?? []).find((a: Account) => a.id === linkedCashAccountId);
                 if (cashAccount) {
                     const description = trade.type === 'deposit' 
                         ? `Transfer to ${investmentAccount.name}`
@@ -1619,7 +1619,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // 4. If trade came from a plan, update the plan's status
         if (executedPlanId) {
-            const plan = data.plannedTrades.find(p => p.id === executedPlanId);
+            const plan = (data?.plannedTrades ?? []).find(p => p.id === executedPlanId);
             if (plan) {
                 await updatePlannedTrade({ ...plan, status: 'Executed' });
             }
@@ -1726,7 +1726,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             alert('Please enter a valid symbol.');
             return;
         }
-        if (data.watchlist.some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
+        if ((data?.watchlist ?? []).some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
             alert(`${symbol} is already in your watchlist.`);
             return;
         }
@@ -1792,7 +1792,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
-        const merged = { ...data.settings, ...settingsUpdate };
+        const merged = { ...(data?.settings ?? {}), ...settingsUpdate };
         const overrides = settingsOverridesToRow(merged, settingsUpdate);
         const row = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
@@ -1827,7 +1827,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateUniverseTickerStatus = async (tickerId: string, status: TickerStatus, updates: Partial<UniverseTicker> = {}) => {
         if (!supabase || !auth?.user) return;
-        const ticker = data.portfolioUniverse.find(t => t.id === tickerId);
+        const ticker = (data?.portfolioUniverse ?? []).find(t => t.id === tickerId);
         if (!ticker) return;
 
         const logEntry = {
@@ -1907,7 +1907,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             map[accId].USD = Math.max(0, map[accId].USD);
         });
         return map;
-    }, [data.investmentTransactions]);
+    }, [data?.investmentTransactions]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const v = availableCashByAccountId[accountId] ?? { SAR: 0, USD: 0 };
@@ -1921,9 +1921,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return s + cash.SAR + cash.USD;
         }, 0);
         return bank + platformCash;
-    }, [data.accounts, getAvailableCashForAccount]);
+    }, [data?.accounts, getAvailableCashForAccount]);
 
-    const value = { data, loading, dataResetKey, allTransactions: data.transactions, allBudgets: data.budgets, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

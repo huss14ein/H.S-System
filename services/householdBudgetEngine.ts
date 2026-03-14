@@ -89,8 +89,15 @@ export type HouseholdEngineResult = HouseholdBudgetPlanResult;
 
 export type HouseholdEngineProfile = 'Moderate' | 'Conservative' | 'Aggressive' | string;
 
+/** Default months of expenses to target for emergency fund (e.g. 6). */
+export const DEFAULT_EMERGENCY_TARGET_MONTHS = 6;
+/** Default months of expenses for reserve pool target (e.g. 2). */
+export const DEFAULT_RESERVE_TARGET_MONTHS = 2;
+
 export const DEFAULT_HOUSEHOLD_ENGINE_CONFIG: HouseholdEngineConfig = {
   operatingMode: 'Balanced',
+  emergencyTargetMonths: DEFAULT_EMERGENCY_TARGET_MONTHS,
+  reserveTargetMonths: DEFAULT_RESERVE_TARGET_MONTHS,
 };
 
 export const HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS: Array<{
@@ -131,7 +138,7 @@ export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number 
 }
 
 export function buildHouseholdEngineInputFromData(
-  _transactions: Array<{ date: string; type?: string; amount?: number }>,
+  transactions: Array<{ date: string; type?: string; amount?: number }>,
   accounts: Array<{ type?: string; balance?: number }>,
   goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>,
   options: {
@@ -141,12 +148,27 @@ export function buildHouseholdEngineInputFromData(
     kids?: number;
     profile?: HouseholdEngineProfile;
     monthlyOverrides?: HouseholdMonthlyOverride[];
+    config?: HouseholdEngineConfig;
   }
 ): HouseholdBudgetPlanInput {
+  const year = options?.year ?? new Date().getFullYear();
   const salary = options?.expectedMonthlySalary ?? 0;
   const monthlySalaryPlan = Array(12).fill(salary);
-  const monthlyActualIncome = monthlySalaryPlan.slice();
+  const monthlyActualIncome = Array(12).fill(0);
   const monthlyActualExpense = Array(12).fill(0);
+  if (Array.isArray(transactions)) {
+    transactions.forEach((t) => {
+      const d = new Date(t.date);
+      if (d.getFullYear() !== year) return;
+      const m = d.getMonth();
+      const amount = Math.max(0, Number(t.amount) ?? 0);
+      if (t.type === 'income') monthlyActualIncome[m] += amount;
+      else if (t.type === 'expense') monthlyActualExpense[m] += amount;
+    });
+  }
+  for (let i = 0; i < 12; i++) {
+    if (monthlyActualIncome[i] === 0) monthlyActualIncome[i] = salary;
+  }
   const liquidBalance = sumLiquidCash(accounts);
   const goalsMapped = mapGoalsForRouting(goals);
   return {
@@ -156,17 +178,32 @@ export function buildHouseholdEngineInputFromData(
     householdDefaults: { adults: options?.adults ?? 2, kids: options?.kids ?? 0 },
     monthlyOverrides: options?.monthlyOverrides ?? [],
     liquidBalance,
-    emergencyBalance: 0,
+    emergencyBalance: liquidBalance,
     reserveBalance: 0,
     goals: goalsMapped,
-    config: DEFAULT_HOUSEHOLD_ENGINE_CONFIG,
+    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, ...options?.config },
   };
 }
 
 export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): HouseholdBudgetPlanResult {
-  const { monthlySalaryPlan, monthlyActualIncome, monthlyActualExpense, liquidBalance } = input;
+  const { monthlySalaryPlan, monthlyActualIncome, monthlyActualExpense, liquidBalance, emergencyBalance, reserveBalance, config } = input;
   const plannedNet = monthlySalaryPlan.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
   const actualNet = monthlyActualIncome.reduce((a, b) => a + b, 0) - monthlyActualExpense.reduce((a, b) => a + b, 0);
+
+  const emergencyTargetMonths = Number((config as { emergencyTargetMonths?: number })?.emergencyTargetMonths) || DEFAULT_EMERGENCY_TARGET_MONTHS;
+  const reserveTargetMonths = Number((config as { reserveTargetMonths?: number })?.reserveTargetMonths) || DEFAULT_RESERVE_TARGET_MONTHS;
+  // Use average monthly expense across the year so emergency/reserve targets aren't skewed by a single outlier month
+  const expenseValues = (monthlyActualExpense ?? []).map((e) => Number(e) ?? 0);
+  const avgMonthlyExpense = expenseValues.length > 0
+    ? expenseValues.reduce((a, b) => a + b, 0) / expenseValues.length
+    : 0;
+  const avgMonthlySalary = (monthlySalaryPlan ?? []).length > 0
+    ? (monthlySalaryPlan ?? []).reduce((a, b) => a + (Number(b) ?? 0), 0) / (monthlySalaryPlan ?? []).length
+    : 0;
+  const monthlyExpenseForTargets = avgMonthlyExpense > 0 ? avgMonthlyExpense : (Number(avgMonthlySalary) || 0);
+  const initialEmergencyGap = Math.max(0, monthlyExpenseForTargets * emergencyTargetMonths - Number(emergencyBalance ?? 0));
+  const initialReserveGap = Math.max(0, monthlyExpenseForTargets * reserveTargetMonths - Number(reserveBalance ?? 0));
+
   const months: HouseholdMonthResult[] = (monthlySalaryPlan.length ? monthlySalaryPlan : Array(12).fill(0)).map((_, i) => {
     const inc = Number(monthlySalaryPlan[i] ?? 0);
     const exp = Number(monthlyActualExpense[i] ?? 0);
@@ -189,10 +226,20 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       totalActualOutflow: exp,
     };
   });
+  const recommendations: string[] = [];
+  if (initialEmergencyGap > 0) {
+    recommendations.push(`Build emergency fund: ~${Math.round(initialEmergencyGap).toLocaleString()} short of ${emergencyTargetMonths} months of expenses.`);
+  }
+  if (initialReserveGap > 0) {
+    recommendations.push(`Top up reserve pool: ~${Math.round(initialReserveGap).toLocaleString()} short of ${reserveTargetMonths} months target.`);
+  }
+
   return {
     months,
     plannedVsActual: { plannedNet, actualNet },
     balanceProjection: { projectedYearEndLiquid: liquidBalance, openingLiquid: liquidBalance },
-    recommendations: [],
+    recommendations,
+    emergencyGap: initialEmergencyGap,
+    reserveGap: initialReserveGap,
   };
 }

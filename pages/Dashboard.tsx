@@ -45,12 +45,13 @@ const AIExecutiveSummary: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const handleGenerate = useCallback(async () => {
+        if (!data) return;
         setIsLoading(true);
         setError(null);
         setSummary('');
         try {
             const result = await getAIExecutiveSummary(data);
-            setSummary(result);
+            setSummary(result ?? '');
         } catch (err) {
             setError(formatAiError(err));
         }
@@ -113,20 +114,25 @@ const AIExecutiveSummary: React.FC = () => {
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const safeAccounts = accounts ?? [];
     return (
-        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
+        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()} aria-label="Accounts overview, click to open Accounts page">
             <h3 className="section-title"><BuildingLibraryIcon className="h-5 w-5 text-primary"/> Accounts Overview</h3>
+            {safeAccounts.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4">No accounts yet. Add accounts to track balances.</p>
+            ) : (
             <ul className="space-y-3">
-                {accounts.map(acc => (
+                {safeAccounts.map(acc => (
                     <li key={acc.id} className="flex justify-between items-center text-sm">
                         <div>
                             <p className="font-medium text-dark">{acc.name}</p>
                             <p className="text-xs text-slate-500">{acc.type}</p>
                         </div>
-                        <p className={`font-semibold ${acc.balance >= 0 ? 'text-success' : 'text-danger'}`}>{formatCurrencyString(acc.balance)}</p>
+                        <p className={`font-semibold ${(acc.balance ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>{formatCurrencyString(acc.balance ?? 0)}</p>
                     </li>
                 ))}
             </ul>
+            )}
         </div>
     );
 };
@@ -141,11 +147,11 @@ const UpcomingBills: React.FC = () => {
         const now = new Date();
 
         // Find recurring fixed expenses from the last year
-        data.transactions
-            .filter(t => t.type === 'expense' && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() -1, now.getMonth(), now.getDate()))
+        (data?.transactions ?? [])
+            .filter(t => t.type === 'expense' && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
             .forEach(t => {
                 const existing = recurringExpenses.get(t.description) || { totalAmount: 0, lastAmount: 0, lastDate: new Date(0), count: 0 };
-                const thisAmount = Math.abs(t.amount);
+                const thisAmount = Math.abs(Number(t.amount) ?? 0);
                 recurringExpenses.set(t.description, {
                     totalAmount: existing.totalAmount + thisAmount,
                     lastAmount: thisAmount,
@@ -168,7 +174,7 @@ const UpcomingBills: React.FC = () => {
             }
         }
         return bills.sort((a,b) => a.date.getTime() - b.date.getTime()).slice(0, 3);
-    }, [data.transactions]);
+    }, [data?.transactions]);
 
     return (
         <div className="section-card">
@@ -209,11 +215,11 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], onClick: () =>
                       style={{ animationDelay: `${index * 100}ms`, opacity: 0 }}
                     >
                         <div>
-                            <p className="font-medium text-dark">{t.description}</p>
+                            <p className="font-medium text-dark">{t.description ?? '—'}</p>
                             <p className="text-sm text-slate-500">{formatDate(t.date)}</p>
                         </div>
                         <p className="font-semibold">
-                            {formatCurrency(t.amount, { colorize: true })}
+                            {formatCurrency(t.amount ?? 0, { colorize: true })}
                         </p>
                     </li>
                 ))}
@@ -229,8 +235,9 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
     const daysLeft = daysInMonth - now.getDate();
 
     const getStatus = (percentage: number) => {
-        if (percentage > 100) return { text: 'Over Budget', colorClass: 'bg-danger', textColorClass: 'text-danger' };
-        if (percentage > 75) return { text: 'Nearing Limit', colorClass: 'bg-warning', textColorClass: 'text-warning' };
+        const p = Number(percentage) || 0;
+        if (p > 100) return { text: 'Over Budget', colorClass: 'bg-danger', textColorClass: 'text-danger' };
+        if (p > 75) return { text: 'Nearing Limit', colorClass: 'bg-warning', textColorClass: 'text-warning' };
         return { text: 'On Track', colorClass: 'bg-success', textColorClass: 'text-success' };
     };
 
@@ -238,22 +245,22 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
         <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
             <h3 className="text-lg font-semibold mb-4 text-dark">Budget Health (This Month)</h3>
             <div className="space-y-4">
-                {budgets.slice(0, 4).map(budget => {
-                    const status = getStatus(budget.percentage);
+                {(budgets ?? []).slice(0, 4).map((budget, index) => {
+                    const status = getStatus(budget?.percentage ?? 0);
                     return (
-                        <div key={budget.category} className="border-t pt-3 first:border-t-0">
+                        <div key={budget?.category ?? `budget-${index}`} className="border-t pt-3 first:border-t-0">
                             <div className="flex justify-between items-center mb-1">
-                                <span className="font-bold text-dark">{budget.category}</span>
+                                <span className="font-bold text-dark">{budget?.category ?? '—'}</span>
                                 <span className={`text-sm font-semibold flex items-center gap-1.5 ${status.textColorClass}`}>
                                     <span className={`w-2 h-2 rounded-full ${status.colorClass}`}></span>
                                     {status.text}
                                 </span>
                             </div>
-                            <ProgressBar value={budget.spent} max={budget.monthlyLimit ?? budget.limit} color={status.colorClass} />
+                            <ProgressBar value={budget?.spent ?? 0} max={budget?.monthlyLimit ?? budget?.limit ?? 1} color={status.colorClass} />
                             <div className="flex justify-between items-baseline text-xs text-slate-500 mt-1">
                                 <span>
-                                    <span className="font-semibold text-dark">{formatCurrencyString(budget.spent, { digits: 0 })}</span> / {formatCurrencyString(budget.monthlyLimit ?? budget.limit, { digits: 0 })}
-                                    <span className="font-medium text-slate-600"> ({budget.percentage.toFixed(0)}%)</span>
+                                    <span className="font-semibold text-dark">{formatCurrencyString(budget?.spent ?? 0, { digits: 0 })}</span> / {formatCurrencyString(budget?.monthlyLimit ?? budget?.limit ?? 0, { digits: 0 })}
+                                    <span className="font-medium text-slate-600"> ({(budget?.percentage ?? 0).toFixed(0)}%)</span>
                                 </span>
                                 <span>
                                     {daysLeft} days left
@@ -298,17 +305,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
-        const monthlyInvested = data.investmentTransactions
+        const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .reduce((sum, t) => sum + t.total, 0);
+            .reduce((sum, t) => sum + (t.total ?? 0), 0);
         
         return {
-            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            percent: Math.min((monthlyInvested / ((data?.investmentPlan?.monthlyBudget) || 1)) * 100, 100),
             amount: monthlyInvested,
-            target: data.investmentPlan.monthlyBudget
+            target: data?.investmentPlan?.monthlyBudget ?? 0
         };
     }, [data]);
 
@@ -322,47 +329,47 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
             // Current Month Calculations
-            const monthlyTransactions = (data.transactions || []).filter(t => new Date(t.date) >= firstDayOfMonth);
-            const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-            const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const monthlyTransactions = (data?.transactions ?? []).filter(t => new Date(t.date) >= firstDayOfMonth);
+            const monthlyIncome = monthlyTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
+            const monthlyExpenses = monthlyTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
             const monthlyPnL = monthlyIncome - monthlyExpenses;
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const totalBudget = (data.budgets || []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
+            const totalBudget = (data?.budgets ?? []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
             const budgetVariance = totalBudget - monthlyExpenses;
             
             // Previous Month P&L for trend
-            const lastMonthTransactions = (data.transactions || []).filter(t => {
+            const lastMonthTransactions = (data?.transactions ?? []).filter(t => {
                 const date = new Date(t.date);
                 return date >= firstDayOfLastMonth && date < firstDayOfMonth;
             });
-            const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            const lastMonthPnL = lastMonthTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0) - lastMonthTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
             
             // Net Worth and Trend — include investment value only via totalInvestmentsValue; exclude Investment accounts from balance sum to avoid double-counting (their balance may reflect portfolio value in some flows)
-            const totalCommodities = (data.commodityHoldings || []).reduce((sum, ch) => sum + ch.currentValue, 0);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments || [], exchangeRate);
-            const cashSavingsAccounts = (data.accounts || []).filter(a => a.type === 'Checking' || a.type === 'Savings');
+            const totalCommodities = (data?.commodityHoldings ?? []).reduce((sum, ch) => sum + (ch.currentValue ?? 0), 0);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data?.investments ?? [], exchangeRate);
+            const cashSavingsAccounts = (data?.accounts ?? []).filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
             const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-            const totalAssets = (data.assets || []).reduce((sum, asset) => sum + asset.value, 0) +
+            const totalAssets = (data?.assets ?? []).reduce((sum, asset) => sum + (asset.value ?? 0), 0) +
                                cashAndSavingsPositive +
                                totalCommodities +
                                totalInvestmentsValue;
-            const totalDebt = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + (data.accounts || []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
-            const totalReceivable = (data.liabilities || []).filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
+            const totalDebt = (data?.liabilities ?? []).filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + (data?.accounts ?? []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
+            const totalReceivable = (data?.liabilities ?? []).filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
             const netWorth = totalAssets - totalDebt + totalReceivable;
             const netWorthPrevMonth = netWorth - monthlyPnL; // Simplified: assumes NW change is only P&L
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
             
             // Investment data
-            const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
+            const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
             const investmentTreemapData = allHoldings.map(h => {
-                 const totalCost = h.avgCost * h.quantity;
-                 const gainLoss = h.currentValue - totalCost;
+                 const totalCost = (h.avgCost ?? 0) * (h.quantity ?? 0);
+                 const gainLoss = (h.currentValue ?? 0) - totalCost;
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const totalInvested = (data.investmentTransactions || []).filter(t => t.type === 'buy').reduce((sum, t) => sum + t.total, 0);
-            const totalWithdrawn = Math.abs((data.investmentTransactions || []).filter(t => t.type === 'sell').reduce((sum, t) => sum + t.total, 0));
+            const totalInvested = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + (t.total ?? 0), 0);
+            const totalWithdrawn = Math.abs((data?.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + (t.total ?? 0), 0));
             const netCapital = totalInvested - totalWithdrawn;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
@@ -370,10 +377,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const monthlySpending = new Map<string, number>();
             monthlyTransactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
                     const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
-                    monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+                    monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(Number(t.amount) ?? 0));
                 });
 
-            const monthlyBudgets = (data.budgets || [])
+            const monthlyBudgets = (data?.budgets ?? [])
                 .map(budget => {
                     const spent = monthlySpending.get(budget.category) || 0;
                     const monthlyLimit = budgetToMonthly(budget);
@@ -385,28 +392,28 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             // Cashflow Chart Data
             const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
             const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-            (data.transactions || []).filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
+            (data?.transactions ?? []).filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
                 const monthKey = t.date.slice(0, 7); // YYYY-MM
                 const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
-                if(t.type === 'income') current.income += t.amount;
-                else current.expenses += Math.abs(t.amount);
+                if(t.type === 'income') current.income += (Number(t.amount) ?? 0);
+                else current.expenses += Math.abs(Number(t.amount) ?? 0);
                 monthlyCashflowMap.set(monthKey, current);
             });
             const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
 
-            const uncategorizedTransactions = (data.transactions || []).filter(t => t.type === 'expense' && !t.budgetCategory);
+            const uncategorizedTransactions = (data?.transactions ?? []).filter(t => t.type === 'expense' && !t.budgetCategory);
             
-            const recentTransactions = [...(data.transactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            const recentTransactions = [...(data?.transactions ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
             // 30-day projected cash: current cash + average monthly net (last 6 months)
-            const cashAccounts = (data.accounts || []).filter(a => ['Checking', 'Savings'].includes(a.type));
-            const currentCash = cashAccounts.reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+            const cashAccounts = (data?.accounts ?? []).filter(a => ['Checking', 'Savings'].includes(a.type));
+            const currentCash = cashAccounts.reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
             const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-            const recentTx = (data.transactions || []).filter(t => new Date(t.date) >= sixMonthsAgo);
+            const recentTx = (data?.transactions ?? []).filter(t => new Date(t.date) >= sixMonthsAgo);
             const monthlyNets = new Map<string, number>();
             recentTx.forEach(t => {
                 const key = t.date.slice(0, 7);
-                monthlyNets.set(key, (monthlyNets.get(key) || 0) + t.amount);
+                monthlyNets.set(key, (monthlyNets.get(key) || 0) + (Number(t.amount) ?? 0));
             });
             const avgMonthlyNet = monthlyNets.size > 0
                 ? Array.from(monthlyNets.values()).reduce((a, b) => a + b, 0) / monthlyNets.size
@@ -587,12 +594,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  </div>
             </div>
             
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
-                <AccountsOverview accounts={data.accounts} onClick={() => setActivePage('Accounts')} />
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+                <AccountsOverview accounts={data?.accounts ?? []} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
                 <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
                 <RecentTransactions transactions={recentTransactions} onClick={() => setActivePage('Transactions')} />
             </div>
@@ -612,7 +619,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 isOpen={isReviewModalOpen}
                 onClose={() => setIsReviewModalOpen(false)}
                 transactions={uncategorizedTransactions}
-                budgetCategories={data.budgets.map(b => b.category)}
+                budgetCategories={(data?.budgets ?? []).map(b => b.category)}
             />
         </div>
     );

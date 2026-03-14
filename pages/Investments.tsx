@@ -106,20 +106,20 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0 };
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
-        const monthlyInvested = data.investmentTransactions
+        const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .reduce((sum, t) => sum + t.total, 0);
+            .reduce((sum, t) => sum + (t.total ?? 0), 0);
         
-        const corePct = data.investmentPlan.coreAllocation ?? 0.7;
-        const upsidePct = data.investmentPlan.upsideAllocation ?? 0.3;
+        const corePct = data?.investmentPlan?.coreAllocation ?? 0.7;
+        const upsidePct = data?.investmentPlan?.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
         return {
-            percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+            percent: Math.min((monthlyInvested / (data?.investmentPlan?.monthlyBudget || 1)) * 100, 100),
             amount: monthlyInvested,
-            target: data.investmentPlan.monthlyBudget,
+            target: data?.investmentPlan?.monthlyBudget ?? 0,
             corePct,
             upsidePct,
             specPct,
@@ -222,7 +222,7 @@ const RecordTradeModal: React.FC<{
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const availableGoals = useMemo(() => data.goals || [], [data.goals]);
+    const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
@@ -845,7 +845,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                         className="mt-1 w-full p-2 border border-gray-300 rounded-md"
                     >
                         <option value="none">-- Not Linked --</option>
-                        {data.goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        {(data?.goals ?? []).map(g => <option key={g?.id ?? ''} value={g?.id ?? ''}>{g?.name ?? '—'}</option>)}
                     </select>
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Changes</button>
@@ -1361,11 +1361,11 @@ const PlatformView: React.FC<{
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
-        const investmentAccounts = data.accounts.filter(acc => acc.type === 'Investment').sort((a,b) => a.name.localeCompare(b.name));
+        const investmentAccounts = (data?.accounts ?? []).filter(acc => acc.type === 'Investment').sort((a,b) => (a.name ?? '').localeCompare(b.name ?? ''));
         return investmentAccounts.map(account => ({
             account,
-            portfolios: data.investments.filter(p => (p.accountId ?? (p as any).account_id) === account.id),
-            transactions: data.investmentTransactions.filter(t => (t.accountId ?? (t as any).account_id) === account.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+            portfolios: (data?.investments ?? []).filter(p => (p.accountId ?? (p as any).account_id) === account.id),
+            transactions: (data?.investmentTransactions ?? []).filter(t => (t.accountId ?? (t as any).account_id) === account.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
             availableCashByCurrency: getAvailableCashForAccount(account.id),
         }));
     }, [data, getAvailableCashForAccount]);
@@ -1479,7 +1479,7 @@ const PlatformView: React.FC<{
                         platform={p.account}
                         portfolios={p.portfolios}
                         transactions={p.transactions}
-                        goals={data.goals}
+                        goals={data?.goals ?? []}
                         availableCashByCurrency={p.availableCashByCurrency}
                         onEditPlatform={props.onEditPlatform}
                         onDeletePlatform={props.onDeletePlatform}
@@ -1524,7 +1524,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
 
-    const planFromData = data.investmentPlan;
+    const planFromData = data?.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
         ...planFromData,
         minimumUpsidePercentage: Number(planFromData.minimumUpsidePercentage) || ANALYST_DEFAULTS.minimumUpsidePercentage,
@@ -1567,10 +1567,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
-        const portfolioUniverse = data.portfolioUniverse ?? [];
-        const investments = data.investments ?? [];
-        const watchlist = data.watchlist ?? [];
-        const plannedTrades = data.plannedTrades ?? [];
+        const portfolioUniverse = data?.portfolioUniverse ?? [];
+        const investments = data?.investments ?? [];
+        const watchlist = data?.watchlist ?? [];
+        const plannedTrades = data?.plannedTrades ?? [];
 
         // 1. Start with explicit universe
         portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
@@ -1630,7 +1630,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         });
         
         return Array.from(universeMap.values());
-    }, [data.portfolioUniverse, data.investments, data.watchlist, data.plannedTrades]);
+    }, [data?.portfolioUniverse, data?.investments, data?.watchlist, data?.plannedTrades]);
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
@@ -1647,14 +1647,14 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [unifiedUniverse]);
 
     useEffect(() => {
-        if (data.investmentPlan) {
+        if (data?.investmentPlan) {
             setPlan(data.investmentPlan);
         }
-    }, [data.investmentPlan]);
+    }, [data?.investmentPlan]);
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
     const suggestedMonthlyBudget = useMemo(() => {
-        const buys = (data.investmentTransactions || []).filter(t => t.type === 'buy');
+        const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
         if (buys.length === 0) return 0;
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
@@ -1669,7 +1669,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const amounts = Array.from(byMonth.values());
         if (amounts.length === 0) return 0;
         return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
-    }, [data.investmentTransactions]);
+    }, [data?.investmentTransactions]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -1787,7 +1787,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const actionableCount = (data.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
+    const actionableCount = (data?.portfolioUniverse ?? []).filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
 
     const planHealth = useMemo(() => {
@@ -1843,8 +1843,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning, effectiveCoreAllocation, effectiveUpsideAllocation]);
 
     const syncPlanFromUniverse = () => {
-        const core = (data.portfolioUniverse || []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
-        const upside = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const core = (data?.portfolioUniverse ?? []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker ?? '', weight: t.monthly_weight ?? 0 }));
+        const upside = (data?.portfolioUniverse ?? []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker ?? '', weight: t.monthly_weight ?? 0 }));
         setPlan(prev => ({ ...prev, corePortfolio: core, upsideSleeve: upside }));
     };
 
@@ -1852,8 +1852,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const hasHistory = suggestedMonthlyBudget > 0;
         const monthly = hasHistory ? suggestedMonthlyBudget : plan.monthlyBudget || 0;
     
-        const coreUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'Core');
-        const upsideUniverse = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside');
+        const coreUniverse = (data?.portfolioUniverse ?? []).filter(t => t.status === 'Core');
+        const upsideUniverse = (data?.portfolioUniverse ?? []).filter(t => t.status === 'High-Upside');
     
         let coreAlloc = effectiveCoreAllocation;
         let upsideAlloc = effectiveUpsideAllocation;
@@ -1912,7 +1912,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setExecutionResult(null);
         setExecutionError(null);
         try {
-            const result = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased });
+            const result = await executeInvestmentPlanStrategy(plan, data?.portfolioUniverse ?? [], { forceRuleBased });
             setExecutionResult(result);
             setExecutionError(null);
 
@@ -1929,7 +1929,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
             if (!forceRuleBased) {
                 try {
-                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data.portfolioUniverse, { forceRuleBased: true });
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, data?.portfolioUniverse ?? [], { forceRuleBased: true });
                     setExecutionResult(fallbackResult);
                     setExecutionError(null);
 
@@ -2488,12 +2488,12 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   const { exchangeRate } = useCurrency();
   const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage } = useMemo(() => {
-    if (!data || !data.investments) {
+    if (!data || !data?.investments?.length) {
         return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
     }
     const rate = exchangeRate;
     let valueSAR = 0, valueUSD = 0;
-    data.investments.forEach((p: InvestmentPortfolio) => {
+    (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
         const v = (p.holdings || []).reduce((s: number, h: Holding) => {
             const sym = h.symbol;
@@ -2502,7 +2502,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         if (cur === 'SAR') valueSAR += v; else valueUSD += v;
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
-    const allCommodities = data.commodityHoldings || [];
+    const allCommodities = data?.commodityHoldings ?? [];
     const totalCommoditiesValue = allCommodities.reduce((sum, ch) => {
         const sym = ch.symbol;
         return sum + (sym != null && simulatedPrices[sym] ? simulatedPrices[sym].price * ch.quantity : ch.currentValue);
@@ -2510,8 +2510,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
 
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    data.investmentTransactions.filter((t: InvestmentTransaction) => t.type === 'buy').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    data.investmentTransactions.filter((t: InvestmentTransaction) => t.type === 'sell').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'buy').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'sell').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
@@ -2519,7 +2519,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const allHoldings = data.investments.flatMap((p: InvestmentPortfolio) => p.holdings || []);
+    const allHoldings = (data?.investments ?? []).flatMap((p: InvestmentPortfolio) => p.holdings ?? []);
     const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => {
         const sym = (item as { symbol?: string }).symbol;
         return (sym != null && simulatedPrices[sym]) ? sum + simulatedPrices[sym].change * item.quantity : sum;
@@ -2528,7 +2528,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data.investments, data.investmentTransactions, data.commodityHoldings, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, simulatedPrices, exchangeRate]);
 
 
   const getTrendString = (trend: number) => {
@@ -2552,7 +2552,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   }, [pageAction, clearPageAction]);
 
-  const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
+  const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }), portfolio: InvestmentPortfolio) => { setSelectedHolding(holding); setSelectedPortfolio(portfolio); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
@@ -2753,7 +2753,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         portfolioToEdit={portfolioToEdit} 
         accountId={currentAccountId}
         investmentAccounts={investmentAccounts}
-        goals={data.goals}
+        goals={data?.goals ?? []}
       />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
       <RecordTradeModal 
@@ -2761,7 +2761,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         onClose={handleCloseTradeModal} 
         onSave={recordTrade} 
         investmentAccounts={investmentAccounts} 
-        portfolios={data.investments}
+        portfolios={data?.investments ?? []}
         initialData={tradeInitialData}
       />
     </div>

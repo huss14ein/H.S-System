@@ -42,22 +42,22 @@ function buildEngineConfigFromSystem(
   },
   totalDeployableCash?: number
 ) {
-  const plan = data.investmentPlan;
-  const systemConfig = data.wealthUltraConfig;
+  const plan = data?.investmentPlan;
+  const systemConfig = data?.wealthUltraConfig;
   const defaults = getDefaultWealthUltraConfig();
   const base = { ...defaults, ...systemConfig } as typeof defaults;
 
   const cashAvailable =
     totalDeployableCash ??
-    (data.accounts || []).reduce((s: number, a: { balance?: number }) => s + (a.balance || 0), 0);
+    (data?.accounts ?? []).reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
 
   const allHoldingTickers =
-    (data.investments || [])
+    (data?.investments ?? [])
       .flatMap((p: { holdings?: Array<{ symbol?: string }> }) => p.holdings || [])
       .map((h: { symbol?: string }) => (h.symbol || '').toUpperCase())
       .filter(Boolean) || [];
 
-  const universe = data.portfolioUniverse || [];
+  const universe = data?.portfolioUniverse ?? [];
 
   let coreTickers: string[] = [];
   let upsideTickers: string[] = [];
@@ -175,7 +175,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { isAiAvailable } = useAI();
 
   const engineState = useMemo(() => {
-    const allHoldings = (data.investments || []).flatMap(p => p.holdings || []);
+    const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
     const priceMap: Record<string, number> = {};
     Object.entries(simulatedPrices).forEach(([sym, o]) => {
       priceMap[sym.toUpperCase()] = (o as { price: number }).price;
@@ -186,11 +186,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     });
     const config = buildEngineConfigFromSystem(
       {
-        investmentPlan: data.investmentPlan,
-        wealthUltraConfig: data.wealthUltraConfig,
-        accounts: data.accounts,
-        portfolioUniverse: data.portfolioUniverse,
-        investments: data.investments,
+        investmentPlan: data?.investmentPlan,
+        wealthUltraConfig: data?.wealthUltraConfig,
+        accounts: data?.accounts ?? [],
+        portfolioUniverse: data?.portfolioUniverse ?? [],
+        investments: data?.investments ?? [],
       },
       totalDeployableCash
     );
@@ -199,7 +199,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       priceMap,
       config,
     });
-  }, [data.investments, data.investmentPlan, data.accounts, data.wealthUltraConfig, data.portfolioUniverse, simulatedPrices, totalDeployableCash]);
+  }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.portfolioUniverse, simulatedPrices, totalDeployableCash]);
 
   const {
     totalPortfolioValue,
@@ -222,7 +222,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const top5Gainers = positions.filter(p => p.plPct > 0).sort((a, b) => b.plPct - a.plPct).slice(0, 5);
   const top5Losers = positions.filter(p => p.plPct < 0).sort((a, b) => a.plPct - b.plPct).slice(0, 5);
   const positionCount = positions.length;
-  const portfolioCount = (data.investments || []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
+  const portfolioCount = (data?.investments ?? []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
   const buyOrders = orders.filter(o => o.type === 'BUY');
   const sellOrders = orders.filter(o => o.type === 'SELL');
 
@@ -232,7 +232,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     (engineState.positions || []).forEach((p: WealthUltraPosition) => {
       const tier = (p.riskTier && tiers.includes(p.riskTier as WealthUltraRiskTier)) ? p.riskTier : 'Med';
       byRisk[tier].count += 1;
-      byRisk[tier].value += p.marketValue;
+      byRisk[tier].value += (p.marketValue ?? 0);
     });
     return byRisk;
   }, [engineState.positions]);
@@ -948,7 +948,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <div key={tier} className={`rounded-xl ${colors.bg} border-2 ${colors.border} px-5 py-4 shadow-sm`}>
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-2">{tier} Risk</p>
                     <p className="text-sm font-medium text-slate-700 mb-1">{stat.count} position{stat.count !== 1 ? 's' : ''}</p>
-                    <p className={`text-xl font-black tabular-nums ${colors.text}`}>{formatCurrencyString(stat.value)}</p>
+                    <p className={`text-xl font-black tabular-nums ${colors.text}`}>{formatCurrencyString(stat.value ?? 0)}</p>
                   </div>
                 );
               })}

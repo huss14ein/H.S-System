@@ -93,8 +93,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const transactions = data?.transactions ?? [];
         const recentTransactions = transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
 
-        const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = recentTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
+        const monthlyExpenses = recentTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
         const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
         const monthlyPnL = monthlyIncome - monthlyExpenses;
 
@@ -108,9 +108,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
         const totalDebt = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0) + cashAndSavingsNegative;
         const totalReceivable = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + ch.currentValue, 0);
+        const totalCommodities = commodityHoldings.reduce((sum, ch) => sum + (ch.currentValue ?? 0), 0);
         const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
-        const totalAssets = assets.reduce((sum, asset) => sum + asset.value, 0) +
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) +
                            cashAndSavingsPositive +
                            totalCommodities +
                            totalInvestmentsValue;
@@ -157,17 +157,16 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
 
     const householdStress = useMemo(() => {
         if (!data) return null;
-        const year = new Date().getFullYear();
         const input = buildHouseholdEngineInputFromData(
-            (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
-            (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
-            (data.goals ?? []) as any[],
+            (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+            (data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            (data?.goals ?? []) as any[],
             {
-                year,
+                year: new Date().getFullYear(),
                 expectedMonthlySalary: undefined,
                 adults: 2,
                 kids: 0,
-                profile: 'Moderate',
+                profile: (data?.settings?.riskProfile as string) || 'Moderate',
                 monthlyOverrides: [],
             }
         );
@@ -201,12 +200,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         setAnalysis(null);
         try {
             const result = await getAIFinancialPersona(
-                financialMetricsWithEf.savingsRate, 
-                financialMetricsWithEf.debtToAssetRatio, 
-                financialMetricsWithEf.emergencyFundMonths, 
-                financialMetricsWithEf.investmentStyle
+                Number(financialMetricsWithEf.savingsRate) || 0,
+                Number(financialMetricsWithEf.debtToAssetRatio) || 0,
+                Number(financialMetricsWithEf.emergencyFundMonths) || 0,
+                String(financialMetricsWithEf.investmentStyle ?? 'Balanced')
             );
-            setAnalysis(result);
+            setAnalysis(result ?? null);
         } catch (err) {
             setError(formatAiError(err));
         }
@@ -231,21 +230,21 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         <DemoDataButton page="Summary" />
                         <button
                             type="button"
-                            onClick={() => setActivePage('Dashboard')}
+                            onClick={() => setActivePage('Wealth Ultra')}
                             className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
                         >
                             Wealth Ultra
                         </button>
                         <button
                             type="button"
-                            onClick={() => setActivePage('Dashboard')}
+                            onClick={() => setActivePage('Market Events')}
                             className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
                         >
                             Market Events
                         </button>
                         <button
                             type="button"
-                            onClick={() => setActivePage('Dashboard')}
+                            onClick={() => setActivePage('Investments')}
                             className="text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5"
                         >
                             Investments
@@ -261,7 +260,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 )
             }
         >
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {isAdmin ? (
                     <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
                         <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
@@ -332,7 +331,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             )}
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 mt-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
                 <div className="section-card">
                     <h3 className="section-title mb-2">Risk Lane</h3>
                     <p className="text-sm text-slate-700">
@@ -342,7 +341,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
                     </p>
                     <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {riskLane.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                        {(riskLane.reasons ?? []).slice(0, 3).map((r, i) => <li key={r ?? i}>{r}</li>)}
                     </ul>
                 </div>
                 <div className="section-card">
@@ -350,12 +349,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     {liquidityRunway ? (
                         <>
                             <p className="text-sm text-slate-700">
-                                Runway: <span className="font-semibold">{liquidityRunway.monthsOfRunway.toFixed(1)} months</span>
+                                Runway: <span className="font-semibold">{(liquidityRunway.monthsOfRunway ?? 0).toFixed(1)} months</span>
                             </p>
                             <p className="text-xs text-slate-500 mt-1">
-                                Portfolio drawdown: <span className="font-semibold">{liquidityRunway.drawdownPct.toFixed(1)}%</span>
+                                Portfolio drawdown: <span className="font-semibold">{(liquidityRunway.drawdownPct ?? 0).toFixed(1)}%</span>
                             </p>
-                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons[0]}</p>
+                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons?.[0] ?? '—'}</p>
                         </>
                     ) : (
                         <p className="text-sm text-slate-500">Not enough data.</p>
@@ -364,10 +363,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 <div className="section-card">
                     <h3 className="section-title mb-2">Discipline Score</h3>
                     <p className="text-sm text-slate-700">
-                        Score: <span className="font-semibold">{discipline.score}/100</span> ({discipline.label})
+                        Score: <span className="font-semibold">{discipline?.score ?? 0}/100</span> ({discipline?.label ?? '—'})
                     </p>
                     <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {discipline.reasons.slice(0, 3).map(r => <li key={r}>{r}</li>)}
+                        {(discipline.reasons ?? []).slice(0, 3).map((r, i) => <li key={r ?? i}>{r}</li>)}
                     </ul>
                 </div>
             </div>
@@ -380,12 +379,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 {shockDrill ? (
                     <>
                         <p className="text-sm text-slate-700">
-                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta, { digits: 0 })}</span>
+                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta ?? 0, { digits: 0 })}</span>
                         </p>
                         <p className="text-sm text-slate-700 mt-1">
-                            Wealth Ultra value delta: <span className="font-semibold">{shockDrill.wealthUltraPortfolioValueDeltaPct.toFixed(1)}%</span>
+                            Wealth Ultra value delta: <span className="font-semibold">{(shockDrill.wealthUltraPortfolioValueDeltaPct ?? 0).toFixed(1)}%</span>
                         </p>
-                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote}</p>
+                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote ?? '—'}</p>
                     </>
                 ) : (
                     <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
@@ -419,8 +418,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         <div>
                             <h3 className="text-xl font-semibold text-dark mb-4 text-center">Financial Health Report Card</h3>
                             <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
-                                {analysis.reportCard.map(item => (
-                                    <div key={item.metric} className={`p-4 rounded-lg border-l-4 ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}>
+                                {(analysis.reportCard ?? []).map((item, idx) => (
+                                    <div key={item.metric ?? `report-${idx}`} className={`p-4 rounded-lg border-l-4 ${getRatingColors(item.rating).border} ${getRatingColors(item.rating).bg}`}>
                                         <div className="flex items-start justify-between">
                                             <div className="flex items-center space-x-3">
                                                  <MetricIcon metric={item.metric} />

@@ -72,8 +72,8 @@ export function calculatePositionRisk(
   portfolioValue: number,
   otherPositions: PositionRiskInput[]
 ): RiskMetrics {
-  const marketValue = position.shares * position.currentPrice;
-  const concentrationRisk = marketValue / portfolioValue;
+  const marketValue = (position.shares ?? 0) * (position.currentPrice ?? 0);
+  const concentrationRisk = (portfolioValue && Number.isFinite(portfolioValue)) ? marketValue / Math.max(portfolioValue, 1e-6) : 0;
   
   // Calculate returns if price history provided
   const returns = position.returns || 
@@ -309,9 +309,10 @@ export function calculateSleeveRiskAllocation(
     .filter(p => p.sleeve === 'speculative')
     .reduce((sum, p) => sum + p.shares * p.currentPrice, 0);
   
-  const currentCorePct = coreValue / totalValue;
-  const currentUpsidePct = upsideValue / totalValue;
-  const currentSpeculativePct = speculativeValue / totalValue;
+  const safeTotal = totalValue && Number.isFinite(totalValue) ? Math.max(totalValue, 1e-6) : 1;
+  const currentCorePct = coreValue / safeTotal;
+  const currentUpsidePct = upsideValue / safeTotal;
+  const currentSpeculativePct = speculativeValue / safeTotal;
   
   // Calculate risk scores per sleeve
   const coreRisk = calculateSleeveRisk(classifiedPositions.filter(p => p.sleeve === 'core'));

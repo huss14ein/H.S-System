@@ -24,10 +24,10 @@ const MarketSimulator: React.FC = () => {
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated } = marketContext;
             
-            const allHoldings = data.investments.flatMap(p => p.holdings);
-            const allWatchlistItems = data.watchlist;
-            const allPlannedTrades = data.plannedTrades;
-            const allCommodities = data.commodityHoldings;
+            const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
+            const allWatchlistItems = data?.watchlist ?? [];
+            const allPlannedTrades = data?.plannedTrades ?? [];
+            const allCommodities = data?.commodityHoldings ?? [];
             
             const uniqueSymbols = Array.from(new Set([
                 ...allHoldings.map(h => h.symbol).filter((s): s is string => s != null && s !== ''),
@@ -95,7 +95,7 @@ const MarketSimulator: React.FC = () => {
             const holdingUpdates: { id: string, currentValue: number }[] = [];
             const commodityUpdates: { id: string, currentValue: number }[] = [];
             const activeAlertsBySymbol = new Map<string, PriceAlert[]>();
-            data.priceAlerts.filter(a => a.status === 'active').forEach(alert => {
+            (data?.priceAlerts ?? []).filter(a => a.status === 'active').forEach(alert => {
                 const sym = alert.symbol;
                 if (sym == null) return;
                 if (!activeAlertsBySymbol.has(sym)) {

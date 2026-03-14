@@ -33,25 +33,25 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => a.balance > 0).reduce((sum, acc) => sum + acc.balance, 0);
-        const totalLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
+        const totalAssets = (data?.assets ?? []).reduce((sum, asset) => sum + asset.value, 0) + (data?.accounts ?? []).filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = (data?.liabilities ?? []).reduce((sum, liab) => sum + (liab.amount ?? 0), 0) + (data?.accounts ?? []).filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         return { netWorth: totalAssets + totalLiabilities };
     }, [data]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
-        const budget = data.budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
+        const budget = (data?.budgets ?? []).find(b => b.category.toLowerCase() === category.toLowerCase());
         if (!budget) return { error: `Budget category "${category}" not found.` };
         const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const spent = data.transactions
+        const spent = (data?.transactions ?? [])
             .filter(t => t.type === 'expense' && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
             .reduce((sum, t) => sum + Math.abs(t.amount), 0);
         return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
     }, [data]);
     
      const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {
-        const sortedTransactions = [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const sortedTransactions = [...(data?.transactions ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         return { transactions: sortedTransactions.slice(0, limit).map(t => ({ description: t.description, amount: t.amount })) };
     }, [data]);
     

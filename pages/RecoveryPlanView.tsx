@@ -85,7 +85,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; currency: TradeCurrency; accountId?: string }[] = [];
-    (data.investments ?? []).forEach((p: InvestmentPortfolio) => {
+    (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
       (p.holdings ?? [])
         .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
         .forEach((h: Holding) => {
@@ -102,7 +102,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         });
     });
     return list;
-  }, [data.investments]);
+  }, [data?.investments]);
   const allHoldings = useMemo(() => allHoldingsWithPortfolio.map(({ holding }) => holding), [allHoldingsWithPortfolio]);
   const priceMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -128,11 +128,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [simulatedPrices, allHoldings]);
 
   const deployableCashSAR = useMemo(() => {
-    const bankCash = (data.accounts ?? [])
+    const bankCash = (data?.accounts ?? [])
       .filter((a) => a.type === 'Checking' || a.type === 'Savings')
       .reduce((s, a) => s + Math.max(0, Number(a.balance) || 0), 0);
 
-    const platformCashSAR = (data.accounts ?? [])
+    const platformCashSAR = (data?.accounts ?? [])
       .filter((a) => a.type === 'Investment')
       .reduce((s, a) => {
         const cash = getAvailableCashForAccount(a.id);
@@ -140,7 +140,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       }, 0);
 
     return bankCash + platformCashSAR;
-  }, [data.accounts, getAvailableCashForAccount, safeFxRate]);
+  }, [data?.accounts, getAvailableCashForAccount, safeFxRate]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
@@ -149,7 +149,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCashSAR > 50000 ? 0.04 : 0))),
   }), [deployableCashSAR]);
 
-  const universe = data.portfolioUniverse ?? [];
+  const universe = data?.portfolioUniverse ?? [];
   const coreUpsideSpec = useMemo(() => {
     const coreTickers: string[] = [];
     const upsideTickers: string[] = [];
@@ -166,7 +166,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       (data.investmentPlan?.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
     }
     return { coreTickers, upsideTickers, specTickers };
-  }, [universe, data.investmentPlan]);
+  }, [universe, data?.investmentPlan]);
 
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
@@ -340,12 +340,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const selectedRecoveryBrief = useMemo(() => {
     if (!selected || !selectedPlan) return null;
     const secondaryCurrency: TradeCurrency = selected.currency === 'USD' ? 'SAR' : 'USD';
-    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost, selected.currency, secondaryCurrency, safeFxRate);
-    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost, selected.currency, secondaryCurrency, safeFxRate);
+    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
+    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
     const triggerGap = Math.abs(selectedPlan.plPct) - Math.abs(selected.positionConfig.lossTriggerPct);
     const triggerStatus = triggerGap >= 0 ? 'trigger met' : 'monitor only';
     const aiNote = selected.aiNotes ? ` AI note: ${selected.aiNotes}` : '';
-    return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder.length} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
+    return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder?.length ?? 0} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
   }, [selected, selectedPlan, safeFxRate, formatCurrencyString]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
@@ -967,7 +967,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-emerald-600 font-medium">New Avg Cost:</span>
                   <span className="text-sm font-bold text-emerald-900">
-                    {formatCurrencyString(selectedPlan.newAvgCost, {
+                    {formatCurrencyString(selectedPlan.newAvgCost ?? 0, {
                       inCurrency: selected.currency ?? 'USD',
                     })}
                   </span>
@@ -976,15 +976,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-sm text-emerald-600 font-medium">Planned Recovery Cost:</span>
                     <span className="text-lg font-black text-emerald-900 tabular-nums">
-                      {formatCurrencyString(selectedPlan.totalPlannedCost, {
+                      {formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, {
                         inCurrency: selected.currency ?? 'USD',
                       })}
                     </span>
                   </div>
                   <div className="bg-emerald-100/50 rounded-lg p-3">
                     <p className="text-xs text-emerald-700 font-medium">
-                      Added shares cap: {Math.max(0, selectedPlan.newShares - selectedPlan.shares)} / {selected.positionConfig.maxAddShares ?? 0}
-                      {' '}({selectedPlan.shares > 0 ? (((selectedPlan.newShares - selectedPlan.shares) / selectedPlan.shares) * 100).toFixed(0) : '0'}% of current shares)
+                      Added shares cap: {Math.max(0, (selectedPlan.newShares ?? 0) - (selectedPlan.shares ?? 0))} / {selected.positionConfig.maxAddShares ?? 0}
+                      {' '}({(selectedPlan.shares ?? 0) > 0 ? ((((selectedPlan.newShares ?? 0) - (selectedPlan.shares ?? 0)) / (selectedPlan.shares ?? 1)) * 100).toFixed(0) : '0'}% of current shares)
                     </p>
                   </div>
                 </div>
@@ -1100,7 +1100,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-slate-100">
-                  {selectedPlan.ladder.map(l => (
+                  {(selectedPlan.ladder ?? []).map(l => (
                     <tr key={l.level} className="hover:bg-slate-50 transition-colors duration-150">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">

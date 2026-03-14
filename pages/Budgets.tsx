@@ -358,7 +358,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         
         // Calculate predictive analytics dynamically
         try {
-            if (result.months.length >= 3) {
+            if ((result.months ?? []).length >= 3) {
                 const forecasts = predictFutureMonths(result.months, 3);
                 setPredictiveForecasts(forecasts);
                 
@@ -389,12 +389,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     React.useEffect(() => {
-        const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
+        const riskProfile = String(data?.settings?.riskProfile ?? '').toLowerCase();
         if (engineProfile === 'Moderate') {
             if (riskProfile.includes('conservative')) setEngineProfile('Conservative');
             if (riskProfile.includes('aggressive') || riskProfile.includes('growth')) setEngineProfile('Growth');
         }
-    }, [(data as any)?.settings?.riskProfile]);
+    }, [data?.settings?.riskProfile]);
 
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
     const availableIncreaseCategories = useMemo((): Array<{ value: string; label: string; category: string }> => governanceCategories.map((c) => ({ value: c.id, label: c.name, category: c.name })), [governanceCategories]);
@@ -589,7 +589,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t) => {
                 const txDate = new Date(t.date);
-                const amount = Math.abs(t.amount);
+                const amount = Math.abs(Number(t.amount) ?? 0);
                 if (txDate >= rangeStart && txDate <= rangeEnd) {
                     spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
                 }
@@ -947,7 +947,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
             const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
-            entry.total += Math.abs(t.amount);
+            entry.total += Math.abs(Number(t.amount) ?? 0);
             entry.months.add(key);
             byCategory.set(cat, entry);
         });
@@ -1687,11 +1687,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Derived (read-only) values</p>
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2 text-sm">
                         <div className="rounded border bg-white p-2">
                             <p className="text-[11px] uppercase tracking-wide text-slate-500">Reserve pool (latest)</p>
                             <p className="font-semibold text-slate-900">{formatCurrencyString(householdBudgetEngine.months[householdBudgetEngine.months.length - 1]?.reservePoolAfterDeductions || 0, { digits: 0 })}</p>
                         </div>
+                        {(householdBudgetEngine.emergencyGap ?? 0) > 0 && (
+                            <div className="rounded border bg-amber-50 border-amber-200 p-2">
+                                <p className="text-[11px] uppercase tracking-wide text-amber-700">Emergency fund gap</p>
+                                <p className="font-semibold text-amber-800">{formatCurrencyString(householdBudgetEngine.emergencyGap ?? 0, { digits: 0 })}</p>
+                            </div>
+                        )}
+                        {(householdBudgetEngine.reserveGap ?? 0) > 0 && (
+                            <div className="rounded border bg-amber-50 border-amber-200 p-2">
+                                <p className="text-[11px] uppercase tracking-wide text-amber-700">Reserve pool gap</p>
+                                <p className="font-semibold text-amber-800">{formatCurrencyString(householdBudgetEngine.reserveGap ?? 0, { digits: 0 })}</p>
+                            </div>
+                        )}
                         <div className="rounded border bg-white p-2">
                             <p className="text-[11px] uppercase tracking-wide text-slate-500">Pressure months</p>
                             <p className="font-semibold text-slate-900">{householdBudgetEngine.months.filter((m: HouseholdMonthResult) => m.warnings.length > 0).length}</p>

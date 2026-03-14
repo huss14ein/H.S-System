@@ -32,7 +32,7 @@ const TransactionModal: React.FC<{
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
-    const [category, setCategory] = useState(allCategories[0] || '');
+    const [category, setCategory] = useState(allCategories?.[0] || '');
     const [subcategory, setSubcategory] = useState('');
     const [budgetCategory, setBudgetCategory] = useState(budgetCategories[0] || '');
     const [type, setType] = useState<'income' | 'expense'>('expense');
@@ -70,7 +70,7 @@ const TransactionModal: React.FC<{
         if (transactionToEdit) {
             setDate(new Date(transactionToEdit.date).toISOString().split('T')[0]);
             setDescription(transactionToEdit.description);
-            setAmount(String(Math.abs(transactionToEdit.amount)));
+            setAmount(String(Math.abs(Number(transactionToEdit?.amount) || 0)));
             setCategory(transactionToEdit.category);
             setSubcategory(transactionToEdit.subcategory || '');
             setBudgetCategory(transactionToEdit.budgetCategory || '');
@@ -82,9 +82,9 @@ const TransactionModal: React.FC<{
             setDate(new Date().toISOString().split('T')[0]);
             setDescription('');
             setAmount('');
-            setCategory(allCategories[0] || 'Groceries');
+            setCategory(allCategories?.[0] || 'Groceries');
             setSubcategory('');
-            setBudgetCategory(budgetCategories[0] || '');
+            setBudgetCategory(budgetCategories?.[0] || '');
             setType('expense');
             setAccountId(accounts[0]?.id || '');
             setTransactionNature('Variable');
@@ -96,7 +96,7 @@ const TransactionModal: React.FC<{
     const buildTransactionData = (): Omit<Transaction, 'id'> => ({
         date,
         description,
-        amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
+        amount: type === 'expense' ? -Math.abs(parseFloat(amount) || 0) : Math.abs(parseFloat(amount) || 0),
         category,
         subcategory: subcategory || undefined,
         budgetCategory: type === 'expense' ? budgetCategory : undefined,
@@ -284,7 +284,7 @@ const RecurringModal: React.FC<{
     React.useEffect(() => {
         if (recurring) {
             setDescription(recurring.description);
-            setAmount(String(recurring.amount));
+            setAmount(String(recurring?.amount ?? 0));
             setType(recurring.type);
             setAccountId(recurring.accountId);
             setBudgetCategory(recurring.budgetCategory ?? '');
@@ -574,8 +574,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
+        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
@@ -583,7 +583,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             .filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
-                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+                spending.set(t.budgetCategory!, currentSpend + Math.abs(Number(t.amount) ?? 0));
             });
         
         const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
@@ -627,7 +627,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
         addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
-        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
+        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(Number(transaction.amount) ?? 0)}`);
     };
     
     const handleConfirmDelete = () => {
@@ -816,7 +816,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <div className="flex-1 min-w-0">
                                     <span className="font-medium text-dark">{r.description}</span>
                                     <span className={`ml-2 text-sm font-medium ${r.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount)}
+                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount ?? 0)}
                                     </span>
                                     <span className="text-xs text-gray-500 ml-2">
                                         • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
@@ -866,7 +866,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
+                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount ?? 0), { colorize: false })}</span>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
                                     </div>
@@ -924,7 +924,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 flex-shrink-0">
-                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction.amount, { colorize: true })}</p>
+                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction?.amount ?? 0, { colorize: true })}</p>
                                 <button type="button" onClick={() => handleOpenTransactionModal(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50" aria-label="Edit"><PencilIcon className="h-5 w-5"/></button>
                                 <button type="button" onClick={() => setItemToDelete(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-danger/50" aria-label="Delete"><TrashIcon className="h-5 w-5"/></button>
                             </div>

@@ -166,7 +166,7 @@ const HomeScreenWidget: React.FC<HomeScreenWidgetProps> = ({ widget, onEdit, onR
             React.createElement(
               'div',
               { key: 'content', className: 'space-y-2' },
-              data.goals.slice(0, 3).map((goal: any, index: number) =>
+              (data?.goals ?? []).slice(0, 3).map((goal: any, index: number) =>
                 React.createElement(
                   'div',
                   { key: index, className: 'flex justify-between items-center' },
@@ -179,7 +179,7 @@ const HomeScreenWidget: React.FC<HomeScreenWidgetProps> = ({ widget, onEdit, onR
                     React.createElement(
                       'span',
                       { key: 'percentage', className: 'text-xs font-medium text-blue-600 dark:text-blue-400' },
-                      `${goal.percentage}%`
+                      `${goal?.percentage ?? 0}%`
                     )
                   ]
                 )

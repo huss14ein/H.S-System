@@ -171,30 +171,32 @@ export function analyzeScenario(
   monthlyExpenseChange: number,
   goals: Array<{ name: string; remaining: number }>
 ): ScenarioAnalysis {
-  const currentYearEndBalance = result.balanceProjection.projectedYearEndLiquid;
-  const numMonths = result.months.length || 1;
-  const avgMonthlySalary = result.months.reduce((sum, m) => sum + m.incomePlanned, 0) / numMonths;
-  const avgMonthlyExpense = result.months.reduce((sum, m) => sum + (m.totalPlannedOutflow ?? m.expensePlanned ?? 0), 0) / numMonths;
+  const months = result.months ?? [];
+  const balanceProjection = result.balanceProjection ?? {};
+  const currentYearEndBalance = balanceProjection.projectedYearEndLiquid ?? 0;
+  const numMonths = months.length || 1;
+  const avgMonthlySalary = months.reduce((sum, m) => sum + (m.incomePlanned ?? 0), 0) / numMonths;
+  const avgMonthlyExpense = months.reduce((sum, m) => sum + (m.totalPlannedOutflow ?? m.expensePlanned ?? 0), 0) / numMonths;
   
   const newAvgSalary = avgMonthlySalary + monthlySalaryChange;
   const newAvgExpense = avgMonthlyExpense + monthlyExpenseChange;
   const newMonthlyNet = newAvgSalary - newAvgExpense;
   
-  const openingLiquid = result.balanceProjection.openingLiquid ?? result.balanceProjection.projectedYearEndLiquid ?? 0;
+  const openingLiquid = balanceProjection.openingLiquid ?? balanceProjection.projectedYearEndLiquid ?? 0;
   const projectedYearEndBalance = openingLiquid + (newMonthlyNet * 12);
   const projectedYearEndBalanceChange = projectedYearEndBalance - currentYearEndBalance;
   
   // Calculate goal achievement impact
-  const goalAchievementImpact = goals.map(goal => {
-    const currentSurplus = result.months.reduce((sum, m) => sum + (m.routedGoalAmount ?? 0) + (m.buckets?.goalSavings ?? 0), 0);
+  const goalAchievementImpact = (goals ?? []).map(goal => {
+    const currentSurplus = months.reduce((sum, m) => sum + (m.routedGoalAmount ?? 0) + (m.buckets?.goalSavings ?? 0), 0);
     const newSurplus = Math.max(0, newMonthlyNet * 12);
     const currentMonthsToGoal = currentSurplus > 0 ? goal.remaining / (currentSurplus / 12) : 999;
     const newMonthsToGoal = newSurplus > 0 ? goal.remaining / (newSurplus / 12) : 999;
     const delayMonths = newMonthsToGoal - currentMonthsToGoal;
     
     return {
-      goalName: goal.name,
-      achievementDelayMonths: delayMonths,
+      goalName: goal?.name ?? '',
+      achievementDelayMonths: Number.isFinite(delayMonths) ? delayMonths : 0,
     };
   });
   
@@ -291,8 +293,8 @@ export function generateCommonScenarios(
   const avgMonthlySalary = result.months.reduce((sum, m) => sum + m.incomePlanned, 0) / result.months.length;
   
   const scenarios: ScenarioAnalysis[] = [
-    analyzeScenario(result, 0, 0, goals), // Baseline
-    analyzeScenario(result, avgMonthlySalary * 0.1, 0, goals), // 10% salary increase
+    analyzeScenario(result, 0, 0, goals ?? []), // Baseline
+    analyzeScenario(result, avgMonthlySalary * 0.1, 0, goals ?? []), // 10% salary increase
     analyzeScenario(result, -avgMonthlySalary * 0.1, 0, goals), // 10% salary decrease
     analyzeScenario(result, 0, avgMonthlySalary * 0.1, goals), // 10% expense increase
     analyzeScenario(result, 0, -avgMonthlySalary * 0.1, goals), // 10% expense decrease
@@ -394,7 +396,8 @@ export function detectSeasonality(
   // Detect patterns by category
   Object.keys(categoryTotals).forEach(category => {
     const categoryData = categoryTotals[category];
-    const categoryOverallAvg = Object.values(categoryData).flat().reduce((a, b) => a + b, 0) / Object.values(categoryData).flat().length;
+    const flat = Object.values(categoryData).flat();
+    const categoryOverallAvg = flat.length > 0 ? flat.reduce((a, b) => a + b, 0) / flat.length : 0;
     
     Object.keys(categoryData).forEach(monthStr => {
       const monthNum = Number(monthStr);

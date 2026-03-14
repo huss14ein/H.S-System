@@ -22,17 +22,17 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
 
         // 1. Calculate historical monthly net cash flow from transactions
         const monthlyNetFlows = new Map<string, number>();
-        data.transactions.forEach(t => {
+        (data?.transactions ?? []).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentFlow = monthlyNetFlows.get(monthKey) || 0;
             monthlyNetFlows.set(monthKey, currentFlow + t.amount);
         });
         
         // 2. Get current asset & liability values
-        const currentInvestments = getAllInvestmentsValueInSAR(data.investments, exchangeRate);
-        const currentCash = data.accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
-        const currentProperty = data.assets.filter(a => a.type === 'Property').reduce((sum, asset) => sum + asset.value, 0);
-        const currentLiabilities = data.liabilities.reduce((sum, liab) => sum + liab.amount, 0) + data.accounts.filter(a => a.type === 'Credit' && a.balance < 0).reduce((sum, acc) => sum + acc.balance, 0);
+        const currentInvestments = getAllInvestmentsValueInSAR(data?.investments ?? [], exchangeRate);
+        const currentCash = (data?.accounts ?? []).filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
+        const currentProperty = (data?.assets ?? []).filter(a => a.type === 'Property').reduce((sum, asset) => sum + asset.value, 0);
+        const currentLiabilities = (data?.liabilities ?? []).reduce((sum, liab) => sum + (liab.amount ?? 0), 0) + (data?.accounts ?? []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         
         let cash = currentCash;
         let investments = currentInvestments;

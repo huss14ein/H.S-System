@@ -51,7 +51,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
   const filtered = useMemo(() => {
     if (!ctx) return [];
-    let list = ctx.notifications;
+    let list = ctx.notifications ?? [];
     if (filter === 'Unread') list = list.filter((n) => !n.isRead);
     if (categoryFilter !== 'All') {
       if (categoryFilter === 'Investment') {
@@ -85,7 +85,7 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
   const handleNotificationClick = (n: AppNotification) => {
     ctx?.markAsRead(n.id);
-    setActivePage(n.pageLink);
+    if (n.pageLink) setActivePage(n.pageLink);
   };
 
   if (!ctx) {

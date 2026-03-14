@@ -100,19 +100,19 @@ const Assets: React.FC = () => {
     const commodities = mockCommodities || [];
 
     const totalPhysicalAssets = assets.reduce((sum, asset) => 
-      sum + asset.value, 0
+      sum + (asset.value ?? 0), 0
     );
 
     const totalCommodities = commodities.reduce((sum, commodity) => 
-      sum + commodity.totalValue, 0
+      sum + (commodity.totalValue ?? 0), 0
     );
 
     const totalGainLoss = commodities.reduce((sum, commodity) => 
-      sum + commodity.gainLoss, 0
+      sum + (commodity.gainLoss ?? 0), 0
     );
 
     const totalPurchaseValue = assets.reduce((sum, asset) => 
-      sum + asset.purchaseValue, 0
+      sum + (asset.purchaseValue ?? 0), 0
     );
 
     const totalGainLossPercent = totalPurchaseValue > 0 
@@ -272,7 +272,7 @@ const Assets: React.FC = () => {
                           <div>
                             <p className="text-sm text-gray-600">Current Value</p>
                             <p className="text-lg font-semibold text-gray-900">
-                              {formatCurrencyString(asset.value)}
+                              {formatCurrencyString(asset.value ?? 0)}
                             </p>
                           </div>
                           <div className="text-right">

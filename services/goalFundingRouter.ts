@@ -44,8 +44,8 @@ export function computeGoalFundingPlan(
 
   if (monthlySurplus <= 0 || active.length === 0) {
     suggestions = active.map(e => ({
-      goalId: e.goal.id,
-      name: e.goal.name,
+      goalId: e.goal?.id ?? '',
+      name: e.goal?.name ?? '—',
       requiredPerMonth: e.requiredPerMonth,
       suggestedPerMonth: 0,
       priorityShare: 0,
@@ -53,11 +53,11 @@ export function computeGoalFundingPlan(
     }));
   } else if (monthlySurplus >= totalRequired) {
     suggestions = active.map(e => ({
-      goalId: e.goal.id,
-      name: e.goal.name,
+      goalId: e.goal?.id ?? '',
+      name: e.goal?.name ?? '—',
       requiredPerMonth: e.requiredPerMonth,
       suggestedPerMonth: e.requiredPerMonth,
-      priorityShare: e.requiredPerMonth / monthlySurplus,
+      priorityShare: monthlySurplus > 0 ? e.requiredPerMonth / monthlySurplus : 0,
       status: 'on_track',
     }));
   } else {
@@ -72,8 +72,8 @@ export function computeGoalFundingPlan(
           ? 'need_more'
           : 'need_more';
       return {
-        goalId: e.goal.id,
-        name: e.goal.name,
+        goalId: e.goal?.id ?? '',
+        name: e.goal?.name ?? '—',
         requiredPerMonth: e.requiredPerMonth,
         suggestedPerMonth: suggested,
         priorityShare: share,

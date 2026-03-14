@@ -11,6 +11,16 @@
         -ms-overflow-style: none;  /* IE and Edge */
         scrollbar-width: none;  /* Firefox */
     }
+    /* Touch targets ≥44px for mobile (optional: add to icon buttons) */
+    .touch-target {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    /* Tables: horizontal scroll on small screens without breaking layout */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
 }
 
 @layer base {
