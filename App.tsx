@@ -2,6 +2,9 @@ import React, { useState, useContext, useCallback, Suspense, lazy, startTransiti
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
+import SignupPage from './pages/SignupPage';
+
+const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === 'true';
 import { AuthContext, AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
@@ -57,6 +60,22 @@ const VALID_PAGES: Page[] = [
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
   'Assets', 'System Health'
 ];
+
+function getAuthViewFromHash(allowSignup: boolean): boolean {
+  if (!allowSignup || typeof window === 'undefined') return false;
+  return window.location.hash === '#signup';
+}
+
+const AuthGate: React.FC<{ allowSignup: boolean }> = ({ allowSignup }) => {
+  const [showSignup, setShowSignup] = useState(() => getAuthViewFromHash(allowSignup));
+  React.useEffect(() => {
+    if (!allowSignup) return;
+    const onHashChange = () => setShowSignup(getAuthViewFromHash(allowSignup));
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [allowSignup]);
+  return showSignup ? <SignupPage /> : <LoginPage />;
+};
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -166,7 +185,7 @@ const App: React.FC = () => {
     return (
       <ThemeProvider>
         <AuthProvider>
-          <LoginPage />
+          <AuthGate allowSignup={ALLOW_SIGNUP} />
         </AuthProvider>
       </ThemeProvider>
     );
