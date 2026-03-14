@@ -1,26 +1,19 @@
+
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Page } from '../types';
-import { CreditCardIcon } from '../components/icons';
-import { HomeIcon, BanknotesIcon, PencilIcon, CheckCircleIcon, ShieldCheckIcon } from '../components/icons';
+import { Liability, Page } from '../types';
+import Card from '../components/Card';
+import Modal from '../components/Modal';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import { CreditCardIcon } from '../components/icons/CreditCardIcon';
+import { HomeIcon } from '../components/icons/HomeIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { PencilIcon } from '../components/icons/PencilIcon';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
+import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
-import Modal from '../components/Modal';
-
-// Define Liability type locally since it's missing
-interface Liability {
-  id: string;
-  name: string;
-  type: 'Credit Card' | 'Loan' | 'Personal Loan' | 'Mortgage' | 'Receivable';
-  amount: number;
-  status: 'Active' | 'Paid';
-  interestRate?: number;
-  monthlyPayment?: number;
-  dueDate?: string;
-  description?: string;
-  goalId?: string;
-}
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -41,7 +34,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
         if (liabilityToEdit) {
             setName(liabilityToEdit.name);
             setType(liabilityToEdit.type);
-            setAmount(String(Math.abs(Number(liabilityToEdit?.amount) || 0)));
+            setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
         } else {
             setName('');
@@ -130,8 +123,8 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                 <div className="flex items-center space-x-3">
                     {getIcon(liability.type)}
                     <div>
-                        <h3 className="font-bold text-dark text-lg">{liability.name ?? '—'}</h3>
-                        <p className="text-sm text-gray-500">{liability.type ?? 'Loan'}{isPaid ? ' · Paid' : ''}</p>
+                        <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
+                        <p className="text-sm text-gray-500">{liability.type}{isPaid ? ' · Paid' : ''}</p>
                     </div>
                 </div>
                 <div className="flex space-x-1 items-center">
@@ -148,7 +141,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">Amount owed</p>
-                <p className="text-2xl font-semibold text-danger">{formatCurrencyString(Math.abs(liability.amount ?? 0))}</p>
+                <p className="text-2xl font-semibold text-danger">{formatCurrencyString(Math.abs(liability.amount))}</p>
             </div>
         </div>
     );
@@ -163,7 +156,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                 <div className="flex items-center space-x-3">
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />
                     <div>
-                        <h3 className="font-bold text-dark text-lg">{liability.name ?? '—'}</h3>
+                        <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
                         <p className="text-sm text-gray-500">{isPaid ? 'Owed to you · Paid' : 'Owed to you'}</p>
                     </div>
                 </div>
@@ -176,7 +169,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">Amount owed to you</p>
-                <p className={`text-2xl font-semibold ${isPaid ? 'text-gray-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount ?? 0)}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-gray-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount)}</p>
             </div>
         </div>
     );
@@ -191,32 +184,28 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
     const allLiabilities: Liability[] = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const liabilities = data?.liabilities ?? [];
-        const creditCardDebts = accounts
-            .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance ?? 0, status: 'Active' as const }));
-        return [...liabilities, ...creditCardDebts];
-    }, [data?.liabilities, data?.accounts]);
+        const creditCardDebts = data.accounts
+            .filter(a => a.type === 'Credit' && a.balance < 0)
+            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance, status: 'Active' as const }));
+        return [...data.liabilities, ...creditCardDebts];
+    }, [data.liabilities, data.accounts]);
 
     const allDebts = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) < 0), [allLiabilities]);
     const allReceivables = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) > 0), [allLiabilities]);
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
-    const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
+    const liabilityIds = useMemo(() => new Set(data.liabilities.map(l => l.id)), [data.liabilities]);
 
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
         const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const assets = data?.assets ?? [];
-        const accountsForRatio = data?.accounts ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accountsForRatio.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [allDebts, allReceivables, data?.assets, data?.accounts]);
+    }, [allDebts, allReceivables, data.assets, data.accounts]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
@@ -242,147 +231,75 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-rose-50">
-            {/* Enhanced Hero Section */}
-            <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-rose-50 p-8 shadow-xl mb-8">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-                    <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">💳</span>
-                        </div>
-                        <div>
-                            <h2 className="text-3xl font-bold text-slate-900">Liabilities</h2>
-                            <p className="text-lg text-slate-600 mt-2">Track liabilities, including debts and money owed back to you. Mark as Paid to keep a reference; totals show only unpaid.</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse"></div>
-                        <span className="text-sm font-bold text-rose-700 uppercase tracking-wider">Debt Management</span>
-                    </div>
-                </div>
-                <div className="mt-6 bg-gradient-to-r from-rose-50 to-red-50 rounded-2xl p-6 border border-rose-100">
-                    <p className="text-slate-700 leading-relaxed">
-                        Monitor your financial obligations and receivables in one place. Track loans, mortgages, credit cards, and money owed to you 
-                        for comprehensive debt management and financial planning.
-                    </p>
-                </div>
-            </div>
-
-            {/* Enhanced Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-6 mb-8">
-                <div className="bg-gradient-to-br from-rose-50 to-red-50 border-2 border-rose-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="w-14 h-14 bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">💰</span>
-                        </div>
-                        <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <p className="text-sm font-bold text-rose-800 uppercase tracking-wider mb-2">Total Debt</p>
-                    <p className="text-4xl font-black text-rose-900 tabular-nums">{formatCurrencyString(totalDebt)}</p>
-                    <p className="text-sm text-rose-600 mt-2">Unpaid obligations</p>
-                </div>
-                <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">💵</span>
-                        </div>
-                        <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <p className="text-sm font-bold text-emerald-800 uppercase tracking-wider mb-2">Money Owed to You</p>
-                    <p className="text-4xl font-black text-emerald-900 tabular-nums">{formatCurrencyString(totalReceivable)}</p>
-                    <p className="text-sm text-emerald-600 mt-2">Receivables</p>
-                </div>
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">📊</span>
-                        </div>
-                        <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <p className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-2">Net Position</p>
-                    <p className="text-4xl font-black text-blue-900 tabular-nums">{formatCurrencyString(netPosition)}</p>
-                    <p className="text-sm text-blue-600 mt-2">Receivables − Debt</p>
-                </div>
-                <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="w-14 h-14 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">📈</span>
-                        </div>
-                        <div className="w-3 h-3 bg-amber-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <p className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2">Debt-to-Asset Ratio</p>
-                    <p className="text-4xl font-black text-amber-900 tabular-nums">{debtToAssetRatio.toFixed(2)}%</p>
-                    <p className="text-sm text-amber-600 mt-2">Risk indicator</p>
-                </div>
-            </div>
-
-            {/* Enhanced Filter Controls */}
-            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-8 shadow-lg mb-8">
-                <div className="flex items-center gap-3 mb-6">
-                    <div className="w-12 h-12 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center shadow-lg">
-                        <span className="text-white font-bold text-lg">🔍</span>
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-900">Filter & Actions</h3>
-                </div>
-                <div className="flex flex-wrap items-center gap-4">
+        <PageLayout
+            title="Liabilities"
+            description="Track liabilities, including debts and money owed back to you. Mark as Paid to keep a reference; totals show only unpaid."
+            action={
+                <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
-                        <label htmlFor="status-filter" className="text-sm font-medium text-slate-700">Show:</label>
+                        <label htmlFor="status-filter" className="text-sm font-medium text-gray-700">Show:</label>
                         <select
                             id="status-filter"
                             value={statusFilter}
                             onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-                            className="h-12 px-4 text-sm border-2 border-slate-200 rounded-xl focus:border-rose-500 focus:outline-none bg-white shadow-sm hover:shadow-md transition-all duration-200"
+                            className="rounded-lg border border-gray-300 text-sm py-1.5 px-3 bg-white text-gray-700 focus:ring-2 focus:ring-primary focus:border-primary"
                         >
                             <option value="active">Active (unpaid)</option>
                             <option value="paid">Paid / Completed</option>
                             <option value="all">All</option>
                         </select>
                     </div>
-                    <button type="button" onClick={() => handleOpenModal(null)} className="h-12 px-6 text-sm border-2 border-rose-300 text-rose-700 rounded-xl hover:bg-rose-50 transition-all duration-200 font-medium flex items-center gap-2">
-                        <CreditCardIcon className="h-4 w-4" /> Add Liabilities
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => handleOpenModal(null)} className="btn-primary inline-flex items-center gap-2">
+                            <CreditCardIcon className="h-4 w-4" /> Add Liabilities
+                        </button>
+                    </div>
                 </div>
+            }
+        >
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+                <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Sum of unpaid money you owe." />
+                <Card title="Money Owed to You" value={formatCurrencyString(totalReceivable)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of unpaid amounts others owe you." />
+                <Card title="Net (Receivables − Debt)" value={formatCurrencyString(netPosition)} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Positive = you are owed more than you owe; negative = you owe more than you are owed." />
+                <Card title="Debt-to-Asset Ratio" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Debt as a percentage of your assets (excludes receivables)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
             </div>
 
-            {/* Enhanced Main Content */}
-            <div className="space-y-8">
-                <SectionCard title="What I Owe" className="mt-6">
-                    <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
-                    {debts.length === 0 ? (
-                        <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
-                    ) : (
-                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                            {debts.map(liab => (
-                                <DebtCard
-                                    key={liab.id}
-                                    liability={liab}
-                                    onEdit={l => handleOpenModal(l)}
-                                    onMarkPaid={handleMarkPaid}
-                                    canMarkPaid={liabilityIds.has(liab.id)}
-                                    canEdit={liabilityIds.has(liab.id)}
-                                    onGoToAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </SectionCard>
+            <SectionCard title="What I Owe" className="mt-6">
+                <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
+                {debts.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
+                ) : (
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                        {debts.map(liab => (
+                            <DebtCard
+                                key={liab.id}
+                                liability={liab}
+                                onEdit={l => handleOpenModal(l)}
+                                onMarkPaid={handleMarkPaid}
+                                canMarkPaid={liabilityIds.has(liab.id)}
+                                canEdit={liabilityIds.has(liab.id)}
+                                onGoToAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                            />
+                        ))}
+                    </div>
+                )}
+            </SectionCard>
 
-                <SectionCard title="Receivables" className="mt-6">
-                    <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Managed under liabilities so all entries stay in one flow.</p>
-                    {receivables.length === 0 ? (
-                        <p className="text-center text-gray-500 py-8">No liability entries in this group for this filter. Switch filter to Paid/All to review historical items.</p>
-                    ) : (
-                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                            {receivables.map(liab => (
-                                <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
-                            ))}
-                        </div>
-                    )}
-                </SectionCard>
-            </div>
+            <SectionCard title="Liabilities" className="mt-6">
+                <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Managed under liabilities so all entries stay in one flow.</p>
+                {receivables.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">No liability entries in this group for this filter. Switch filter to Paid/All to review historical items.</p>
+                ) : (
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                        {receivables.map(liab => (
+                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
+                        ))}
+                    </div>
+                )}
+            </SectionCard>
 
             <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} />
-        </div>
+        </PageLayout>
     );
 };
 

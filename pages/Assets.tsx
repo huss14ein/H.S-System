@@ -1,769 +1,582 @@
-import React, { useState, useContext, useMemo } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import PageLayout from '../components/PageLayout';
+import { Asset, Goal, AssetType, CommodityHolding } from '../types';
+import Card from '../components/Card';
 import Modal from '../components/Modal';
-import { 
-  BuildingLibraryIcon, 
-  TruckIcon, 
-  CurrencyDollarIcon,
-  BanknotesIcon,
-  PlusIcon,
-  PencilIcon,
-  TrashIcon,
-  ChartBarIcon
-} from '../components/icons';
-import { Asset as AssetType, CommodityHolding as CommodityHoldingType } from '../types';
+import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
+import { HomeModernIcon } from '../components/icons/HomeModernIcon';
+import { TruckIcon } from '../components/icons/TruckIcon';
+import { GoldBarIcon } from '../components/icons/GoldBarIcon';
+import { QuestionMarkCircleIcon } from '../components/icons/QuestionMarkCircleIcon';
+import { PencilIcon } from '../components/icons/PencilIcon';
+import { TrashIcon } from '../components/icons/TrashIcon';
+import { LinkIcon } from '../components/icons/LinkIcon';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { BitcoinIcon } from '../components/icons/BitcoinIcon';
+import { CubeIcon } from '../components/icons/CubeIcon';
+import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import InfoHint from '../components/InfoHint';
+import AddMenu from '../components/AddMenu';
+import { useAI } from '../context/AiContext';
+import SectionCard from '../components/SectionCard';
+import PageLayout from '../components/PageLayout';
 
-interface Asset {
-  id: string;
-  name: string;
-  type: 'Property' | 'Vehicle' | 'Sukuk' | 'Other';
-  value: number;
-  currency: string;
-  purchaseDate: string;
-  purchaseValue: number;
-  description?: string;
-  goalId?: string;
-}
+// --- Physical Asset Components ---
+const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
+    const [name, setName] = useState('');
+    const [type, setType] = useState<AssetType>('Property');
+    const [value, setValue] = useState('');
+    const [purchasePrice, setPurchasePrice] = useState('');
+    const [isRental, setIsRental] = useState(false);
+    const [monthlyRent, setMonthlyRent] = useState('');
+    const [owner, setOwner] = useState('');
 
-interface CommodityHolding {
-  id: string;
-  symbol: string;
-  name: string;
-  quantity: number;
-  currentPrice: number;
-  currency: string;
-  purchasePrice: number;
-  totalValue: number;
-  gainLoss: number;
-  gainLossPercent: number;
-}
+    React.useEffect(() => {
+        if (assetToEdit) {
+            setName(assetToEdit.name);
+            setType(assetToEdit.type);
+            setValue(assetToEdit.value.toString());
+            setPurchasePrice(assetToEdit.purchasePrice?.toString() || '');
+            setIsRental(assetToEdit.isRental || false);
+            setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
+            setOwner(assetToEdit.owner || '');
+        } else {
+            setName(''); setType(preferredType); setValue(''); setPurchasePrice('');
+            setIsRental(false); setMonthlyRent(''); setOwner('');
+        }
+    }, [assetToEdit, isOpen, preferredType]);
 
-const Assets: React.FC = () => {
-  const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding } = useContext(DataContext)!;
-  const { formatCurrencyString } = useFormatCurrency();
-
-  const [activeTab, setActiveTab] = useState<'physical' | 'commodities'>('physical');
-  const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
-  const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
-  const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
-  const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
-
-  // Use real data from context - map to local Asset interface
-  const realAssets: Asset[] = useMemo(() => {
-    return (data?.assets ?? []).map(asset => ({
-      id: asset.id,
-      name: asset.name,
-      type: (asset.type === 'Property' ? 'Property' : asset.type === 'Vehicle' ? 'Vehicle' : asset.type === 'Sukuk' ? 'Sukuk' : 'Other') as Asset['type'],
-      value: asset.value ?? 0,
-      currency: 'SAR', // Default currency
-      purchaseDate: new Date().toISOString().split('T')[0], // Default to today if not available
-      purchaseValue: asset.purchasePrice ?? asset.value ?? 0,
-      description: undefined,
-      goalId: asset.goalId
-    }));
-  }, [data?.assets]);
-
-  const realCommodities: CommodityHolding[] = useMemo(() => {
-    return (data?.commodityHoldings ?? []).map(commodity => {
-      const currentValue = commodity.currentValue ?? 0;
-      const purchaseValue = commodity.purchaseValue ?? 0;
-      const gainLoss = currentValue - purchaseValue;
-      const gainLossPercent = purchaseValue > 0 ? (gainLoss / purchaseValue) * 100 : 0;
-      
-      // Calculate currentPrice from currentValue / quantity if needed
-      const currentPrice = commodity.quantity > 0 ? currentValue / commodity.quantity : 0;
-      // Calculate purchasePrice from purchaseValue / quantity if needed
-      const purchasePrice = commodity.quantity > 0 ? purchaseValue / commodity.quantity : 0;
-      
-      return {
-        id: commodity.id,
-        symbol: commodity.symbol ?? '',
-        name: (typeof commodity.name === 'string' ? commodity.name : 'Gold') ?? commodity.symbol ?? '',
-        quantity: commodity.quantity ?? 0,
-        currentPrice,
-        currency: 'SAR', // Default currency
-        purchasePrice,
-        totalValue: currentValue,
-        gainLoss,
-        gainLossPercent
-      };
-    });
-  }, [data?.commodityHoldings]);
-
-    const calculations = useMemo(() => {
-    const assets = realAssets || [];
-    const commodities = realCommodities || [];
-
-    const totalPhysicalAssets = assets.reduce((sum, asset) => 
-      sum + (asset.value ?? 0), 0
-    );
-
-    const totalCommodities = commodities.reduce((sum, commodity) => 
-      sum + (commodity.totalValue ?? 0), 0
-    );
-
-    const commodityGainLoss = commodities.reduce((sum, commodity) => 
-      sum + (commodity.gainLoss ?? 0), 0
-    );
-
-    // Calculate gain/loss for physical assets
-    const physicalGainLoss = assets.reduce((sum, asset) => {
-      const gain = (asset.value ?? 0) - (asset.purchaseValue ?? 0);
-      return sum + gain;
-    }, 0);
-    
-    const totalPurchaseValue = assets.reduce((sum, asset) => sum + (asset.purchaseValue ?? 0), 0);
-    const totalGainLossAll = physicalGainLoss + commodityGainLoss;
-    const totalGainLossPercent = totalPurchaseValue > 0 
-      ? ((totalPhysicalAssets - totalPurchaseValue) / totalPurchaseValue) * 100 
-      : 0;
-
-    return {
-      totalPhysicalAssets,
-      totalCommodities,
-      totalAssetValue: totalPhysicalAssets + totalCommodities,
-      totalGainLoss: totalGainLossAll,
-      totalGainLossPercent,
-      assetCount: assets.length,
-      commodityCount: commodities.length,
-      physicalGainLoss,
-      commodityGainLoss
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const newAsset: Asset = {
+            id: assetToEdit ? assetToEdit.id : `asset${Date.now()}`,
+            name, type, value: parseFloat(value) || 0,
+            purchasePrice: parseFloat(purchasePrice) || undefined,
+            isRental: type === 'Property' ? isRental : undefined,
+            monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
+            goalId: assetToEdit?.goalId, owner: owner || undefined,
+        };
+        onSave(newAsset); onClose();
     };
-  }, [realAssets, realCommodities]);
 
-  if (loading || !data) {
+
+
     return (
-      <PageLayout title="Assets" description="Loading assets...">
-        <div className="flex items-center justify-center min-h-[24rem]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-        </div>
-      </PageLayout>
+        <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="select-base">
+                    <option value="Sukuk">Sukuk (Islamic fixed income)</option>
+                    <option value="Property">Property</option>
+                    <option value="Vehicle">Vehicle</option>
+                    <option value="Other">Other</option>
+                </select>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
+                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Useful for family-level, multi-user governance and Zakat attribution." /></label><input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
+                {type === 'Property' && (
+                    <div className="space-y-2 border-t pt-4">
+                        <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
+                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="input-base"/>}
+                    </div>
+                )}
+                <button type="submit" className="w-full btn-primary">Save Asset</button>
+            </form>
+        </Modal>
     );
-  }
-
-  const getAssetIcon = (type: Asset['type']) => {
-    switch (type) {
-      case 'Property':
-        return <BuildingLibraryIcon className="h-6 w-6 text-blue-500" />;
-      case 'Vehicle':
-        return <TruckIcon className="h-6 w-6 text-green-500" />;
-      case 'Sukuk':
-        return <CurrencyDollarIcon className="h-6 w-6 text-purple-500" />;
-      default:
-        return <BanknotesIcon className="h-6 w-6 text-gray-500" />;
-    }
-  };
-
-  return (
-    <PageLayout 
-      title="Assets" 
-      description="Manage your physical assets and commodity holdings."
-    >
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-100 text-sm">Total Asset Value</p>
-                <p className="text-2xl font-bold">{formatCurrencyString(calculations.totalAssetValue)}</p>
-              </div>
-              <BanknotesIcon className="h-8 w-8 text-blue-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-green-100 text-sm">Physical Assets</p>
-                <p className="text-2xl font-bold">{formatCurrencyString(calculations.totalPhysicalAssets)}</p>
-              </div>
-              <BuildingLibraryIcon className="h-8 w-8 text-green-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-purple-100 text-sm">Metals & Crypto</p>
-                <p className="text-2xl font-bold">{formatCurrencyString(calculations.totalCommodities)}</p>
-              </div>
-              <CurrencyDollarIcon className="h-8 w-8 text-purple-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-orange-100 text-sm">Total Gain/Loss</p>
-                <p className="text-2xl font-bold">{formatCurrencyString(calculations.totalGainLoss)}</p>
-              </div>
-              <ChartBarIcon className="h-8 w-8 text-orange-200" />
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-          <div className="border-b border-gray-200">
-            <nav className="flex -mb-px">
-              <button
-                onClick={() => setActiveTab('physical')}
-                className={`py-4 px-6 border-b-2 font-medium text-sm ${
-                  activeTab === 'physical'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Physical Assets ({calculations.assetCount})
-              </button>
-              <button
-                onClick={() => setActiveTab('commodities')}
-                className={`py-4 px-6 border-b-2 font-medium text-sm ${
-                  activeTab === 'commodities'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Commodities ({calculations.commodityCount})
-              </button>
-            </nav>
-          </div>
-
-          <div className="p-6">
-            {activeTab === 'physical' && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold text-gray-900">Physical Assets</h3>
-                  <button
-                    onClick={() => { setAssetToEdit(null); setIsAssetModalOpen(true); }}
-                    className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-                  >
-                    <PlusIcon className="h-4 w-4 mr-2" />
-                    Add Asset
-                  </button>
-                </div>
-
-                {realAssets.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500">
-                    <BuildingLibraryIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                    <p>No physical assets recorded yet.</p>
-                    <p className="text-sm mt-2">Click "Add Asset" to get started.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {realAssets.map(asset => (
-                    <div key={asset.id} className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          {getAssetIcon(asset.type)}
-                          <div>
-                            <h4 className="font-medium text-gray-900">{asset.name}</h4>
-                            <p className="text-sm text-gray-600">{asset.type}</p>
-                            {asset.description && (
-                              <p className="text-xs text-gray-500 mt-1">{asset.description}</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex space-x-2">
-                          <button 
-                            onClick={() => { setAssetToEdit(asset); setIsAssetModalOpen(true); }}
-                            className="text-gray-400 hover:text-gray-600"
-                            aria-label="Edit asset"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </button>
-                          <button 
-                            onClick={() => {
-                              if (confirm(`Delete ${asset.name}?`)) {
-                                deleteAsset(asset.id);
-                              }
-                            }}
-                            className="text-gray-400 hover:text-red-600"
-                            aria-label="Delete asset"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4 pt-4 border-t border-gray-100">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="text-sm text-gray-600">Current Value</p>
-                            <p className="text-lg font-semibold text-gray-900">
-                              {formatCurrencyString(asset.value ?? 0)}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-600">Purchase</p>
-                            <p className="text-sm font-medium text-gray-900">
-                              {formatCurrencyString(asset.purchaseValue)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {new Date(asset.purchaseDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                            </p>
-                            {(asset.value - asset.purchaseValue) !== 0 && asset.purchaseValue > 0 && (
-                              <p className={`text-xs font-medium mt-1 ${
-                                (asset.value - asset.purchaseValue) >= 0 ? 'text-green-600' : 'text-red-600'
-                              }`}>
-                                {(asset.value - asset.purchaseValue) >= 0 ? '+' : ''}
-                                {formatCurrencyString(asset.value - asset.purchaseValue)}
-                                ({((asset.value - asset.purchaseValue) / asset.purchaseValue * 100).toFixed(1)}%)
-                              </p>
-                            )}
-                            {asset.purchaseValue === 0 && asset.value !== 0 && (
-                              <p className="text-xs font-medium mt-1 text-slate-500">
-                                {formatCurrencyString(asset.value - asset.purchaseValue)} (N/A %)
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'commodities' && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold text-gray-900">Commodity Holdings</h3>
-                  <button
-                    onClick={() => { setCommodityToEdit(null); setIsCommodityModalOpen(true); }}
-                    className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-                  >
-                    <PlusIcon className="h-4 w-4 mr-2" />
-                    Add Commodity
-                  </button>
-                </div>
-
-                {realCommodities.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500">
-                    <CurrencyDollarIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                    <p>No commodity holdings recorded yet.</p>
-                    <p className="text-sm mt-2">Click "Add Commodity" to get started.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {realCommodities.map(commodity => (
-                    <div key={commodity.id} className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h4 className="font-medium text-gray-900">{commodity.name}</h4>
-                          <p className="text-sm text-gray-600">{commodity.symbol}</p>
-                        </div>
-                        <div className="flex space-x-2">
-                          <button 
-                            onClick={() => { setCommodityToEdit(commodity); setIsCommodityModalOpen(true); }}
-                            className="text-gray-400 hover:text-gray-600"
-                            aria-label="Edit commodity"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </button>
-                          <button 
-                            onClick={() => {
-                              if (confirm(`Delete ${commodity.name}?`)) {
-                                deleteCommodityHolding(commodity.id);
-                              }
-                            }}
-                            className="text-gray-400 hover:text-red-600"
-                            aria-label="Delete commodity"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4 pt-4 border-t border-gray-100">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="text-sm text-gray-600">Quantity</p>
-                            <p className="text-lg font-semibold text-gray-900">{commodity.quantity}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-600">Current Price</p>
-                            <p className="text-sm font-medium text-gray-900">
-                              {formatCurrencyString(commodity.currentPrice)}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Purchase: {formatCurrencyString(commodity.purchasePrice)}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <div className="mt-3 pt-3 border-t border-gray-100">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <p className="text-sm text-gray-600">Total Value</p>
-                              <p className="text-lg font-semibold text-gray-900">
-                                {formatCurrencyString(commodity.totalValue)}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm text-gray-600">Gain/Loss</p>
-                              <p className={`text-sm font-medium ${
-                                commodity.gainLoss >= 0 ? 'text-green-600' : 'text-red-600'
-                              }`}>
-                                {commodity.gainLoss >= 0 ? '+' : ''}{formatCurrencyString(commodity.gainLoss)}
-                                ({commodity.gainLossPercent >= 0 ? '+' : ''}{commodity.gainLossPercent.toFixed(1)}%)
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Asset Allocation Chart - Real Data */}
-        {(() => {
-          const typeBreakdown = useMemo(() => {
-            const byType = new Map<string, number>();
-            realAssets.forEach(asset => {
-              const type = asset.type;
-              byType.set(type, (byType.get(type) || 0) + (asset.value ?? 0));
-            });
-            return Array.from(byType.entries()).map(([type, value]) => ({
-              type,
-              value,
-              percentage: calculations.totalAssetValue > 0 ? (value / calculations.totalAssetValue) * 100 : 0
-            }));
-          }, [realAssets, calculations.totalAssetValue]);
-
-          // Calculate annualized return based on purchase dates
-          const annualizedReturn = useMemo(() => {
-            if (realAssets.length === 0) return 0;
-            const now = new Date();
-            const totalYears = realAssets.reduce((sum, asset) => {
-              const purchaseDate = new Date(asset.purchaseDate);
-              const years = (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60 * 24 * 365);
-              return sum + Math.max(years, 0.1); // Minimum 0.1 years to avoid division by zero
-            }, 0);
-            const avgYears = totalYears / realAssets.length;
-            return avgYears > 0 ? calculations.totalGainLossPercent / avgYears : 0;
-          }, [realAssets, calculations.totalGainLossPercent]);
-
-          return (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-6">Asset Allocation & Performance</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-3">By Type</h3>
-                  <div className="space-y-2">
-                    {typeBreakdown.length > 0 ? (
-                      typeBreakdown.map(({ type, value, percentage }) => (
-                        <div key={type} className="flex justify-between items-center">
-                          <span className="text-sm text-gray-600">{type}</span>
-                          <span className="text-sm font-medium text-gray-900">
-                            {formatCurrencyString(value)} ({percentage.toFixed(1)}%)
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-500">No assets to display</p>
-                    )}
-                    {calculations.totalCommodities > 0 && (
-                      <div className="flex justify-between items-center pt-2 border-t">
-                        <span className="text-sm text-gray-600">Commodities</span>
-                        <span className="text-sm font-medium text-gray-900">
-                          {formatCurrencyString(calculations.totalCommodities)} 
-                          ({calculations.totalAssetValue > 0 ? ((calculations.totalCommodities / calculations.totalAssetValue) * 100).toFixed(1) : '0'}%)
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-3">Performance</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Total Return</span>
-                      <span className={`text-sm font-medium ${
-                        calculations.totalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
-                      }`}>
-                        {calculations.totalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.totalGainLoss)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Physical Assets Return</span>
-                      <span className={`text-sm font-medium ${
-                        calculations.physicalGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
-                      }`}>
-                        {calculations.physicalGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.physicalGainLoss)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Commodities Return</span>
-                      <span className={`text-sm font-medium ${
-                        calculations.commodityGainLoss >= 0 ? 'text-green-600' : 'text-red-600'
-                      }`}>
-                        {calculations.commodityGainLoss >= 0 ? '+' : ''}{formatCurrencyString(calculations.commodityGainLoss)}
-                      </span>
-                    </div>
-                    {calculations.totalGainLossPercent !== 0 && (
-                      <div className="flex justify-between items-center pt-2 border-t">
-                        <span className="text-sm text-gray-600">Return Percentage</span>
-                        <span className={`text-sm font-medium ${
-                          calculations.totalGainLossPercent >= 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {calculations.totalGainLossPercent >= 0 ? '+' : ''}{calculations.totalGainLossPercent.toFixed(1)}%
-                        </span>
-                      </div>
-                    )}
-                    {annualizedReturn !== 0 && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-gray-600">Annualized Return</span>
-                        <span className={`text-sm font-medium ${
-                          annualizedReturn >= 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {annualizedReturn >= 0 ? '+' : ''}{annualizedReturn.toFixed(1)}%
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* Asset Modal */}
-      <Modal isOpen={isAssetModalOpen} onClose={() => { setIsAssetModalOpen(false); setAssetToEdit(null); }} title={assetToEdit ? 'Edit Asset' : 'Add Asset'}>
-        <AssetForm 
-          asset={assetToEdit}
-          onSave={async (assetData) => {
-            // Convert local Asset interface to AssetType
-            const assetTypeData: AssetType = {
-              id: assetToEdit?.id || '',
-              name: assetData.name || '',
-              type: assetData.type || 'Other',
-              value: assetData.value || 0,
-              purchasePrice: assetData.purchaseValue,
-              goalId: assetData.goalId
-            };
-            if (assetToEdit) {
-              await updateAsset({ ...assetToEdit, ...assetTypeData });
-            } else {
-              await addAsset(assetTypeData);
-            }
-            setIsAssetModalOpen(false);
-            setAssetToEdit(null);
-          }}
-        />
-      </Modal>
-
-      {/* Commodity Modal */}
-      <Modal isOpen={isCommodityModalOpen} onClose={() => { setIsCommodityModalOpen(false); setCommodityToEdit(null); }} title={commodityToEdit ? 'Edit Commodity' : 'Add Commodity'}>
-        <CommodityForm 
-          commodity={commodityToEdit}
-          onSave={async (commodityData) => {
-            // Convert local CommodityHolding interface to CommodityHoldingType
-            const commodityTypeData: Omit<CommodityHoldingType, 'id' | 'user_id'> = {
-              name: (commodityData.name === 'Gold' || commodityData.name === 'Silver' || commodityData.name === 'Bitcoin' ? commodityData.name : 'Other') as 'Gold' | 'Silver' | 'Bitcoin' | 'Other',
-              quantity: commodityData.quantity || 0,
-              unit: 'unit' as const,
-              purchaseValue: (commodityData.purchasePrice || 0) * (commodityData.quantity || 0),
-              currentValue: (commodityData.currentPrice || 0) * (commodityData.quantity || 0),
-              symbol: commodityData.symbol || '',
-              zakahClass: 'Zakatable' as const,
-              goalId: undefined
-            };
-            if (commodityToEdit) {
-              await updateCommodityHolding({ ...commodityToEdit, ...commodityTypeData });
-            } else {
-              await addCommodityHolding(commodityTypeData);
-            }
-            setIsCommodityModalOpen(false);
-            setCommodityToEdit(null);
-          }}
-        />
-      </Modal>
-    </PageLayout>
-  );
 };
-
-// Asset Form Component
-const AssetForm: React.FC<{ asset: Asset | null; onSave: (data: Partial<Asset>) => Promise<void> }> = ({ asset, onSave }) => {
-  const [name, setName] = useState(asset?.name || '');
-  const [type, setType] = useState<Asset['type']>(asset?.type || 'Property');
-  const [value, setValue] = useState(String(asset?.value || ''));
-  const [purchaseValue, setPurchaseValue] = useState(String(asset?.purchaseValue || ''));
-  const [purchaseDate, setPurchaseDate] = useState(asset?.purchaseDate || new Date().toISOString().split('T')[0]);
-  const [description, setDescription] = useState(asset?.description || '');
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Validation
-    const valueNum = parseFloat(value);
-    const purchaseValueNum = parseFloat(purchaseValue);
-    
-    if (!name || name.trim().length < 2) {
-      alert('Asset name must be at least 2 characters.');
-      return;
-    }
-    
-    if (!Number.isFinite(valueNum) || valueNum <= 0) {
-      alert('Current value must be a positive number.');
-      return;
-    }
-    
-    if (!Number.isFinite(purchaseValueNum) || purchaseValueNum < 0) {
-      alert('Purchase value must be a non-negative number.');
-      return;
-    }
-    
-    const purchaseDateObj = new Date(purchaseDate);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if (purchaseDateObj > today) {
-      if (!confirm('Purchase date is in the future. Continue anyway?')) {
-        return;
-      }
-    }
-    
-    try {
-      await onSave({
-        name: name.trim(),
-        type,
-        value: valueNum,
-        purchaseValue: purchaseValueNum,
-        purchaseDate,
-        description: description?.trim(),
-        currency: 'SAR'
-      });
-    } catch (error) {
-      alert(`Failed to save asset: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Asset Name</label>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-        <select value={type} onChange={e => setType(e.target.value as Asset['type'])} className="select-base">
-          <option value="Property">Property</option>
-          <option value="Vehicle">Vehicle</option>
-          <option value="Sukuk">Sukuk</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Current Value (SAR)</label>
-        <input type="number" step="0.01" value={value} onChange={e => setValue(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Value (SAR)</label>
-        <input type="number" step="0.01" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Date</label>
-        <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
-        <textarea value={description} onChange={e => setDescription(e.target.value)} className="input-base" rows={3} />
-      </div>
-      <button type="submit" className="w-full btn-primary">Save Asset</button>
-    </form>
-  );
+const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => void; onDelete: (asset: Asset | CommodityHolding) => void; onLinkGoal: (assetId: string, goalId: string) => void; goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
+    const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+    const getAssetIcon = (type: Asset['type']) => {
+        switch (type) {
+            case 'Sukuk': return <BanknotesIcon className="h-8 w-8 text-sky-600" />;
+            case 'Property': return <HomeModernIcon className="h-8 w-8 text-indigo-500" />;
+            case 'Vehicle': return <TruckIcon className="h-8 w-8 text-emerald-500" />;
+            default: return <QuestionMarkCircleIcon className="h-8 w-8 text-slate-500" />;
+        }
+    };
+    const unrealizedGain = asset.purchasePrice != null ? asset.value - asset.purchasePrice : null;
+    const unrealizedGainPct = asset.purchasePrice != null && asset.purchasePrice > 0 && unrealizedGain !== null
+        ? (unrealizedGain / asset.purchasePrice) * 100
+        : null;
+    const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
+    const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
+    return (
+        <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow min-h-[290px]`}>
+            <div className="flex items-start justify-between gap-2 min-h-[32px]">
+                <div className="flex items-center gap-3 min-w-0">
+                    {getAssetIcon(asset.type)}
+                    <div className="min-w-0">
+                        <h3 className="font-semibold text-dark break-words">{asset.name}</h3>
+                        <p className="text-xs text-slate-500">{asset.type === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : asset.type}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    <button type="button" onClick={() => onEdit(asset)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit asset"><PencilIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onDelete(asset)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button>
+                </div>
+            </div>
+            {asset.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 min-w-0 overflow-hidden">
+                <div><dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
+                <div className="grid grid-cols-2 gap-3 text-sm min-w-0">
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Purchase Price</dt><dd className="metric-value font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
+                    <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Unrealized G/L</dt><dd className="metric-value font-semibold whitespace-nowrap">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
+                </div>
+                {asset.type === 'Sukuk' && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">Tracked as Shariah-compliant fixed income in your asset allocation.</div>}
+                {asset.isRental && asset.monthlyRent != null && <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Monthly Rent</dt><dd className="metric-value font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
+            </div>
+            <div className="border-t mt-4 pt-4 flex items-center justify-between gap-2 flex-wrap">
+                {linkedGoal ? <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />{linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
+                <select value={asset.goalId || 'none'} onChange={(e) => onLinkGoal(asset.id, e.target.value)} className="text-xs border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-1.5 pl-2 pr-7" aria-label={`Link ${asset.name} to a goal`}>
+                    <option value="none">Link to goal...</option>
+                    {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+            </div>
+        </div>
+    );
 };
+// --- End Physical Asset Components ---
 
-// Commodity Form Component
-const CommodityForm: React.FC<{ commodity: CommodityHolding | null; onSave: (data: Partial<CommodityHolding>) => Promise<void> }> = ({ commodity, onSave }) => {
-  const [symbol, setSymbol] = useState(commodity?.symbol || '');
-  const [name, setName] = useState(commodity?.name || '');
-  const [quantity, setQuantity] = useState(String(commodity?.quantity || ''));
-  const [purchasePrice, setPurchasePrice] = useState(String(commodity?.purchasePrice || ''));
-  const [currentPrice, setCurrentPrice] = useState(String(commodity?.currentPrice || ''));
+// --- Commodity Components ---
+const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals }) => {
+    const [name, setName] = useState<CommodityHolding['name']>('Gold');
+    const [quantity, setQuantity] = useState('');
+    const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
+    const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
+    const [purchaseValue, setPurchaseValue] = useState('');
+    const [currentValue, setCurrentValue] = useState('');
+    const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
+    const [owner, setOwner] = useState('');
+    const [goalId, setGoalId] = useState<string | undefined>(undefined);
+    const [formError, setFormError] = useState<string | null>(null);
+    const [diagnosticReport, setDiagnosticReport] = useState<string | null>(null);
+    const [copied, setCopied] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    useEffect(() => {
+        if (holdingToEdit) {
+            setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
+            setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
+            setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
+            setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || ''); setGoalId(holdingToEdit.goalId);
+        } else {
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
+        }
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
+    }, [holdingToEdit, isOpen]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Validation
-    if (!symbol || symbol.trim().length < 1 || symbol.trim().length > 10) {
-      alert('Symbol must be between 1 and 10 characters.');
-      return;
-    }
-    
-    const qty = parseFloat(quantity);
-    const purchasePriceNum = parseFloat(purchasePrice);
-    const currentPriceNum = parseFloat(currentPrice);
-    
-    if (!Number.isFinite(qty) || qty <= 0) {
-      alert('Quantity must be a positive number.');
-      return;
-    }
-    
-    if (!Number.isFinite(purchasePriceNum) || purchasePriceNum < 0) {
-      alert('Purchase price must be a non-negative number.');
-      return;
-    }
-    
-    const price = Number.isFinite(currentPriceNum) && currentPriceNum > 0 ? currentPriceNum : purchasePriceNum;
-    if (!Number.isFinite(price) || price <= 0) {
-      alert('Current price must be a positive number.');
-      return;
-    }
-    
-    try {
-      await onSave({
-        symbol: symbol.trim().toUpperCase(),
-        name: (name || symbol.trim()).toUpperCase(),
-        quantity: qty,
-        purchasePrice: purchasePriceNum,
-        currentPrice: price,
-        currency: 'SAR',
-        totalValue: qty * price,
-        gainLoss: (qty * price) - (qty * purchasePriceNum),
-        gainLossPercent: purchasePriceNum > 0 ? (((price - purchasePriceNum) / purchasePriceNum) * 100) : 0
-      });
-    } catch (error) {
-      alert(`Failed to save commodity: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
+    useEffect(() => {
+        if (name === 'Gold' || name === 'Silver') setUnit('gram');
+        else if (name === 'Bitcoin') setUnit('BTC');
+        else setUnit('unit');
+    }, [name]);
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Symbol (e.g., GOLD, SILVER)</label>
-        <input type="text" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} className="input-base" placeholder="Auto-filled from symbol" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-        <input type="number" step="0.001" value={quantity} onChange={e => setQuantity(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price per Unit (SAR)</label>
-        <input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} required className="input-base" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Current Price per Unit (SAR)</label>
-        <input type="number" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} required className="input-base" />
-      </div>
-      <button type="submit" className="w-full btn-primary">Save Commodity</button>
-    </form>
-  );
+    const getSymbol = (name: CommodityHolding['name'], unit: CommodityHolding['unit'], karat?: CommodityHolding['goldKarat']) => {
+        if (name === 'Gold') {
+            const k = (karat || 24);
+            return `${unit === 'gram' ? 'XAU_GRAM' : 'XAU_OUNCE'}_${k}K`;
+        }
+        if (name === 'Silver') return unit === 'gram' ? 'XAG_GRAM' : 'XAG_OUNCE';
+        if (name === 'Bitcoin') return 'BTC_USD';
+        return 'OTHER';
+    }
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
+
+        const parsedQuantity = parseFloat(quantity);
+        const parsedPurchaseValue = parseFloat(purchaseValue);
+        const parsedCurrentValue = parseFloat(currentValue);
+        if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+            setFormError('Quantity must be a positive number.');
+            return;
+        }
+        if (!Number.isFinite(parsedPurchaseValue) || parsedPurchaseValue <= 0) {
+            setFormError('Purchase value must be greater than 0.');
+            return;
+        }
+        if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+            setFormError('Current value cannot be negative.');
+            return;
+        }
+
+        const holdingData = {
+            name,
+            quantity: parsedQuantity,
+            unit,
+            purchaseValue: parsedPurchaseValue,
+            currentValue: parsedCurrentValue,
+            symbol: getSymbol(name, unit, goldKarat),
+            goldKarat: name === 'Gold' ? goldKarat : undefined,
+            zakahClass,
+            owner: owner || undefined,
+            goalId,
+        };
+
+        try {
+            setIsSubmitting(true);
+            if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
+            else await onSave(holdingData);
+            onClose();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setFormError(message);
+            const missing = message.match(/Missing column detected:\s*([a-zA-Z0-9_]+)/i)?.[1];
+            const variantCount = message.match(/Tried\s*(\d+)\s*payload variants?/i)?.[1];
+            const reportLines = [
+                `Commodity save failed at ${new Date().toISOString()}`,
+                `Operation: ${holdingToEdit ? 'Update' : 'Insert'}`,
+                `Commodity: ${name}`,
+                `Symbol: ${getSymbol(name, unit, goldKarat)}`,
+                `Message: ${message}`,
+            ];
+            if (missing) reportLines.push(`Likely missing DB column: ${missing}`);
+            if (variantCount) reportLines.push(`Attempted payload variants: ${variantCount}`);
+            setDiagnosticReport(reportLines.join('\n'));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+
+
+    const recoveryHints = useMemo(() => {
+        if (!formError) return [] as string[];
+        const message = formError.toLowerCase();
+        const hints: string[] = [];
+        if (message.includes('missing column')) {
+            hints.push('Apply the latest unified DB migration file and refresh Supabase schema cache.');
+        }
+        if (message.includes('owner')) {
+            hints.push('Your commodity table may not include the owner column. Keep Owner blank or add the column in DB.');
+        }
+        if (message.includes('purchase_value') || message.includes('current_value') || message.includes('zakah_class')) {
+            hints.push('Schema naming mismatch detected. Ensure snake_case and/or camelCase variants exist per your deployment strategy.');
+        }
+        if (message.includes('payload variants')) {
+            hints.push('Multiple fallback payloads were attempted. Use the copied diagnostic report to identify unsupported column names.');
+        }
+        if (hints.length === 0) {
+            hints.push('Retry after refreshing data. If it fails again, share the diagnostic report with support.');
+        }
+        return hints;
+    }, [formError]);
+
+
+    const canAutoFixOwnerIssue = useMemo(() => {
+        if (!formError) return false;
+        return formError.toLowerCase().includes('owner');
+    }, [formError]);
+
+    const handleClearOwnerForRetry = () => {
+        setOwner('');
+        setFormError(null);
+        setDiagnosticReport(null);
+        setCopied(false);
+    };
+
+    const handleCopyDiagnosticReport = async () => {
+        if (!diagnosticReport) return;
+        try {
+            await navigator.clipboard.writeText(diagnosticReport);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } catch {
+            setCopied(false);
+        }
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={holdingToEdit ? 'Edit Commodity' : 'Add Commodity'}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <select value={name} onChange={e => setName(e.target.value as any)} className="w-full p-2 border rounded-md"><option value="Gold">Gold</option><option value="Silver">Silver</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option></select>
+                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="w-full p-2 border rounded-md">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                {name === 'Gold' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Gold Purity (Karat) <InfoHint text="Gold valuation depends on purity. 24K is pure gold; 22K/21K/18K are priced proportionally." /></label>
+                        <select value={goldKarat} onChange={e => setGoldKarat(Number(e.target.value) as NonNullable<CommodityHolding['goldKarat']>)} className="mt-1 w-full p-2 border rounded-md">
+                            <option value={24}>24K</option>
+                            <option value={22}>22K</option>
+                            <option value={21}>21K</option>
+                            <option value={18}>18K</option>
+                        </select>
+                    </div>
+                )}
+                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Optional ownership label for shared/family tracking." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
+                <div><label className="block text-sm font-medium text-gray-700">Link to Goal <InfoHint text="Connect this commodity to a goal so goal progress includes it." /></label><select value={goalId || 'none'} onChange={(e) => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} className="mt-1 w-full p-2 border rounded-md"><option value="none">Not linked</option>{goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+                {formError && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
+                {diagnosticReport && (
+                    <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="font-semibold">Diagnostic Report</p>
+                            <button type="button" onClick={handleCopyDiagnosticReport} className="px-2 py-1 border rounded text-amber-800 border-amber-300 hover:border-amber-500">{copied ? 'Copied' : 'Copy report'}</button>
+                        </div>
+                        <pre className="whitespace-pre-wrap font-mono">{diagnosticReport}</pre>
+                    </div>
+                )}
+                {recoveryHints.length > 0 && (
+                    <div className="text-xs bg-blue-50 border border-blue-200 rounded p-3 text-blue-900">
+                        <ul className="list-disc pl-5 space-y-1">
+                            {recoveryHints.map((hint, i) => <li key={i}>{hint}</li>)}
+                        </ul>
+                        {canAutoFixOwnerIssue && (
+                            <button
+                                type="button"
+                                onClick={handleClearOwnerForRetry}
+                                className="mt-2 px-2 py-1 border rounded text-blue-800 border-blue-300 hover:border-blue-500"
+                            >
+                                Apply owner-safe retry
+                            </button>
+                        )}
+                    </div>
+                )}
+                <button type="submit" disabled={isSubmitting} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Saving...' : 'Save'}</button>
+            </form>
+        </Modal>
+    );
+};
+const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void }> = ({ holding, onEdit, onDelete, goals, onLinkGoal }) => {
+    const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+    const unrealizedGain = holding.currentValue - holding.purchaseValue;
+    const unrealizedGainPct = holding.purchaseValue > 0 ? (unrealizedGain / holding.purchaseValue) * 100 : null;
+    const borderTone = unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
+    const getIcon = (type: CommodityHolding['name']) => {
+        switch (type) {
+            case 'Gold': return <GoldBarIcon className="h-8 w-8 text-amber-500 flex-shrink-0" />;
+            case 'Silver': return <GoldBarIcon className="h-8 w-8 text-slate-400 flex-shrink-0" />;
+            case 'Bitcoin': return <BitcoinIcon className="h-8 w-8 text-orange-500 flex-shrink-0" />;
+            default: return <CubeIcon className="h-8 w-8 text-slate-500 flex-shrink-0" />;
+        }
+    };
+    return (
+        <div className={`section-card flex flex-col min-w-0 border-t-4 ${borderTone} hover:shadow-lg transition-shadow rounded-xl overflow-hidden min-h-[290px]`}>
+            <div className="flex items-start justify-between gap-2 min-h-[40px]">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {getIcon(holding.name)}
+                    <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-dark break-words">{holding.name}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">{holding.quantity} {holding.unit}{holding.name === 'Gold' && holding.goldKarat ? ` • ${holding.goldKarat}K` : ''}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    <button type="button" onClick={() => onEdit(holding)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button>
+                    <button type="button" onClick={() => onDelete(holding)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
+                </div>
+            </div>
+            {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full w-fit">{holding.owner}</span>}
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-3 min-w-0 overflow-hidden">
+                <div>
+                    <dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt>
+                    <dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(holding.currentValue)}</dd>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm min-w-0">
+                    <div className="min-w-0 overflow-hidden">
+                        <dt className="metric-label text-slate-500 text-xs">Purchase Value</dt>
+                        <dd className="metric-value font-medium text-slate-700">{formatCurrencyString(holding.purchaseValue)}</dd>
+                    </div>
+                    <div className="min-w-0 overflow-hidden">
+                        <dt className="metric-label text-slate-500 text-xs">Unrealized G/L</dt>
+                        <dd className="metric-value font-semibold whitespace-nowrap"><span>{formatCurrency(unrealizedGain, { colorize: true })}</span>{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGain >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</dd>
+                    </div>
+                </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                <dt className="metric-label text-slate-500 text-xs">Link to goal</dt>
+                <dd>
+                    <select value={holding.goalId || 'none'} onChange={(e) => onLinkGoal(holding.id, e.target.value)} className="w-full text-sm border border-slate-300 rounded-lg shadow-sm focus:ring-primary focus:border-primary py-2 pl-2 pr-8 min-w-0" aria-label={`Link ${holding.name} to goal`}>
+                        <option value="none">Not linked</option>
+                        {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                </dd>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100">
+                <span className={`inline-block px-2.5 py-1 text-xs font-semibold rounded-full ${holding.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{holding.zakahClass}</span>
+            </div>
+        </div>
+    );
+};
+// --- End Commodity Components ---
+
+interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; }
+
+const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
+    const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
+    const { formatCurrencyString } = useFormatCurrency();
+    
+    // State for both types of modals
+    const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
+    const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
+    const [preferredAssetType, setPreferredAssetType] = useState<AssetType>('Property');
+    const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
+    const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
+    const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
+    const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+    const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
+
+    useEffect(() => {
+        if (pageAction === 'open-asset-modal') {
+            handleOpenAssetModal();
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
+
+    const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
+        const physicalValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
+        const commodityValue = data.commodityHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+        const rentalIncome = data.assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + a.monthlyRent!, 0);
+        return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
+    }, [data.assets, data.commodityHoldings]);
+
+    // Physical Asset Handlers
+    const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
+    const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
+    const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
+        const holding = data.commodityHoldings.find((h) => h.id === holdingId);
+        if (holding) updateCommodityHolding({ ...holding, goalId: goalId === 'none' ? undefined : goalId });
+    };
+    
+    // Commodity Handlers
+    const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
+    const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
+        if ('id' in holding) await updateCommodityHolding(holding);
+        else await addCommodityHolding(holding);
+    };
+
+    // Generic Delete Handlers
+    const handleOpenDeleteModal = (item: Asset | CommodityHolding) => { setItemToDelete(item); };
+    const handleConfirmDelete = () => { if(itemToDelete) { ('unit' in itemToDelete ? deleteCommodityHolding(itemToDelete.id) : deleteAsset(itemToDelete.id)); setItemToDelete(null); } };
+    
+    const handleUpdatePrices = async () => {
+        if (data.commodityHoldings.length === 0) return;
+        setIsUpdatingPrices(true);
+        setGroundingChunks([]);
+        try {
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name, goldKarat: c.goldKarat })));
+            if (chunks) {
+                setGroundingChunks(chunks);
+            }
+            if (prices.length > 0) {
+                const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
+                const updates = data.commodityHoldings.map(h => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
+                if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
+            }
+        } catch (error) {
+            console.error("Failed to update prices:", error);
+            alert(`Failed to update commodity prices. Crypto/metals use Finnhub when AI is unavailable.\n\n${formatAiError(error)}`);
+        } 
+        finally { setIsUpdatingPrices(false); }
+    };
+
+
+    const orderedAssets = useMemo(() => [...data.assets].sort((a, b) => a.name.localeCompare(b.name)), [data.assets]);
+    const orderedCommodities = useMemo(() => [...data.commodityHoldings].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data.commodityHoldings]);
+
+    const addActions = [
+        { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal(null, 'Property') },
+        { label: 'Sukuk', icon: BanknotesIcon, onClick: () => handleOpenAssetModal(null, 'Sukuk') },
+        { label: 'Commodity', icon: CubeIcon, onClick: () => handleOpenCommodityModal() }
+    ];
+
+    return (
+        <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
+
+            <SectionCard title="Sukuk in Finova" className="overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">How it is handled</p>
+                        <p className="text-slate-700 mt-1">Sukuk is treated as a first-class asset type and included in total assets, gain/loss, and goal-linking.</p>
+                    </div>
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">Investment integration</p>
+                        <p className="text-slate-700 mt-1">For portfolio holdings, open holding edit and set <strong>Asset Class = Sukuk</strong> so reports and execution views classify it correctly.</p>
+                    </div>
+                    <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+                        <p className="font-semibold text-sky-800">How to add Sukuk</p>
+                        <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong> (or Add Physical Asset and choose type Sukuk), enter value/purchase price, then optionally link it to a goal.</p>
+                    </div>
+                </div>
+            </SectionCard>
+
+            <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
+            </div>
+
+            <SectionCard title="Physical Assets" className="overflow-visible">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
+                    {orderedAssets.map((asset) => (
+                        <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />
+                    ))}
+                    {data.assets.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
+                </div>
+            </SectionCard>
+
+            <SectionCard
+                title="Metals & Crypto"
+                className="overflow-visible"
+                headerAction={
+                    <button
+                        type="button"
+                        onClick={handleUpdatePrices}
+                        disabled={isUpdatingPrices || data.commodityHoldings.length === 0}
+                        title={data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices"}
+                        className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <SparklesIcon className="h-4 w-4" />
+                        {isUpdatingPrices ? 'Updating...' : 'Update Prices'}
+                    </button>
+                }
+            >
+                <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm text-slate-700 leading-relaxed">
+                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI with deterministic fallback APIs (Finnhub/Stooq).
+                        </p>
+                        <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
+                    </div>
+                </div>
+                {!isAiAvailable && data.commodityHoldings.length > 0 && (
+                    <div className="alert-warning mb-4 rounded-lg">
+                        <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
+                    </div>
+                )}
+                {groundingChunks.length > 0 && (
+                    <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-lg border border-slate-200">
+                        <p className="font-semibold text-gray-700 mb-1">Sources</p>
+                        <ul className="list-disc pl-5 space-y-0.5">
+                            {groundingChunks.map((chunk, index) => (
+                                chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
+                    {orderedCommodities.map((h) => (
+                        <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
+                    ))}
+                    {data.commodityHoldings.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
+                </div>
+            </SectionCard>
+            
+            <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data.goals} />
+            <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
+        </PageLayout>
+    );
 };
 
 export default Assets;

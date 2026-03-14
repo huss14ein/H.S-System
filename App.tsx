@@ -2,9 +2,6 @@ import React, { useState, useContext, useCallback, Suspense, lazy, startTransiti
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
-
-const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === 'true';
 import { AuthContext, AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
@@ -36,22 +33,18 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Investment & Strategy Pages
+const Investments = lazy(() => import('./pages/Investments'));
 const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
 const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
 const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
 const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
 const WatchlistView = lazy(() => import('./pages/WatchlistView'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 
 // Financial Planning Pages
 const Plan = lazy(() => import('./pages/Plan'));
 
 // Asset Management Pages
 const Assets = lazy(() => import('./pages/Assets'));
-
-// Statement Upload
-const StatementUpload = lazy(() => import('./pages/StatementUpload'));
-const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
 
 // System & Market Pages
 const MarketEvents = lazy(() => import('./pages/MarketEvents'));
@@ -62,24 +55,8 @@ const VALID_PAGES: Page[] = [
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System Health', 'Statement Upload', 'Statement History'
+  'Assets', 'System & APIs Health'
 ];
-
-function getAuthViewFromHash(allowSignup: boolean): boolean {
-  if (!allowSignup || typeof window === 'undefined') return false;
-  return window.location.hash === '#signup';
-}
-
-const AuthGate: React.FC<{ allowSignup: boolean }> = ({ allowSignup }) => {
-  const [showSignup, setShowSignup] = useState(() => getAuthViewFromHash(allowSignup));
-  React.useEffect(() => {
-    if (!allowSignup) return;
-    const onHashChange = () => setShowSignup(getAuthViewFromHash(allowSignup));
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, [allowSignup]);
-  return showSignup ? <SignupPage /> : <LoginPage />;
-};
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -168,21 +145,17 @@ const App: React.FC = () => {
       case 'AI Rebalancer': return <AIRebalancerView />;
       case 'Dividend Tracker': return <DividendTrackerView />;
       case 'Watchlist': return <WatchlistView />;
-      case 'Investments': return <Commodities />;
+      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages
-      case 'Plan': return <Plan />;
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
       
       // Asset Management Pages
-      case 'Assets': return <Assets />;
-      
-      // Statement Upload
-      case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} />;
-      case 'Statement History': return <StatementHistoryView />;
+      case 'Assets': return <Assets {...actionProps} />;
       
       // System & Market Pages
       case 'Market Events': return <MarketEvents />;
-      case 'System Health': return <SystemHealth />;
+      case 'System & APIs Health': return <SystemHealth />;
       case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
       
       default: return <Dashboard setActivePage={setActivePage} />;
@@ -193,7 +166,7 @@ const App: React.FC = () => {
     return (
       <ThemeProvider>
         <AuthProvider>
-          <AuthGate allowSignup={ALLOW_SIGNUP} />
+          <LoginPage />
         </AuthProvider>
       </ThemeProvider>
     );

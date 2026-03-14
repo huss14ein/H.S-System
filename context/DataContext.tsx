@@ -482,7 +482,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
         if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
 
-        return [payloadWithSnakeCase, payloadWithCamelCase];
+        // Try camelCase first (most common), then snake_case as fallback
+        return [payloadWithCamelCase, payloadWithSnakeCase];
     };
 
     const fetchData = async () => {
