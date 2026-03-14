@@ -3,7 +3,6 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { RiskProfile, Page } from '../types';
 import InfoHint from '../components/InfoHint';
-import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 
@@ -127,8 +126,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
                 {setActivePage && (
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setActivePage('Investments')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
-                        <button type="button" onClick={() => setActivePage('Wealth Ultra')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra Autopilot</button>
+                        <button type="button" onClick={() => setActivePage('Dashboard')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
+                        <button type="button" onClick={() => setActivePage('Dashboard')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra Autopilot</button>
                     </div>
                 )}
             </SectionCard>

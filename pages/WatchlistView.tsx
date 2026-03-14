@@ -20,8 +20,7 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { PlusIcon } from '../components/icons/PlusIcon';
-import { XMarkIcon } from '../components/icons/XMarkIcon';
+import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ArrowLeftIcon, XMarkIcon, PlusIcon } from '../components/icons';
 import { toSAR } from '../utils/currencyMath';
 
 
@@ -188,7 +187,7 @@ const AddWatchlistItemModal: React.FC<{
                             onClick={handleBack}
                             className="p-2 hover:bg-slate-100 rounded-full transition-colors"
                         >
-                            <ArrowLeftIcon className="h-5 w-5 text-slate-600" />
+                            <ArrowTrendingDownIcon className="h-5 w-5 text-slate-600" />
                         </button>
                         <div>
                             <div className="flex items-center gap-2">

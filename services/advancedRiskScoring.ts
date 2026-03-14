@@ -272,8 +272,7 @@ export function calculatePositionSizeLimits(
  */
 export function calculateSleeveRiskAllocation(
   positions: PositionRiskInput[],
-  sleeveTargets: { core: number; upside: number; speculative: number },
-  riskTolerance: 'Conservative' | 'Moderate' | 'Aggressive'
+  sleeveTargets: { core: number; upside: number; speculative: number }
 ): {
   coreAllocation: { positions: string[]; riskScore: number; targetMet: boolean };
   upsideAllocation: { positions: string[]; riskScore: number; targetMet: boolean };
@@ -544,7 +543,7 @@ function calculateVariance(returns: number[]): number {
   return returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
 }
 
-function calculatePortfolioReturns(positions: PositionRiskInput[], totalValue: number): number[] {
+function calculatePortfolioReturns(positions: PositionRiskInput[]): number[] {
   // Simplified: use equal-weighted returns
   const allReturns: number[][] = positions
     .filter(p => p.returns && p.returns.length > 0)

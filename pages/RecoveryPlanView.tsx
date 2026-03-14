@@ -1252,14 +1252,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <>
                 <button
                   type="button"
-                  onClick={() => setActivePage('Market Events')}
+                  onClick={() => setActivePage('Dashboard')}
                   className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm"
                 >
                   Check Market Events for {selected.holding.symbol}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActivePage('Wealth Ultra')}
+                  onClick={() => setActivePage('Dashboard')}
                   className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
                 >
                   View in Wealth Ultra

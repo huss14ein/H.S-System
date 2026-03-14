@@ -3,12 +3,8 @@
  * Ensures consistent constraint sharing and cross-engine communication
  */
 
-import { Transaction, Account, Budget, Goal, Investment } from '../types';
-import { calculatePortfolioRisk, RiskMetrics, calculatePositionRisk } from './advancedRiskScoring';
-import { calculateSleeveRiskAllocation, RebalancePolicy } from './sleeveAllocation';
-import { calculateTradeScore, TradeCandidate, rankTradeCandidates } from './tradeRanking';
+import { Transaction, Account, Budget, Goal } from '../types';
 import { generateCashflowStressSignals, calculateDynamicBaselines } from './enhancedBudgetEngine';
-import { detectRecurringBillPatterns, batchClassifyTransactions } from './hybridBudgetCategorization';
 
 // Constraint interfaces for cross-engine communication
 export interface CashConstraints {
@@ -312,7 +308,7 @@ export function runCrossEngineAnalysis(context: UnifiedFinancialContext): CrossE
     if (baseline && baseline.trendDirection === 'increasing') {
       budgetRecommendations.push({
         category: budget.category,
-        currentBudget: budget.monthlyLimit || budget.limit || 0,
+        currentBudget: budget.limit || 0,
         recommendedBudget: Math.round(baseline.baselineAmount * 1.1),
         reason: `Spending trending up, align budget with actual usage`,
         confidence: 75

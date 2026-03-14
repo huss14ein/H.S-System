@@ -1,10 +1,6 @@
-
-import React, { useState, useMemo, useContext } from 'react';
-import { DataContext } from '../context/DataContext';
-import { Liability, Page } from '../types';
-import Card from '../components/Card';
-import Modal from '../components/Modal';
-import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
+import React, { useState, useMemo } from 'react';
+import { useData } from '../context/DataContext';
+import { Page } from '../types';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { HomeIcon } from '../components/icons/HomeIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
@@ -12,7 +8,6 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
-import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { DemoDataButton } from '../components/DemoDataButton';
 

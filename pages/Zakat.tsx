@@ -1,7 +1,5 @@
-import React, { useState, useMemo, useContext, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import Card from '../components/Card';
-import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -11,7 +9,6 @@ import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
-import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { DemoDataButton } from '../components/DemoDataButton';
