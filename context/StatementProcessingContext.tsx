@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
+import { DataContext } from './DataContext';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
 
 export interface FinancialStatement {
@@ -123,6 +124,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const [currentStatement, setCurrentStatement] = useState<FinancialStatement | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const auth = useContext(AuthContext);
+  const dataContext = useContext(DataContext);
 
   // Load statements from database and localStorage (fallback)
   useEffect(() => {
@@ -539,21 +541,169 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
       throw new Error('Statement not found');
     }
 
-    // Simulate reconciliation process
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (!dataContext) {
+      throw new Error('DataContext not available');
+    }
 
-    const matchedTransactions = Math.floor(statement.transactions.length * 0.8);
-    const unmatchedTransactions = statement.transactions.length - matchedTransactions;
-    const duplicateTransactions = Math.floor(statement.transactions.length * 0.1);
+    const existingTransactions = dataContext.data.transactions || [];
+    const discrepancies: TransactionDiscrepancy[] = [];
+    let matchedCount = 0;
+    let duplicateCount = 0;
+    const matchedIds = new Set<string>();
+
+    // Match extracted transactions with existing ones
+    for (const extractedTx of statement.transactions) {
+      const extractedDate = new Date(extractedTx.date);
+      const extractedAmount = Math.abs(extractedTx.amount);
+      const extractedDesc = extractedTx.description.toLowerCase().trim();
+
+      // Find potential matches
+      const potentialMatches = existingTransactions.filter(existingTx => {
+        const existingDate = new Date(existingTx.date);
+        const existingAmount = Math.abs(existingTx.amount);
+        const existingDesc = existingTx.description.toLowerCase().trim();
+
+        // Date tolerance: ±3 days
+        const dateDiff = Math.abs(extractedDate.getTime() - existingDate.getTime());
+        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
+        
+        // Amount tolerance: ±0.01 (for rounding differences)
+        const amountDiff = Math.abs(extractedAmount - existingAmount);
+
+        // Match criteria:
+        // 1. Same date (±3 days) AND same amount (±0.01) AND similar description
+        // 2. OR same date (±3 days) AND same amount (±0.01) (description might differ)
+        const dateMatch = daysDiff <= 3;
+        const amountMatch = amountDiff <= 0.01;
+        const descSimilarity = calculateStringSimilarity(extractedDesc, existingDesc) > 0.6;
+
+        return dateMatch && amountMatch && (descSimilarity || amountMatch);
+      });
+
+      if (potentialMatches.length === 0) {
+        // Unmatched transaction
+        extractedTx.reconciliationStatus = 'unmatched';
+      } else if (potentialMatches.length === 1) {
+        // Single match - likely a match
+        const match = potentialMatches[0];
+        if (!matchedIds.has(match.id)) {
+          matchedIds.add(match.id);
+          extractedTx.matchedTransaction = match.id;
+          extractedTx.reconciliationStatus = 'matched';
+          matchedCount++;
+
+          // Check for discrepancies
+          const dateDiff = Math.abs(extractedDate.getTime() - new Date(match.date).getTime());
+          const amountDiff = Math.abs(extractedAmount - Math.abs(match.amount));
+          const descSimilarity = calculateStringSimilarity(extractedDesc, match.description.toLowerCase().trim());
+
+          if (dateDiff > 0) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'date_mismatch',
+              severity: dateDiff > 86400000 ? 'medium' : 'low', // > 1 day
+              suggestion: `Date differs by ${Math.floor(dateDiff / (1000 * 60 * 60 * 24))} days`
+            });
+          }
+          if (amountDiff > 0.01) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'amount_mismatch',
+              severity: amountDiff > 10 ? 'high' : amountDiff > 1 ? 'medium' : 'low',
+              suggestion: `Amount differs by ${amountDiff.toFixed(2)}`
+            });
+          }
+          if (descSimilarity < 0.7) {
+            discrepancies.push({
+              extractedTransaction: extractedTx,
+              existingTransaction: match,
+              type: 'description_mismatch',
+              severity: 'low',
+              suggestion: 'Description differs significantly'
+            });
+          }
+        } else {
+          // Already matched to another transaction - potential duplicate
+          extractedTx.reconciliationStatus = 'duplicate';
+          duplicateCount++;
+        }
+      } else {
+        // Multiple matches - potential duplicate or ambiguous
+        extractedTx.reconciliationStatus = 'duplicate';
+        duplicateCount++;
+        discrepancies.push({
+          extractedTransaction: extractedTx,
+          existingTransaction: potentialMatches[0],
+          type: 'missing_transaction',
+          severity: 'medium',
+          suggestion: `Multiple potential matches found (${potentialMatches.length}). Please review manually.`
+        });
+      }
+    }
+
+    // Update statement with reconciliation status
+    setStatements(prev => prev.map(s => 
+      s.id === statementId 
+        ? { ...s, transactions: statement.transactions }
+        : s
+    ));
+
+    const unmatchedCount = statement.transactions.length - matchedCount - duplicateCount;
+    const confidence = statement.transactions.length > 0 
+      ? (matchedCount / statement.transactions.length) * 100 
+      : 0;
 
     return {
       totalTransactions: statement.transactions.length,
-      matchedTransactions,
-      unmatchedTransactions,
-      duplicateTransactions,
-      discrepancies: [],
-      confidence: (matchedTransactions / statement.transactions.length) * 100
+      matchedTransactions: matchedCount,
+      unmatchedTransactions: unmatchedCount,
+      duplicateTransactions: duplicateCount,
+      discrepancies,
+      confidence
     };
+  };
+
+  // Helper function to calculate string similarity (Levenshtein-based)
+  const calculateStringSimilarity = (str1: string, str2: string): number => {
+    if (str1 === str2) return 1;
+    if (str1.length === 0 || str2.length === 0) return 0;
+
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+
+    // Check if one string contains the other (fuzzy match)
+    if (longer.includes(shorter)) {
+      return shorter.length / longer.length;
+    }
+
+    // Calculate Levenshtein distance
+    const matrix: number[][] = [];
+    for (let i = 0; i <= longer.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= shorter.length; j++) {
+      matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= longer.length; i++) {
+      for (let j = 1; j <= shorter.length; j++) {
+        if (longer[i - 1] === shorter[j - 1]) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+
+    const distance = matrix[longer.length][shorter.length];
+    const maxLength = Math.max(longer.length, shorter.length);
+    return 1 - (distance / maxLength);
   };
 
   const exportTransactions = (statementId: string): string => {

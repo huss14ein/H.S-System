@@ -4,12 +4,16 @@ import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon } from '../components/icons';
+import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement } from '../services/statementParser';
-import { Transaction, InvestmentTransaction } from '../types';
+import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 
-const StatementUpload: React.FC = () => {
+interface StatementUploadProps {
+  setActivePage?: (page: Page) => void;
+}
+
+const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const { data, addTransaction, recordTrade } = useContext(DataContext)!;
   const { uploadStatement, processStatement } = useStatementProcessing();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
@@ -21,6 +25,9 @@ const StatementUpload: React.FC = () => {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [duplicateTransactions, setDuplicateTransactions] = useState<Set<number>>(new Set());
+  const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
@@ -33,12 +40,22 @@ const StatementUpload: React.FC = () => {
     setUploadedFile(file);
     setProcessingError(null);
     setIsProcessingFile(true);
+    setProcessingProgress(10);
 
     try {
+      // Validate file
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error('File size exceeds 10MB limit');
+      }
+
+      setProcessingProgress(20);
+      
       // Parse based on file type using real parser
       let transactions: Transaction[] = [];
       let investmentTransactions: InvestmentTransaction[] = [];
 
+      setProcessingProgress(40);
+      
       if (activeTab === 'trading') {
         const result = await parseTradingStatement(file, selectedAccount);
         investmentTransactions = result.transactions;
@@ -48,8 +65,17 @@ const StatementUpload: React.FC = () => {
         transactions = result.transactions;
         setExtractedTransactions(transactions);
       }
+      
+      setProcessingProgress(80);
 
+      setProcessingProgress(90);
+      
       if (transactions.length > 0 || investmentTransactions.length > 0) {
+        // Check for duplicates before showing review modal
+        checkForDuplicates(transactions, investmentTransactions);
+        
+        setProcessingProgress(95);
+        
         // Save statement metadata to context for history tracking
         try {
           await uploadStatement(file, {
@@ -62,6 +88,7 @@ const StatementUpload: React.FC = () => {
           // Continue anyway - transactions can still be imported
         }
         
+        setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
         alert('No transactions found in the uploaded file. Please check the file format.');
@@ -72,6 +99,7 @@ const StatementUpload: React.FC = () => {
       alert(`Error processing file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsProcessingFile(false);
+      setProcessingProgress(0);
     }
   };
 
@@ -88,12 +116,18 @@ const StatementUpload: React.FC = () => {
 
     setProcessingError(null);
     setIsProcessingFile(true);
+    setProcessingProgress(10);
 
     try {
+      setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
       setExtractedTransactions(result.transactions);
+      setProcessingProgress(70);
       
       if (result.transactions.length > 0) {
+        // Check for duplicates
+        checkForDuplicates(result.transactions, []);
+        setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
         alert('No transactions found in the SMS text. Please check the format.');
@@ -104,13 +138,98 @@ const StatementUpload: React.FC = () => {
       alert(`Error parsing SMS: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsProcessingFile(false);
+      setProcessingProgress(0);
     }
+  };
+
+  // Check for duplicate transactions
+  const checkForDuplicates = (transactions: Transaction[], investmentTransactions: InvestmentTransaction[]) => {
+    const existingTransactions = data?.transactions || [];
+    const existingInvestmentTransactions = data?.investmentTransactions || [];
+    const duplicates = new Set<number>();
+
+    // Check regular transactions
+    transactions.forEach((tx, index) => {
+      const txDate = new Date(tx.date);
+      const txAmount = Math.abs(tx.amount);
+      const txDesc = tx.description.toLowerCase().trim();
+
+      const isDuplicate = existingTransactions.some(existing => {
+        const existingDate = new Date(existing.date);
+        const existingAmount = Math.abs(existing.amount);
+        const existingDesc = existing.description.toLowerCase().trim();
+
+        const dateDiff = Math.abs(txDate.getTime() - existingDate.getTime());
+        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
+        const amountMatch = Math.abs(txAmount - existingAmount) <= 0.01;
+        const descMatch = txDesc === existingDesc || 
+          (txDesc.includes(existingDesc.substring(0, 10)) || existingDesc.includes(txDesc.substring(0, 10)));
+
+        return daysDiff <= 3 && amountMatch && descMatch;
+      });
+
+      if (isDuplicate) {
+        duplicates.add(index);
+      }
+    });
+
+    // Check investment transactions
+    investmentTransactions.forEach((tx, index) => {
+      const txDate = new Date(tx.date);
+      const txSymbol = tx.symbol?.toUpperCase();
+      const txQuantity = Math.abs(tx.quantity);
+      const txPrice = tx.price;
+
+      const isDuplicate = existingInvestmentTransactions.some(existing => {
+        const existingDate = new Date(existing.date);
+        const existingSymbol = existing.symbol?.toUpperCase();
+        const existingQuantity = Math.abs(existing.quantity);
+        const existingPrice = existing.price;
+
+        const dateDiff = Math.abs(txDate.getTime() - existingDate.getTime());
+        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
+
+        return daysDiff <= 3 && 
+               txSymbol === existingSymbol && 
+               Math.abs(txQuantity - existingQuantity) <= 0.01 &&
+               Math.abs(txPrice - existingPrice) <= 0.01;
+      });
+
+      if (isDuplicate) {
+        duplicates.add(transactions.length + index);
+      }
+    });
+
+    setDuplicateTransactions(duplicates);
+    // Auto-select non-duplicates
+    const allCount = transactions.length + investmentTransactions.length;
+    const nonDuplicates = new Set<number>();
+    for (let i = 0; i < allCount; i++) {
+      if (!duplicates.has(i)) {
+        nonDuplicates.add(i);
+      }
+    }
+    setSelectedTransactions(nonDuplicates);
   };
 
   const handleApproveTransactions = async () => {
     try {
+      const transactionsToImport = extractedTransactions.filter((_, i) => selectedTransactions.has(i));
+      const investmentTransactionsToImport = extractedInvestmentTransactions.filter((_, i) => 
+        selectedTransactions.has(extractedTransactions.length + i)
+      );
+
+      if (transactionsToImport.length === 0 && investmentTransactionsToImport.length === 0) {
+        alert('Please select at least one transaction to import.');
+        return;
+      }
+
+      setProcessingProgress(0);
+      const total = transactionsToImport.length + investmentTransactionsToImport.length;
+      let processed = 0;
+
       // Save regular transactions
-      for (const tx of extractedTransactions) {
+      for (const tx of transactionsToImport) {
         await addTransaction({
           date: tx.date,
           description: tx.description,
@@ -124,10 +243,12 @@ const StatementUpload: React.FC = () => {
           expenseType: tx.expenseType,
           status: tx.status || 'Approved'
         });
+        processed++;
+        setProcessingProgress((processed / total) * 100);
       }
 
       // Save investment transactions using recordTrade
-      for (const tx of extractedInvestmentTransactions) {
+      for (const tx of investmentTransactionsToImport) {
         await recordTrade({
           accountId: tx.accountId,
           date: tx.date,
@@ -138,12 +259,17 @@ const StatementUpload: React.FC = () => {
           total: tx.total,
           currency: tx.currency
         });
+        processed++;
+        setProcessingProgress((processed / total) * 100);
       }
 
-      alert(`Successfully imported ${extractedTransactions.length + extractedInvestmentTransactions.length} transactions!`);
+      alert(`Successfully imported ${transactionsToImport.length + investmentTransactionsToImport.length} transactions!`);
       setIsReviewModalOpen(false);
       setExtractedTransactions([]);
       setExtractedInvestmentTransactions([]);
+      setDuplicateTransactions(new Set());
+      setSelectedTransactions(new Set());
+      setProcessingProgress(0);
       setSmsText('');
       setUploadedFile(null);
       if (fileInputRef.current) {
@@ -153,6 +279,33 @@ const StatementUpload: React.FC = () => {
       console.error('Error saving transactions:', error);
       alert(`Failed to save transactions: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  };
+
+  const handleSelectAll = () => {
+    const allCount = extractedTransactions.length + extractedInvestmentTransactions.length;
+    const nonDuplicates = new Set<number>();
+    for (let i = 0; i < allCount; i++) {
+      if (!duplicateTransactions.has(i)) {
+        nonDuplicates.add(i);
+      }
+    }
+    setSelectedTransactions(nonDuplicates);
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedTransactions(new Set());
+  };
+
+  const handleToggleTransaction = (index: number) => {
+    setSelectedTransactions(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
   };
 
   const handleRejectTransaction = (index: number, type: 'transaction' | 'investment') => {
@@ -167,6 +320,18 @@ const StatementUpload: React.FC = () => {
     <PageLayout
       title="Upload Statements"
       description="Upload bank statements, paste SMS transactions, or upload trading statements to automatically import transactions"
+      action={
+        setActivePage && (
+          <button
+            type="button"
+            onClick={() => setActivePage('Statement History')}
+            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-2"
+          >
+            <ClockIcon className="h-5 w-5" />
+            View History
+          </button>
+        )
+      }
     >
       <div className="space-y-6">
         {/* Tabs */}
@@ -277,9 +442,25 @@ const StatementUpload: React.FC = () => {
               )}
 
               {isProcessingFile && (
-                <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg">
-                  <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-sm text-blue-700">Processing statement...</p>
+                <div className="space-y-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-sm font-medium text-blue-700">Processing statement...</p>
+                  </div>
+                  {processingProgress > 0 && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-blue-600">
+                        <span>Extracting transactions</span>
+                        <span>{Math.round(processingProgress)}%</span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${processingProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -427,9 +608,64 @@ const StatementUpload: React.FC = () => {
           maxWidthClass="max-w-4xl"
         >
           <div className="space-y-4">
-            <p className="text-sm text-slate-600">
-              Review the extracted transactions before importing. You can remove any transactions you don't want to import.
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-slate-600">
+                Review the extracted transactions before importing. Select which transactions to import.
+              </p>
+              {duplicateTransactions.size > 0 && (
+                <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs font-medium text-amber-800">
+                    {duplicateTransactions.size} potential duplicate(s) detected
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Progress Indicator */}
+            {processingProgress > 0 && processingProgress < 100 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-700">Importing transactions...</span>
+                  <span className="font-medium text-primary">{Math.round(processingProgress)}%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${processingProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions */}
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-700">
+                  {selectedTransactions.size} of {extractedTransactions.length + extractedInvestmentTransactions.length} selected
+                </span>
+                {duplicateTransactions.size > 0 && (
+                  <span className="text-xs text-amber-600">
+                    ({duplicateTransactions.size} duplicates excluded)
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeselectAll}
+                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                >
+                  Deselect All
+                </button>
+              </div>
+            </div>
 
             {/* Regular Transactions */}
             {extractedTransactions.length > 0 && (
@@ -441,33 +677,71 @@ const StatementUpload: React.FC = () => {
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-12">
+                          <input
+                            type="checkbox"
+                            checked={extractedTransactions.length > 0 && extractedTransactions.every((_, i) => 
+                              duplicateTransactions.has(i) || selectedTransactions.has(i)
+                            )}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                handleSelectAll();
+                              } else {
+                                handleDeselectAll();
+                              }
+                            }}
+                            className="rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                        </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Actions</th>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-200">
-                      {extractedTransactions.map((tx, index) => (
-                        <tr key={index}>
-                          <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
-                          <td className="px-4 py-3 text-sm text-slate-900">{tx.description}</td>
-                          <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {tx.amount >= 0 ? '+' : ''}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SAR
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600">{tx.category || 'Uncategorized'}</td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleRejectTransaction(index, 'transaction')}
-                              className="text-rose-600 hover:text-rose-800 text-sm font-medium"
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {extractedTransactions.map((tx, index) => {
+                        const isDuplicate = duplicateTransactions.has(index);
+                        const isSelected = selectedTransactions.has(index);
+                        return (
+                          <tr
+                            key={index}
+                            className={isDuplicate ? 'bg-amber-50' : isSelected ? 'bg-blue-50' : ''}
+                          >
+                            <td className="px-4 py-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleTransaction(index)}
+                                disabled={isDuplicate}
+                                className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900">{tx.description}</td>
+                            <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {tx.amount >= 0 ? '+' : ''}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SAR
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{tx.category || 'Uncategorized'}</td>
+                            <td className="px-4 py-3 text-center">
+                              {isDuplicate ? (
+                                <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-medium">
+                                  Duplicate
+                                </span>
+                              ) : isSelected ? (
+                                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                                  Selected
+                                </span>
+                              ) : (
+                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-medium">
+                                  Not Selected
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -484,45 +758,85 @@ const StatementUpload: React.FC = () => {
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-12">
+                          <input
+                            type="checkbox"
+                            checked={extractedInvestmentTransactions.length > 0 && extractedInvestmentTransactions.every((_, i) => 
+                              duplicateTransactions.has(extractedTransactions.length + i) || 
+                              selectedTransactions.has(extractedTransactions.length + i)
+                            )}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                handleSelectAll();
+                              } else {
+                                handleDeselectAll();
+                              }
+                            }}
+                            className="rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                        </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Type</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Symbol</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Quantity</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Price</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Total</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Actions</th>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-200">
-                      {extractedInvestmentTransactions.map((tx, index) => (
-                        <tr key={index}>
-                          <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
-                          <td className="px-4 py-3 text-sm text-slate-900">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              tx.type === 'buy' ? 'bg-emerald-100 text-emerald-800' :
-                              tx.type === 'sell' ? 'bg-rose-100 text-rose-800' :
-                              'bg-blue-100 text-blue-800'
-                            }`}>
-                              {tx.type.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-sm font-medium text-slate-900">{tx.symbol}</td>
-                          <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.quantity}</td>
-                          <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.price.toFixed(2)}</td>
-                          <td className="px-4 py-3 text-sm text-right font-medium text-slate-900">
-                            {tx.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {tx.currency || 'SAR'}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleRejectTransaction(index, 'investment')}
-                              className="text-rose-600 hover:text-rose-800 text-sm font-medium"
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {extractedInvestmentTransactions.map((tx, index) => {
+                        const actualIndex = extractedTransactions.length + index;
+                        const isDuplicate = duplicateTransactions.has(actualIndex);
+                        const isSelected = selectedTransactions.has(actualIndex);
+                        return (
+                          <tr
+                            key={index}
+                            className={isDuplicate ? 'bg-amber-50' : isSelected ? 'bg-blue-50' : ''}
+                          >
+                            <td className="px-4 py-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleTransaction(actualIndex)}
+                                disabled={isDuplicate}
+                                className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                tx.type === 'buy' ? 'bg-emerald-100 text-emerald-800' :
+                                tx.type === 'sell' ? 'bg-rose-100 text-rose-800' :
+                                'bg-blue-100 text-blue-800'
+                              }`}>
+                                {tx.type.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm font-medium text-slate-900">{tx.symbol}</td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.quantity}</td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.price.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-slate-900">
+                              {tx.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {tx.currency || 'SAR'}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              {isDuplicate ? (
+                                <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-medium">
+                                  Duplicate
+                                </span>
+                              ) : isSelected ? (
+                                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                                  Selected
+                                </span>
+                              ) : (
+                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-medium">
+                                  Not Selected
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -532,7 +846,11 @@ const StatementUpload: React.FC = () => {
             <div className="flex justify-end gap-3 pt-4 border-t">
               <button
                 type="button"
-                onClick={() => setIsReviewModalOpen(false)}
+                onClick={() => {
+                  setIsReviewModalOpen(false);
+                  setSelectedTransactions(new Set());
+                  setDuplicateTransactions(new Set());
+                }}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
               >
                 Cancel
@@ -540,10 +858,13 @@ const StatementUpload: React.FC = () => {
               <button
                 type="button"
                 onClick={handleApproveTransactions}
-                disabled={extractedTransactions.length === 0 && extractedInvestmentTransactions.length === 0}
+                disabled={selectedTransactions.size === 0 || processingProgress > 0}
                 className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Import {extractedTransactions.length + extractedInvestmentTransactions.length} Transaction(s)
+                {processingProgress > 0 
+                  ? `Importing... ${Math.round(processingProgress)}%`
+                  : `Import ${selectedTransactions.size} Selected Transaction(s)`
+                }
               </button>
             </div>
           </div>
