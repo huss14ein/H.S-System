@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { ocrParser, ParsedStatement, ParsedTransaction } from '../services/ocrDocumentParser';
+import { ParsedTransaction } from '../services/ocrDocumentParser';
 
 export interface AIContextType {
   isCategorizing: boolean;

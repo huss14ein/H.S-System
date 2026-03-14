@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { CategorizedTransaction, DuplicateResult } from '../context/TransactionAIContext';
+import { CategorizedTransaction } from '../context/TransactionAIContext';
 
 export interface ReconciliationContextType {
   reconciliations: ReconciliationSession[];
@@ -203,7 +203,7 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
       // Update session with results
       const updatedSession = {
         ...session,
-        status: conflicts.length > 0 ? 'review' : 'completed',
+        status: (conflicts.length > 0 ? 'review' : 'completed') as 'review' | 'completed',
         completedAt: new Date(),
         processedTransactions: session.totalTransactions,
         matchedTransactions: matchedCount,
@@ -236,7 +236,7 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
     }
   };
 
-  const processTransaction = async (transactionIndex: number, existingTransactions: any[]): Promise<ReconciliationConflict | null> => {
+  const processTransaction = async (transactionIndex: number, _existingTransactions: any[]): Promise<ReconciliationConflict | null> => {
     // Simulate transaction processing
     // In a real implementation, you would compare with existing transactions
     
@@ -249,7 +249,6 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
         type: 'duplicate',
         severity: 'medium',
         extractedTransaction: {
-          id: `tx-${transactionIndex}`,
           date: new Date(),
           description: 'Sample Transaction',
           amount: 100,
@@ -278,7 +277,6 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
         type: 'amount_mismatch',
         severity: 'high',
         extractedTransaction: {
-          id: `tx-${transactionIndex}`,
           date: new Date(),
           description: 'Sample Transaction',
           amount: 100,
@@ -404,7 +402,7 @@ export const ReconciliationProvider: React.FC<ReconciliationProviderProps> = ({ 
     ));
   };
 
-  const rejectReconciliation = async (sessionId: string, reason: string) => {
+  const rejectReconciliation = async (sessionId: string, _reason: string) => {
     setReconciliations(prev => prev.map(s => 
       s.id === sessionId 
         ? { ...s, status: 'failed', completedAt: new Date() }

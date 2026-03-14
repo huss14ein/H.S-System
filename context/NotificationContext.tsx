@@ -15,6 +15,15 @@ export interface NotificationContextType {
   clearNotifications: () => void;
 }
 
+export interface NotificationOptions {
+  body?: string;
+  icon?: string;
+  badge?: string;
+  vibrate?: number[];
+  data?: any;
+  actions?: NotificationAction[];
+}
+
 export interface NotificationMessage {
   id: string;
   title: string;
@@ -147,7 +156,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
 
       const pushSubscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: applicationServerKey
+        applicationServerKey: new Uint8Array(applicationServerKey)
       });
 
       setSubscription(pushSubscription);

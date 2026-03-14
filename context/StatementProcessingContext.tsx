@@ -267,7 +267,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
     };
   };
 
-  const processPDFStatement = async (statement: FinancialStatement): Promise<ExtractedTransaction[]> => {
+  const processPDFStatement = async (_statement: FinancialStatement): Promise<ExtractedTransaction[]> => {
     // Simulate PDF OCR processing
     const mockTransactions: ExtractedTransaction[] = [
       {

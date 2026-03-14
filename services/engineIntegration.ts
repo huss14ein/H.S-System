@@ -33,6 +33,11 @@ interface RiskMetrics {
   sortinoRatio?: number;
   treynorRatio?: number;
   calmarRatio?: number;
+  concentrationRisk?: number;
+  liquidityRisk?: number;
+  correlationRisk?: number;
+  riskRating?: number;
+  sleeveRiskScore?: number;
 }
 
 // Mock function for missing detectRecurringBillPatterns
@@ -259,8 +264,9 @@ function calculatePortfolioRiskForInvestments(investments: Investment[]): RiskMe
       liquidityRisk: 0,
       correlationRisk: 0,
       overallRiskScore: 50,
-      riskRating: 'Moderate',
-      sleeveRiskScore: 50
+      riskRating: 2,
+      sleeveRiskScore: 50,
+      valueAtRisk: 0,
     };
   }
   
@@ -290,8 +296,9 @@ function calculatePortfolioRiskForInvestments(investments: Investment[]): RiskMe
     liquidityRisk: 0.3,
     correlationRisk: 0.5,
     overallRiskScore: Math.round(largestPosition * 100 + 30),
-    riskRating: largestPosition > 0.25 ? 'High' : 'Moderate',
-    sleeveRiskScore: Math.round(largestPosition * 100)
+    riskRating: largestPosition > 0.25 ? 3 : 2,
+    sleeveRiskScore: Math.round(largestPosition * 100),
+    valueAtRisk: totalValue * 0.025,
   };
 }
 

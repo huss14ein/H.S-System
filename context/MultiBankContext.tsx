@@ -1,5 +1,4 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { ocrParser, ParsedStatement } from '../services/ocrDocumentParser';
 
 export interface Bank {
   id: string;
@@ -33,6 +32,7 @@ export interface BankAccount {
 }
 
 export interface BankTemplate {
+  id: string;
   bankId: string;
   templateName: string;
   patterns: {
@@ -254,6 +254,7 @@ export const MultiBankProvider: React.FC<MultiBankProviderProps> = ({ children }
   const getDefaultTemplates = (): BankTemplate[] => [
     // Chase Template
     {
+      id: 'chase-standard',
       bankId: 'chase',
       templateName: 'Chase Standard',
       patterns: {
@@ -277,6 +278,7 @@ export const MultiBankProvider: React.FC<MultiBankProviderProps> = ({ children }
     },
     // Bank of America Template
     {
+      id: 'boa-standard',
       bankId: 'bankofamerica',
       templateName: 'Bank of America Standard',
       patterns: {
@@ -298,6 +300,7 @@ export const MultiBankProvider: React.FC<MultiBankProviderProps> = ({ children }
     },
     // Wells Fargo Template
     {
+      id: 'wells-fargo-standard',
       bankId: 'wellsfargo',
       templateName: 'Wells Fargo Standard',
       patterns: {

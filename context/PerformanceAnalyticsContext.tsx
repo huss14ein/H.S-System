@@ -187,7 +187,7 @@ export const PerformanceAnalyticsProvider: React.FC<PerformanceAnalyticsProvider
         name: 'LCP',
         value: lastEntry.startTime,
         type: 'paint',
-        metadata: { element: lastEntry.element?.tagName }
+        metadata: { element: (lastEntry as any).element?.tagName }
       });
     }).observe({ entryTypes: ['largest-contentful-paint'] });
 

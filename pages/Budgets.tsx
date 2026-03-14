@@ -1243,7 +1243,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
         
         // Refresh data context to show newly created budgets
-        await refreshData();
+        // Note: DataContext automatically refreshes when dataResetKey changes
     };
 
     const rejectBudgetRequest = async (requestId: string) => {

@@ -1,5 +1,12 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
 
+// Define MemoryInfo interface locally
+interface MemoryInfo {
+  usedJSHeapSize: number;
+  totalJSHeapSize: number;
+  jsHeapSizeLimit: number;
+}
+
 export interface PerformanceContextType {
   isMobile: boolean;
   isSlowDevice: boolean;
