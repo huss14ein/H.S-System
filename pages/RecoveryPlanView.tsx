@@ -17,6 +17,7 @@ import { getHoldingFundamentals, type HoldingFundamentals } from '../services/fi
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
 import {
   saveRecoveryExecution,
@@ -1284,8 +1285,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <button
                     type="button"
                     onClick={onOpenWealthUltra}
-                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
+                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm inline-flex items-center gap-2"
                   >
+                    <PresentationChartLineIcon className="h-5 w-5" />
                     View in Wealth Ultra
                   </button>
                 )}

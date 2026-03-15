@@ -3,9 +3,10 @@ import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, MagnifyingGlassIcon } from '../components/icons';
-import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { MagnifyingGlassIcon } from '../components/icons';
 import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import { StatementIcons, getStatementIcon } from '../constants/statementIcons';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import type { Page } from '../types';
 
 interface StatementHistoryViewProps {
@@ -89,7 +90,7 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
             onClick={() => setActivePage('Statement Upload')}
             className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
           >
-            <DocumentArrowUpIcon className="h-5 w-5" />
+            <StatementIcons.upload className="h-5 w-5" />
             Upload New Statement
           </button>
         )
@@ -150,7 +151,7 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
 
           {filteredStatements.length === 0 ? (
             <div className="text-center py-12">
-              <DocumentArrowUpIcon className="h-12 w-12 text-slate-300 mx-auto mb-4" aria-hidden />
+              <StatementIcons.upload className="h-12 w-12 text-slate-300 mx-auto mb-4" aria-hidden />
               <p className="text-lg font-semibold text-slate-600 mb-2">No statements found</p>
               <p className="text-sm text-slate-500 mb-4">
                 {statements.length === 0
@@ -161,8 +162,9 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                 <button
                   type="button"
                   onClick={() => setActivePage('Statement Upload')}
-                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium inline-flex items-center gap-2"
                 >
+                  <StatementIcons.upload className="h-4 w-4" />
                   Upload statement
                 </button>
               )}
@@ -177,6 +179,10 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
+                        {(() => {
+                          const StatementTypeIcon = getStatementIcon(statement.bankName, statement.accountType);
+                          return <StatementTypeIcon className="h-5 w-5 text-slate-500 flex-shrink-0" aria-hidden />;
+                        })()}
                         <h3 className="text-lg font-bold text-slate-900">{statement.fileName}</h3>
                         <span
                           className={`px-2.5 py-1 rounded-full text-xs font-semibold ${

@@ -18,7 +18,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import InfoHint from '../components/InfoHint';
-import AddMenu from '../components/AddMenu';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
@@ -466,7 +466,15 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActiveP
 
     // Generic Delete Handlers
     const handleOpenDeleteModal = (item: Asset | CommodityHolding) => { setItemToDelete(item); };
-    const handleConfirmDelete = () => { if(itemToDelete) { ('unit' in itemToDelete ? deleteCommodityHolding(itemToDelete.id) : deleteAsset(itemToDelete.id)); setItemToDelete(null); } };
+    const handleConfirmDelete = async () => {
+        if (!itemToDelete) return;
+        try {
+            if ('unit' in itemToDelete) await deleteCommodityHolding(itemToDelete.id);
+            else await deleteAsset(itemToDelete.id);
+        } finally {
+            setItemToDelete(null);
+        }
+    };
     
     const handleUpdatePrices = async () => {
         const commodityHoldings = data?.commodityHoldings ?? [];
@@ -484,7 +492,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActiveP
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
-            console.error("Failed to update prices:", error);
             alert(`Failed to update commodity prices. Crypto/metals use Finnhub when AI is unavailable.\n\n${formatAiError(error)}`);
         } 
         finally { setIsUpdatingPrices(false); }
@@ -494,22 +501,21 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActiveP
     const orderedAssets = useMemo(() => [...(data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [data?.assets]);
     const orderedCommodities = useMemo(() => [...(data?.commodityHoldings ?? [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data?.commodityHoldings]);
 
-    const addActions = [
-        { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal(null, 'Property') },
-        { label: 'Sukuk', icon: BanknotesIcon, onClick: () => handleOpenAssetModal(null, 'Sukuk') },
-        { label: 'Commodity', icon: CubeIcon, onClick: () => handleOpenCommodityModal() }
-    ];
-
     return (
         <PageLayout
             title="Assets"
-            description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values."
+            description="Physical assets and commodities (metals & crypto). Manage property, vehicles, Sukuk, gold, silver, bitcoin and other holdings. Link to goals and use Update Prices for current commodity values."
             action={
                 <div className="flex flex-wrap items-center gap-2">
-                    {setActivePage && (
-                        <button type="button" onClick={() => setActivePage('Commodities')} className="btn-outline text-sm">Metals & Crypto</button>
-                    )}
-                    <AddMenu actions={addActions} />
+                    <PageActionsDropdown
+                        ariaLabel="Assets actions"
+                        actions={[
+                            ...(setActivePage ? [{ value: 'commodities-page', label: 'Open Commodities page', onClick: () => setActivePage('Commodities') }] : []),
+                            { value: 'physical', label: 'Add Physical Asset', onClick: () => handleOpenAssetModal(null, 'Property') },
+                            { value: 'sukuk', label: 'Add Sukuk', onClick: () => handleOpenAssetModal(null, 'Sukuk') },
+                            { value: 'commodity', label: 'Add Commodity', onClick: () => handleOpenCommodityModal() },
+                        ]}
+                    />
                 </div>
             }
         >
@@ -548,7 +554,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActiveP
             </SectionCard>
 
             <SectionCard
-                title="Metals & Crypto"
+                title="Commodities (Metals & Crypto)"
                 className="overflow-visible"
                 headerAction={
                     <button

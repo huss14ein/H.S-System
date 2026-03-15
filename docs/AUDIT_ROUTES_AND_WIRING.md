@@ -23,7 +23,7 @@
 | Settings | ✅ | Settings | ✅ | System |
 | Investments | ✅ | Investments | ✅ | Strategy |
 | Plan | ✅ | Plan | ✅ | Strategy |
-| Wealth Ultra | ✅ | **InvestmentPlanView** (wrong) | ✅ | (via nav: Strategy → not listed; in NAV_ITEMS) |
+| Wealth Ultra | ✅ | WealthUltraDashboard | ✅ | (in NAV_ITEMS; reachable via Summary/Dashboard/Investments) |
 | Market Events | ✅ | MarketEvents | ✅ | Strategy |
 | Recovery Plan | ✅ | RecoveryPlanView | ❌ | No (sub-tab of Investments) |
 | Investment Plan | ✅ | InvestmentPlanView | ❌ | No (sub-tab of Investments) |
@@ -31,24 +31,20 @@
 | AI Rebalancer | ✅ | AIRebalancerView | ❌ | No (sub-tab of Investments) |
 | Watchlist | ✅ | WatchlistView | ❌ | No (sub-tab of Investments) |
 | Assets | ✅ | Assets | ✅ | Strategy |
+| Commodities | ✅ | Commodities | ✅ | Strategy |
+| Statement Upload | ✅ | StatementUpload | ✅ | Management |
+| Statement History | ✅ | StatementHistoryView | ✅ | (in NAV_ITEMS; link from Statement Upload) |
 | System & APIs Health | ✅ | SystemHealth | ✅ | System |
 
-**Gaps:**
-- **Statement Upload** – not in `Page` type, not in App, not in nav. Component exists (`StatementUpload.tsx`).
-- **Statement History** – not in `Page` type, not in App, not in nav. Component exists (`StatementHistoryView.tsx`). Referenced from `StatementUpload.tsx` via `setActivePage('Statement History')` (invalid Page).
-- **Commodities** – not in `Page` type, not in App, not in nav. Component exists (`Commodities.tsx`). Zakat.tsx copy says "change … on the 'Investments' and 'Commodities' pages" but there is no Commodities route.
+**Status:** All pages are in `Page` type, App router, and nav/NAVIGATION_ITEMS where intended. No remaining gaps.
 
 ---
 
-## 2. Wrong or inconsistent implementation
+## 2. Implementation status (all fixed)
 
-### 2.1 Wealth Ultra route shows wrong component
-- **Location:** `App.tsx` line 157.
-- **Current:** `case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping`
-- **Issue:** `WealthUltraDashboard.tsx` is the real Wealth Ultra UI (allocation, orders, export). It is never used as a top-level route. Users clicking "Wealth Ultra" in nav or from Summary/Dashboard/Investments see Investment Plan instead.
-- **Fix:** Route `'Wealth Ultra'` to `WealthUltraDashboard` and pass `setActivePage` and `triggerPageAction` (component expects these).
+**Wealth Ultra:** Routed to WealthUltraDashboard with setActivePage and triggerPageAction.
 
-### 2.2 Settings: wrong targets for Investment Plan / Wealth Ultra
+**Settings:**
 - **Location:** `pages/Settings.tsx` lines 129–130.
 - **Current:** Both buttons call `setActivePage('Dashboard')`.
 - **Issue:** "Investment Plan" and "Open Wealth Ultra Autopilot" should navigate to `'Investment Plan'` and `'Wealth Ultra'` respectively.
@@ -67,25 +63,22 @@
 
 ---
 
-## 3. Orphan / unreachable page components
+## 3. Page components (all wired)
 
 | File | Used by | Note |
 |------|---------|------|
-| `StatementUpload.tsx` | Nothing | Never imported in App; no route. |
-| `StatementHistoryView.tsx` | Nothing | Never imported in App; no route. |
-| `Commodities.tsx` | Nothing | Never imported in App; no route. Zakat mentions "Commodities" page. |
-| `WealthUltraDashboard.tsx` | Nothing (as route) | Used only by reference; App uses InvestmentPlanView for "Wealth Ultra". |
-| `ExecutionHistoryView.tsx` | Nothing | Never imported anywhere. Orphan. |
-| `SignupPage.tsx` | Nothing | Never imported in App. LoginPage links to `#signup` but App never renders SignupPage. |
+| `StatementUpload.tsx` | App.tsx | Route `'Statement Upload'`; in Management nav. |
+| `StatementHistoryView.tsx` | App.tsx | Route `'Statement History'`; link from Statement Upload. |
+| `Commodities.tsx` | App.tsx | Route `'Commodities'`; in Strategy nav; linked from Zakat and Assets. |
+| `WealthUltraDashboard.tsx` | App.tsx | Route `'Wealth Ultra'`. |
+| `ExecutionHistoryView.tsx` | Investments.tsx | Sub-tab "Execution History" under Investments. |
+| `SignupPage.tsx` | App.tsx | Rendered when unauthenticated and hash is `#signup`. |
 
 ---
 
 ## 4. Signup flow
 
-- **LoginPage.tsx:** When `VITE_ALLOW_SIGNUP === 'true'`, shows "Sign up" with `href="#signup"`.
-- **App.tsx:** When `!isAuthenticated`, always renders `<LoginPage />`. Hash is not read; there is no `#signup` → SignupPage handling.
-- **Result:** Clicking "Sign up" only changes the URL to `#signup`; the screen stays LoginPage. SignupPage is never shown.
-- **Fix (optional):** In the unauthenticated branch, if `window.location.hash === '#signup'` (or similar), render `<SignupPage />` instead of (or alongside) LoginPage; or handle signup inside LoginPage and remove SignupPage.
+- **App.tsx:** When `!isAuthenticated`, reads `authHash`; if `authHash === '#signup'` renders `<SignupPage />`, otherwise `<LoginPage />`. Hash change listener updates state so "Log in" on SignupPage returns to LoginPage.
 
 ---
 
@@ -98,25 +91,23 @@
 
 ## 6. Sub-views (not top-level routes)
 
-These are used only as tabs or children of other pages; they do not need a top-level route:
-
 - **InvestmentOverview** – tab inside Investments.
 - **SinkingFunds** – embedded in Plan.tsx.
-- **ExecutionHistoryView** – not used anywhere; consider wiring as a tab or removing.
+- **ExecutionHistoryView** – sub-tab "Execution History" inside Investments.
 
 ---
 
-## 7. Summary of required fixes
+## 7. Fix summary (all done)
 
-| # | Item | Action |
+| # | Item | Status |
 |---|------|--------|
-| 1 | Statement Upload & Statement History | Add to `Page` type, `VALID_PAGES`, and `App.tsx` router; add route(s); add nav entry or link from Transactions/Management; fix `setActivePage('Statement History')` once the type exists. |
-| 2 | Wealth Ultra | In App.tsx, render `WealthUltraDashboard` for `'Wealth Ultra'` and pass `setActivePage` and `triggerPageAction`. Lazy-import WealthUltraDashboard. |
-| 3 | Settings buttons | In Settings.tsx, set "Investment Plan" → `setActivePage('Investment Plan')`, "Open Wealth Ultra" → `setActivePage('Wealth Ultra')`. |
-| 4 | Commodities | Either add `'Commodities'` to Page, VALID_PAGES, App, and nav (and optionally link from Zakat/Assets), or remove the "Commodities" page reference from Zakat copy. |
-| 5 | Signup | Either render SignupPage when hash is `#signup` (or equivalent) in the unauthenticated branch, or remove the Sign up link / use in-page signup. |
-| 6 | Load Demo Data | If removing: delete the "Load Demo Data" button (and optional `loadDemoData` usage) from Header. |
-| 7 | ExecutionHistoryView | Either wire as a sub-view (e.g. in Investments) or remove if unused. |
+| 1 | Statement Upload & Statement History | Done: in Page, router, nav; link works. |
+| 2 | Wealth Ultra | Done: routes to WealthUltraDashboard with setActivePage and triggerPageAction. |
+| 3 | Settings buttons | Done: Investment Plan and Wealth Ultra navigate correctly. |
+| 4 | Commodities | Done: in Page, router, Strategy nav; Zakat and Assets link to it. |
+| 5 | Signup | Done: SignupPage shown when hash is #signup. |
+| 6 | Load Demo Data | Done: removed from Header. |
+| 7 | ExecutionHistoryView | Done: wired as Investments sub-tab. |
 
 ---
 

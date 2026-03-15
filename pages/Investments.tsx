@@ -5,6 +5,7 @@ import { InvestmentPortfolio, Holding, HoldingAssetClass, InvestmentTransaction,
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
+import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 import { EyeIcon } from '../components/icons/EyeIcon';
@@ -1663,7 +1664,8 @@ const PlatformView: React.FC<{
                     </div>
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                         {setActivePage && (
-                            <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm font-medium text-primary hover:underline py-2 px-1">
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="text-sm font-medium text-primary hover:underline py-2 px-1 inline-flex items-center gap-1.5">
+                                <BuildingLibraryIcon className="h-4 w-4" />
                                 Go to Accounts
                             </button>
                         )}
@@ -1706,7 +1708,8 @@ const PlatformView: React.FC<{
                     <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">Add an <strong>Investment</strong> account from Accounts, then create portfolios here and record trades.</p>
                     <div className="mt-6 flex flex-wrap justify-center gap-3">
                         {setActivePage && (
-                            <button type="button" onClick={() => setActivePage('Accounts')} className="px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium inline-flex items-center gap-2">
+                                <BuildingLibraryIcon className="h-5 w-5" />
                                 Go to Accounts
                             </button>
                         )}

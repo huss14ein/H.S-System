@@ -502,6 +502,105 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
     return invokeGeminiProxy(mergedPayload);
 }
 
+// --- Salary & Planning Experts (7 modes: allocation, cash flow, 5Y wealth, debt, automation, FI timeline, lifestyle) ---
+const SALARY_EXPERT_SYSTEM = `${EXPERT_ADVISOR_PERSONA}
+Respond in Markdown only (no HTML). Use ### for sections, ** for emphasis, exact amounts and percentages. Be specific and actionable for someone in Saudi Arabia (SAR, local context).`;
+
+export type SalaryAllocationExpertParams = { salary: number; fixedExpenses: number; currentSavings: number; goal: string };
+export type CashFlowExpertParams = { salary: number; expenseBreakdown: string };
+export type Wealth5YExpertParams = { salary: number; monthlyInvestment: number; currentNetWorth: number };
+export type DebtEliminationExpertParams = { salary: number; debtList: string };
+export type InvestmentAutomationExpertParams = { salary: number; investmentAmountOrPct: string; riskTolerance: string };
+export type FinancialIndependenceExpertParams = { monthlyExpenses: number; currentPortfolio: number; monthlyInvestment: number };
+export type LifestyleUpgradeExpertParams = { salary: number; currentExpenses: number };
+
+export async function getSalaryAllocationExpert(params: SalaryAllocationExpertParams): Promise<string> {
+    const prompt = `Act as my personal finance expert.
+My monthly salary is ${params.salary} SAR.
+My fixed monthly expenses are ${params.fixedExpenses} SAR.
+My current savings / emergency fund is ${params.currentSavings} SAR.
+My main financial goal right now is ${params.goal}.
+
+Create a smart monthly salary allocation plan that balances spending, saving, investing and debt payoff (if any). Prioritize: essentials first → protect savings → enjoy responsibly → accelerate wealth. Show exact amounts and percentages for each category.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getCashFlowAnalystExpert(params: CashFlowExpertParams): Promise<string> {
+    const prompt = `My monthly take-home salary is ${params.salary} SAR.
+Here is my current monthly expense breakdown: ${params.expenseBreakdown}.
+
+Analyze my cash flow.
+Calculate my current savings rate.
+Show me exactly where my money is leaking.
+Propose a restructured spending plan that permanently increases my savings rate by at least 10–20% without making life feel worse. Track every riyal; find permanent structural improvements.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getWealth5YearExpert(params: Wealth5YExpertParams): Promise<string> {
+    const prompt = `My current monthly salary is ${params.salary} SAR.
+I can realistically invest ${params.monthlyInvestment} SAR every month starting now.
+My current total net worth (savings + investments – debts) is ${params.currentNetWorth} SAR.
+
+Build me a realistic 5-year wealth growth plan.
+Assume conservative to moderate annual returns (6–10%).
+Show projected net worth at year 1, 3 and 5.
+Highlight the single change that would have the biggest impact on the final number. Use realistic compounding and milestone tracking.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getDebtEliminationExpert(params: DebtEliminationExpertParams): Promise<string> {
+    const prompt = `My monthly take-home salary is ${params.salary} SAR.
+I currently have the following debts:
+${params.debtList}
+
+Calculate the fastest and cheapest way to become completely debt-free.
+Show month-by-month payoff timeline, total interest paid, and how much faster/cheaper it is compared to minimum payments only.
+Recommend avalanche vs snowball and why. Minimize total interest and time to payoff.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getInvestmentAutomationExpert(params: InvestmentAutomationExpertParams): Promise<string> {
+    const prompt = `My monthly salary is ${params.salary} SAR.
+I want to automatically invest ${params.investmentAmountOrPct} every month.
+My risk tolerance is ${params.riskTolerance}.
+
+Design a simple, long-term investment system I can stick to for 10–30 years.
+Suggest asset allocation and specific investment types suitable for someone living in Saudi Arabia (Sukuk, local funds, global ETFs, etc.).
+Explain how to automate it and why this mix fits my risk level. Pay yourself first; match risk to personality; keep it simple and boring long-term.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getFinancialIndependenceExpert(params: FinancialIndependenceExpertParams): Promise<string> {
+    const prompt = `My current monthly expenses (lifestyle I want to maintain forever) are ${params.monthlyExpenses} SAR.
+My current investable savings / portfolio is ${params.currentPortfolio} SAR.
+I can invest ${params.monthlyInvestment} SAR every month going forward.
+
+Using a 3.5–4% safe withdrawal rate, tell me:
+1. How big my portfolio needs to be to reach financial independence (expenses × 25–28.6).
+2. Realistic years until I get there (assume 7–9% average annual return).
+3. 3–4 specific changes (cut expenses, increase savings, side income, etc.) that would shorten the timeline the most.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
+
+export async function getLifestyleUpgradeExpert(params: LifestyleUpgradeExpertParams): Promise<string> {
+    const prompt = `My current monthly take-home salary is ${params.salary} SAR.
+My current monthly expenses are roughly ${params.currentExpenses} SAR.
+I want to noticeably improve my daily quality of life (better food, travel, hobbies, home, health, time freedom, etc.) but I refuse to slow down my wealth building speed.
+
+Propose specific upgrades and changes that:
+- Feel significantly better day-to-day
+- Keep my savings & investment rate the same or higher
+- Come mostly from cutting low-value spending and replacing it with high-value spending
+Give exact example swaps and new monthly budget if possible. Swap low-joy spending for high-joy; small cost increase, big happiness gain; wealth velocity stays high.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
+    return response?.text ?? '';
+}
 
 const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
     if (!investments || investments.length === 0) {

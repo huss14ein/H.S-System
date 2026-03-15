@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ClockIcon } from '../components/icons/ClockIcon';
+import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -146,8 +147,9 @@ const ExecutionHistoryView: React.FC = () => {
                 const event = new CustomEvent('navigateToTab', { detail: 'Investment Plan' });
                 window.dispatchEvent(event);
               }}
-              className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors"
+              className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors inline-flex items-center gap-2"
             >
+              <ClipboardDocumentListIcon className="h-5 w-5" />
               Go to Investment Plan
             </button>
           </div>

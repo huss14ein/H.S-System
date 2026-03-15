@@ -14,7 +14,7 @@ import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
-import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import { StatementIcons } from '../constants/statementIcons';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
@@ -837,7 +837,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 <div className="flex flex-wrap items-center gap-2">
                     {setActivePage && (
                         <button type="button" onClick={() => setActivePage('Statement Upload')} className="btn-outline flex items-center gap-2">
-                            <ArrowDownTrayIcon className="h-5 w-5" />
+                            <StatementIcons.upload className="h-5 w-5" />
                             Import from statements
                         </button>
                     )}
@@ -991,7 +991,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <li className="empty-state flex flex-col items-center gap-2 py-6">
                             <span>No transactions found for the selected period.</span>
                             {setActivePage && (
-                                <button type="button" onClick={() => setActivePage('Statement Upload')} className="text-sm font-medium text-primary hover:underline">
+                                <button type="button" onClick={() => setActivePage('Statement Upload')} className="text-sm font-medium text-primary hover:underline inline-flex items-center gap-1.5">
+                                    <StatementIcons.upload className="h-4 w-4" />
                                     Import from statements →
                                 </button>
                             )}

@@ -10,8 +10,8 @@ import { valueAtRiskHistorical, getPDTStatus, getMarketHoursGuardrail, volatilit
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
 import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -1087,32 +1087,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             </select>
           </label>
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
-          {triggerPageAction && (
-            <button
-              type="button"
-              onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
-            >
-              <PencilIcon className="h-5 w-5" />
-              Edit plan & budget
-            </button>
-          )}
-          {setActivePage && (
-            <button
-              type="button"
-              onClick={() => setActivePage('Investments')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
-            >
-              Open Investments Hub
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleExportOrders}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium transition-colors"
-          >
-            Export orders (JSON)
-          </button>
+          <PageActionsDropdown
+            ariaLabel="Wealth Ultra actions"
+            actions={[
+              ...(triggerPageAction ? [{ value: 'edit-plan', label: 'Edit plan & budget', onClick: () => triggerPageAction('Investments', 'focus-investment-plan') }] : []),
+              ...(setActivePage ? [{ value: 'investments', label: 'Open Investments Hub', onClick: () => setActivePage('Investments') }] : []),
+              { value: 'export', label: 'Export orders (JSON)', onClick: handleExportOrders },
+            ]}
+          />
         </div>
       }
     >

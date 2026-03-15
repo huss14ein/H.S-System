@@ -8,12 +8,14 @@ import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
+import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import {
     buildHouseholdBudgetPlan,
@@ -229,6 +231,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
     const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // Approved Budgets Overview (admin) filters and scope
+    const [approvedOverviewMonth, setApprovedOverviewMonth] = useState(currentMonth);
+    const [approvedOverviewYear, setApprovedOverviewYear] = useState(currentYear);
+    const [approvedOverviewPeriodFilter, setApprovedOverviewPeriodFilter] = useState<'all' | 'monthly' | 'weekly' | 'yearly' | 'daily'>('all');
+    const [approvedOverviewTierFilter, setApprovedOverviewTierFilter] = useState<'all' | 'Core' | 'Supporting' | 'Optional'>('all');
+    const [approvedOverviewSearch, setApprovedOverviewSearch] = useState('');
+    const [approvedOverviewCreateFromSalary, setApprovedOverviewCreateFromSalary] = useState(false);
+    const [approvedOverviewSalaryInput, setApprovedOverviewSalaryInput] = useState<number | ''>('');
+    /** Category names selected for "Create from salary" (only these will be created). */
+    const [approvedOverviewSelectedForCreate, setApprovedOverviewSelectedForCreate] = useState<string[]>([]);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -725,6 +738,73 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
     }, [data?.transactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
+
+    // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
+    const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
+        const mo = approvedOverviewMonth;
+        const yr = approvedOverviewYear;
+        const rangeStart = new Date(yr, mo - 1, 1);
+        const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
+        const spending = new Map<string, number>();
+        (data?.transactions ?? []).forEach((tx) => {
+            const d = new Date(tx.date);
+            if (!(d >= rangeStart && d <= rangeEnd)) return;
+            const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
+            if (!cat) return;
+            spending.set(cat, (spending.get(cat) || 0) + Math.abs(Number(tx.amount) || 0));
+        });
+        ownerSharedTransactions
+            .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
+            .forEach((tx) => {
+                const d = new Date(tx.transaction_date || (tx as any).date);
+                if (!(d >= rangeStart && d <= rangeEnd)) return;
+                const cat = String(tx.budget_category || '').trim();
+                if (!cat) return;
+                spending.set(cat, (spending.get(cat) || 0) + Math.abs(Number(tx.amount) || 0));
+            });
+        const budgetsForMonth = (data?.budgets ?? []).filter(
+            (b) => b.month === mo && b.year === yr || (b.period === 'yearly' && b.year === yr)
+        );
+        const rows: BudgetRow[] = budgetsForMonth.map((budget) => {
+            const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
+            const spent = spending.get(budget.category) || 0;
+            const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
+            const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+            let colorClass = 'bg-primary';
+            if (percentage > 100) colorClass = 'bg-danger';
+            else if (percentage > 90) colorClass = 'bg-warning';
+            return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
+        });
+        return rows.sort((a, b) => b.spent - a.spent);
+    }, [data?.budgets, data?.transactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions]);
+
+    const adminApprovedOverviewFiltered = useMemo(() => {
+        let list = adminApprovedOverviewRaw;
+        if (approvedOverviewPeriodFilter !== 'all') {
+            list = list.filter((b) => (b.period ?? 'monthly') === approvedOverviewPeriodFilter);
+        }
+        if (approvedOverviewTierFilter !== 'all') {
+            list = list.filter((b) => (b.budgetTier ?? 'Optional') === approvedOverviewTierFilter);
+        }
+        if (approvedOverviewSearch.trim()) {
+            const q = approvedOverviewSearch.trim().toLowerCase();
+            list = list.filter((b) => b.category.toLowerCase().includes(q));
+        }
+        return list;
+    }, [adminApprovedOverviewRaw, approvedOverviewPeriodFilter, approvedOverviewTierFilter, approvedOverviewSearch]);
+
+    // Suggested categories for "Create from salary" (when salary is valid)
+    const approvedOverviewSuggestedCategories = useMemo(() => {
+        const salary = Number(approvedOverviewSalaryInput);
+        if (!Number.isFinite(salary) || salary <= 0) return [];
+        return generateSaudiBudgetCategories(householdAdults, householdKids, salary, engineProfile);
+    }, [approvedOverviewSalaryInput, householdAdults, householdKids, engineProfile]);
+
+    // When salary or household params change, default selection to all suggested categories
+    React.useEffect(() => {
+        if (!approvedOverviewCreateFromSalary || approvedOverviewSuggestedCategories.length === 0) return;
+        setApprovedOverviewSelectedForCreate(approvedOverviewSuggestedCategories.map((c) => c.category));
+    }, [approvedOverviewCreateFromSalary, approvedOverviewSalaryInput, householdAdults, householdKids, engineProfile]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -1356,26 +1436,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <label className="text-xs text-slate-500 font-medium whitespace-nowrap">Actions:</label>
-                        <select
-                            className="p-2 border border-slate-300 rounded-lg text-sm bg-white min-w-[180px]"
-                            value=""
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                e.target.value = '';
-                                if (v === 'smart-fill') handleSmartFillBudgets();
-                                else if (v === 'copy-month') handleCopyBudgets();
-                                else if (v === 'add-budget') handleOpenModal();
-                            }}
-                            aria-label="Budget actions"
-                        >
-                            <option value="">Choose action…</option>
-                            <option value="smart-fill" disabled={!isAdmin}>Smart-fill from history</option>
-                            <option value="copy-month" disabled={!isAdmin}>Copy last month</option>
-                            <option value="add-budget" disabled={!isAdmin}>Add budget</option>
-                        </select>
-                    </div>
+                    <PageActionsDropdown
+                        ariaLabel="Budget actions"
+                        actions={[
+                            { value: 'smart-fill', label: 'Smart-fill from history', disabled: !isAdmin, onClick: handleSmartFillBudgets },
+                            { value: 'copy-month', label: 'Copy last month', disabled: !isAdmin, onClick: handleCopyBudgets },
+                            { value: 'add-budget', label: 'Add budget', disabled: !isAdmin, onClick: handleOpenModal },
+                        ]}
+                    />
                 </div>
             }
         >
@@ -1745,51 +1813,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                const salary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : (suggestedMonthlySalary || 5000);
-                                const categories = generateSaudiBudgetCategories(householdAdults, householdKids, salary, engineProfile);
-                                const budgetsThisPeriod = (data?.budgets ?? []) as Budget[];
-                                const existingCats = new Set([
-                                    ...budgetsThisPeriod.filter((b) => b.month === currentMonth && b.year === currentYear).map((b) => b.category),
-                                    ...budgetsThisPeriod.filter((b) => b.period === 'yearly' && b.year === currentYear).map((b) => b.category),
-                                ]);
-                                let created = 0;
-                                for (const c of categories) {
-                                    if (existingCats.has(c.category)) continue;
-                                    try {
-                                        await addBudget({ category: c.category, limit: c.limit, month: currentMonth, year: currentYear, period: c.period, tier: c.tier });
-                                        existingCats.add(c.category);
-                                        created++;
-                                    } catch {
-                                        // skip on error
-                                    }
-                                }
-                                alert(created > 0 ? `Created ${created} budget categories for ${currentMonth}/${currentYear} based on household (${householdAdults} adults, ${householdKids} kids, ${engineProfile}).` : 'No new categories added; you already have budgets for this month or an error occurred.');
-                            }}
-                            className="px-4 py-2 rounded-lg border-2 border-primary bg-primary/10 text-primary font-medium text-sm hover:bg-primary/20 transition-colors"
-                        >
-                            Create budgets from household (Saudi)
-                        </button>
-                        <p className="text-xs text-slate-500 mt-1 max-w-[280px]">Creates all possible categories with suggested amounts for current month based on family size and salary. Includes monthly, semi-annual (as yearly), annual sinking funds, and weekly. Run manually when needed.</p>
-                        <div className="mt-2">
-                            <button type="button" onClick={() => setShowKsaExpenseRef((v) => !v)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                                {showKsaExpenseRef ? 'Hide' : 'View'} KSA expense reference
-                            </button>
-                            {showKsaExpenseRef && (
-                                <div className="mt-2 p-2 rounded border border-slate-200 bg-slate-50 text-xs text-slate-700 max-h-48 overflow-y-auto">
-                                    {Object.entries(KSA_EXPENSE_CATEGORY_HINTS).map(([name, hint]) => (
-                                        <div key={name} className="py-1 border-b border-slate-100 last:border-0">
-                                            <span className="font-medium text-slate-800">{name}</span>
-                                            <span className="text-slate-600"> — {hint}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                    <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
                         <select
                             value={engineProfile}
@@ -1859,130 +1882,169 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs font-semibold text-amber-800">Issues in {criticalValidationCount} month(s)</p>
                         <ul className="mt-1 list-disc pl-5 text-xs text-amber-800 space-y-0.5">
-                            {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 3).map((m) => (
+                            {householdBudgetEngine.months.filter((m) => (m.validationErrors?.length || 0) > 0).slice(0, 5).map((m) => (
                                 <li key={`vv-${m.month}`}>Month {m.month}: {(m.validationErrors || []).join(' ')}</li>
                             ))}
                         </ul>
+                        <p className="mt-2 text-xs text-amber-700">Set a higher <strong>Salary</strong> in the table below for affected months, or reduce planned expenses/savings so they don’t exceed income.</p>
+                        {(typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setHouseholdOverrides((prev) => {
+                                        const byMonth = new Map(prev.map((o) => [o.month, { ...o }]));
+                                        for (let month = 1; month <= 12; month++) {
+                                            const existing = byMonth.get(month) || { month };
+                                            byMonth.set(month, { ...existing, month, salary: expectedMonthlySalary });
+                                        }
+                                        return Array.from(byMonth.values()).sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
+                                    });
+                                }}
+                                className="mt-2 text-xs px-2 py-1 rounded border border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            >
+                                Apply expected salary ({formatCurrencyString(expectedMonthlySalary, { digits: 0 })}) to all months
+                            </button>
+                        )}
                     </div>
                 )}
-                <div className="mt-4 flex items-center gap-3">
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!isAdmin) {
-                                alert('Only admins can create budgets from household engine.');
-                                return;
-                            }
-                            if (!window.confirm(`This will create/update budgets for ${currentYear}-${currentMonth} based on the household engine output. Existing budgets for this month will be updated. Continue?`)) {
-                                return;
-                            }
-                            const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
-                            if (!currentMonthPlan) {
-                                alert('No household engine plan available for current month.');
-                                return;
-                            }
-                            const buckets = currentMonthPlan.buckets || {};
-                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                            const categoryMap: Record<string, string> = {
-                                'Fixed Obligations': 'Housing',
-                                'Household Essentials': 'Food',
-                                'Household Operations': 'Utilities',
-                                'Transport': 'Transportation',
-                                'Personal Support': 'Personal Care',
-                                'Reserve Savings': 'Savings & Investments',
-                                'Emergency Savings': 'Savings & Investments',
-                                'Goal Savings': 'Savings & Investments',
-                                'Kids Future Savings': 'Education',
-                                'Retirement Savings': 'Savings & Investments',
-                                'Investing': 'Savings & Investments',
-                            };
-                            let created = 0;
-                            let updated = 0;
-                            for (const [bucketName, amount] of Object.entries(buckets)) {
-                                if (!amount || amount <= 0) continue;
-                                const category = categoryMap[bucketName] || bucketName;
-                                const existing = existingBudgets.find((b) => b.category === category);
-                                if (existing) {
-                                    updateBudget({ ...existing, limit: amount });
-                                    updated++;
-                                } else {
-                                    addBudget({
-                                        category,
-                                        limit: amount,
-                                        month: currentMonth,
-                                        year: currentYear,
-                                        period: 'monthly',
-                                        tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
-                                    });
-                                    created++;
-                                }
-                            }
-                            alert(`Household engine budgets applied: ${created} created, ${updated} updated.`);
-                        }}
-                        className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isAdmin}
-                    >
-                        Apply Household Engine Budgets to Current Month
-                    </button>
-                    <InfoHint text="Creates or updates budgets for the current month based on household engine calculations. Only admins can trigger this." />
+                <div className="mt-6 pt-4 border-t border-slate-200">
+                    <p className="text-sm font-semibold text-slate-800 mb-1">Create or update budgets for this month</p>
+                    <p className="text-xs text-slate-600 mb-4">Choose one method. Both create or update budget categories for the current month; they use different sources for the amounts.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                            <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-1">1. Saudi household template</p>
+                            <p className="text-xs text-slate-600 mb-3">Uses the family size and salary above to generate KSA-focused categories (rent, groceries, utilities, schooling, etc.) with suggested amounts. Creates missing budgets and updates existing ones.</p>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!isAdmin) {
+                                        alert('Only admins can create budgets from household engine.');
+                                        return;
+                                    }
+                                    const monthlySalary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : suggestedMonthlySalary;
+                                    if (!monthlySalary || monthlySalary <= 0) {
+                                        alert('Please enter an expected monthly salary above to generate budget categories.');
+                                        return;
+                                    }
+                                    if (!window.confirm(`Create or update budgets for ${currentYear}-${currentMonth} from the Saudi template (${householdAdults} adults, ${householdKids} kids, ${formatCurrencyString(monthlySalary)}/month)? Existing budgets for this month will be updated.`)) return;
+                                    const categories = generateSaudiBudgetCategories(householdAdults, householdKids, monthlySalary, engineProfile);
+                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                                    let created = 0, updated = 0;
+                                    for (const cat of categories) {
+                                        const existing = existingBudgets.find((b) => b.category === cat.category);
+                                        if (existing) {
+                                            updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
+                                            updated++;
+                                        } else {
+                                            addBudget({ category: cat.category, limit: cat.limit, month: currentMonth, year: currentYear, period: cat.period, tier: cat.tier });
+                                            created++;
+                                        }
+                                    }
+                                    alert(`Saudi template: ${created} created, ${updated} updated.`);
+                                }}
+                                className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                                disabled={!isAdmin}
+                            >
+                                Apply Saudi template
+                            </button>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                            <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">2. Household engine projection</p>
+                            <p className="text-xs text-slate-600 mb-3">Uses your transactions, accounts, and goals to suggest amounts. Applies the engine’s projected buckets (Housing, Food, Transport, etc.) to the current month. Overwrites existing budgets with engine values.</p>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!isAdmin) {
+                                        alert('Only admins can apply household engine budgets.');
+                                        return;
+                                    }
+                                    if (!window.confirm(`Apply the household engine projection to ${currentYear}-${currentMonth}? Existing budgets for this month will be updated with engine amounts.`)) return;
+                                    const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
+                                    if (!currentMonthPlan) {
+                                        alert('No household engine plan for this month. The engine runs from your data above.');
+                                        return;
+                                    }
+                                    const buckets = currentMonthPlan.buckets || {};
+                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
+                                    const categoryMap: Record<string, string> = {
+                                        'Fixed Obligations': 'Housing', 'Household Essentials': 'Food', 'Household Operations': 'Utilities', 'Transport': 'Transportation',
+                                        'Personal Support': 'Personal Care', 'Reserve Savings': 'Savings & Investments', 'Emergency Savings': 'Savings & Investments',
+                                        'Goal Savings': 'Savings & Investments', 'Kids Future Savings': 'Education', 'Retirement Savings': 'Savings & Investments', 'Investing': 'Savings & Investments',
+                                    };
+                                    let created = 0, updated = 0;
+                                    for (const [bucketName, amount] of Object.entries(buckets)) {
+                                        if (!amount || amount <= 0) continue;
+                                        const category = categoryMap[bucketName] || bucketName;
+                                        const existing = existingBudgets.find((b) => b.category === category);
+                                        if (existing) {
+                                            updateBudget({ ...existing, limit: amount });
+                                            updated++;
+                                        } else {
+                                            addBudget({
+                                                category, limit: amount, month: currentMonth, year: currentYear, period: 'monthly',
+                                                tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
+                                            });
+                                            created++;
+                                        }
+                                    }
+                                    alert(`Engine projection applied: ${created} created, ${updated} updated.`);
+                                }}
+                                className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                                disabled={!isAdmin}
+                            >
+                                Apply engine projection
+                            </button>
+                        </div>
+                    </div>
+                    <div className="mt-3">
+                        <button type="button" onClick={() => setShowKsaExpenseRef((v) => !v)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                            {showKsaExpenseRef ? 'Hide' : 'View'} KSA expense reference
+                        </button>
+                        {showKsaExpenseRef && (
+                            <div className="mt-2 p-2 rounded border border-slate-200 bg-slate-50 text-xs text-slate-700 max-h-48 overflow-y-auto">
+                                {Object.entries(KSA_EXPENSE_CATEGORY_HINTS).map(([name, hint]) => (
+                                    <div key={name} className="py-1 border-b border-slate-100 last:border-0">
+                                        <span className="font-medium text-slate-800">{name}</span>
+                                        <span className="text-slate-600"> — {hint}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                <div className="mt-4 flex items-center gap-3">
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            if (!isAdmin) {
-                                alert('Only admins can create budgets from household engine.');
-                                return;
-                            }
-                            
-                            // Use the expected monthly salary or auto-detect from transactions
-                            const monthlySalary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 
-                                ? expectedMonthlySalary 
-                                : suggestedMonthlySalary;
-                                
-                            if (!monthlySalary || monthlySalary <= 0) {
-                                alert('Please enter an expected monthly salary to generate budget categories.');
-                                return;
-                            }
-                            
-                            if (!window.confirm(`This will create budget categories for a Saudi household with ${householdAdults} adult(s) and ${householdKids} kid(s) based on ${formatCurrencyString(monthlySalary)} monthly salary. Existing budgets for ${currentYear}-${currentMonth} will be updated. Continue?`)) {
-                                return;
-                            }
-                            
-                            const categories = generateSaudiBudgetCategories(householdAdults, householdKids, monthlySalary, engineProfile);
-                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                            
-                            let created = 0;
-                            let updated = 0;
-                            for (const cat of categories) {
-                                const existing = existingBudgets.find((b) => b.category === cat.category);
-                                if (existing) {
-                                    updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
-                                    updated++;
-                                } else {
-                                    addBudget({
-                                        category: cat.category,
-                                        limit: cat.limit,
-                                        month: currentMonth,
-                                        year: currentYear,
-                                        period: cat.period,
-                                        tier: cat.tier,
-                                    });
-                                    created++;
-                                }
-                            }
-                            alert(`Saudi household budgets created: ${created} created, ${updated} updated.`);
-                        }}
-                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isAdmin}
-                    >
-                        Auto-Create Saudi Household Budgets
-                    </button>
-                    <InfoHint text="Generates budget categories for Saudi households based on family size (adults/kids) and monthly salary. Considers realistic Saudi living costs including utilities, transport, and spouse allowance." />
+                {/* Action Buttons — results appear below when toggled */}
+                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
+                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowPredictiveAnalytics(true)}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                        >
+                            Show Predictive Analytics
+                        </button>
+                    )}
+                    {!showScenarioPlanning && scenarios.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowScenarioPlanning(true)}
+                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
+                        >
+                            Show Scenario Planning
+                        </button>
+                    )}
+                    {!showSeasonality && seasonalityPatterns.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowSeasonality(true)}
+                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
+                        >
+                            Show Seasonality Patterns
+                        </button>
+                    )}
                 </div>
 
-                {/* Predictive Analytics Section */}
+                {/* Predictive Analytics Section — shown below the buttons */}
                 {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
                     <div className="mt-6 pt-6 border-t border-slate-200">
                         <div className="flex items-center justify-between mb-4">
@@ -2233,38 +2295,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     </div>
                 )}
 
-                {/* Action Buttons */}
-                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
-                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowPredictiveAnalytics(true)}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-                        >
-                            Show Predictive Analytics
-                        </button>
-                    )}
-                    {!showScenarioPlanning && scenarios.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowScenarioPlanning(true)}
-                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
-                        >
-                            Show Scenario Planning
-                        </button>
-                    )}
-                    {!showSeasonality && seasonalityPatterns.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowSeasonality(true)}
-                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
-                        >
-                            Show Seasonality Patterns
-                        </button>
-                    )}
-                </div>
-
-                <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
+                <details className="mt-6 rounded-lg border border-slate-200 bg-slate-50">
                     <summary className="p-3 cursor-pointer text-sm font-medium text-slate-600">Advanced: monthly overrides & scenarios</summary>
                     <div className="p-3 pt-0 space-y-3">
                         <div className="flex flex-wrap gap-2">
@@ -2294,10 +2325,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     {MONTHS.map((label, idx) => {
                                         const month = idx + 1;
                                         const ov = householdOverrides.find((o) => o.month === month);
+                                        const defaultSalary = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) ? expectedMonthlySalary : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : undefined);
+                                        const displaySalary = ov?.salary !== undefined && ov?.salary !== null ? ov.salary : defaultSalary;
                                         return (
                                             <tr key={`hh-month-${month}`} className="border-b border-slate-100">
                                                 <td className="py-1 pr-2">{label}</td>
-                                                <td className="py-1 pr-2"><input type="number" value={ov?.salary ?? ''} onChange={(e) => updateMonthlyOverride(month, { salary: Number(e.target.value) || undefined })} className="w-20 p-1 border rounded" /></td>
+                                                <td className="py-1 pr-2"><input type="number" min={0} step={100} value={displaySalary !== undefined && displaySalary !== null ? displaySalary : ''} onChange={(e) => updateMonthlyOverride(month, { salary: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder={defaultSalary == null ? 'From income' : undefined} className="w-20 p-1 border rounded" /></td>
                                                 <td className="py-1 pr-2"><input type="number" min={1} value={ov?.adults ?? householdAdults} onChange={(e) => updateMonthlyOverride(month, { adults: Math.max(1, Number(e.target.value) || 1) })} className="w-12 p-1 border rounded" /></td>
                                                 <td className="py-1 pr-2"><input type="number" min={0} value={ov?.kids ?? householdKids} onChange={(e) => updateMonthlyOverride(month, { kids: Math.max(0, Number(e.target.value) || 0) })} className="w-12 p-1 border rounded" /></td>
                                             </tr>
@@ -2416,51 +2449,218 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
                     <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
                         <h3 className="text-sm font-semibold text-indigo-900 mb-3">Approved Budgets Overview</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm mb-4">
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Categories</span>
-                                <p className="font-bold text-indigo-900 text-lg">{budgetData.length}</p>
+
+                        {/* Create from salary */}
+                        <div className="mb-4 p-3 rounded-lg border border-indigo-100 bg-white">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                        setApprovedOverviewCreateFromSalary((v) => !v);
+                                        if (!approvedOverviewCreateFromSalary) {
+                                            const prefill = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0)
+                                                ? expectedMonthlySalary
+                                                : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : '');
+                                            setApprovedOverviewSalaryInput(prefill);
+                                        }
+                                    }}
+                                className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
+                            >
+                                {approvedOverviewCreateFromSalary ? '− Hide create from salary' : '+ Create budgets from salary'}
+                            </button>
+                            {approvedOverviewCreateFromSalary && (
+                                <div className="mt-3 space-y-3">
+                                    <div className="flex flex-wrap items-end gap-3">
+                                        <div>
+                                            <label className="block text-xs text-slate-600 font-medium mb-1">Monthly salary (SAR)</label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={100}
+                                                value={approvedOverviewSalaryInput}
+                                                onChange={(e) => setApprovedOverviewSalaryInput(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder={suggestedMonthlySalary > 0 ? `From income: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : 'e.g. 15000'}
+                                                className="w-36 p-2 border border-slate-300 rounded text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                    {approvedOverviewSuggestedCategories.length > 0 && (
+                                        <>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="text-xs font-medium text-slate-600">Select categories to create:</span>
+                                                <span className="flex gap-2">
+                                                    <button type="button" onClick={() => setApprovedOverviewSelectedForCreate(approvedOverviewSuggestedCategories.map((c) => c.category))} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Select all</button>
+                                                    <span className="text-slate-300">|</span>
+                                                    <button type="button" onClick={() => setApprovedOverviewSelectedForCreate([])} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Deselect all</button>
+                                                </span>
+                                            </div>
+                                            <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-slate-50/50 p-2 space-y-1.5">
+                                                {approvedOverviewSuggestedCategories.map((cat) => {
+                                                    const selected = approvedOverviewSelectedForCreate.includes(cat.category);
+                                                    const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
+                                                    return (
+                                                        <label key={cat.category} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-white cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selected}
+                                                                onChange={() => {
+                                                                    if (selected) setApprovedOverviewSelectedForCreate((prev) => prev.filter((n) => n !== cat.category));
+                                                                    else setApprovedOverviewSelectedForCreate((prev) => [...prev, cat.category]);
+                                                                }}
+                                                                className="rounded border-slate-300 text-indigo-600"
+                                                            />
+                                                            <span className="text-sm text-slate-800 flex-1">{cat.category}</span>
+                                                            <span className="text-xs text-slate-500 tabular-nums">{formatCurrencyString(cat.limit, { digits: 0 })}{periodLabel}</span>
+                                                            <span className={`text-xs px-1.5 py-0.5 rounded ${cat.tier === 'Core' ? 'bg-indigo-100 text-indigo-700' : cat.tier === 'Supporting' ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-600'}`}>{cat.tier}</span>
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                disabled={approvedOverviewSelectedForCreate.length === 0}
+                                                onClick={async () => {
+                                                    const salary = Number(approvedOverviewSalaryInput);
+                                                    if (!Number.isFinite(salary) || salary <= 0) return;
+                                                    const selectedSet = new Set(approvedOverviewSelectedForCreate);
+                                                    const categories = approvedOverviewSuggestedCategories.filter((c) => selectedSet.has(c.category));
+                                                    for (const cat of categories) {
+                                                        await addBudget({
+                                                            category: cat.category,
+                                                            limit: cat.limit,
+                                                            month: approvedOverviewMonth,
+                                                            year: approvedOverviewYear,
+                                                            period: cat.period ?? 'monthly',
+                                                            tier: (cat.tier ?? 'Optional') as BudgetTier,
+                                                        });
+                                                    }
+                                                    setApprovedOverviewCreateFromSalary(false);
+                                                }}
+                                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                Create {approvedOverviewSelectedForCreate.length} selected for {MONTHS[approvedOverviewMonth - 1]} {approvedOverviewYear}
+                                            </button>
+                                        </>
+                                    )}
+                                    {Number.isFinite(Number(approvedOverviewSalaryInput)) && Number(approvedOverviewSalaryInput) > 0 && approvedOverviewSuggestedCategories.length === 0 && (
+                                        <p className="text-xs text-slate-500">Enter a valid salary to see suggested categories.</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Filters */}
+                        <div className="flex flex-wrap items-center gap-3 mb-4">
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Month</label>
+                                <input
+                                    type="month"
+                                    value={`${approvedOverviewYear}-${String(approvedOverviewMonth).padStart(2, '0')}`}
+                                    onChange={(e) => {
+                                        const [y, m] = e.target.value.split('-').map(Number);
+                                        setApprovedOverviewYear(y);
+                                        setApprovedOverviewMonth(m);
+                                    }}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                />
                             </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Budget Limit</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</p>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Period</label>
+                                <select
+                                    value={approvedOverviewPeriodFilter}
+                                    onChange={(e) => setApprovedOverviewPeriodFilter(e.target.value as typeof approvedOverviewPeriodFilter)}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                >
+                                    <option value="all">All</option>
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="yearly">Yearly</option>
+                                </select>
                             </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Spent</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</p>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Tier</label>
+                                <select
+                                    value={approvedOverviewTierFilter}
+                                    onChange={(e) => setApprovedOverviewTierFilter(e.target.value as typeof approvedOverviewTierFilter)}
+                                    className="p-1.5 border border-slate-300 rounded text-sm"
+                                >
+                                    <option value="all">All</option>
+                                    <option value="Core">Core</option>
+                                    <option value="Supporting">Supporting</option>
+                                    <option value="Optional">Optional</option>
+                                </select>
                             </div>
-                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
-                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(budgetData.reduce((sum, b) => sum + (b.monthlyLimit - b.spent), 0), { digits: 0 })}</p>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-600 font-medium">Category</label>
+                                <input
+                                    type="text"
+                                    value={approvedOverviewSearch}
+                                    onChange={(e) => setApprovedOverviewSearch(e.target.value)}
+                                    placeholder="Search category..."
+                                    className="p-1.5 border border-slate-300 rounded text-sm w-40"
+                                />
                             </div>
                         </div>
 
-                        {budgetData.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm mb-4">
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Categories</span>
+                                <p className="font-bold text-indigo-900 text-lg">{adminApprovedOverviewFiltered.length}</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Budget Limit (mo equiv)</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => sum + b.monthlyLimit, 0), { digits: 0 })}</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Total Spent</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => sum + b.spent, 0), { digits: 0 })}</p>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                                <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => sum + (b.monthlyLimit - b.spent), 0), { digits: 0 })}</p>
+                            </div>
+                        </div>
+
+                        {adminApprovedOverviewFiltered.length > 0 && (
                             <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                                 <table className="min-w-full text-sm">
                                     <thead className="bg-slate-50">
                                         <tr>
                                             <th className="px-3 py-2 text-left font-medium text-slate-700">Category</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Period</th>
                                             <th className="px-3 py-2 text-left font-medium text-slate-700">Tier</th>
-                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Monthly Limit</th>
+                                            <th className="px-3 py-2 text-right font-medium text-slate-700">Limit</th>
                                             <th className="px-3 py-2 text-right font-medium text-slate-700">Spent</th>
                                             <th className="px-3 py-2 text-right font-medium text-slate-700">Remaining</th>
                                             <th className="px-3 py-2 text-center font-medium text-slate-700">Utilization</th>
+                                            <th className="px-3 py-2 text-center font-medium text-slate-700">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {budgetData.map((b) => {
+                                        {adminApprovedOverviewFiltered.map((b) => {
                                             const remaining = b.monthlyLimit - b.spent;
                                             const percentage = b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0;
+                                            const periodLabel = (b.period ?? 'monthly') === 'yearly' ? 'Yearly' : (b.period ?? 'monthly') === 'weekly' ? 'Weekly' : (b.period ?? 'monthly') === 'daily' ? 'Daily' : 'Monthly';
+                                            const limitWithUnit = (b.period ?? 'monthly') === 'yearly'
+                                                ? `${formatCurrencyString(b.limit, { digits: 0 })}/yr`
+                                                : (b.period ?? 'monthly') === 'weekly'
+                                                ? `${formatCurrencyString(b.limit, { digits: 0 })}/wk`
+                                                : (b.period ?? 'monthly') === 'daily'
+                                                ? `${formatCurrencyString(b.limit, { digits: 0 })}/day`
+                                                : `${formatCurrencyString(b.limit, { digits: 0 })}/mo`;
+                                            const canEditRemove = !b.id.startsWith('synthetic-') && !b.id.startsWith('approved-request-');
                                             return (
                                                 <tr key={`admin-budget-${b.id}`} className="border-t border-slate-100">
                                                     <td className="px-3 py-2 font-medium text-slate-900">{b.category}</td>
+                                                    <td className="px-3 py-2">
+                                                        <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">{periodLabel}</span>
+                                                    </td>
                                                     <td className="px-3 py-2">
                                                         <span className={`text-xs px-2 py-0.5 rounded ${b.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : b.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>
                                                             {b.budgetTier}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.monthlyLimit, { digits: 0 })}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{limitWithUnit}</td>
                                                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.spent, { digits: 0 })}</td>
                                                     <td className={`px-3 py-2 text-right tabular-nums ${remaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                         {remaining >= 0 ? formatCurrencyString(remaining, { digits: 0 }) : `-${formatCurrencyString(Math.abs(remaining), { digits: 0 })}`}
@@ -2475,12 +2675,39 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                             </span>
                                                         </div>
                                                     </td>
+                                                    <td className="px-3 py-2 text-center">
+                                                        {canEditRemove ? (
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleOpenModal({ ...b, limit: b.displayLimit })}
+                                                                    className="p-1.5 text-slate-500 hover:text-indigo-600 rounded"
+                                                                    title="Edit"
+                                                                >
+                                                                    <PencilIcon className="h-4 w-4" />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => { if (window.confirm(`Remove budget "${b.category}" for ${MONTHS[b.month - 1]} ${b.year}?`)) deleteBudget(b.category, b.month, b.year); }}
+                                                                    className="p-1.5 text-slate-500 hover:text-rose-600 rounded"
+                                                                    title="Remove"
+                                                                >
+                                                                    <TrashIcon className="h-4 w-4" />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-xs text-slate-400">—</span>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                     </tbody>
                                 </table>
                             </div>
+                        )}
+                        {adminApprovedOverviewFiltered.length === 0 && (
+                            <p className="text-sm text-slate-500 py-3">No budgets match the selected filters for {MONTHS[approvedOverviewMonth - 1]} {approvedOverviewYear}. Adjust filters or create from salary above.</p>
                         )}
                     </div>
 
@@ -2786,7 +3013,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     {setActivePage && (
                         <p className="mt-2 text-sm text-slate-600">
                             Add a budget above, or{' '}
-                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline">
+                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline inline-flex items-center gap-1.5">
+                                <CreditCardIcon className="h-4 w-4" />
                                 track spending in Cash Flow
                             </button>
                             {' '}to compare later on the Plan page.

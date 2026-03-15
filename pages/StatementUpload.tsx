@@ -5,7 +5,8 @@ import PageLayout from '../components/PageLayout';
 import PageLoading from '../components/PageLoading';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
+import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
+import { StatementIcons } from '../constants/statementIcons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
@@ -398,7 +399,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <BanknotesIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.bank className="h-5 w-5 inline-block mr-2" />
               Bank Statements
             </button>
             <button
@@ -412,7 +413,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <ChatBubbleLeftRightIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.sms className="h-5 w-5 inline-block mr-2" />
               SMS Transactions
             </button>
             <button
@@ -426,7 +427,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <DocumentArrowUpIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.trading className="h-5 w-5 inline-block mr-2" />
               Trading Statements
             </button>
           </div>

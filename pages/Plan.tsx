@@ -7,16 +7,21 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AIAdvisor from '../components/AIAdvisor';
+import SalaryPlanningExperts from '../components/SalaryPlanningExperts';
 import SinkingFunds from './SinkingFunds';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import Modal from '../components/Modal';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
-import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { TrophyIcon } from '../components/icons/TrophyIcon';
+import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
+import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
+import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import {
@@ -123,6 +128,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
     const [planData, setPlanData] = useState<PlanRow[]>([]);
     const [isEditing, setIsEditing] = useState<{ row: number; col: number } | null>(null);
+    const [planSubPage, setPlanSubPage] = useState<'overview' | 'experts'>('overview');
 
     const budgets = data?.budgets ?? [];
     const transactions = data?.transactions ?? [];
@@ -544,21 +550,33 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             description="Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan. Fully integrated with your data."
             action={
                 <div className="w-full flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
+                    <div className="inline-flex items-center p-1 rounded-lg border border-slate-200 bg-white self-start lg:self-auto">
+                        <button type="button" onClick={() => setPlanSubPage('overview')} className={`px-3 py-1.5 text-xs rounded-md font-medium ${planSubPage === 'overview' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Plan Overview</button>
+                        <button type="button" onClick={() => setPlanSubPage('experts')} className={`px-3 py-1.5 text-xs rounded-md font-medium ${planSubPage === 'experts' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Salary & Planning Experts</button>
+                    </div>
                     <div className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-2 py-1 self-start lg:self-auto">
                         <button type="button" onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronLeftIcon className="h-5 w-5"/></button>
                         <label className="flex items-center gap-1.5"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-base w-24 text-center font-semibold" /></label>
                         <button type="button" onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
                     {setActivePage && (
-                        <div className="flex flex-wrap items-center gap-2">
-                            <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-sm"><BanknotesIcon className="h-4 w-4" /> Budgets</button>
-                            <button type="button" onClick={() => setActivePage('Goals')} className="btn-ghost py-1.5 text-sm text-blue-600 hover:bg-blue-50"><ScaleIcon className="h-4 w-4" /> Goals</button>
-                            <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-sm text-violet-600 hover:bg-violet-50"><ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan</button>
-                        </div>
+                        <PageActionsDropdown
+                            ariaLabel="Plan quick links"
+                            actions={[
+                                { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
+                                { value: 'goals', label: 'Goals', onClick: () => setActivePage('Goals') },
+                                { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investments') },
+                            ]}
+                        />
                     )}
                 </div>
             }
         >
+            {planSubPage === 'experts' ? (
+                <div className="space-y-6">
+                    <SalaryPlanningExperts />
+                </div>
+            ) : (
             <div className="space-y-6 sm:space-y-8">
             <div className="space-y-4 sm:space-y-5">
             {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
@@ -568,11 +586,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 {setActivePage && (
                     <>
                         <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Actuals & recurring (auto or manual)">
-                            <BanknotesIcon className="h-4 w-4" /> Transactions
+                            <CreditCardIcon className="h-4 w-4" /> Transactions
                         </button>
                         <span className="text-slate-400">·</span>
                         <button type="button" onClick={() => setActivePage('Budgets')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Planned limits">
-                            Budgets
+                            <PiggyBankIcon className="h-4 w-4" /> Budgets
                         </button>
                         <span className="text-slate-400">·</span>
                         <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Monthly investment planned & actual buys">
@@ -580,7 +598,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </button>
                         <span className="text-slate-400">·</span>
                         <button type="button" onClick={() => setActivePage('Accounts')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
-                            Accounts (cash)
+                            <BuildingLibraryIcon className="h-4 w-4" /> Accounts (cash)
                         </button>
                     </>
                 )}
@@ -732,7 +750,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <p className="font-medium text-slate-600">No goals yet</p>
                         <p className="text-sm mt-1">Set goals to see when you'll reach them and whether your plan keeps you on track.</p>
                         {setActivePage && (
-                            <button type="button" onClick={() => setActivePage('Goals')} className="mt-3 text-primary font-medium hover:underline">Go to Goals →</button>
+                            <button type="button" onClick={() => setActivePage('Goals')} className="mt-3 text-primary font-medium hover:underline inline-flex items-center gap-1.5"><TrophyIcon className="h-4 w-4" />Go to Goals →</button>
                         )}
                     </div>
                 ) : (
@@ -782,7 +800,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         ))}
                     </div>
                     {setActivePage && (
-                        <button type="button" onClick={() => setActivePage('Goals')} className="mt-4 text-sm font-medium text-primary hover:underline flex items-center gap-1">
+                        <button type="button" onClick={() => setActivePage('Goals')} className="mt-4 text-sm font-medium text-primary hover:underline flex items-center gap-1.5">
+                            <TrophyIcon className="h-4 w-4" />
                             View & edit goals →
                         </button>
                     )}
@@ -984,6 +1003,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             )}
                 </div>
             </div>
+            )}
         </PageLayout>
     );
 };

@@ -59,7 +59,9 @@ This document reflects features and functionalities implemented in the codebase.
 
 ### Assets
 - **Location:** `pages/Assets.tsx`
-- Physical assets, property, vehicles, net worth and valuation
+- Physical assets, property, vehicles, Sukuk, metals & crypto (commodity holdings), net worth and valuation
+- In main nav under **Assets** (with Commodities); linked from Summary (Net Worth card and action bar), Dashboard (quick steps), Command Palette, and Quick Actions sidebar (“Add Asset”)
+- Add/edit/delete assets, link to goals, rental income, AI-powered commodity price updates
 
 ### Commodities
 - **Location:** `pages/Commodities.tsx`
