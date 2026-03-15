@@ -468,7 +468,11 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         <PageLayout
             title="Accounts"
             description="Track checking, savings, credit, and investment accounts."
-            action={<AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>}
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
+                </div>
+            }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                  <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
