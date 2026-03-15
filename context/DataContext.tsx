@@ -513,7 +513,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('price_alerts').select('*').eq('user_id', auth.user.id),
                 db.from('commodity_holdings').select('*').eq('user_id', auth.user.id),
                 db.from('planned_trades').select('*').eq('user_id', auth.user.id),
-                // Do not fetch by other user id; privacy requirement.
+                // Monthly investment plan is private per user; admin must never load or view another user's plan.
                 db.from('investment_plan').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
@@ -545,7 +545,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                            auth.user.email?.toLowerCase().includes('hussein') ||
                            (auth.user.user_metadata?.role === 'admin');
 
-            // Fetch admin data if user is admin
+            // Admin: fetch only Pending transactions (for approval UI) and own budgets. Never fetch other users' investment_plan or planned_trades.
             let allTransactionsData: any[] = [];
             let allBudgetsData: any[] = [];
             if (isAdmin && supabase) {
@@ -1302,11 +1302,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const db = supabase;
         const payload: any = { ...platform, balance: 0 };
-        if (Array.isArray(platform.linkedAccountIds)) {
-            // Allow explicitly clearing links by sending an empty array, or setting specific links.
-            payload.linked_account_ids = platform.linkedAccountIds;
+        // Always persist linked_account_ids for Investment platforms (including empty array to clear links).
+        if (platform.type === 'Investment') {
+            payload.linked_account_ids = Array.isArray(platform.linkedAccountIds) ? platform.linkedAccountIds : [];
         }
-        // Never send camelCase 'linkedAccountIds' to PostgREST; column is snake_case only.
         delete payload.linkedAccountIds;
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
         if(error) {

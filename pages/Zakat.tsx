@@ -6,7 +6,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import Modal from '../components/Modal';
-import { ZakatPayment } from '../types';
+import { ZakatPayment, Page } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
@@ -51,7 +51,11 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 };
 
 
-const Zakat: React.FC = () => {
+interface ZakatProps {
+    setActivePage?: (page: Page) => void;
+}
+
+const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -118,10 +122,10 @@ const Zakat: React.FC = () => {
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading Zakat" />
             </div>
         );
     }
@@ -159,7 +163,11 @@ const Zakat: React.FC = () => {
                             </div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total)}</span></div>
                              <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded-md mt-2">
-                                <p>Includes cash, 'Zakatable' investments, and 'Zakatable' commodities. You can change an asset's Zakat classification on the 'Investments' and 'Commodities' pages.</p>
+                                <p>Includes cash, &apos;Zakatable&apos; investments, and &apos;Zakatable&apos; commodities. You can change an asset&apos;s Zakat classification on the {setActivePage ? (
+                                    <> <button type="button" onClick={() => setActivePage('Investments')} className="text-primary font-medium hover:underline">Investments</button> and <button type="button" onClick={() => setActivePage('Commodities')} className="text-primary font-medium hover:underline">Commodities</button> pages.</>
+                                ) : (
+                                    <>Investments and Commodities pages.</>
+                                )}</p>
                             </div>
                         </div>
                     </SectionCard>
