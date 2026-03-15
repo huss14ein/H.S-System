@@ -107,4 +107,3 @@ function runTests(): void {
 }
 
 runTests();
-console.log('Engine integration tests passed.');
