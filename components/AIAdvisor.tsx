@@ -23,11 +23,11 @@ interface AIAdvisorProps {
 const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any, exchangeRate: number): Promise<string> => {
     switch (context) {
         case 'dashboard': {
-            const assets = data.assets ?? [];
-            const accounts = data.accounts ?? [];
-            const liabilities = data.liabilities ?? [];
+            const assets = data?.assets ?? [];
+            const accounts = data?.accounts ?? [];
+            const liabilities = data?.liabilities ?? [];
             const totalCommodities = (data?.commodityHoldings ?? []).reduce((sum, ch) => sum + (ch.currentValue ?? 0), 0);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data.investments ?? [], exchangeRate);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(data?.investments ?? [], exchangeRate);
             const cashSavings = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
             const cashPositive = cashSavings.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
             const cashNegative = cashSavings.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);

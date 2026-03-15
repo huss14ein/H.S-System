@@ -7,7 +7,7 @@ import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, updateSettings, resetData } = useContext(DataContext)!;
+    const { data, loading, updateSettings, resetData } = useContext(DataContext)!;
     const auth = useContext(AuthContext)!;
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
 
@@ -21,8 +21,16 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         updateSettings({ [key]: value });
     };
 
-    const hasData = data && (data?.accounts?.length ?? 0) > 0;
+    const hasData = data?.accounts && data.accounts.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading settings" />
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
@@ -126,8 +134,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
                 {setActivePage && (
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setActivePage('Dashboard')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
-                        <button type="button" onClick={() => setActivePage('Dashboard')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra Autopilot</button>
+                        <button type="button" onClick={() => setActivePage?.('Investment Plan')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
+                        <button type="button" onClick={() => setActivePage?.('Wealth Ultra')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra</button>
                     </div>
                 )}
             </SectionCard>

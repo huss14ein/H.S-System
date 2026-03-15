@@ -9,16 +9,19 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
+import type { Page } from '../types';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
 interface AIRebalancerViewProps {
   onNavigateToTab?: (tab: string) => void;
   onOpenWealthUltra?: () => void;
+  setActivePage?: (page: Page) => void;
 }
 
-const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra }) => {
-  const { data } = useContext(DataContext)!;
+const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
+  const { data, loading } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data?.investments?.[0]?.id ?? '');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
@@ -56,6 +59,23 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     }
   }, [selectedPortfolio, riskProfile]);
 
+  const targetAssetMix = useMemo(() => getTargetAllocationForProfile(riskProfile), [riskProfile]);
+
+  const mvoResult = useMemo(() => {
+    if (!selectedPortfolio?.holdings?.length) return null;
+    const holdings = (selectedPortfolio.holdings ?? []).filter(h => Number(h.currentValue ?? 0) > 0);
+    if (holdings.length < 2) return null;
+    const total = holdings.reduce((s, h) => s + Number(h.currentValue ?? 0), 0);
+    if (total <= 0) return null;
+    const expectedReturns = holdings.map(() => 0.07 / 12);
+    const n = holdings.length;
+    const cov = Array(n).fill(0).map(() => Array(n).fill(0));
+    for (let i = 0; i < n; i++) cov[i][i] = 0.04 / 12;
+    const res = meanVarianceOptimization({ expectedReturns, covarianceMatrix: cov, riskFreeRate: 0.04 / 12 });
+    const labels = holdings.map(h => h.symbol ?? '');
+    return { ...res, labels };
+  }, [selectedPortfolio?.holdings]);
+
   const currentAllocation = useMemo(() => {
     if (!selectedPortfolio) return [];
     return (selectedPortfolio?.holdings ?? [])
@@ -71,11 +91,11 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }, [selectedPortfolio]);
 
   // Loading state
-  if (!data) {
+  if (loading || !data) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center" aria-busy="true">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading AI Rebalancer" />
           <p className="text-sm text-slate-600">Loading portfolio data...</p>
         </div>
       </div>
@@ -280,6 +300,22 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                     </button>
                   ))}
                 </div>
+                {Object.keys(targetAssetMix).length > 0 && (
+                  <p className="text-xs text-slate-600 mt-2">
+                    Target allocation: {Object.entries(targetAssetMix).map(([sym, w]) => `${sym} ${(w * 100).toFixed(0)}%`).join(', ')}
+                  </p>
+                )}
+                {mvoResult && mvoResult.optimalWeights.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-200">
+                    <p className="text-xs font-medium text-slate-700 mb-1">MVO suggested weights (Efficient Frontier)</p>
+                    <p className="text-xs text-slate-600">
+                      {mvoResult.labels.map((label, i) => `${label} ${(mvoResult!.optimalWeights[i] * 100).toFixed(0)}%`).join(', ')}
+                      {mvoResult.sharpeRatio != null && (
+                        <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)}</span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Generate Button */}

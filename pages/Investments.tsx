@@ -38,6 +38,11 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
+import { dollarToShareQuantity } from '../services/portfolioConstruction';
+import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
+import { getSettlementDate, isSettled } from '../services/riskCompliance';
+import { ClockIcon } from '../components/icons/ClockIcon';
+import ExecutionHistoryView from './ExecutionHistoryView';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -45,7 +50,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -94,6 +99,7 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
     { name: 'Watchlist', icon: EyeIcon },
+    { name: 'Execution History', icon: ClockIcon },
 ];
 
 
@@ -116,9 +122,10 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
 
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
-        const planCurrency: TradeCurrency = (data.investmentPlan.budgetCurrency as TradeCurrency) || 'SAR';
+        const plan = data?.investmentPlan;
+        const planCurrency: TradeCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
 
-        const monthlyInvested = data.investmentTransactions
+        const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
@@ -128,10 +135,10 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
             }, 0);
 
-        const corePct = data.investmentPlan.coreAllocation ?? 0.7;
-        const upsidePct = data.investmentPlan.upsideAllocation ?? 0.3;
+        const corePct = plan?.coreAllocation ?? 0.7;
+        const upsidePct = plan?.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
-        const target = data.investmentPlan.monthlyBudget || 0;
+        const target = plan?.monthlyBudget || 0;
         return {
             percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
             amount: monthlyInvested,
@@ -238,11 +245,14 @@ const RecordTradeModal: React.FC<{
     const [holdingName, setHoldingName] = useState('');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
+    const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
+    const [tif, setTif] = useState<TIF>('GTC');
+    const [t1ConfirmChecked, setT1ConfirmChecked] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const availableGoals = useMemo(() => data.goals || [], [data.goals]);
+    const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
@@ -267,6 +277,9 @@ const RecordTradeModal: React.FC<{
         setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
+        setOrderType('LIMIT');
+        setTif('GTC');
+        setT1ConfirmChecked(false);
         setSubmitError(null);
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
@@ -277,6 +290,7 @@ const RecordTradeModal: React.FC<{
         if (isOpen) {
             setSubmitError(null);
             setIsSubmitting(false);
+            setT1ConfirmChecked(false);
             setTradeCurrency(appCurrency);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
@@ -327,15 +341,25 @@ const RecordTradeModal: React.FC<{
         }
     }, [portfolioId, portfolios, initialData]);
     
+    const brokerConstraints = data?.investmentPlan?.brokerConstraints;
     useEffect(() => {
         if (amountToInvest && price && type === 'buy') {
             const numPrice = parseFloat(price);
-            if(numPrice > 0) {
-                const calcQty = amountToInvest / numPrice;
-                setQuantity(calcQty.toFixed(8).replace(/\.?0+$/, ""));
+            if (numPrice > 0) {
+                const qty = dollarToShareQuantity(
+                    amountToInvest,
+                    numPrice,
+                    {
+                        allowFractional: brokerConstraints?.allowFractionalShares ?? true,
+                        minimumOrderSize: brokerConstraints?.minimumOrderSize ?? 1,
+                        roundingRule: brokerConstraints?.roundingRule ?? 'round',
+                        decimalPlaces: 6,
+                    }
+                );
+                setQuantity(qty.toFixed(6).replace(/\.?0+$/, '') || '0');
             }
         }
-    }, [amountToInvest, price, type]);
+    }, [amountToInvest, price, type, brokerConstraints?.allowFractionalShares, brokerConstraints?.minimumOrderSize, brokerConstraints?.roundingRule]);
 
     // Auto-fill company name from API when user enters a symbol (new holding)
     const holdingNameRef = React.useRef(holdingName);
@@ -350,6 +374,62 @@ const RecordTradeModal: React.FC<{
         }, 700);
         return () => clearTimeout(t);
     }, [symbol, isOpen, type]);
+
+    const nbboStub = useMemo(() => {
+        if (isCashFlow || !symbol.trim()) return null;
+        const numPrice = parseFloat(price);
+        if (!Number.isFinite(numPrice) || numPrice <= 0) return null;
+        return getNBBOStub(symbol.trim().toUpperCase(), numPrice);
+    }, [isCashFlow, symbol, price]);
+
+    const { t1SettlementWarning } = useMemo(() => {
+        const today = new Date().toISOString().slice(0, 10);
+        if (type !== 'sell' || !symbol.trim() || !data?.investmentTransactions?.length) {
+            return { t1SettlementWarning: null as string | null };
+        }
+        const normalized = symbol.toUpperCase().trim();
+        const recentBuys = (data.investmentTransactions as InvestmentTransaction[])
+            .filter(t => t.type === 'buy' && (t.symbol ?? '').toUpperCase().trim() === normalized);
+        let pendingBuyAmount = 0;
+        let latestSettleDate = '';
+        for (const buy of recentBuys) {
+            const buyDate = buy.date ? new Date(buy.date) : null;
+            if (!buyDate || isNaN(buyDate.getTime())) continue;
+            const settleDate = getSettlementDate(buyDate);
+            if (settleDate > today) {
+                pendingBuyAmount += buy.total ?? 0;
+                if (settleDate > latestSettleDate) latestSettleDate = settleDate;
+            }
+        }
+        const settlementState = pendingBuyAmount > 0 ? { pendingBuyAmount, pendingSettleDate: latestSettleDate } : null;
+        const unsettled = settlementState && !isSettled(settlementState, today);
+        const msg = unsettled
+            ? `T+1 settlement: You bought ${normalized} recently. Funds settle ${settlementState!.pendingSettleDate}. Ensure you have other settled cash before selling.`
+            : null;
+        return { t1SettlementWarning: msg };
+    }, [type, symbol, data?.investmentTransactions]);
+
+    const sorStub = useMemo(() => {
+        if (isCashFlow || !symbol.trim()) return null;
+        const q = parseFloat(quantity);
+        const p = parseFloat(price);
+        if (!Number.isFinite(q) || !Number.isFinite(p) || q <= 0 || p <= 0) return null;
+        const notional = q * p;
+        if (notional < 10_000) return null;
+        return getSORStub(symbol.trim().toUpperCase(), type === 'buy' ? 'BUY' : 'SELL', q, p);
+    }, [isCashFlow, symbol, quantity, price, type]);
+
+    const vwapSlices = useMemo(() => {
+        if (isCashFlow) return null;
+        const q = parseFloat(quantity);
+        const p = parseFloat(price);
+        const notional = Number.isFinite(p) && p > 0 && Number.isFinite(q) ? q * p : 0;
+        if (!Number.isFinite(q) || q <= 0) return null;
+        const isLarge = q >= 50 || notional >= 10_000;
+        if (!isLarge) return null;
+        const n = Math.min(10, Math.max(3, Math.floor(q / 20)));
+        return getVWAPSlices(q, n);
+    }, [isCashFlow, quantity, price]);
 
     const validationError = useMemo(() => {
         if (isCashFlow) {
@@ -382,6 +462,20 @@ const RecordTradeModal: React.FC<{
         if (validationError) {
             setSubmitError(validationError);
             return;
+        }
+        if (t1SettlementWarning && !t1ConfirmChecked) {
+            setSubmitError('Please confirm you have other settled cash (or understand T+1) before selling.');
+            return;
+        }
+        if (!isCashFlow && (type === 'buy' || type === 'sell') && orderType === 'MARKET') {
+            const now = new Date();
+            const hourET = (now.getUTCHours() - 5 + 24) % 24;
+            const minuteET = now.getUTCMinutes();
+            const guard = checkExtendedHoursGuardrail({ orderType: 'MARKET', hourET, minuteET });
+            if (!guard.allowed) {
+                setSubmitError(guard.reason ?? 'Market orders only during 9:30 AM–4:00 PM ET. Switch to Limit or record during regular hours.');
+                return;
+            }
         }
         try {
             setIsSubmitting(true);
@@ -445,6 +539,18 @@ const RecordTradeModal: React.FC<{
                  {hasNoPortfolios && accountId && !isCashFlow && (
                     <div className="p-2 bg-amber-50 text-amber-800 text-sm rounded-md">No portfolio in this account. Create a portfolio first from the Investments page.</div>
                  )}
+                 {t1SettlementWarning && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex flex-col gap-2">
+                        <div className="flex items-start gap-2">
+                            <ClockIcon className="h-5 w-5 flex-shrink-0 mt-0.5" aria-hidden />
+                            <span>{t1SettlementWarning}</span>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={t1ConfirmChecked} onChange={e => setT1ConfirmChecked(e.target.checked)} className="rounded border-amber-300 text-amber-600 focus:ring-amber-500" />
+                            <span className="text-xs">I have other settled cash or understand T+1 settlement</span>
+                        </label>
+                    </div>
+                 )}
                  <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label htmlFor="account-id" className="block text-sm font-medium text-gray-700">Platform</label>
@@ -477,6 +583,27 @@ const RecordTradeModal: React.FC<{
                             <option value="SAR">SAR</option>
                         </select>
                     </div>
+                    {!isCashFlow && (type === 'buy' || type === 'sell') && (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Order type</span>
+                                <select value={orderType} onChange={e => setOrderType(e.target.value as 'MARKET' | 'LIMIT')} className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-800">
+                                    <option value="LIMIT">Limit</option>
+                                    <option value="MARKET">Market</option>
+                                </select>
+                                <InfoHint text="Market orders are only valid 9:30 AM–4:00 PM ET. Limit can be recorded any time." />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Time-in-Force</span>
+                                <select value={tif} onChange={e => setTif(e.target.value as TIF)} className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-800" title={getTIFLabel(tif)}>
+                                    <option value="DAY">Day</option>
+                                    <option value="GTC">GTC</option>
+                                    <option value="IOC">IOC</option>
+                                </select>
+                                <InfoHint text={getTIFLabel(tif)} />
+                            </div>
+                        </>
+                    )}
                 </div>
                 {isCashFlow ? (
                     <>
@@ -510,6 +637,21 @@ const RecordTradeModal: React.FC<{
                         <input type="number" id="price" value={price} onChange={e => setPrice(e.target.value)} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                 </div>
+                {nbboStub && (
+                    <p className="text-xs text-slate-500">
+                        NBBO (sim): bid ${nbboStub.bid.toFixed(2)} / ask ${nbboStub.ask.toFixed(2)} USD
+                    </p>
+                )}
+                {sorStub && (
+                    <p className="text-xs text-slate-500">
+                        SOR (sim): {sorStub.recommendedVenue ?? '—'} · ~{sorStub.estimatedSlippageBps} bps slippage{sorStub.useLimitOrder ? ' · use limit for large order' : ''}
+                    </p>
+                )}
+                {vwapSlices && vwapSlices.length > 0 && (
+                    <p className="text-xs text-slate-500">
+                        VWAP (sim): {vwapSlices.length} slices for large order
+                    </p>
+                )}
                 <div>
                     <label htmlFor="trade-goal" className="block text-sm font-medium text-gray-700">Link to Goal (Optional)</label>
                     <select id="trade-goal" value={goalId || ''} onChange={e => setGoalId(e.target.value || undefined)} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary">
@@ -949,7 +1091,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                         className="mt-1 w-full p-2 border border-gray-300 rounded-md"
                     >
                         <option value="none">-- Not Linked --</option>
-                        {data.goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        {(data?.goals ?? []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Changes</button>
@@ -1457,14 +1599,17 @@ const PlatformView: React.FC<{
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
-        const investmentAccounts = data.accounts.filter(acc => acc.type === 'Investment').sort((a,b) => a.name.localeCompare(b.name));
+        const accounts = data?.accounts ?? [];
+        const investments = data?.investments ?? [];
+        const investmentTransactions = data?.investmentTransactions ?? [];
+        const investmentAccounts = accounts.filter(acc => acc.type === 'Investment').sort((a,b) => a.name.localeCompare(b.name));
         return investmentAccounts.map(account => ({
             account,
-            portfolios: data.investments.filter(p => (p.accountId ?? (p as any).account_id) === account.id),
-            transactions: data.investmentTransactions.filter(t => (t.accountId ?? (t as any).account_id) === account.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+            portfolios: investments.filter(p => (p.accountId ?? (p as any).account_id) === account.id),
+            transactions: investmentTransactions.filter(t => (t.accountId ?? (t as any).account_id) === account.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
             availableCashByCurrency: getAvailableCashForAccount(account.id),
         }));
-    }, [data, getAvailableCashForAccount]);
+    }, [data?.accounts, data?.investments, data?.investmentTransactions, getAvailableCashForAccount]);
 
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
@@ -1588,7 +1733,7 @@ const PlatformView: React.FC<{
                         platform={p.account}
                         portfolios={p.portfolios}
                         transactions={p.transactions}
-                        goals={data.goals}
+                        goals={data?.goals ?? []}
                         availableCashByCurrency={p.availableCashByCurrency}
                         onEditPlatform={props.onEditPlatform}
                         onDeletePlatform={props.onDeletePlatform}
@@ -1635,7 +1780,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
 
-    const planFromData = data.investmentPlan;
+    const planFromData = data?.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
         ...planFromData,
         minimumUpsidePercentage: Number(planFromData.minimumUpsidePercentage) || ANALYST_DEFAULTS.minimumUpsidePercentage,
@@ -1678,10 +1823,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
-        const portfolioUniverse = data.portfolioUniverse ?? [];
-        const investments = data.investments ?? [];
-        const watchlist = data.watchlist ?? [];
-        const plannedTrades = data.plannedTrades ?? [];
+        const portfolioUniverse = data?.portfolioUniverse ?? [];
+        const investments = data?.investments ?? [];
+        const watchlist = data?.watchlist ?? [];
+        const plannedTrades = data?.plannedTrades ?? [];
 
         // 1. Start with explicit universe
         portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
@@ -1739,7 +1884,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         });
         
         return Array.from(universeMap.values());
-    }, [data.portfolioUniverse, data.investments, data.watchlist, data.plannedTrades]);
+    }, [data?.portfolioUniverse, data?.investments, data?.watchlist, data?.plannedTrades]);
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
@@ -1756,10 +1901,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [unifiedUniverse]);
 
     useEffect(() => {
-        if (data.investmentPlan) {
+        if (data?.investmentPlan) {
             setPlan(data.investmentPlan);
         }
-    }, [data.investmentPlan]);
+    }, [data?.investmentPlan]);
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
     const suggestedMonthlyBudget = useMemo(() => {
@@ -1771,7 +1916,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
         };
 
-        const buys = (data.investmentTransactions || []).filter(t => t.type === 'buy');
+        const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
         if (buys.length === 0) return 0;
 
         const sixMonthsAgo = new Date();
@@ -1791,7 +1936,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const amounts = Array.from(byMonth.values()).filter(v => Number.isFinite(v) && v > 0);
         if (amounts.length === 0) return 0;
         return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
-    }, [data.investmentTransactions, exchangeRate, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, exchangeRate, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -1970,8 +2115,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning]);
 
     const syncPlanFromUniverse = () => {
-        const core = (data.portfolioUniverse || []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
-        const upside = (data.portfolioUniverse || []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const core = (data?.portfolioUniverse ?? []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const upside = (data?.portfolioUniverse ?? []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
         setPlan(prev => ({ ...prev, corePortfolio: core, upsideSleeve: upside }));
     };
 
@@ -1984,7 +2129,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
         };
 
-        const investedBase = (data.investments || []).reduce((sum, portfolio) => {
+        const investedBase = (data?.investments ?? []).reduce((sum, portfolio) => {
             const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
             const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
             return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
@@ -2076,7 +2221,7 @@ Save anyway?`)) return;
     };
 
     const autoConfigureUniverseWeights = useCallback(async () => {
-        const universe = [...(data.portfolioUniverse || [])];
+        const universe = [...(data?.portfolioUniverse ?? [])];
         if (universe.length === 0) return;
 
         const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
@@ -2112,7 +2257,7 @@ Save anyway?`)) return;
 
         setSaveMessage('Universe weights auto-configured for actionable tickers.');
         setTimeout(() => setSaveMessage(null), 5000);
-    }, [data.portfolioUniverse, updateUniverseTickerStatus]);
+    }, [data?.portfolioUniverse, updateUniverseTickerStatus]);
 
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
         if (isUniverseTicker(ticker)) {
@@ -2146,7 +2291,7 @@ Save anyway?`)) return;
             });
         });
         return map;
-    }, [data.investments]);
+    }, [data?.investments]);
 
     const holdingPriceFallbackMap = useMemo<Record<string, number>>(() => {
         const map: Record<string, number> = {};
@@ -2159,7 +2304,7 @@ Save anyway?`)) return;
             });
         });
         return map;
-    }, [data.investments]);
+    }, [data?.investments]);
 
     const getTradeExecutionSuggestion = useCallback((trade: InvestmentPlanExecutionResult['trades'][number]) => {
         const symbol = (trade.ticker || '').trim().toUpperCase();
@@ -2198,7 +2343,7 @@ Save anyway?`)) return;
         };
 
         const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
-        const mapBySymbol = new Map((data.portfolioUniverse || []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
+        const mapBySymbol = new Map((data?.portfolioUniverse ?? []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
         const candidates: AddOnCandidate[] = [];
 
         const fx = exchangeRate > 0 ? exchangeRate : 3.75;
@@ -2213,7 +2358,7 @@ Save anyway?`)) return;
         const addOnPoolBudget = monthlyBudget > 0 ? Math.round(monthlyBudget * 0.2) : 0;
         if (addOnPoolBudget <= 0) return [];
 
-        (data.investments || []).forEach((portfolio) => {
+        (data?.investments ?? []).forEach((portfolio) => {
             const holdings = portfolio.holdings || [];
             const liveHoldingValues = holdings.map((holding) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
@@ -2299,7 +2444,7 @@ Save anyway?`)) return;
             .slice(0, 6);
 
         return allocated;
-    }, [data.investments, data.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
+    }, [data?.investments, data?.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
@@ -2956,7 +3101,7 @@ interface InvestmentsProps {
 }
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction: _triggerPageAction }) => {
-  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -2989,19 +3134,19 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
     const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
     let valueSAR = 0, valueUSD = 0;
-    data.investments.forEach((p: InvestmentPortfolio) => {
+    (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
         const v = (p.holdings || []).reduce((s: number, h: Holding) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
         if (cur === 'SAR') valueSAR += v; else valueUSD += v;
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
-    const allCommodities = data.commodityHoldings || [];
+    const allCommodities = data?.commodityHoldings ?? [];
     const totalCommoditiesValue = allCommodities.reduce((sum, ch) => sum + (simulatedPrices[ch.symbol] ? simulatedPrices[ch.symbol].price * ch.quantity : ch.currentValue), 0);
     const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
 
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    data.investmentTransactions.filter((t: InvestmentTransaction) => t.type === 'buy').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    data.investmentTransactions.filter((t: InvestmentTransaction) => t.type === 'sell').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'buy').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'sell').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
@@ -3009,14 +3154,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const allHoldings = data.investments.flatMap((p: InvestmentPortfolio) => p.holdings || []);
+    const allHoldings = (data?.investments ?? []).flatMap((p: InvestmentPortfolio) => p.holdings || []);
     const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => (simulatedPrices[item.symbol] ? sum + simulatedPrices[item.symbol].change * item.quantity : sum), 0);
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data.investments, data.investmentTransactions, data.commodityHoldings, simulatedPrices, exchangeRate]);
-
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, simulatedPrices, exchangeRate]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -3039,7 +3183,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   }, [pageAction, clearPageAction]);
 
-  const investmentAccounts = useMemo(() => data.accounts.filter(acc => acc.type === 'Investment'), [data.accounts]);
+  const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }), portfolio: InvestmentPortfolio) => { setSelectedHolding(holding); setSelectedPortfolio(portfolio); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
@@ -3126,9 +3270,10 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
                     onOpenRecordTrade={(trade) => {
                         const normalizedSymbol = trade.ticker.trim().toUpperCase();
-                        const targetPortfolio = data.investments.find((portfolio) =>
+                        const inv = data?.investments ?? [];
+                        const targetPortfolio = inv.find((portfolio) =>
                             (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                        ) || data.investments.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || data.investments[0];
+                        ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
                         setTradeInitialData({
                             symbol: trade.ticker,
                             amount: trade.amount,
@@ -3149,9 +3294,18 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
+      case 'Execution History': return <ExecutionHistoryView />;
       default: return null;
     }
   };
+
+  if (loading || !data) {
+    return (
+      <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investments" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -3198,7 +3352,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Profit or loss on holdings vs cost basis (not yet realized)."
+                tooltip="Unrealized gain or loss on holdings (cost basis vs current value)."
             />
             <Card
                 title="Portfolio ROI"
@@ -3258,7 +3412,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         portfolioToEdit={portfolioToEdit} 
         accountId={currentAccountId}
         investmentAccounts={investmentAccounts}
-        goals={data.goals}
+        goals={data?.goals ?? []}
       />
       <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
       <RecordTradeModal 
@@ -3266,7 +3420,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         onClose={handleCloseTradeModal} 
         onSave={recordTrade} 
         investmentAccounts={investmentAccounts} 
-        portfolios={data.investments}
+        portfolios={data?.investments ?? []}
         initialData={tradeInitialData}
       />
     </div>

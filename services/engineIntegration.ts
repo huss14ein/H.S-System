@@ -5,17 +5,18 @@
 
 import { Transaction, Account, Budget, Goal } from '../types';
 import { generateCashflowStressSignals, calculateDynamicBaselines } from './enhancedBudgetEngine';
+import { detectRecurringBillPatterns } from './hybridBudgetCategorization';
 
-// Define missing types locally
+// Define missing types locally for internal portfolio risk
 interface Investment {
   id: string;
   symbol: string;
   quantity: number;
-  shares: number; // alias for quantity
+  shares: number;
   averageCost: number;
-  avgCost: number; // alias for averageCost
+  avgCost: number;
   currentPrice: number;
-  type: 'stock' | 'bond' | 'etf' | 'crypto';
+  type: string;
 }
 
 interface RiskMetrics {
@@ -40,20 +41,16 @@ interface RiskMetrics {
   sleeveRiskScore?: number;
 }
 
-// Mock function for missing detectRecurringBillPatterns
-function detectRecurringBillPatterns(transactions: Transaction[], minOccurrences: number) {
-  return transactions
-    .filter(t => t.type === 'expense')
-    .reduce((patterns: any[], transaction) => {
-      const existing = patterns.find(p => p.description === transaction.description);
-      if (existing) {
-        existing.count++;
-      } else {
-        patterns.push({ description: transaction.description ?? '', count: 1, amount: Number(transaction.amount) ?? 0, frequency: 'monthly' });
-      }
-      return patterns;
-    }, [])
-    .filter(p => p.count >= minOccurrences);
+function mapRecurringBillsToInfo(transactions: Transaction[]): RecurringBillInfo[] {
+  const patterns = detectRecurringBillPatterns(transactions, 2);
+  return patterns.map(p => ({
+    merchant: p.merchant,
+    amount: p.typicalAmount,
+    frequency: p.frequency,
+    nextDueDate: p.nextExpectedDate,
+    category: p.category,
+    isNegotiable: p.canBeNegotiated,
+  }));
 }
 
 // Constraint interfaces for cross-engine communication
@@ -168,16 +165,8 @@ export function buildUnifiedFinancialContext(
   const cashAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
   const totalCash = cashAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
   
-  // Get recurring bills
-  const recurringBills = detectRecurringBillPatterns(transactions, 2)
-    .map(pattern => ({
-      merchant: pattern.merchant,
-      amount: pattern.typicalAmount,
-      frequency: pattern.frequency,
-      nextDueDate: pattern.nextExpectedDate,
-      category: pattern.category,
-      isNegotiable: pattern.canBeNegotiated
-    }));
+  // Get recurring bills (hybrid categorization + pattern detection)
+  const recurringBills = mapRecurringBillsToInfo(transactions);
   
   const monthlyRecurring = recurringBills
     .filter(b => b.frequency === 'monthly')

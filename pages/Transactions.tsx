@@ -14,6 +14,7 @@ import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
+import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
@@ -259,6 +260,7 @@ const FilterButton: React.FC<{ label: string, value: string, current: string, on
 interface TransactionsProps {
   pageAction?: string | null;
   clearPageAction?: () => void;
+  setActivePage?: (page: Page) => void;
   triggerPageAction: (page: Page, action: string) => void;
 }
 
@@ -392,8 +394,8 @@ const RecurringModal: React.FC<{
     );
 };
 
-const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
+    const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -819,11 +821,28 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         setIsBulkReviewing(false);
     };
 
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading transactions" />
+            </div>
+        );
+    }
+
     return (
         <PageLayout
             title="Cash Flow"
+            description="Track income and expenses. Import from bank or trading statements for less manual entry."
             action={
-                <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                <div className="flex flex-wrap items-center gap-2">
+                    {setActivePage && (
+                        <button type="button" onClick={() => setActivePage('Statement Upload')} className="btn-outline flex items-center gap-2">
+                            <ArrowDownTrayIcon className="h-5 w-5" />
+                            Import from statements
+                        </button>
+                    )}
+                    <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                </div>
             }
         >
             <SectionCard
@@ -968,7 +987,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             </div>
                         </li>
                     ))}
-                    {filteredTransactions.length === 0 && <li className="empty-state">No transactions found for the selected period.</li>}
+                    {filteredTransactions.length === 0 && (
+                        <li className="empty-state flex flex-col items-center gap-2 py-6">
+                            <span>No transactions found for the selected period.</span>
+                            {setActivePage && (
+                                <button type="button" onClick={() => setActivePage('Statement Upload')} className="text-sm font-medium text-primary hover:underline">
+                                    Import from statements →
+                                </button>
+                            )}
+                        </li>
+                    )}
                 </ul>
             </SectionCard>
             

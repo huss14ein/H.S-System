@@ -6,8 +6,13 @@ import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, MagnifyingGlassIcon } from '../components/icons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import type { Page } from '../types';
 
-const StatementHistoryView: React.FC = () => {
+interface StatementHistoryViewProps {
+  setActivePage?: (page: Page) => void;
+}
+
+const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePage }) => {
   const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,6 +82,18 @@ const StatementHistoryView: React.FC = () => {
     <PageLayout
       title="Statement History"
       description="View and manage all uploaded statements, reconcile transactions, and track import history"
+      action={
+        setActivePage && (
+          <button
+            type="button"
+            onClick={() => setActivePage('Statement Upload')}
+            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
+          >
+            <DocumentArrowUpIcon className="h-5 w-5" />
+            Upload New Statement
+          </button>
+        )
+      }
     >
       <div className="space-y-6">
         {/* Stats Cards */}
@@ -133,13 +150,22 @@ const StatementHistoryView: React.FC = () => {
 
           {filteredStatements.length === 0 ? (
             <div className="text-center py-12">
-              <DocumentArrowUpIcon className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+              <DocumentArrowUpIcon className="h-12 w-12 text-slate-300 mx-auto mb-4" aria-hidden />
               <p className="text-lg font-semibold text-slate-600 mb-2">No statements found</p>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 mb-4">
                 {statements.length === 0
                   ? 'Upload your first statement to get started'
                   : 'Try adjusting your search or filter criteria'}
               </p>
+              {statements.length === 0 && setActivePage && (
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Statement Upload')}
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                >
+                  Upload statement
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-4">

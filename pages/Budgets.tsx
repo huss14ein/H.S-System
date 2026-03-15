@@ -8,7 +8,6 @@ import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
-import { DocumentDuplicateIcon } from '../components/icons/DocumentDuplicateIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -16,13 +15,13 @@ import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
-import { SparklesIcon } from '../components/icons/SparklesIcon';
 import {
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     generateSaudiBudgetCategories,
+    KSA_EXPENSE_CATEGORY_HINTS,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
@@ -36,6 +35,8 @@ import {
     type BudgetAnomaly,
     type SeasonalityPattern,
 } from '../services/householdBudgetAnalytics';
+import { detectRecurringBillPatterns, addBenchmarkComparison } from '../services/hybridBudgetCategorization';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 
 
 
@@ -162,9 +163,10 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 
 interface BudgetsProps {
     triggerPageAction?: (page: Page, action: string) => void;
+    setActivePage?: (page: Page) => void;
 }
 
-const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
+const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
@@ -207,7 +209,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
-    
+    const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
+
     // Update shared transaction month filter when current month changes
     useEffect(() => {
         setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
@@ -373,7 +376,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 const forecasts = predictFutureMonths(result.months, 3);
                 setPredictiveForecasts(forecasts);
                 
-                const commonScenarios = generateCommonScenarios(result, input.goals);
+                const commonScenarios = generateCommonScenarios(result, input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - (g.currentAmount ?? 0)) })));
                 setScenarios(commonScenarios);
                 
                        const detectedAnomalies = detectAnomalies(result.months);
@@ -409,6 +412,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
     }, [data?.transactions, currentYear]);
 
+    const recurringBillsWithBenchmarks = useMemo(() => {
+        const txs = (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
+        const patterns = detectRecurringBillPatterns(txs as any, 2);
+        return patterns.map((p) => addBenchmarkComparison(p));
+    }, [data?.transactions]);
+
+    const { household: householdConstraints } = useFinancialEnginesIntegration();
 
     React.useEffect(() => {
         const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
@@ -654,7 +664,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 })
             : [];
 
-        const scopedBudgets = [...ownScopedBudgets, ...syntheticRestrictedBudgets];
+        // Approved (Finalized) NewCategory requests: show as budget cards so they display like normal budgets
+        const finalizedNewCategory = (data?.budgetRequests ?? []).filter(
+            (r: any) => r.status === 'Finalized' && (r.requestType ?? r.request_type) === 'NewCategory'
+        );
+        const approvedRequestBudgets: Budget[] = finalizedNewCategory
+            .filter((r: any) => {
+                const cat = (r.category_name ?? r.categoryName ?? '').trim();
+                return cat && !ownScopedBudgets.some((b) => b.category === cat);
+            })
+            .map((r: any) => ({
+                id: `approved-request-${r.id}`,
+                user_id: auth?.user?.id,
+                category: (r.category_name ?? r.categoryName ?? '').trim(),
+                limit: Number(r.amount ?? 0) || 0,
+                month: currentMonth,
+                year: currentYear,
+                period: 'monthly' as const,
+                tier: (r.tier ?? 'Core') as 'Core' | 'Supporting' | 'Optional',
+            })) as Budget[];
+
+        const scopedBudgets = [...ownScopedBudgets, ...syntheticRestrictedBudgets, ...approvedRequestBudgets];
 
         if (budgetView === 'Yearly') {
             const yearlyLimitByCategory = new Map<string, number>();
@@ -694,7 +724,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
+    }, [data?.transactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -888,7 +918,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
         setHouseholdOverrides((prev) => {
             const existing = prev.find((o) => o.month === month) || { month };
             const next = { ...existing, ...patch };
-            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => a.month - b.month);
+            const merged = [...prev.filter((o) => o.month !== month), next].sort((a, b) => (a.month ?? 0) - (b.month ?? 0));
             return merged;
         });
     };
@@ -1294,10 +1324,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading budgets" />
             </div>
         );
     }
@@ -1326,12 +1356,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <span className="font-semibold text-sm sm:text-base min-w-[140px] text-center">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
                         <button type="button" onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-200" aria-label="Next month"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    <button type="button" disabled={!isAdmin} onClick={handleSmartFillBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50">
-                        <SparklesIcon className="h-5 w-5" />
-                        Smart-fill from history
-                    </button>
-                    <button type="button" disabled={!isAdmin} onClick={handleCopyBudgets} className="btn-ghost flex items-center gap-2 disabled:opacity-50"><DocumentDuplicateIcon className="h-5 w-5"/>Copy Last Month</button>
-                    <button type="button" disabled={!isAdmin} onClick={() => handleOpenModal()} className="btn-primary disabled:opacity-50">Add Budget</button>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500 font-medium whitespace-nowrap">Actions:</label>
+                        <select
+                            className="p-2 border border-slate-300 rounded-lg text-sm bg-white min-w-[180px]"
+                            value=""
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                e.target.value = '';
+                                if (v === 'smart-fill') handleSmartFillBudgets();
+                                else if (v === 'copy-month') handleCopyBudgets();
+                                else if (v === 'add-budget') handleOpenModal();
+                            }}
+                            aria-label="Budget actions"
+                        >
+                            <option value="">Choose action…</option>
+                            <option value="smart-fill" disabled={!isAdmin}>Smart-fill from history</option>
+                            <option value="copy-month" disabled={!isAdmin}>Copy last month</option>
+                            <option value="add-budget" disabled={!isAdmin}>Add budget</option>
+                        </select>
+                    </div>
                 </div>
             }
         >
@@ -1406,6 +1450,35 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                     </p>
                 )}
             </SectionCard>
+
+            {recurringBillsWithBenchmarks.length > 0 && (
+                <SectionCard title="Recurring bills & price benchmarks">
+                    <ul className="space-y-2 text-sm">
+                        {recurringBillsWithBenchmarks.slice(0, 8).map((bill, i) => (
+                            <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-2">
+                                <span className="font-medium text-slate-800">{bill.merchant}</span>
+                                <span className="text-slate-600">{formatCurrencyString(bill.typicalAmount, { digits: 0 })} · {bill.frequency}</span>
+                                {bill.benchmarkComparison && (
+                                    <span className="text-xs text-slate-500 w-full mt-0.5">
+                                        Market avg: {formatCurrencyString(bill.benchmarkComparison.marketAverage, { digits: 0 })} · {bill.benchmarkComparison.recommendation ?? `You pay ${bill.benchmarkComparison.percentile}th %ile`}
+                                    </span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-slate-500">Categories from EXPENSE_CATEGORIES; benchmarks from hybrid AI/local classification.</p>
+                </SectionCard>
+            )}
+
+            {householdConstraints?.cashflowStressSignals && householdConstraints.cashflowStressSignals.length > 0 && (
+                <SectionCard title="Cashflow signals (household & budget engines)">
+                    <ul className="space-y-1 text-sm text-amber-900">
+                        {householdConstraints.cashflowStressSignals.slice(0, 3).map((s, i) => (
+                            <li key={i}>{s.message}{s.recommendedAction ? ` — ${s.recommendedAction}` : ''}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
 
             {!isAdmin && (() => {
                 const selectedCategoryName = (() => {
@@ -1672,6 +1745,51 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 </div>
                 <div className="mt-4 flex flex-wrap gap-4 items-end">
                     <div>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                const salary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : (suggestedMonthlySalary || 5000);
+                                const categories = generateSaudiBudgetCategories(householdAdults, householdKids, salary, engineProfile);
+                                const budgetsThisPeriod = (data?.budgets ?? []) as Budget[];
+                                const existingCats = new Set([
+                                    ...budgetsThisPeriod.filter((b) => b.month === currentMonth && b.year === currentYear).map((b) => b.category),
+                                    ...budgetsThisPeriod.filter((b) => b.period === 'yearly' && b.year === currentYear).map((b) => b.category),
+                                ]);
+                                let created = 0;
+                                for (const c of categories) {
+                                    if (existingCats.has(c.category)) continue;
+                                    try {
+                                        await addBudget({ category: c.category, limit: c.limit, month: currentMonth, year: currentYear, period: c.period, tier: c.tier });
+                                        existingCats.add(c.category);
+                                        created++;
+                                    } catch {
+                                        // skip on error
+                                    }
+                                }
+                                alert(created > 0 ? `Created ${created} budget categories for ${currentMonth}/${currentYear} based on household (${householdAdults} adults, ${householdKids} kids, ${engineProfile}).` : 'No new categories added; you already have budgets for this month or an error occurred.');
+                            }}
+                            className="px-4 py-2 rounded-lg border-2 border-primary bg-primary/10 text-primary font-medium text-sm hover:bg-primary/20 transition-colors"
+                        >
+                            Create budgets from household (Saudi)
+                        </button>
+                        <p className="text-xs text-slate-500 mt-1 max-w-[280px]">Creates all possible categories with suggested amounts for current month based on family size and salary. Includes monthly, semi-annual (as yearly), annual sinking funds, and weekly. Run manually when needed.</p>
+                        <div className="mt-2">
+                            <button type="button" onClick={() => setShowKsaExpenseRef((v) => !v)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                                {showKsaExpenseRef ? 'Hide' : 'View'} KSA expense reference
+                            </button>
+                            {showKsaExpenseRef && (
+                                <div className="mt-2 p-2 rounded border border-slate-200 bg-slate-50 text-xs text-slate-700 max-h-48 overflow-y-auto">
+                                    {Object.entries(KSA_EXPENSE_CATEGORY_HINTS).map(([name, hint]) => (
+                                        <div key={name} className="py-1 border-b border-slate-100 last:border-0">
+                                            <span className="font-medium text-slate-800">{name}</span>
+                                            <span className="text-slate-600"> — {hint}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
                         <select
                             value={engineProfile}
@@ -1682,9 +1800,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                 <option key={key} value={key}>{HOUSEHOLD_ENGINE_PROFILES[key].label}</option>
                             ))}
                         </select>
-                        <p className="text-xs text-slate-500 mt-1 max-w-[200px]">{HOUSEHOLD_ENGINE_PROFILES[engineProfile].description}</p>
-                        {householdBudgetEngine.suggestedProfile && householdBudgetEngine.suggestedProfile !== engineProfile && (
-                            <p className="text-xs text-amber-700 mt-1">Suggested: {householdBudgetEngine.suggestedProfile} (income variance)</p>
+                        <p className="text-xs text-slate-500 mt-1 max-w-[200px]">{HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.description ?? ''}</p>
+                        {(householdBudgetEngine as unknown as { suggestedProfile?: string }).suggestedProfile && (householdBudgetEngine as unknown as { suggestedProfile: string }).suggestedProfile !== engineProfile && (
+                            <p className="text-xs text-amber-700 mt-1">Suggested: {(householdBudgetEngine as unknown as { suggestedProfile: string }).suggestedProfile} (income variance)</p>
                         )}
                     </div>
                     <div>
@@ -2016,14 +2134,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                             <div className="h-48 flex items-end justify-between gap-1">
                                 {householdBudgetEngine.months.slice(-6).map((month, idx) => {
-                                    const maxExpense = Math.max(...householdBudgetEngine.months.slice(-6).map(m => 
-                                        m.totalActualOutflow > 0 ? m.totalActualOutflow : m.totalPlannedOutflow
-                                    ));
-                                    const expense = month.totalActualOutflow > 0 ? month.totalActualOutflow : month.totalPlannedOutflow;
+                                    const outflows = householdBudgetEngine.months.slice(-6).map(m => 
+                                        (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0)
+                                    );
+                                    const maxExpense = outflows.length > 0 ? Math.max(...outflows) : 0;
+                                    const expense = (month.totalActualOutflow ?? 0) > 0 ? (month.totalActualOutflow ?? 0) : (month.totalPlannedOutflow ?? 0);
                                     const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
-                                    const income = month.incomeActual > 0 ? month.incomeActual : month.incomePlanned;
+                                    const income = (month.incomeActual ?? 0) > 0 ? (month.incomeActual ?? 0) : (month.incomePlanned ?? 0);
                                     const net = income - expense;
-                                    
+                                    const monthNum = month.month ?? (month.monthIndex ?? idx) + 1;
                                     return (
                                         <div key={idx} className="flex-1 flex flex-col items-center gap-1">
                                             <div className="w-full flex flex-col items-center gap-0.5" style={{ height: '180px' }}>
@@ -2031,7 +2150,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                                 <div
                                                     className="w-full rounded-t bg-emerald-500 transition-all"
                                                     style={{ height: `${maxExpense > 0 ? (income / maxExpense) * 100 : 0}%`, minHeight: income > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(month.month - 1) % 12]}: Income ${formatCurrencyString(income)}`}
+                                                    title={`${MONTHS[(monthNum - 1) % 12]}: Income ${formatCurrencyString(income)}`}
                                                 />
                                                 {/* Expense bar */}
                                                 <div
@@ -2039,11 +2158,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                                                         net >= 0 ? 'bg-rose-400' : 'bg-rose-600'
                                                     }`}
                                                     style={{ height: `${height}%`, minHeight: expense > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(month.month - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
+                                                    title={`${MONTHS[(monthNum - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
                                                 />
                                             </div>
                                             <p className="text-[10px] text-slate-600 font-medium mt-1">
-                                                {MONTHS[(month.month - 1) % 12].substring(0, 3)}
+                                                {MONTHS[(monthNum - 1) % 12].substring(0, 3)}
                                             </p>
                                         </div>
                                     );
@@ -2446,7 +2565,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
                 <SectionCard title="Shared Budget Transactions">
                     <div className="mb-4">
                         <p className="text-xs text-slate-500 mb-3">
-                            Track all transactions from shared accounts affecting your budgets. Approved transactions are deducted from budget totals.
+                            Default view is the <strong>current month</strong>. Use the month filter to view history. Track all transactions from shared accounts affecting your budgets; approved transactions are deducted from budget totals.
                         </p>
                         
                         {/* Filters */}
@@ -2664,6 +2783,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction }) => {
              {budgetData.length === 0 && (
                 <div className="text-center py-12 bg-white rounded-lg shadow">
                     <p className="text-gray-500">No budgets set for this month.</p>
+                    {setActivePage && (
+                        <p className="mt-2 text-sm text-slate-600">
+                            Add a budget above, or{' '}
+                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline">
+                                track spending in Cash Flow
+                            </button>
+                            {' '}to compare later on the Plan page.
+                        </p>
+                    )}
                 </div>
             )}
 

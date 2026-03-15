@@ -1,10 +1,9 @@
-
 import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 
 const SinkingFunds: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
     const suggestedFunds = useMemo(() => {
@@ -13,7 +12,7 @@ const SinkingFunds: React.FC = () => {
         twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
 
         // 1. Find large, fixed, recurring expenses from the last 2 years
-        data.transactions
+        (data?.transactions ?? [])
             .filter(t => 
                 t.type === 'expense' && 
                 t.transactionNature === 'Fixed' && 
@@ -55,6 +54,17 @@ const SinkingFunds: React.FC = () => {
         }
         return funds.sort((a,b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
     }, [data?.transactions]);
+
+    if (loading || !data) {
+        return (
+            <div className="bg-white p-6 rounded-lg shadow">
+                <div className="flex items-center justify-center py-8 gap-2 text-slate-500 text-sm" aria-busy="true">
+                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading sinking funds" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="bg-white p-6 rounded-lg shadow">

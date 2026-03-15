@@ -1,7 +1,9 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
+import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
+import type { Page } from '../types';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
@@ -229,8 +231,8 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   return events;
 }
 
-const MarketEvents: React.FC = () => {
-  const { data } = useContext(DataContext)!;
+const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+  const { data, loading } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -546,6 +548,10 @@ const MarketEvents: React.FC = () => {
     URL.revokeObjectURL(href);
   };
 
+  if (loading || !data) {
+    return <PageLoading ariaLabel="Loading market events" message="Loading…" />;
+  }
+
   return (
     <PageLayout
       title="Market Events"
@@ -593,7 +599,7 @@ const MarketEvents: React.FC = () => {
       <div className="space-y-4">
         <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
-          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows.</p>
+          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows. <strong>Macro</strong> events (US NFP, CPI, FOMC) impact rates and global equities; <strong>Earnings</strong> and <strong>Dividend</strong> events affect your holdings. Use filters to see what matters to you and how to react.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
@@ -653,6 +659,10 @@ const MarketEvents: React.FC = () => {
                       <h4 className="font-semibold text-slate-800">{event.title}</h4>
                       <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
                     </div>
+                    <p className="mt-1 text-xs text-slate-600">{event.description}</p>
+                    <div className="mt-2 text-xs text-slate-700 bg-slate-50 rounded-lg px-2 py-1.5">
+                      <span className="font-medium">Impact:</span> {event.impact === 'High' ? 'Can move markets and your portfolio; consider reducing risk or waiting to trade around this date.' : event.impact === 'Medium' ? 'May affect sector or symbol; watch positions and news.' : 'Lower market impact; optional to plan around.'}
+                    </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                       <span className={`px-2 py-0.5 rounded-full border ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
                       <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
@@ -660,7 +670,6 @@ const MarketEvents: React.FC = () => {
                       {event.estimated && <span className="text-amber-700">• Estimated</span>}
                       {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">{event.description}</p>
                     <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
                     <div className="mt-2">
                       <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>

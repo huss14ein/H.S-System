@@ -59,15 +59,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const { simulatedPrices } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
+  const [pendingTransactionApprovalCount, setPendingTransactionApprovalCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => { saveReadIds(readIds); }, [readIds]);
 
   useEffect(() => {
     let alive = true;
-    const loadPendingBudgetRequests = async () => {
+    const loadPending = async () => {
       if (!supabase || !auth?.user?.id) {
-        if (alive) setPendingBudgetRequestCount(0);
+        if (alive) { setPendingBudgetRequestCount(0); setPendingTransactionApprovalCount(0); }
         return;
       }
       const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
@@ -77,14 +78,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (!adminStatus) query = query.eq('user_id', auth.user.id);
       const { count } = await query;
       if (alive) setPendingBudgetRequestCount(Number(count || 0));
+      if (adminStatus) {
+        const txRes = await supabase.from('budget_shared_transactions').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
+        if (alive) setPendingTransactionApprovalCount(Number((txRes as any).count ?? 0));
+      } else if (alive) setPendingTransactionApprovalCount(0);
     };
 
-    loadPendingBudgetRequests();
-    const timer = window.setInterval(loadPendingBudgetRequests, 60000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
+    loadPending();
+    const timer = window.setInterval(loadPending, 60000);
+    return () => { alive = false; window.clearInterval(timer); };
   }, [auth?.user?.id]);
 
   const notifications = useMemo<AppNotification[]>(() => {
@@ -142,23 +144,49 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     });
 
-    // Transaction approval notifications - only for admins
-    if (isAdmin) {
-      const pendingTx = (data.transactions ?? []).filter((t) => (t.status ?? 'Approved') === 'Pending');
-      if (pendingTx.length > 0) {
-        push({
-          id: 'tx-pending-review',
-          category: 'Transaction',
-          message: `${pendingTx.length} transaction(s) need approval.`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Transactions',
-          severity: pendingTx.length >= 5 ? 'urgent' : 'warning',
-          actionHint: 'Open Transactions and review pending items.',
-        });
-      }
+    // Transaction approval notifications for admin (from shared budget transactions pending approval)
+    if (isAdmin && pendingTransactionApprovalCount > 0) {
+      push({
+        id: 'tx-pending-approval-admin',
+        category: 'Transaction',
+        message: `${pendingTransactionApprovalCount} shared-budget transaction(s) need your approval.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: 'warning',
+        actionHint: 'Open Budgets to review and approve. Approved transactions will be reflected in shared budgets for all users with access.',
+      });
     }
-    
+
+    // Budget request notifications for admin (pending requests from others)
+    if (isAdmin && pendingBudgetRequestCount > 0) {
+      push({
+        id: 'budget-request-pending-admin',
+        category: 'Budget',
+        message: `${pendingBudgetRequestCount} budget request(s) pending your review.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: 'warning',
+        actionHint: 'Open Budgets to approve or reject requests.',
+      });
+    }
+
+    // User: notifications for their own budget request outcomes (Finalized or Rejected)
+    (data.budgetRequests ?? []).filter((r: any) => r.status === 'Finalized' || r.status === 'Rejected').forEach((r: any) => {
+      const categoryLabel = r.category_name || r.categoryName || r.category_id || 'Request';
+      push({
+        id: `request-${r.id}`,
+        category: 'Budget',
+        message: r.status === 'Finalized' ? `Your budget request for "${categoryLabel}" was approved.` : `Your budget request for "${categoryLabel}" was rejected.`,
+        date: (r.updated_at || r.created_at || now).toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: r.status === 'Finalized' ? 'info' : 'warning',
+        actionHint: r.status === 'Finalized' ? 'View your budgets to see the new category.' : 'You can submit a new request with different details.',
+      });
+    });
+
     // User notifications for their own budget requests
     if (!isAdmin && pendingBudgetRequestCount > 0) {
       push({
@@ -272,7 +300,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, pendingBudgetRequestCount, isAdmin]);
+  }, [data, simulatedPrices, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

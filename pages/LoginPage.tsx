@@ -53,7 +53,7 @@ const LoginPage: React.FC = () => {
                     />
                 </div>
                 <div>
-                    <label htmlFor="password"className="block text-sm font-medium text-gray-700">Password</label>
+                    <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
                     <input
                     type="password"
                     id="password"

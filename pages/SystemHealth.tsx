@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
+import type { Page } from '../types';
 import { invokeAI } from '../services/geminiService';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { MarketDataContext } from '../context/MarketDataContext';
@@ -55,7 +56,7 @@ const statusWeight: Record<ServiceStatus, number> = {
   Simulated: 85,
 };
 
-const SystemHealth: React.FC = () => {
+const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
   const [services, setServices] = useState<Service[]>(initialServices);
   const [isLoading, setIsLoading] = useState(false);
   const [marketStatus, setMarketStatus] = useState<MarketStatusItem | null>(null);

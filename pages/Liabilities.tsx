@@ -177,35 +177,39 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
 
 interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
 const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
-    const { data, addLiability, updateLiability } = useContext(DataContext)!;
+    const { data, loading, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
     const allLiabilities: Liability[] = useMemo(() => {
-        const creditCardDebts = data.accounts
-            .filter(a => a.type === 'Credit' && a.balance < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance, status: 'Active' as const }));
-        return [...data.liabilities, ...creditCardDebts];
-    }, [data.liabilities, data.accounts]);
+        const accounts = data?.accounts ?? [];
+        const liabilities = data?.liabilities ?? [];
+        const creditCardDebts = accounts
+            .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
+            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance ?? 0, status: 'Active' as const }));
+        return [...liabilities, ...creditCardDebts];
+    }, [data?.liabilities, data?.accounts]);
 
     const allDebts = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) < 0), [allLiabilities]);
     const allReceivables = useMemo(() => allLiabilities.filter(l => (l.amount ?? 0) > 0), [allLiabilities]);
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
-    const liabilityIds = useMemo(() => new Set(data.liabilities.map(l => l.id)), [data.liabilities]);
+    const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
 
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
         const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const totalAssets = data.assets.reduce((sum, asset) => sum + asset.value, 0) + data.accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const assets = data?.assets ?? [];
+        const accounts = data?.accounts ?? [];
+        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [allDebts, allReceivables, data.assets, data.accounts]);
+    }, [allDebts, allReceivables, data?.assets, data?.accounts]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
@@ -229,6 +233,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             updateLiability({ ...liability, status: 'Paid' });
         }
     };
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading liabilities" />
+            </div>
+        );
+    }
 
     return (
         <PageLayout

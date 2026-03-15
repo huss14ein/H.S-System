@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Asset, Goal, AssetType, CommodityHolding } from '../types';
+import { Asset, Goal, AssetType, CommodityHolding, Page } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -407,12 +407,20 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 };
 // --- End Commodity Components ---
 
-interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; }
+interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
-const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActivePage }) => {
+    const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading assets" />
+            </div>
+        );
+    }
     
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
@@ -432,18 +440,20 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     }, [pageAction, clearPageAction]);
 
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
-        const physicalValue = data.assets.reduce((sum, asset) => sum + asset.value, 0);
-        const commodityValue = data.commodityHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-        const rentalIncome = data.assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + a.monthlyRent!, 0);
+        const assets = data?.assets ?? [];
+        const commodityHoldings = data?.commodityHoldings ?? [];
+        const physicalValue = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0);
+        const commodityValue = commodityHoldings.reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
+        const rentalIncome = assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + (a.monthlyRent ?? 0), 0);
         return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
-    }, [data.assets, data.commodityHoldings]);
+    }, [data?.assets, data?.commodityHoldings]);
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
-    const handleSaveAsset = (asset: Asset) => { if (data.assets.some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
-    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = data.assets.find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
+    const handleSaveAsset = (asset: Asset) => { if ((data?.assets ?? []).some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = (data?.assets ?? []).find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
     const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
-        const holding = data.commodityHoldings.find((h) => h.id === holdingId);
+        const holding = (data?.commodityHoldings ?? []).find((h) => h.id === holdingId);
         if (holding) updateCommodityHolding({ ...holding, goalId: goalId === 'none' ? undefined : goalId });
     };
     
@@ -459,17 +469,18 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleConfirmDelete = () => { if(itemToDelete) { ('unit' in itemToDelete ? deleteCommodityHolding(itemToDelete.id) : deleteAsset(itemToDelete.id)); setItemToDelete(null); } };
     
     const handleUpdatePrices = async () => {
-        if (data.commodityHoldings.length === 0) return;
+        const commodityHoldings = data?.commodityHoldings ?? [];
+        if (commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
         setGroundingChunks([]);
         try {
-            const { prices, groundingChunks: chunks } = await getAICommodityPrices(data.commodityHoldings.map(c => ({ symbol: c.symbol, name: c.name, goldKarat: c.goldKarat })));
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(commodityHoldings.map(c => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
             if (chunks) {
                 setGroundingChunks(chunks);
             }
             if (prices.length > 0) {
                 const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
-                const updates = data.commodityHoldings.map(h => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
+                const updates = commodityHoldings.map(h => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
@@ -480,8 +491,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     };
 
 
-    const orderedAssets = useMemo(() => [...data.assets].sort((a, b) => a.name.localeCompare(b.name)), [data.assets]);
-    const orderedCommodities = useMemo(() => [...data.commodityHoldings].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data.commodityHoldings]);
+    const orderedAssets = useMemo(() => [...(data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [data?.assets]);
+    const orderedCommodities = useMemo(() => [...(data?.commodityHoldings ?? [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data?.commodityHoldings]);
 
     const addActions = [
         { label: 'Physical Asset', icon: HomeModernIcon, onClick: () => handleOpenAssetModal(null, 'Property') },
@@ -490,7 +501,18 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     ];
 
     return (
-        <PageLayout title="Assets" description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values." action={<AddMenu actions={addActions} />}>
+        <PageLayout
+            title="Assets"
+            description="Physical assets, metals, and crypto. Link to goals and use Update Prices for current commodity values."
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    {setActivePage && (
+                        <button type="button" onClick={() => setActivePage('Commodities')} className="btn-outline text-sm">Metals & Crypto</button>
+                    )}
+                    <AddMenu actions={addActions} />
+                </div>
+            }
+        >
 
             <SectionCard title="Sukuk in Finova" className="overflow-hidden">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
@@ -519,9 +541,9 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <SectionCard title="Physical Assets" className="overflow-visible">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedAssets.map((asset) => (
-                        <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data.goals} />
+                        <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data?.goals ?? []} />
                     ))}
-                    {data.assets.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
+                    {(data?.assets?.length ?? 0) === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
                 </div>
             </SectionCard>
 
@@ -532,8 +554,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <button
                         type="button"
                         onClick={handleUpdatePrices}
-                        disabled={isUpdatingPrices || data.commodityHoldings.length === 0}
-                        title={data.commodityHoldings.length === 0 ? "Add a commodity to update prices" : "Update prices"}
+                        disabled={isUpdatingPrices || (data?.commodityHoldings?.length ?? 0) === 0}
+                        title={(data?.commodityHoldings?.length ?? 0) === 0 ? "Add a commodity to update prices" : "Update prices"}
                         className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <SparklesIcon className="h-4 w-4" />
@@ -549,7 +571,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>
                 </div>
-                {!isAiAvailable && data.commodityHoldings.length > 0 && (
+                {!isAiAvailable && (data?.commodityHoldings?.length ?? 0) > 0 && (
                     <div className="alert-warning mb-4 rounded-lg">
                         <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
                     </div>
@@ -566,14 +588,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedCommodities.map((h) => (
-                        <CommodityHoldingCard key={h.id} holding={h} goals={data.goals} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
+                        <CommodityHoldingCard key={h.id} holding={h} goals={data?.goals ?? []} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
                     ))}
-                    {data.commodityHoldings.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
+                    {(data?.commodityHoldings?.length ?? 0) === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
                 </div>
             </SectionCard>
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
-            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data.goals} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>
     );

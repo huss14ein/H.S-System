@@ -8,10 +8,10 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const ExecutionHistoryView: React.FC = () => {
-  const { data } = useContext(DataContext)!;
+  const { data, loading } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
-  
+
   const executionLogs = useMemo(() => {
     // Get execution logs from data context (loaded from database)
     let logs: any[] = [];
@@ -66,6 +66,19 @@ const ExecutionHistoryView: React.FC = () => {
         return dateB - dateA; // Most recent first
       });
   }, [data?.executionLogs, filterStatus]);
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-6" aria-busy="true">
+        <SectionCard title="Execution History">
+          <div className="flex items-center justify-center py-12 gap-3">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
+            <span className="text-sm text-slate-600">Loading execution history…</span>
+          </div>
+        </SectionCard>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

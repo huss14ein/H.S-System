@@ -75,7 +75,7 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, getAvailableCashForAccount } = ctx;
+  const { data, loading, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
   const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
   const { simulatedPrices } = useMarketData();
@@ -459,6 +459,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       alert(`Failed to generate draft orders: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+
+  if (loading || !data) {
+    return (
+      <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 mt-4">

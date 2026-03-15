@@ -14,12 +14,13 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 
 const InvestmentOverview: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
-        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = data.investments.flatMap((p) =>
+        const investments = data?.investments ?? [];
+        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap((p) =>
             (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency })),
         );
 
@@ -47,7 +48,7 @@ const InvestmentOverview: React.FC = () => {
             .filter((x) => Number.isFinite(x.value) && x.value > 0)
             .sort((a, b) => b.value - a.value);
 
-        const portfolioAllocation = data.investments
+        const portfolioAllocation = investments
             .map((p) => {
                 const portfolioValue = (p.holdings || []).reduce((sum, h) => {
                     const qty = Number(h.quantity || 0);
@@ -63,7 +64,7 @@ const InvestmentOverview: React.FC = () => {
             .sort((a, b) => b.value - a.value);
 
         return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation };
-    }, [data, exchangeRate]);
+    }, [data?.investments, exchangeRate]);
 
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
@@ -117,6 +118,14 @@ const InvestmentOverview: React.FC = () => {
             setIsAiLoading(false);
         }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation]);
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investment overview" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 mt-4">

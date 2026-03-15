@@ -1,6 +1,6 @@
 import React, { useState, useContext, useCallback, useEffect, useRef, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { PriceAlert, PriceAlertCurrency, WatchlistItem } from '../types';
+import { PriceAlert, PriceAlertCurrency, WatchlistItem, type Page } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint, getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
@@ -20,8 +20,10 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { ArrowTrendingDownIcon, XMarkIcon, PlusIcon } from '../components/icons';
+import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { XMarkIcon } from '../components/icons';
 import { toSAR } from '../utils/currencyMath';
+import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 
 
 interface WatchlistBucket {
@@ -36,6 +38,8 @@ const ALERT_CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'SAR', label: 'SAR' },
 ];
 
+const POPULAR_SYMBOLS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', '2222.SR', '1120.SR', '1180.SR'];
+
 const AddWatchlistItemModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
@@ -48,7 +52,8 @@ const AddWatchlistItemModal: React.FC<{
     const [targetPrice, setTargetPrice] = useState('');
     const [alertCurrency, setAlertCurrency] = useState<PriceAlertCurrency>('USD');
     const [isLoadingName, setIsLoadingName] = useState(false);
-    const [step, setStep] = useState<'symbol' | 'details'>('symbol');
+    const [step, setStep] = useState<'main' | 'details'>('main');
+    const [validationError, setValidationError] = useState<string | null>(null);
     const nameRef = useRef(name);
     nameRef.current = name;
     const symbolInputRef = useRef<HTMLInputElement | null>(null);
@@ -61,11 +66,10 @@ const AddWatchlistItemModal: React.FC<{
             setSetAlert(false);
             setTargetPrice('');
             setAlertCurrency('USD');
-            setStep('symbol');
+            setStep('main');
             setIsLoadingName(false);
-            setTimeout(() => {
-                symbolInputRef.current?.focus();
-            }, 100);
+            setValidationError(null);
+            setTimeout(() => symbolInputRef.current?.focus(), 100);
         }
     }, [isOpen]);
 
@@ -79,49 +83,59 @@ const AddWatchlistItemModal: React.FC<{
         setIsLoadingName(true);
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((apiName) => {
-                if (apiName && !nameRef.current.trim()) {
-                    setName(apiName);
-                }
+                if (apiName && !nameRef.current.trim()) setName(apiName);
                 setIsLoadingName(false);
             }).catch(() => setIsLoadingName(false));
-        }, 600);
+        }, 500);
         return () => clearTimeout(t);
     }, [symbol, isOpen]);
 
     useEffect(() => {
-        if (setAlert && priceInputRef.current) {
-            setTimeout(() => priceInputRef.current?.focus(), 100);
-        }
+        if (setAlert && priceInputRef.current) setTimeout(() => priceInputRef.current?.focus(), 100);
     }, [setAlert]);
 
-    const handleSymbolSubmit = (e: React.FormEvent) => {
+    const handleQuickAdd = (sym: string) => {
+        setSymbol(sym);
+        setValidationError(null);
+        symbolInputRef.current?.focus();
+    };
+
+    const handleSubmitMain = (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationError(null);
         const sym = symbol.toUpperCase().trim();
-        if (!sym) return;
-        if (sym.length < 1) return;
+        if (!sym) {
+            setValidationError('Enter a stock symbol.');
+            return;
+        }
+        if (sym.length > 10) {
+            setValidationError('Symbol must be 1–10 characters.');
+            return;
+        }
         setStep('details');
     };
 
     const handleFinalSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationError(null);
         const sym = symbol.toUpperCase().trim();
         if (!sym) {
-            alert('Please enter a stock symbol.');
+            setValidationError('Enter a stock symbol.');
             return;
         }
-        if (sym.length < 1 || sym.length > 10) {
-            alert('Symbol must be between 1 and 10 characters.');
+        if (sym.length > 10) {
+            setValidationError('Symbol must be 1–10 characters.');
             return;
         }
         const displayName = name.trim() || sym;
-        if (displayName.length < 2) {
-            alert('Company name must be at least 2 characters.');
+        if (displayName.length < 1) {
+            setValidationError('Enter or confirm a name for the symbol.');
             return;
         }
         if (onAddAlert && setAlert && targetPrice.trim()) {
             const price = parseFloat(targetPrice.replace(/,/g, ''));
             if (!Number.isFinite(price) || price <= 0) {
-                alert('Target price must be a positive number.');
+                setValidationError('Target price must be a positive number.');
                 return;
             }
             onAddAlert(sym, price, alertCurrency);
@@ -133,164 +147,120 @@ const AddWatchlistItemModal: React.FC<{
     const handleClose = () => {
         setSetAlert(false);
         setTargetPrice('');
-        setAlertCurrency('USD');
+        setValidationError(null);
         onClose();
     };
 
     const handleBack = () => {
-        setStep('symbol');
+        setStep('main');
         setSetAlert(false);
         setTargetPrice('');
+        setValidationError(null);
         setTimeout(() => symbolInputRef.current?.focus(), 100);
     };
 
     const sym = symbol.toUpperCase().trim();
-    const canProceed = sym.length >= 1;
 
     return (
-        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist" maxWidthClass="max-w-md">
-            {step === 'symbol' ? (
-                <form onSubmit={handleSymbolSubmit} className="space-y-6">
-                    <div className="text-center">
-                        <div className="w-16 h-16 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <PlusIcon className="h-8 w-8 text-white" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-slate-800">Add Stock Symbol</h3>
-                        <p className="text-sm text-slate-500 mt-1">Enter a ticker symbol to start tracking</p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label htmlFor="stock-symbol" className="block text-sm font-medium text-slate-700">Stock Symbol</label>
+        <Modal isOpen={isOpen} onClose={handleClose} title="Add to Watchlist" maxWidthClass="max-w-lg">
+            {step === 'main' ? (
+                <form onSubmit={handleSubmitMain} className="space-y-5">
+                    <div>
+                        <label htmlFor="add-wl-symbol" className="block text-sm font-medium text-slate-700 mb-1">Symbol or ticker</label>
                         <div className="relative">
                             <input
                                 ref={symbolInputRef}
                                 type="text"
-                                id="stock-symbol"
+                                id="add-wl-symbol"
                                 value={symbol}
-                                onChange={e => setSymbol(e.target.value.toUpperCase())}
-                                required
-                                className="w-full p-3 border border-slate-300 rounded-lg text-lg font-semibold tracking-wide uppercase focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                                onChange={e => { setSymbol(e.target.value.toUpperCase()); setValidationError(null); }}
+                                className="w-full p-3 pr-10 border border-slate-300 rounded-xl text-lg font-semibold tracking-wide uppercase focus:ring-2 focus:ring-primary focus:border-primary transition-all"
                                 placeholder="e.g. AAPL"
                                 maxLength={10}
+                                aria-describedby="add-wl-hint add-wl-popular"
                             />
                             {symbol && (
-                                <button
-                                    type="button"
-                                    onClick={() => { setSymbol(''); symbolInputRef.current?.focus(); }}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                                >
+                                <button type="button" onClick={() => { setSymbol(''); setValidationError(null); symbolInputRef.current?.focus(); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="Clear symbol">
                                     <XMarkIcon className="h-5 w-5" />
                                 </button>
                             )}
                         </div>
-                        <p className="text-xs text-slate-500">Popular: AAPL, MSFT, GOOGL, 2222.SR</p>
+                        <p id="add-wl-hint" className="text-xs text-slate-500 mt-1">Company name will be filled automatically when possible.</p>
+                        <div id="add-wl-popular" className="flex flex-wrap gap-2 mt-3">
+                            <span className="text-xs text-slate-500 self-center mr-1">Quick add:</span>
+                            {POPULAR_SYMBOLS.map(s => (
+                                <button key={s} type="button" onClick={() => handleQuickAdd(s)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-primary/10 hover:border-primary/30 transition-colors">
+                                    {s}
+                                </button>
+                            ))}
+                        </div>
+                        {validationError && <p className="text-sm text-rose-600 mt-1" role="alert">{validationError}</p>}
                     </div>
-
-                    <button
-                        type="submit"
-                        disabled={!canProceed}
-                        className="w-full py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
-                    >
+                    <button type="submit" disabled={!sym} className="w-full py-3 px-4 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                         Continue
                     </button>
                 </form>
             ) : (
                 <form onSubmit={handleFinalSubmit} className="space-y-5">
-                    <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
-                        <button
-                            type="button"
-                            onClick={handleBack}
-                            className="p-2 hover:bg-slate-100 rounded-full transition-colors"
-                        >
-                            <ArrowTrendingDownIcon className="h-5 w-5 text-slate-600" />
+                    <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
+                        <button type="button" onClick={handleBack} className="p-2 hover:bg-slate-100 rounded-lg transition-colors" aria-label="Back to symbol">
+                            <ChevronLeftIcon className="h-5 w-5 text-slate-600" />
                         </button>
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-2xl font-bold text-slate-900 tracking-wide">{sym}</span>
-                                {isLoadingName && <div className="w-4 h-4 border-2 border-slate-300 border-t-primary rounded-full animate-spin" />}
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xl font-bold text-slate-900 tracking-wide">{sym}</span>
+                                {isLoadingName && <div className="w-4 h-4 border-2 border-slate-300 border-t-primary rounded-full animate-spin" aria-hidden />}
                             </div>
-                            <p className="text-xs text-slate-500">Step 2 of 2 • Confirm details</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Confirm details and add</p>
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <label htmlFor="stock-name" className="block text-sm font-medium text-slate-700">Company Name</label>
+                    <div>
+                        <label htmlFor="add-wl-name" className="block text-sm font-medium text-slate-700 mb-1">Display name (optional)</label>
                         <input
                             type="text"
-                            id="stock-name"
+                            id="add-wl-name"
                             value={name}
                             onChange={e => setName(e.target.value)}
-                            className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all"
-                            placeholder={isLoadingName ? 'Looking up...' : 'Company name (auto-filled)'}
+                            className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
+                            placeholder={isLoadingName ? 'Looking up…' : 'Leave blank to use symbol'}
                         />
                     </div>
 
                     {onAddAlert && (
-                        <div className="space-y-3 pt-2">
-                            <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
-                                <div className="relative">
-                                    <input
-                                        type="checkbox"
-                                        checked={setAlert}
-                                        onChange={e => setSetAlert(e.target.checked)}
-                                        className="peer sr-only"
-                                    />
-                                    <div className="w-5 h-5 border-2 border-slate-300 rounded peer-checked:bg-primary peer-checked:border-primary transition-all" />
-                                    <BellIcon className="h-3 w-3 text-white absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 peer-checked:opacity-100" />
-                                </div>
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                                <input type="checkbox" checked={setAlert} onChange={e => setSetAlert(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary" />
                                 <div className="flex-1">
                                     <span className="text-sm font-medium text-slate-700">Set price alert</span>
-                                    <p className="text-xs text-slate-500">Get notified when price hits your target</p>
+                                    <p className="text-xs text-slate-500">Notify when price reaches target</p>
                                 </div>
                                 <BellIcon className="h-5 w-5 text-amber-500" />
                             </label>
-
                             {setAlert && (
-                                <div className="space-y-3 p-4 bg-slate-50 rounded-lg animate-fadeIn">
-                                    <div className="flex gap-3">
-                                        <div className="w-28">
-                                            <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
-                                            <select
-                                                value={alertCurrency}
-                                                onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)}
-                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
-                                            >
-                                                {ALERT_CURRENCY_OPTIONS.map(opt => (
-                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div className="flex-1">
-                                            <label className="block text-xs font-medium text-slate-600 mb-1">Target Price</label>
-                                            <input
-                                                ref={priceInputRef}
-                                                type="number"
-                                                value={targetPrice}
-                                                onChange={e => setTargetPrice(e.target.value)}
-                                                min="0.01"
-                                                step="0.01"
-                                                placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'}
-                                                className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
-                                            />
-                                        </div>
+                                <div className="flex gap-3 p-3 bg-slate-50 rounded-xl">
+                                    <div className="w-28">
+                                        <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
+                                        <select value={alertCurrency} onChange={e => setAlertCurrency(e.target.value as PriceAlertCurrency)} className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary">
+                                            {ALERT_CURRENCY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="block text-xs font-medium text-slate-600 mb-1">Target price</label>
+                                        <input ref={priceInputRef} type="number" value={targetPrice} onChange={e => setTargetPrice(e.target.value)} min="0.01" step="0.01" placeholder={alertCurrency === 'SAR' ? 'e.g. 350.50' : 'e.g. 185.00'} className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary" />
                                     </div>
                                 </div>
                             )}
                         </div>
                     )}
 
-                    <div className="flex gap-3 pt-2">
-                        <button
-                            type="button"
-                            onClick={handleBack}
-                            className="flex-1 py-3 px-4 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
-                        >
+                    {validationError && <p className="text-sm text-rose-600" role="alert">{validationError}</p>}
+
+                    <div className="flex gap-3 pt-1">
+                        <button type="button" onClick={handleBack} className="flex-1 py-3 px-4 border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors">
                             Back
                         </button>
-                        <button
-                            type="submit"
-                            className="flex-1 py-3 px-4 bg-primary text-white rounded-lg font-medium hover:bg-secondary transition-colors"
-                        >
+                        <button type="submit" className="flex-1 py-3 px-4 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors">
                             Add to Watchlist
                         </button>
                     </div>
@@ -361,6 +331,33 @@ const WatchlistItemRow: React.FC<{
                     ? 'Above target'
                     : 'Below target';
 
+    const techSignals = useMemo(() => {
+        const prices = (historical1M ?? []).map(c => c.price).filter((p): p is number => Number.isFinite(p));
+        if (prices.length < 20) return null;
+        const rsiArr = rsi(prices, 14);
+        const lastRsi = rsiArr[rsiArr.length - 1];
+        const lastZ = zScore(prices, 20)[prices.length - 1];
+        const bb = bollingerBands(prices, 20, 2);
+        const lastPrice = prices[prices.length - 1];
+        const lastUpper = bb.upper[bb.upper.length - 1];
+        const lastLower = bb.lower[bb.lower.length - 1];
+        let bbLabel: string | null = null;
+        if (Number.isFinite(lastUpper) && Number.isFinite(lastLower) && Number.isFinite(lastPrice)) {
+            if (lastPrice >= lastUpper * 0.98) bbLabel = 'BB: near upper';
+            else if (lastPrice <= lastLower * 1.02) bbLabel = 'BB: near lower';
+            else bbLabel = 'BB: mid';
+        }
+        const stCross = shortTermCrossoverSignal(prices, 5, 10);
+        return {
+            rsi: Number.isFinite(lastRsi) ? lastRsi : null,
+            rsiSig: lastRsi != null ? rsiSignal(lastRsi) : null,
+            zScore: Number.isFinite(lastZ) ? lastZ : null,
+            zSig: lastZ != null ? zScoreSignal(lastZ) : null,
+            bb: bbLabel,
+            smaCross: stCross?.golden ? 'golden' as const : stCross?.death ? 'death' as const : null,
+        };
+    }, [historical1M]);
+
     useEffect(() => {
         if (priceInfo) {
             if (prevPriceRef.current !== undefined && priceInfo.price !== prevPriceRef.current) {
@@ -391,6 +388,31 @@ const WatchlistItemRow: React.FC<{
             <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(displayChange, displayCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
                 <span className="block text-[10px] text-slate-500 font-normal">Period: 1D</span>
+            </td>
+            <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[200px]">
+                {techSignals && (
+                    <div className="space-y-0.5">
+                        {techSignals.rsi != null && (
+                            <span className={techSignals.rsiSig === 'overbought' ? 'text-amber-700 font-medium' : techSignals.rsiSig === 'oversold' ? 'text-emerald-700 font-medium' : 'text-slate-600'}>
+                                RSI {techSignals.rsi.toFixed(0)}{techSignals.rsiSig !== 'neutral' ? ` (${techSignals.rsiSig})` : ''}
+                            </span>
+                        )}
+                        {techSignals.zScore != null && techSignals.zSig !== 'neutral' && (
+                            <span className="text-slate-600">Z {techSignals.zScore.toFixed(2)} ({techSignals.zSig})</span>
+                        )}
+                        {techSignals.bb && (
+                            <span className={techSignals.bb.includes('upper') ? 'text-amber-600' : techSignals.bb.includes('lower') ? 'text-emerald-600' : 'text-slate-600'}>
+                                {techSignals.bb}
+                            </span>
+                        )}
+                        {techSignals.smaCross && (
+                            <span className={techSignals.smaCross === 'golden' ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
+                                SMA(5/10): {techSignals.smaCross === 'golden' ? 'golden cross' : 'death cross'}
+                            </span>
+                        )}
+                    </div>
+                )}
+                {!techSignals && historical1M && historical1M.length < 20 && <span className="text-slate-400">Need 20+ days</span>}
             </td>
             <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[220px]">
                 {fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">Loading events…</span>}
@@ -469,22 +491,23 @@ const WatchlistItemRow: React.FC<{
 };
 
 
-interface WatchlistViewProps {
+type WatchlistViewProps = {
   onNavigateToTab?: (tab: string) => void;
-}
+  setActivePage?: (page: Page) => void;
+};
 
-const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
-    const { data, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage }) => {
+    const { data, loading, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
     
     // Loading state
-    if (!data) {
+    if (loading || !data) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center">
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center" aria-busy="true">
                 <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading watchlist" />
                     <p className="text-sm text-slate-600">Loading watchlist data...</p>
                 </div>
             </div>
@@ -692,7 +715,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
     }, [recentTransactions, analysisContext]);
 
     const handleGetWatchlistTips = useCallback(async () => {
-        if (!data.watchlist?.length) {
+        if (!data?.watchlist?.length) {
             setAiWatchlistError('Add at least one symbol to your watchlist first.');
             return;
         }
@@ -875,7 +898,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                     <span className="text-xs text-slate-500">Showing {filteredWatchlist.length} of {(data?.watchlist ?? []).length}</span>
                 </div>
                 <div className="overflow-x-auto overflow-y-visible"><table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Signals</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredWatchlist.map((item) => {
                             const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
@@ -921,7 +944,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab }) => {
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-amber-500"/>Watchlist Tips</h4>
                     <p className="text-xs text-slate-600 mb-3">AI suggestions for your watchlist symbols (diversification, themes, concepts).</p>
-                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
+                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data?.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
                         <SparklesIcon className="h-4 w-4" /> {aiWatchlistLoading ? 'Generating...' : 'Get Recommendations'}
                     </button>
                     {aiWatchlistError && <div className="mt-2"><p className="text-xs text-red-600">{aiWatchlistError}</p><button type="button" onClick={handleGetWatchlistTips} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}

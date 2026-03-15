@@ -22,6 +22,7 @@ import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
+import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -207,6 +208,21 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };
     }, [goal, monthlySavings, calculatedCurrentAmount]);
 
+    const monteCarloResult = useMemo(() => {
+        const targetAmt = goal.targetAmount ?? 0;
+        if (targetAmt <= 0 || monthsLeft <= 0 || calculatedCurrentAmount >= targetAmt) return null;
+        const monthlyContrib = Math.max(0, projectedMonthlyContribution || requiredMonthlyContribution * 0.5);
+        return monteCarloGoalSuccess({
+            currentAmount: calculatedCurrentAmount,
+            targetAmount: targetAmt,
+            monthlyContribution: monthlyContrib,
+            monthsRemaining: monthsLeft,
+            expectedAnnualReturn: 0.07,
+            annualVolatility: 0.15,
+            numSimulations: 2000,
+        });
+    }, [goal.targetAmount, monthsLeft, calculatedCurrentAmount, projectedMonthlyContribution, requiredMonthlyContribution]);
+
     return (
         <div className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border-t-4 ${borderColor}`}>
             {/* Header */}
@@ -248,6 +264,12 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     {projectedMonthlyContribution > 0 && ((goal.targetAmount ?? 0) - calculatedCurrentAmount) > 0 && (
                         <p className="text-xs text-slate-600 mt-2">
                             At current rate: <span className="font-semibold text-dark">~{Math.ceil(((goal.targetAmount ?? 0) - calculatedCurrentAmount) / projectedMonthlyContribution)} months</span> to goal
+                        </p>
+                    )}
+                    {monteCarloResult != null && (
+                        <p className="text-xs text-indigo-700 mt-2 font-medium">
+                            Probability of success: <span className="font-bold">{monteCarloResult.probabilityOfSuccess.toFixed(0)}%</span>
+                            <span className="text-slate-500 font-normal ml-1">(Monte Carlo, 2k scenarios)</span>
                         </p>
                     )}
                 </div>
@@ -437,10 +459,10 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         alert("Savings allocation strategy saved!");
     };
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading goals" />
             </div>
         );
     }

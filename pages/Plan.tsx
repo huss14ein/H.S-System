@@ -25,6 +25,8 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/enhancedBudgetEngine';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -102,7 +104,7 @@ const SCENARIO_PRESETS = [
 ];
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const [year, setYear] = useState(new Date().getFullYear());
@@ -474,6 +476,19 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return buildHouseholdBudgetPlan(input);
     }, [processedPlanData, accounts, goals, transactions, year, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
+    const { household: householdConstraints } = useFinancialEnginesIntegration();
+    const dynamicBaselines = useMemo(() => calculateDynamicBaselines(transactions as any[], 6), [transactions]);
+    const predictiveSpend = useMemo(() => {
+        const currentMonth = new Date().getMonth() + 1;
+        const recentTx = (transactions as any[]).filter((t: { date: string }) => {
+            const d = new Date(t.date);
+            const cutoff = new Date();
+            cutoff.setMonth(cutoff.getMonth() - 3);
+            return d >= cutoff;
+        });
+        return generatePredictiveSpend(dynamicBaselines, currentMonth, recentTx, []);
+    }, [dynamicBaselines, transactions]);
+
     useEffect(() => {
         const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
         if (engineProfile === 'Moderate') {
@@ -512,6 +527,14 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 <span className={`w-2.5 h-2.5 rounded-full ${statusColor}`} title={`Status: ${percentage.toFixed(0)}% of plan`}></span>
                 <span>{formatCurrencyString(value, { digits: 0 })}</span>
              </div>
+        );
+    }
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading plan" />
+            </div>
         );
     }
 
@@ -566,6 +589,45 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </span>
                 </div>
             </div>
+
+            {/* Dynamic baselines & predictive spend (household engine enhancement) */}
+            {(dynamicBaselines.length > 0 || (householdConstraints?.cashflowStressSignals?.length ?? 0) > 0) && (
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Household intelligence</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {dynamicBaselines.length > 0 && (
+                            <div>
+                                <p className="text-sm font-medium text-slate-700 mb-1">Dynamic baselines (from spending)</p>
+                                <ul className="text-xs text-slate-600 space-y-0.5">
+                                    {dynamicBaselines.slice(0, 5).map((b, i) => (
+                                        <li key={i}>{b.category}: {formatCurrencyString(b.baselineAmount, { digits: 0 })} · {b.trendDirection}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {predictiveSpend.length > 0 && (
+                            <div>
+                                <p className="text-sm font-medium text-slate-700 mb-1">Predictive spend (this month)</p>
+                                <ul className="text-xs text-slate-600 space-y-0.5">
+                                    {predictiveSpend.slice(0, 4).map((p, i) => (
+                                        <li key={i}>{p.category}: ~{formatCurrencyString(p.predictedAmount, { digits: 0 })} (risk {p.riskOfOverrun}%)</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {householdConstraints?.cashflowStressSignals && householdConstraints.cashflowStressSignals.length > 0 && (
+                            <div className="sm:col-span-2">
+                                <p className="text-sm font-medium text-amber-800 mb-1">Cashflow signals</p>
+                                <ul className="text-xs text-amber-900 space-y-0.5">
+                                    {householdConstraints.cashflowStressSignals.slice(0, 3).map((s, i) => (
+                                        <li key={i}>{s.message}{s.recommendedAction ? ` — ${s.recommendedAction}` : ''}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Liquid cash from Accounts (cash flow context) */}
             {accounts.length > 0 && (() => {

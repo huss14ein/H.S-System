@@ -17,11 +17,16 @@ import { BellIcon } from './components/icons/BellIcon';
 import { GoldBarIcon } from './components/icons/GoldBarIcon';
 import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
 import { PresentationChartLineIcon } from './components/icons/PresentationChartLineIcon';
+import { DocumentArrowUpIcon } from './components/icons/DocumentArrowUpIcon';
+import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
+import { CubeIcon } from './components/icons/CubeIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
   { name: 'Wealth Ultra', icon: PresentationChartLineIcon },
   { name: 'Transactions', icon: CreditCardIcon },
+  { name: 'Statement Upload', icon: DocumentArrowUpIcon },
+  { name: 'Statement History', icon: DocumentTextIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
   { name: 'Market Events', icon: ChartBarIcon },
@@ -31,6 +36,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Plan', icon: ClipboardDocumentListIcon },
   { name: 'Summary', icon: UsersIcon },
   { name: 'Assets', icon: GoldBarIcon },
+  { name: 'Commodities', icon: CubeIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Forecast', icon: AcademicCapIcon },
   { name: 'Analysis', icon: ChartBarIcon },

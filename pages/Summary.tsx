@@ -211,10 +211,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         setIsLoading(false);
     }, [financialMetricsWithEf]);
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading summary" />
             </div>
         );
     }
@@ -253,6 +253,20 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                             className="text-xs px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50"
                         >
                             Budgets
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Transactions')}
+                            className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                        >
+                            Transactions
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePage('Statement Upload')}
+                            className="text-xs px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                        >
+                            Import statements
                         </button>
                     </div>
                 )

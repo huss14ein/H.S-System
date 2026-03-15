@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -93,6 +93,8 @@ export interface Transaction {
   rejectionReason?: string;
   /** Set when transaction was auto-created from a recurring rule. */
   recurringId?: string;
+  /** Optional link to the financial statement (e.g. bank/trading) this transaction was imported from. */
+  statementId?: string;
 }
 
 export type HoldingAssetClass =
@@ -126,6 +128,8 @@ export interface Holding {
   realizedPnL: number;
   dividendDistribution?: 'Reinvest' | 'Payout';
   dividendYield?: number;
+  /** DB/schema: 'ticker' | 'manual_fund' etc. Used when persisting to backend. */
+  holdingType?: string;
 }
 
 export interface InvestmentPortfolio {
@@ -172,6 +176,8 @@ export interface Budget {
   period?: 'monthly' | 'yearly' | 'weekly' | 'daily';
   /** Type of budget: Core (essential), Supporting, or Optional. Used for prioritization and display. */
   tier?: BudgetTier;
+  /** Optional: account ID to route surplus/deficit for this budget (e.g. savings account). */
+  destinationAccountId?: string;
 }
 
 
@@ -329,6 +335,8 @@ export interface FinancialData {
   allTransactions?: Transaction[];
   /** Admin-only: All users' budgets for tracking */
   allBudgets?: Budget[];
+  /** Budget requests (e.g. new category / increase limit) for governance */
+  budgetRequests?: BudgetRequest[];
 }
 
 export interface KPISummary {

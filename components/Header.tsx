@@ -31,7 +31,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   
   const auth = useContext(AuthContext);
-  const { data, resetData, loadDemoData } = useContext(DataContext)!;
+  const { data, resetData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
@@ -59,7 +59,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
   const navRef = useClickOutside<HTMLDivElement>(() => setActiveGroup(null));
 
-  const hasData = data && data.accounts.length > 0;
+  const hasData = data?.accounts && data.accounts.length > 0;
   
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
@@ -95,8 +95,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
-    { name: 'Management', items: ['Transactions', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Assets', 'Liabilities'] },
+    { name: 'Management', items: ['Transactions', 'Statement Upload', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
+    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Liabilities'] },
+    { name: 'Assets', items: ['Assets', 'Commodities'] },
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
@@ -104,17 +105,17 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
-    const monthlyInvested = data.investmentTransactions
+    const monthlyInvested = (data?.investmentTransactions ?? [])
       .filter(t => {
         const d = new Date(t.date);
         return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
       })
-      .reduce((sum, t) => sum + t.total, 0);
-    
+      .reduce((sum, t) => sum + (t.total ?? 0), 0);
+    const plan = data?.investmentPlan;
     return {
-      percent: Math.min((monthlyInvested / (data.investmentPlan.monthlyBudget || 1)) * 100, 100),
+      percent: Math.min((monthlyInvested / (plan?.monthlyBudget || 1)) * 100, 100),
       amount: monthlyInvested,
-      target: data.investmentPlan.monthlyBudget
+      target: plan?.monthlyBudget ?? 0
     };
   }, [data]);
 
@@ -273,10 +274,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                       </div>
                       <div className="py-1">
                         <button onClick={() => { setActivePage('Settings'); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">Settings</button>
-                        {hasData ? (
+                        {hasData && (
                           <button onClick={() => { resetData(); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">Clear All My Data</button>
-                        ) : (
-                          <button onClick={() => { loadDemoData(); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-primary hover:bg-primary/5 transition-colors">Load Demo Data</button>
                         )}
                       </div>
                       <div className="border-t border-gray-100 mt-1 pt-1">

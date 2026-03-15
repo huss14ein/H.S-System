@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { PlannedTrade } from '../types';
+import { PlannedTrade, type Page } from '../types';
 import Modal from '../components/Modal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { PlusIcon } from '../components/icons/PlusIcon';
@@ -12,6 +12,7 @@ import { useMarketData } from '../context/MarketDataContext';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
@@ -311,21 +312,78 @@ const PlanTradeModal: React.FC<{
     );
 };
 
-const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void }> = ({ onExecutePlan }) => {
-    const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
+/** Control tower: cross-engine constraints, alerts, and prioritized actions for Investment Plan. */
+const InvestmentPlanControlTower: React.FC = () => {
+  const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration();
+  if (!ready || !analysis) return null;
+  const hasAlerts = analysis.alerts.length > 0;
+  const hasActions = actionQueue.length > 0;
+  if (!hasAlerts && !hasActions && !cash && !household?.cashflowStressSignals?.length) return null;
+  return (
+    <SectionCard title="Control tower (Household, Budget & Wealth Ultra constraints)">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {cash && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Cash</p>
+            <p className="text-sm text-slate-800">Buffer: {cash.cashflowBuffer.toFixed(1)} mo · Discretionary: {cash.discretionaryBudget >= 0 ? Math.round(cash.discretionaryBudget).toLocaleString() : '—'}</p>
+          </div>
+        )}
+        {risk && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk</p>
+            <p className="text-sm text-slate-800">Portfolio risk: {risk.currentPortfolioRisk}/100 · Budget left: {risk.riskBudgetRemaining.toFixed(0)}</p>
+          </div>
+        )}
+        {household?.cashflowStressSignals && household.cashflowStressSignals.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Household</p>
+            <p className="text-sm text-amber-900">{household.cashflowStressSignals[0].message}</p>
+          </div>
+        )}
+      </div>
+      {hasAlerts && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
+          <p className="text-xs font-semibold text-amber-800 mb-2">Alerts</p>
+          <ul className="space-y-1 text-sm text-amber-900">
+            {analysis.alerts.slice(0, 3).map((a, i) => (
+              <li key={i}>{a.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {hasActions && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+          <p className="text-xs font-semibold text-slate-600 mb-2">Prioritized actions</p>
+          <ul className="space-y-1 text-sm text-slate-700">
+            {actionQueue.slice(0, 4).map((item, i) => (
+              <li key={i} className="flex justify-between gap-2">
+                <span>{item.action}</span>
+                <span className="text-slate-500 text-xs">P{Math.round(item.priority)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-slate-500">Planned trades are validated against cash and risk constraints. Use Wealth Ultra for sleeve-aware allocation.</p>
+    </SectionCard>
+  );
+};
+
+const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => void; setActivePage?: (page: Page) => void }> = ({ onExecutePlan, setActivePage: _setActivePage }) => {
+    const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
     
     // Loading state
-    if (!data) {
+    if (loading || !data) {
         return (
             <PageLayout 
                 title="Investment Plan" 
                 description="Proactively plan your trades based on price or date targets with AI-powered alignment."
             >
-                <div className="flex items-center justify-center py-12">
+                <div className="flex items-center justify-center py-12" aria-busy="true">
                     <div className="text-center">
-                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading investment plan" />
                         <p className="text-sm text-slate-600">Loading investment plan data...</p>
                     </div>
                 </div>
@@ -611,9 +669,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan: PlannedTrade) => void
     return (
         <PageLayout 
             title="Investment Plan" 
-            description="Proactively plan your trades based on price or date targets with AI-powered alignment."
+            description="Proactively plan your trades based on price or date targets with AI-powered alignment. Integrated with Household, Budget, and Wealth Ultra engines for shared cash and risk constraints."
         >
             <div className="max-w-7xl mx-auto space-y-8">
+                <InvestmentPlanControlTower />
                 {/* Enhanced Header Section */}
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                     <div className="flex-1">
