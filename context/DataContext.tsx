@@ -254,6 +254,20 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
     return row;
 }
 
+/** Allowed asset_class values for DB check constraint. Must match holdings_asset_class_check. */
+const HOLDINGS_ASSET_CLASS_ALLOWED = [
+    'Stock', 'Sukuk', 'Mutual Fund', 'ETF', 'REIT', 'Cryptocurrency', 'Commodity',
+    'CD', 'Private Equity', 'Venture Capital', 'Savings Bond', 'NFT', 'Other',
+] as const;
+
+function normalizeAssetClassForDb(value: string | null | undefined): string | undefined {
+    if (value == null || value === '') return undefined;
+    const v = String(value).trim();
+    if (HOLDINGS_ASSET_CLASS_ALLOWED.includes(v as any)) return v;
+    if (v.toLowerCase() === 'equity') return 'Stock';
+    return 'Other';
+}
+
 /** Map holding to DB row (snake_case). Schema uses avg_cost, current_value, realized_pnl, zakah_class, portfolio_id. */
 function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<string, unknown> {
     const holdingType = holding.holdingType ?? (holding as any).holding_type ?? 'ticker';
@@ -268,9 +282,8 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
         holding_type: holdingType,
     };
-    if (holding.assetClass != null || (holding as any).asset_class != null) {
-        row.asset_class = holding.assetClass ?? (holding as any).asset_class;
-    }
+    const rawAssetClass = holding.assetClass ?? (holding as any).asset_class;
+    row.asset_class = normalizeAssetClassForDb(rawAssetClass) ?? 'Other';
     return row;
 }
 
@@ -1579,7 +1592,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     quantity: tradeData.quantity,
                     avgCost: tradeData.price,
                     currentValue: tradeData.price * tradeData.quantity,
-                    assetClass: 'equity' as any, // Type assertion to bypass strict typing
+                    assetClass: 'Stock' as const,
                     zakahClass: 'Zakatable' as const,
                     realizedPnL: 0,
                 };
@@ -1810,9 +1823,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
         if (error) {
             console.error("Error saving investment plan:", error);
-        } else {
-            setData(prev => ({ ...prev, investmentPlan: plan }));
+            throw new Error(error.message || 'Failed to save plan');
         }
+        setData(prev => ({ ...prev, investmentPlan: plan }));
     };
 
     const addUniverseTicker = async (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => {

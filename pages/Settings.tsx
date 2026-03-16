@@ -26,42 +26,37 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     if (loading || !data) {
         return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+            <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading settings" />
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-            {/* Enhanced Hero Section */}
-            <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
+        <div className="page-container space-y-6 sm:space-y-8">
+            {/* Hero Section */}
+            <div className="section-card p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                     <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                            <span className="text-white font-bold text-lg">⚙️</span>
+                        <div className="w-14 h-14 bg-primary/10 rounded-xl flex items-center justify-center">
+                            <span className="text-primary font-bold text-xl">⚙️</span>
                         </div>
                         <div>
-                            <h2 className="text-3xl font-bold text-slate-900">Settings</h2>
-                            <p className="text-lg text-slate-600 mt-2">Control your profile, automation defaults, notifications, and data management.</p>
+                            <h2 className="page-title text-2xl sm:text-3xl">Settings</h2>
+                            <p className="text-slate-600 mt-1">Control your profile, automation defaults, notifications, and data management.</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
-                        <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">System Config</span>
-                    </div>
                 </div>
-                <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
+                <div className="mt-6 bg-slate-50 rounded-xl p-6 border border-slate-200">
                     <p className="text-slate-700 leading-relaxed">
-                        Customize your financial experience with personalized settings, risk preferences, and automation controls. 
+                        Customize your financial experience with personalized settings, risk preferences, and automation controls.
                         Manage your profile, configure notifications, and control data management options.
                     </p>
                 </div>
             </div>
 
-            {/* Enhanced Main Content */}
-            <div className="space-y-8">
-            <SectionCard title="Settings Snapshot" className="border-2 border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50">
+            <div className="space-y-6 sm:space-y-8">
+            <SectionCard title="Settings Snapshot">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <SnapCard label="Risk profile" value={localSettings?.riskProfile ?? '—'} />
                     <SnapCard label="Budget alert" value={`${localSettings?.budgetThreshold ?? 0}%`} />
@@ -86,11 +81,11 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             <SectionCard title="Financial Preferences" className="border border-slate-200">
                 <div className="space-y-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">Investment Risk Profile <InfoHint text="Guides AI and plan suggestions: Conservative (stability), Moderate (balanced), Aggressive (growth)." /></label>
-                        <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-1">
+                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center">Investment Risk Profile <InfoHint text="Guides AI and plan suggestions: Conservative (stability), Moderate (balanced), Aggressive (growth)." /></label>
+                        <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-100 p-1">
                             {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
                                 <button key={profile} onClick={() => handleSettingChange('riskProfile', profile)}
-                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${(localSettings?.riskProfile ?? '') === profile ? 'bg-white shadow text-primary' : 'text-gray-600 hover:bg-white/50'}`}>
+                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${(localSettings?.riskProfile ?? '') === profile ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}>
                                     {profile}
                                 </button>
                             ))}
@@ -98,13 +93,13 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="rounded-lg border border-slate-200 p-3">
-                            <label htmlFor="budget-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
+                            <label htmlFor="budget-threshold" className="block text-sm font-medium text-slate-700 flex items-center">Budget Alert Threshold (%) <InfoHint text="You get notified when a budget category reaches this percentage of its limit (e.g. 90%)." /></label>
                             <input id="budget-threshold" type="number" value={localSettings?.budgetThreshold ?? 0}
                                 onChange={(e) => handleSettingChange('budgetThreshold', Number(e.target.value))}
                                 className="input-base mt-2"/>
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
-                            <label htmlFor="drift-threshold" className="block text-sm font-medium text-gray-700 flex items-center">Portfolio Drift Threshold (%) <InfoHint text="Rebalancing alerts when an asset’s weight drifts from target by more than this percent." /></label>
+                            <label htmlFor="drift-threshold" className="block text-sm font-medium text-slate-700 flex items-center">Portfolio Drift Threshold (%) <InfoHint text="Rebalancing alerts when an asset’s weight drifts from target by more than this percent." /></label>
                             <input id="drift-threshold" type="number" value={localSettings?.driftThreshold ?? 0}
                                 onChange={(e) => handleSettingChange('driftThreshold', Number(e.target.value))}
                                 className="input-base mt-2"/>
@@ -114,7 +109,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             </SectionCard>
 
             <SectionCard title="Enhanced Default Parameters">
-                <p className="text-sm text-gray-600 mb-3 flex items-center">
+                <p className="text-sm text-slate-600 mb-3 flex items-center">
                     <InfoHint text="These are the baseline defaults used by Wealth Ultra and related planning workflows. The engine can auto-adapt from your live portfolio signals." />
                     Source: system defaults + your current overrides
                 </p>
@@ -142,15 +137,15 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
             <SectionCard title="Notifications">
                 <label htmlFor="email-toggle" className="flex items-center justify-between cursor-pointer">
-                    <span className="text-sm text-gray-700">
+                    <span className="text-sm text-slate-700">
                         <span className="font-medium flex items-center">Weekly Email Reports <InfoHint text="When enabled, you receive a weekly summary of budgets, net worth, and alerts (if the feature is configured)." /></span>
-                        <p className="text-xs text-gray-500 mt-0.5">Receive a summary of your financial health every week.</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Receive a summary of your financial health every week.</p>
                     </span>
-                    <div className="relative">
+                    <div className="relative inline-block w-10 h-6">
                         <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings?.enableEmails ?? false}
                                 onChange={(e) => handleSettingChange('enableEmails', e.target.checked)} />
-                        <div className={`block w-10 h-6 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'bg-primary' : 'bg-gray-200'}`}></div>
-                        <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'transform translate-x-full' : ''}`}></div>
+                        <div className={`block w-10 h-6 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'bg-primary' : 'bg-slate-200'}`}></div>
+                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow transition ${(localSettings?.enableEmails ?? false) ? 'translate-x-4' : ''}`}></div>
                     </div>
                 </label>
             </SectionCard>
@@ -159,7 +154,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                  <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     {hasData ? (
                         <>
-                            <p className="text-sm text-gray-600">Export a JSON backup of all your data (accounts, transactions, goals, budgets, investments, etc.) for safekeeping.</p>
+                            <p className="text-sm text-slate-600">Export a JSON backup of all your data (accounts, transactions, goals, budgets, investments, etc.) for safekeeping.</p>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 <button type="button" onClick={() => {
                                     const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' });
@@ -180,7 +175,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         </>
                     ) : (
                          <>
-                            <p className="text-sm text-gray-600">Your account is empty. Start by adding your accounts, assets, liabilities, goals, budgets, transactions, investments, portfolios, watchlist, price alerts, commodity holdings, and planned trades.</p>
+                            <p className="text-sm text-slate-600">Your account is empty. Start by adding your accounts, assets, liabilities, goals, budgets, transactions, investments, portfolios, watchlist, price alerts, commodity holdings, and planned trades.</p>
                         </>
                     )}
                  </div>
