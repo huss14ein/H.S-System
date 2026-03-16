@@ -1,10 +1,16 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
+import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
-import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
+import type { Page } from '../types';
+import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
+import { Bars3Icon } from '../components/icons/Bars3Icon';
+import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 
 type Impact = 'High' | 'Medium' | 'Low';
-type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
+type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio' | 'Holiday';
 
 interface MarketEventItem {
   id: string;
@@ -36,6 +42,7 @@ const CATEGORY_STYLES: Record<EventCategory, string> = {
   Earnings: 'bg-violet-50 text-violet-700 border-violet-200',
   Dividend: 'bg-cyan-50 text-cyan-700 border-cyan-200',
   Portfolio: 'bg-slate-100 text-slate-700 border-slate-300',
+  Holiday: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
 const MONTHS_AHEAD = 6;
@@ -45,11 +52,48 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+/** Returns YYYY-MM-DD in local time for consistent calendar cell matching. */
+function toLocalDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** Parse API date string (YYYY-MM-DD or ISO) to local start-of-day so calendar placement is correct in any timezone. */
+function parseToLocalDate(dateStr: string): Date {
+  if (!dateStr || typeof dateStr !== 'string') return new Date(NaN);
+  const trimmed = dateStr.trim();
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(trimmed);
+  if (match) {
+    const [, y, m, day] = match;
+    const year = parseInt(y!, 10);
+    const month1 = parseInt(m!, 10);
+    const dayNum = parseInt(day!, 10);
+    if (
+      Number.isFinite(year) &&
+      Number.isFinite(month1) &&
+      Number.isFinite(dayNum) &&
+      month1 >= 1 &&
+      month1 <= 12 &&
+      dayNum >= 1 &&
+      dayNum <= 31
+    ) {
+      return new Date(year, month1 - 1, dayNum);
+    }
+    return new Date(NaN);
+  }
+  const parsed = new Date(trimmed);
+  return Number.isFinite(parsed.getTime()) ? startOfDay(parsed) : new Date(NaN);
+}
+
 function nthWeekdayOfMonth(year: number, month0: number, weekday: number, n: number): Date {
   const first = new Date(year, month0, 1);
   const delta = (weekday - first.getDay() + 7) % 7;
   const day = 1 + delta + (n - 1) * 7;
-  return new Date(year, month0, day);
+  const lastDayOfMonth = new Date(year, month0 + 1, 0).getDate();
+  const clampedDay = Math.min(Math.max(1, day), lastDayOfMonth);
+  return new Date(year, month0, clampedDay);
 }
 
 function lastWeekdayOfMonth(year: number, month0: number, weekday: number): Date {
@@ -179,6 +223,26 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
       estimated: true,
     },
     {
+      id: `retail-sales-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 2),
+      title: 'US Retail Sales',
+      description: 'Consumer spending data; impacts growth expectations and sector sentiment.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `ism-mfg-${year}-${month}`,
+      date: firstWeekdayOfMonth(year, month, 1),
+      title: 'ISM Manufacturing (PMI)',
+      description: 'US manufacturing activity; leading indicator for earnings and recession risk.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
       id: `opex-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 5, 3),
       title: 'Monthly Options Expiration (OpEx)',
@@ -200,12 +264,38 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
     },
   ];
 
-  if ([0, 2, 4, 6, 8, 10].includes(month % 12)) {
+  // US federal tax deadlines (impact liquidity and sentiment)
+  if (month === 3) {
+    events.push({
+      id: `us-tax-day-${year}`,
+      date: new Date(year, 3, 15),
+      title: 'US Tax Day (Federal Individual Return)',
+      description: 'April 15 deadline; can affect market liquidity and retail flows.',
+      source: 'US tax calendar',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: false,
+    });
+  }
+  if (month === 9) {
+    events.push({
+      id: `us-tax-extension-${year}`,
+      date: new Date(year, 9, 15),
+      title: 'US Tax Extension Deadline (Oct 15)',
+      description: 'Extended filing deadline; can affect flows and year-end planning.',
+      source: 'US tax calendar',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: false,
+    });
+  }
+
+  if ([0, 2, 4, 5, 6, 8, 10, 11].includes(month % 12)) {
     events.push({
       id: `fomc-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 3, 3),
-      title: 'Federal Reserve (FOMC) Decision',
-      description: 'Policy statement and rate decision; major cross-asset volatility catalyst.',
+      title: 'Federal Reserve (FOMC) Rate Decision',
+      description: 'Fed funds rate decision (cuts or hikes); policy statement and dot plot. Major catalyst for US shares and bonds.',
       source: 'Macro (estimated schedule)',
       category: 'Macro',
       impact: 'High',
@@ -229,16 +319,18 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   return events;
 }
 
-const MarketEvents: React.FC = () => {
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
-  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
-  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
-  const { data } = useContext(DataContext)!;
+const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+  const { data, loading } = useContext(DataContext)!;
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [remindersOnly, setRemindersOnly] = useState(false);
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
+  const [holidayEvents, setHolidayEvents] = useState<MarketEventItem[]>([]);
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const trackedSymbols = useMemo(() => Array.from(new Set([
     ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
@@ -271,6 +363,24 @@ const MarketEvents: React.FC = () => {
     const to = end.toISOString().slice(0, 10);
     let alive = true;
 
+    getMarketHolidays('US').then((holidays) => {
+      if (!alive) return;
+      const items: MarketEventItem[] = (holidays ?? []).map((h, idx) => {
+        const eventDate = parseToLocalDate(h.date);
+        return {
+          id: `us-holiday-${h.date}-${idx}-${(h.name || '').replace(/\s+/g, '-')}`,
+          date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(h.date),
+          title: h.name || `US Market Holiday (${h.date})`,
+          description: `US exchange closed. ${h.status ? `Status: ${h.status}` : ''}`.trim(),
+          source: 'US market calendar',
+          category: 'Holiday' as const,
+          impact: 'High' as const,
+          estimated: false,
+        };
+      }).filter((e) => Number.isFinite(e.date.getTime()));
+      setHolidayEvents(items);
+    }).catch(() => setHolidayEvents([]));
+
     getMarketCalendarCached(from, to, trackedSymbols).then((result) => {
       if (!alive) return;
       const macro = result.economic
@@ -278,9 +388,10 @@ const MarketEvents: React.FC = () => {
         .map((e, idx) => {
           const title = (e.event || '').trim() || 'Economic Calendar Event';
           const impact: Impact = /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(title) ? 'High' : 'Medium';
+          const eventDate = parseToLocalDate(e.date);
           return {
             id: `finnhub-econ-${e.date}-${idx}-${title}`,
-            date: new Date(e.date),
+            date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
             title,
             description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
             source: result.mode === 'fresh' ? 'Finnhub economic calendar' : 'Finnhub economic calendar (cached)',
@@ -292,9 +403,11 @@ const MarketEvents: React.FC = () => {
 
       const earnings = result.earnings
         .filter((e) => e.date)
-        .map((e) => ({
+        .map((e) => {
+          const eventDate = parseToLocalDate(e.date!);
+          return {
           id: `finnhub-earnings-${e.symbol}-${e.date}`,
-          date: new Date(e.date!),
+          date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
           title: `${e.symbol} earnings (Finnhub)`,
           description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
           source: result.mode === 'fresh' ? 'Finnhub earnings calendar' : 'Finnhub earnings calendar (cached)',
@@ -302,7 +415,8 @@ const MarketEvents: React.FC = () => {
           impact: 'High' as const,
           symbol: e.symbol,
           estimated: false,
-        }));
+        };
+        });
 
       setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
 
@@ -311,21 +425,26 @@ const MarketEvents: React.FC = () => {
           if (!alive) return;
           const freshMacro = freshResult.economic
             .filter((e) => e.date)
-            .map((e, idx) => ({
+            .map((e, idx) => {
+              const eventDate = parseToLocalDate(e.date);
+              return {
               id: `finnhub-econ-fresh-${e.date}-${idx}-${e.event}`,
-              date: new Date(e.date),
+              date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
               title: (e.event || '').trim() || 'Economic Calendar Event',
               description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
               source: 'Finnhub economic calendar',
               category: 'Macro' as const,
               impact: /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(e.event || '') ? 'High' as const : 'Medium' as const,
               estimated: false,
-            }));
+            };
+            });
           const freshEarnings = freshResult.earnings
             .filter((e) => e.date)
-            .map((e) => ({
+            .map((e) => {
+              const eventDate = parseToLocalDate(e.date!);
+              return {
               id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
-              date: new Date(e.date!),
+              date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
               title: `${e.symbol} earnings (Finnhub)`,
               description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
               source: 'Finnhub earnings calendar',
@@ -333,7 +452,8 @@ const MarketEvents: React.FC = () => {
               impact: 'High' as const,
               symbol: e.symbol,
               estimated: false,
-            }));
+            };
+            });
           setFinnhubState({
             mode: 'fresh',
             cachedAt: freshResult.cachedAt,
@@ -352,7 +472,7 @@ const MarketEvents: React.FC = () => {
 
   const events = useMemo(() => {
     const now = startOfDay(new Date());
-    const end = new Date(now.getFullYear(), now.getMonth() + MONTHS_AHEAD, now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth() + MONTHS_AHEAD, now.getDate(), 23, 59, 59, 999);
 
     const modeledMacro: MarketEventItem[] = [];
     for (let i = 0; i < MONTHS_AHEAD; i++) {
@@ -449,25 +569,120 @@ const MarketEvents: React.FC = () => {
       ];
     });
 
-    const reliableEvents = [...finnhubState.events, ...portfolioEvents];
+    const reliableEvents = [...finnhubState.events, ...holidayEvents, ...portfolioEvents];
     const modeledEvents = [...modeledMacro, ...modeledSymbolEvents];
 
     return [...reliableEvents, ...(includeEstimated ? modeledEvents : [])]
-      .filter((e) => e.date >= now && e.date <= end)
+      .filter((e) => {
+        const t = e.date.getTime();
+        return t >= now.getTime() && t <= end.getTime();
+      })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
+  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated]);
 
-  const filtered = useMemo(() => events.filter((e) =>
-    (categoryFilter === 'All' || e.category === categoryFilter) &&
-    (impactFilter === 'All' || e.impact === impactFilter)
-  ), [events, categoryFilter, impactFilter]);
+  const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return events.filter((e) => {
+      if (categoryFilter !== 'All' && e.category !== categoryFilter) return false;
+      if (impactFilter !== 'All' && e.impact !== impactFilter) return false;
+      if (remindersOnly && !reminders[e.id]) return false;
+      if (!query) return true;
+      const haystack = `${e.title} ${e.description} ${e.symbol || ''} ${e.source}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [events, categoryFilter, impactFilter, searchQuery, remindersOnly, reminders]);
 
   const stats = useMemo(() => {
     const macroCount = filtered.filter((e) => e.category === 'Macro').length;
+    const holidayCount = filtered.filter((e) => e.category === 'Holiday').length;
     const symbolCount = filtered.filter((e) => Boolean(e.symbol)).length;
     const highImpact = filtered.filter((e) => e.impact === 'High').length;
-    return { macroCount, symbolCount, highImpact };
+    const reminderCount = filtered.filter((e) => reminders[e.id]).length;
+    const today = startOfDay(new Date()).getTime();
+    const next7 = filtered.filter((e) => {
+      const days = Math.floor((startOfDay(e.date).getTime() - today) / (1000 * 60 * 60 * 24));
+      return days >= 0 && days <= 7;
+    }).length;
+    return { macroCount, holidayCount, symbolCount, highImpact, reminderCount, next7 };
+  }, [filtered, reminders]);
+
+  const topFocusEvents = useMemo(() => {
+    const scoreImpact: Record<Impact, number> = { High: 3, Medium: 2, Low: 1 };
+    return [...filtered]
+      .map((event) => {
+        const daysUntil = Math.max(0, Math.floor((startOfDay(event.date).getTime() - startOfDay(new Date()).getTime()) / (1000 * 60 * 60 * 24)));
+        const urgency = daysUntil <= 1 ? 3 : daysUntil <= 7 ? 2 : 1;
+        const personalized = event.symbol ? 1 : 0;
+        const reminderBoost = reminders[event.id] ? 1 : 0;
+        const score = scoreImpact[event.impact] * 2 + urgency + personalized + reminderBoost;
+        return { event, score, daysUntil };
+      })
+      .sort((a, b) => b.score - a.score || a.daysUntil - b.daysUntil)
+      .slice(0, 5);
+  }, [filtered, reminders]);
+
+
+  const groupedByMonth = useMemo(() => {
+    const map = new Map<string, MarketEventItem[]>();
+    filtered.forEach((event) => {
+      const key = `${event.date.getFullYear()}-${String(event.date.getMonth() + 1).padStart(2, '0')}`;
+      map.set(key, [...(map.get(key) || []), event]);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, items]) => ({
+        key,
+        label: new Date(`${key}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+        items,
+      }));
   }, [filtered]);
+
+  const eventsByDate = useMemo(() => {
+    const map = new Map<string, MarketEventItem[]>();
+    filtered.forEach((event) => {
+      const key = toLocalDateKey(event.date);
+      map.set(key, [...(map.get(key) || []), event]);
+    });
+    return map;
+  }, [filtered]);
+
+  const calendarWeeks = useMemo(() => {
+    const y = calendarMonth.getFullYear();
+    const m = calendarMonth.getMonth();
+    const first = new Date(y, m, 1);
+    const last = new Date(y, m + 1, 0);
+    const startPad = first.getDay();
+    const daysInMonth = last.getDate();
+    const cells: { date: Date; dayNum: number; isCurrentMonth: boolean; dateKey: string }[] = [];
+    for (let i = 0; i < startPad; i++) {
+      const d = new Date(y, m, 1 - (startPad - i));
+      cells.push({ date: d, dayNum: d.getDate(), isCurrentMonth: false, dateKey: toLocalDateKey(d) });
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(y, m, day);
+      cells.push({ date: d, dayNum: day, isCurrentMonth: true, dateKey: toLocalDateKey(d) });
+    }
+    const remainder = cells.length % 7;
+    const tailPad = remainder === 0 ? 0 : 7 - remainder;
+    for (let i = 0; i < tailPad; i++) {
+      const d = new Date(y, m, daysInMonth + i + 1);
+      cells.push({ date: d, dayNum: d.getDate(), isCurrentMonth: false, dateKey: toLocalDateKey(d) });
+    }
+    const weeks: typeof cells[] = [];
+    for (let w = 0; w < cells.length; w += 7) weeks.push(cells.slice(w, w + 7));
+    return weeks;
+  }, [calendarMonth]);
+
+  const calendarMonthEventCount = useMemo(() => {
+    const y = calendarMonth.getFullYear();
+    const m = calendarMonth.getMonth();
+    let count = 0;
+    eventsByDate.forEach((evs, key) => {
+      const [yr, mo] = key.split('-').map(Number);
+      if (yr === y && mo === m + 1) count += evs.length;
+    });
+    return count;
+  }, [calendarMonth, eventsByDate]);
 
   const toggleReminder = (eventId: string) => {
     setReminders((prev) => {
@@ -481,10 +696,8 @@ const MarketEvents: React.FC = () => {
   const downloadIcs = () => {
     const rows = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Finova//Market Events//EN'];
     filtered.slice(0, 500).forEach((event) => {
-      const d = event.date;
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
+      const key = toLocalDateKey(event.date);
+      const [yyyy, mm, dd] = [key.slice(0, 4), key.slice(5, 7), key.slice(8, 10)];
       rows.push('BEGIN:VEVENT');
       rows.push(`UID:${event.id}@finova`);
       rows.push(`DTSTAMP:${yyyy}${mm}${dd}T000000Z`);
@@ -503,32 +716,40 @@ const MarketEvents: React.FC = () => {
     URL.revokeObjectURL(href);
   };
 
+  if (loading || !data) {
+    return <PageLoading ariaLabel="Loading market events" message="Loading…" />;
+  }
+
   return (
     <PageLayout
       title="Market Events"
       description="Important upcoming dates for markets, your watchlist, and your investment holdings."
       action={
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 border border-slate-200 rounded-md bg-white">
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`px-3 py-1.5 text-xs rounded-l-md ${
-                viewMode === 'list' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              List
-            </button>
+          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
               type="button"
               onClick={() => setViewMode('calendar')}
-              className={`px-3 py-1.5 text-xs rounded-r-md ${
-                viewMode === 'calendar' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
             >
+              <CalendarDaysIcon className="h-4 w-4" />
               Calendar
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              <Bars3Icon className="h-4 w-4" />
+              List
+            </button>
           </div>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search symbol, event, source"
+            className="input-base h-9 w-56 text-sm"
+          />
           <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
             <input
               type="checkbox"
@@ -537,9 +758,18 @@ const MarketEvents: React.FC = () => {
             />
             Include modeled estimates
           </label>
+          <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={remindersOnly}
+              onChange={(e) => setRemindersOnly(e.target.checked)}
+            />
+            Reminders only
+          </label>
           <select className="select-base text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}>
             <option value="All">All categories</option>
             <option value="Macro">Macro</option>
+            <option value="Holiday">Holiday</option>
             <option value="Earnings">Earnings</option>
             <option value="Dividend">Dividend</option>
             <option value="Portfolio">Portfolio</option>
@@ -553,10 +783,120 @@ const MarketEvents: React.FC = () => {
         </div>
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
+          <p className="mt-1 text-sm text-slate-700">US market–impacting events: <strong>Macro</strong> (NFP, CPI, FOMC rate decisions, tax deadlines), <strong>US market holidays</strong>, <strong>Earnings</strong> and <strong>Dividend</strong> for your holdings. Filter by category to see what matters and when markets are closed.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-6">
+            <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
+            <StatCard label="Next 7 days" value={String(stats.next7)} />
+            <StatCard label="Macro" value={String(stats.macroCount)} />
+            <StatCard label="Holidays" value={String(stats.holidayCount)} />
+            <StatCard label="Symbol-linked" value={String(stats.symbolCount)} />
+            <StatCard label="Reminders" value={String(stats.reminderCount)} />
+          </div>
+        </div>
+
+        {viewMode === 'calendar' && (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="flex items-center justify-between gap-4 p-4 border-b border-slate-200 bg-slate-50/80">
+              <h3 className="text-sm font-semibold text-slate-800">Calendar</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                  className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                  aria-label="Previous month"
+                >
+                  <ChevronLeftIcon className="h-5 w-5" />
+                </button>
+                <span className="min-w-[160px] text-center text-sm font-medium text-slate-800">
+                  {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                  className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                  aria-label="Next month"
+                >
+                  <ChevronRightIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-3 overflow-x-auto">
+              <table className="w-full border-collapse text-sm" role="grid" aria-label="Market events calendar">
+                <thead>
+                  <tr>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                      <th key={day} className="border border-slate-200 bg-slate-100 py-2 px-1 text-center font-semibold text-slate-700">
+                        {day}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {calendarWeeks.map((week, wi) => (
+                    <tr key={`week-${wi}`}>
+                      {week.map((cell) => {
+                        const dayEvents = eventsByDate.get(cell.dateKey) || [];
+                        return (
+                          <td
+                            key={cell.dateKey}
+                            className={`border border-slate-200 align-top p-1 min-w-[80px] ${cell.isCurrentMonth ? 'bg-white' : 'bg-slate-50/60'}`}
+                          >
+                            <div className={`text-right text-xs font-medium mb-1 ${cell.isCurrentMonth ? 'text-slate-800' : 'text-slate-400'}`}>
+                              {cell.dayNum}
+                            </div>
+                            <div className="space-y-1 min-h-[44px]">
+                              {dayEvents.slice(0, 3).map((ev) => (
+                                <div
+                                  key={ev.id}
+                                  className={`rounded px-1.5 py-0.5 text-[10px] truncate border ${IMPACT_STYLES[ev.impact]}`}
+                                  title={`${ev.title} – ${ev.date.toLocaleDateString()}`}
+                                >
+                                  {ev.title}
+                                </div>
+                              ))}
+                              {dayEvents.length > 3 && (
+                                <div className="text-[10px] text-slate-500 px-1">+{dayEvents.length - 3} more</div>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {calendarMonthEventCount === 0 && (
+              <p className="p-3 text-center text-sm text-slate-500 border-t border-slate-200">
+                No market events in {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. Try another month or enable modeled estimates in the filter bar.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-slate-800">AI-style focus queue</h3>
+          <p className="mt-1 text-xs text-slate-500">Sorted by impact, timing urgency, and portfolio relevance.</p>
+          <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {topFocusEvents.length === 0 && <p className="text-sm text-slate-500">No focus events for current filters.</p>}
+            {topFocusEvents.map(({ event, score, daysUntil }) => (
+              <div key={`focus-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-800">{event.title}</p>
+                  <span className="text-xs text-indigo-700 font-semibold">Priority {score}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{daysUntil === 0 ? 'Today' : `In ${daysUntil} day${daysUntil === 1 ? '' : 's'}`} • {event.date.toLocaleDateString()}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          The calendar shows provider-backed events (Finnhub economic + earnings) and your portfolio timeline by default. You can optionally enable modeled estimates for broader planning windows.
-          The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
+          The calendar shows US market holidays, Finnhub economic + earnings, and your portfolio timeline by default. Enable modeled estimates for FOMC, NFP, CPI, tax deadlines, and other key US macro dates when API data is limited.
+          Included: US exchange holidays, Fed (FOMC) rate decisions, NFP, CPI, PPI, GDP, retail sales, ISM, tax deadlines (Apr 15, Oct 15), options expiry, and symbol-linked earnings/dividends. Some dates are estimated; verify critical dates with official sources.
           <div className="mt-1 text-xs text-amber-700">
             Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
             {finnhubState.mode === 'fresh' && ' Source mode: fresh fetch.'}
@@ -576,49 +916,41 @@ const MarketEvents: React.FC = () => {
           <button type="button" className="btn-outline text-xs" onClick={downloadIcs}>Export filtered calendar (.ics)</button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">High impact events</p><p className="font-semibold text-slate-800">{highImpactLabel(stats.highImpact)}</p></div>
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">Macro events</p><p className="font-semibold text-slate-800">{stats.macroCount}</p></div>
-          <div className="rounded-lg border bg-white p-3"><p className="text-xs text-slate-500">Symbol-linked events</p><p className="font-semibold text-slate-800">{stats.symbolCount}</p></div>
-        </div>
-
-        {viewMode === 'list' ? (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-            {filtered.map((event) => (
-              <div key={event.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-semibold text-slate-800">{event.title}</h3>
-                  <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                  <span className={`px-2 py-0.5 rounded-full border ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
-                  <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
-                  {event.symbol && <span className="text-slate-700 font-medium">• {event.symbol}</span>}
-                  {event.estimated && <span className="text-amber-700">• Estimated</span>}
-                  {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
-                </div>
-                <p className="mt-2 text-sm text-slate-600">{event.description}</p>
-                <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
-                <div className="mt-2">
-                  <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
-                    {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
-                  </button>
-                </div>
+        {viewMode === 'list' && (
+        <div className="space-y-4">
+          {groupedByMonth.map((group) => (
+            <div key={group.key} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">{group.label}</h3>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {group.items.map((event) => (
+                  <div key={event.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="font-semibold text-slate-800">{event.title}</h4>
+                      <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">{event.description}</p>
+                    <div className="mt-2 text-xs text-slate-700 bg-slate-50 rounded-lg px-2 py-1.5">
+                      <span className="font-medium">Impact:</span> {event.impact === 'High' ? 'Can move markets and your portfolio; consider reducing risk or waiting to trade around this date.' : event.impact === 'Medium' ? 'May affect sector or symbol; watch positions and news.' : 'Lower market impact; optional to plan around.'}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full border ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
+                      <span className="text-slate-500">{event.date.toLocaleDateString()}</span>
+                      {event.symbol && <span className="text-slate-700 font-medium">• {event.symbol}</span>}
+                      {event.estimated && <span className="text-amber-700">• Estimated</span>}
+                      {reminders[event.id] && <span className="text-emerald-700">• Reminder on</span>}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Source: {event.source}</p>
+                    <div className="mt-2">
+                      <button type="button" onClick={() => toggleReminder(event.id)} className={`text-xs px-2 py-1 rounded border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+                        {reminders[event.id] ? 'Disable reminder' : 'Enable reminder'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        ) : (
-          <CalendarView 
-            events={filtered}
-            month={calendarMonth}
-            year={calendarYear}
-            onMonthChange={(month, year) => { setCalendarMonth(month); setCalendarYear(year); }}
-            onEventClick={(_event) => {
-              // Could open a modal or scroll to event
-            }}
-            reminders={reminders}
-            onToggleReminder={toggleReminder}
-          />
+            </div>
+          ))}
+        </div>
         )}
 
         {filtered.length === 0 && (
@@ -635,201 +967,13 @@ function highImpactLabel(v: number): string {
   return v > 0 ? String(v) : '0';
 }
 
-// Calendar View Component
-const CalendarView: React.FC<{
-  events: MarketEventItem[];
-  month: number;
-  year: number;
-  onMonthChange: (month: number, year: number) => void;
-  onEventClick: (event: MarketEventItem) => void;
-  reminders: Record<string, boolean>;
-  onToggleReminder: (eventId: string) => void;
-}> = ({ events, month, year, onMonthChange, onEventClick, reminders, onToggleReminder }) => {
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const daysInMonth = lastDay.getDate();
-  const startingDayOfWeek = firstDay.getDay();
-  
-  // Group events by date
-  const eventsByDate = useMemo(() => {
-    const map = new Map<string, MarketEventItem[]>();
-    events.forEach(event => {
-      const dateKey = `${event.date.getFullYear()}-${String(event.date.getMonth() + 1).padStart(2, '0')}-${String(event.date.getDate()).padStart(2, '0')}`;
-      if (event.date.getMonth() === month && event.date.getFullYear() === year) {
-        if (!map.has(dateKey)) {
-          map.set(dateKey, []);
-        }
-        map.get(dateKey)!.push(event);
-      }
-    });
-    return map;
-  }, [events, month, year]);
-  
-  const navigateMonth = (direction: 'prev' | 'next') => {
-    if (direction === 'prev') {
-      if (month === 0) {
-        onMonthChange(11, year - 1);
-      } else {
-        onMonthChange(month - 1, year);
-      }
-    } else {
-      if (month === 11) {
-        onMonthChange(0, year + 1);
-      } else {
-        onMonthChange(month + 1, year);
-      }
-    }
-  };
-  
-  const today = new Date();
-  const isToday = (day: number) => 
-    day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-  
+function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      {/* Calendar Header */}
-      <div className="bg-gradient-to-r from-primary to-primary/80 p-4 text-white">
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => navigateMonth('prev')}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-            aria-label="Previous month"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h2 className="text-xl font-bold">
-            {monthNames[month]} {year}
-          </h2>
-          <button
-            type="button"
-            onClick={() => navigateMonth('next')}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-            aria-label="Next month"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            const now = new Date();
-            onMonthChange(now.getMonth(), now.getFullYear());
-          }}
-          className="mt-2 text-sm text-white/90 hover:text-white underline"
-        >
-          Go to Today
-        </button>
-      </div>
-      
-      {/* Calendar Grid */}
-      <div className="p-4">
-        {/* Day Headers */}
-        <div className="grid grid-cols-7 gap-1 mb-2">
-          {dayNames.map(day => (
-            <div key={day} className="text-center text-xs font-semibold text-slate-600 py-2">
-              {day}
-            </div>
-          ))}
-        </div>
-        
-        {/* Calendar Days */}
-        <div className="grid grid-cols-7 gap-1">
-          {/* Empty cells for days before month starts */}
-          {Array.from({ length: startingDayOfWeek }).map((_, idx) => (
-            <div key={`empty-${idx}`} className="aspect-square" />
-          ))}
-          
-          {/* Days of the month */}
-          {Array.from({ length: daysInMonth }).map((_, idx) => {
-            const day = idx + 1;
-            const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const dayEvents = eventsByDate.get(dateKey) || [];
-            const todayClass = isToday(day) ? 'ring-2 ring-primary bg-primary/5' : '';
-            
-            return (
-              <div
-                key={day}
-                className={`aspect-square border border-slate-200 rounded-lg p-1 overflow-y-auto hover:bg-slate-50 transition-colors ${todayClass}`}
-              >
-                <div className={`text-xs font-semibold mb-1 ${isToday(day) ? 'text-primary' : 'text-slate-700'}`}>
-                  {day}
-                </div>
-                <div className="space-y-0.5">
-                  {dayEvents.slice(0, 3).map(event => (
-                    <div
-                      key={event.id}
-                      onClick={() => onEventClick(event)}
-                      className={`text-[10px] px-1 py-0.5 rounded cursor-pointer truncate ${
-                        event.impact === 'High' ? 'bg-red-100 text-red-700 border border-red-200' :
-                        event.impact === 'Medium' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
-                        'bg-emerald-100 text-emerald-700 border border-emerald-200'
-                      }`}
-                      title={`${event.title} - ${event.category}`}
-                    >
-                      {event.title.length > 15 ? event.title.substring(0, 15) + '...' : event.title}
-                    </div>
-                  ))}
-                  {dayEvents.length > 3 && (
-                    <div className="text-[10px] text-slate-500 px-1">
-                      +{dayEvents.length - 3} more
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      
-      {/* Event Details Modal/Expansion */}
-      <div className="border-t border-slate-200 p-4 bg-slate-50">
-        <h3 className="text-sm font-semibold text-slate-700 mb-2">Events This Month</h3>
-        <div className="space-y-2 max-h-64 overflow-y-auto">
-          {events.filter(e => e.date.getMonth() === month && e.date.getFullYear() === year).map(event => (
-            <div
-              key={event.id}
-              className="bg-white rounded-lg p-2 border border-slate-200 hover:shadow-sm transition-shadow"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-semibold text-slate-800">{event.title}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${IMPACT_STYLES[event.impact]}`}>
-                      {event.impact}
-                    </span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${CATEGORY_STYLES[event.category]}`}>
-                      {event.category}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600">{event.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                  {event.symbol && <p className="text-xs text-slate-500 mt-0.5">Symbol: {event.symbol}</p>}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onToggleReminder(event.id)}
-                  className={`text-xs px-2 py-1 rounded border flex-shrink-0 ${
-                    reminders[event.id] 
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {reminders[event.id] ? '✓' : '○'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+    <div className="rounded-lg border border-white/70 bg-white/80 px-3 py-2">
+      <p className="text-[11px] text-slate-500">{label}</p>
+      <p className="text-base font-semibold text-slate-800">{value}</p>
     </div>
   );
-};
+}
 
 export default MarketEvents;

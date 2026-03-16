@@ -17,6 +17,7 @@ import { getHoldingFundamentals, type HoldingFundamentals } from '../services/fi
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
 import {
   saveRecoveryExecution,
@@ -75,7 +76,7 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, getAvailableCashForAccount } = ctx;
+  const { data, loading, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
   const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
   const { simulatedPrices } = useMarketData();
@@ -460,8 +461,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   };
 
+  if (loading || !data) {
+    return (
+      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-blue-50/40 rounded-2xl border border-slate-200" aria-busy="true">
+        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 mt-4">
+    <div className="space-y-6 mt-4 min-h-[40rem] bg-gradient-to-br from-slate-50/90 via-white to-blue-50/40 rounded-2xl p-4 border border-slate-200/80">
       {/* Enhanced Hero */}
       <section className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50 p-8 shadow-xl">
         <div className="flex flex-col gap-6">
@@ -1276,8 +1285,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <button
                     type="button"
                     onClick={onOpenWealthUltra}
-                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm"
+                    className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium text-sm inline-flex items-center gap-2"
                   >
+                    <PresentationChartLineIcon className="h-5 w-5" />
                     View in Wealth Ultra
                   </button>
                 )}

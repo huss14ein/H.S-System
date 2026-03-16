@@ -8,6 +8,7 @@ import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
@@ -211,10 +212,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         setIsLoading(false);
     }, [financialMetricsWithEf]);
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading summary" />
             </div>
         );
     }
@@ -225,47 +226,37 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             description="Key metrics and AI-generated financial persona with report card and suggestions."
             action={
                 setActivePage && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setActivePage('Wealth Ultra')}
-                            className="text-xs px-3 py-1.5 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50"
-                        >
-                            Wealth Ultra
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setActivePage('Market Events')}
-                            className="text-xs px-3 py-1.5 border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50"
-                        >
-                            Market Events
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setActivePage('Investments')}
-                            className="text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/5"
-                        >
-                            Investments
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setActivePage('Budgets')}
-                            className="text-xs px-3 py-1.5 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50"
-                        >
-                            Budgets
-                        </button>
-                    </div>
+                    <PageActionsDropdown
+                        ariaLabel="Summary quick links"
+                        actions={[
+                            { value: 'wealth-ultra', label: 'Wealth Ultra', onClick: () => setActivePage('Wealth Ultra') },
+                            { value: 'market-events', label: 'Market Events', onClick: () => setActivePage('Market Events') },
+                            { value: 'assets', label: 'Assets', onClick: () => setActivePage('Assets') },
+                            { value: 'investments', label: 'Investments', onClick: () => setActivePage('Investments') },
+                            { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
+                            { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
+                            { value: 'statement-upload', label: 'Import statements', onClick: () => setActivePage('Statement Upload') },
+                        ]}
+                    />
                 )
             }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {isAdmin ? (
-                    <div className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary">
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setActivePage?.('Assets')}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActivePage?.('Assets'); } }}
+                        className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary cursor-pointer hover:shadow-md transition-shadow"
+                        aria-label="View and manage assets"
+                    >
                         <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
                         <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
                         <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
                             {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
                         </p>
+                        <p className="text-xs text-slate-500 mt-2">Click to manage assets</p>
                     </div>
                 ) : (
                     <div className="lg:col-span-1 section-card border-l-4 border-amber-400">

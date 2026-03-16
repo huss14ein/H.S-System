@@ -3,15 +3,16 @@ import { DataContext } from '../context/DataContext';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ClockIcon } from '../components/icons/ClockIcon';
+import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 
 const ExecutionHistoryView: React.FC = () => {
-  const { data } = useContext(DataContext)!;
+  const { data, loading } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
-  
+
   const executionLogs = useMemo(() => {
     // Get execution logs from data context (loaded from database)
     let logs: any[] = [];
@@ -67,9 +68,22 @@ const ExecutionHistoryView: React.FC = () => {
       });
   }, [data?.executionLogs, filterStatus]);
 
+  if (loading || !data) {
+    return (
+      <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6" aria-busy="true">
+        <SectionCard title="Execution History" className="bg-white/80 border-slate-200">
+          <div className="flex items-center justify-center py-12 gap-3">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
+            <span className="text-sm text-slate-600">Loading execution history…</span>
+          </div>
+        </SectionCard>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <SectionCard title="Execution History">
+    <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6">
+      <SectionCard title="Execution History" className="bg-white/90 border-slate-200">
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
@@ -133,8 +147,9 @@ const ExecutionHistoryView: React.FC = () => {
                 const event = new CustomEvent('navigateToTab', { detail: 'Investment Plan' });
                 window.dispatchEvent(event);
               }}
-              className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors"
+              className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-secondary transition-colors inline-flex items-center gap-2"
             >
+              <ClipboardDocumentListIcon className="h-5 w-5" />
               Go to Investment Plan
             </button>
           </div>

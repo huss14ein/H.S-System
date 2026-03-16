@@ -13,9 +13,10 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
+import type { Page } from '../types';
 
-const DividendTrackerView: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+    const { data, loading } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
@@ -23,11 +24,11 @@ const DividendTrackerView: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     
     // Loading state
-    if (!data) {
+    if (loading || !data) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center" aria-busy="true">
                 <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading dividend tracker" />
                     <p className="text-sm text-slate-600">Loading dividend data...</p>
                 </div>
             </div>

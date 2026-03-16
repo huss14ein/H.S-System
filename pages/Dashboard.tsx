@@ -22,6 +22,11 @@ import { getAIExecutiveSummary, formatAiError } from '../services/geminiService'
 import { useAI } from '../context/AiContext';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
+import { CreditCardIcon } from '../components/icons/CreditCardIcon';
+import { DocumentArrowUpIcon } from '../components/icons/DocumentArrowUpIcon';
+import { GoldBarIcon } from '../components/icons/GoldBarIcon';
+import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
+import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
@@ -458,10 +463,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         };
     }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity]);
     
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary"></div>
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading dashboard" />
             </div>
         );
     }
@@ -498,7 +503,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                         <CalendarDaysIcon className="h-5 w-5 text-slate-500" />
                         <span className="text-slate-700"><strong>{dueToday.length}</strong> recurring {dueToday.length === 1 ? 'item' : 'items'} due today</span>
                         {setActivePage && (
-                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline ml-1">
+                            <button type="button" onClick={() => setActivePage('Transactions')} className="text-primary font-medium hover:underline ml-1 inline-flex items-center gap-1.5">
+                                <CreditCardIcon className="h-4 w-4" />
                                 View in Transactions →
                             </button>
                         )}
@@ -589,9 +595,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 <div className="section-card border border-slate-200/80 bg-slate-50/50">
                     <h3 className="section-title text-base mb-2">Quick next steps</h3>
                     <ul className="flex flex-wrap gap-3 text-sm text-slate-600">
-                        <li><button type="button" onClick={() => setActivePage('Transactions')} className="text-primary hover:underline font-medium">Categorize transactions</button> to keep budgets accurate</li>
-                        <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium">Update your Plan</button> to reflect income and expenses</li>
-                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium">View Summary</button> for AI persona and report card</li>
+                        <li><button type="button" onClick={() => setActivePage('Transactions')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><CreditCardIcon className="h-4 w-4" />Categorize transactions</button> to keep budgets accurate</li>
+                        <li><button type="button" onClick={() => setActivePage('Statement Upload')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><DocumentArrowUpIcon className="h-4 w-4" />Import from statements</button> (bank, SMS, or trading)</li>
+                        <li><button type="button" onClick={() => setActivePage('Assets')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><GoldBarIcon className="h-4 w-4" />Manage assets</button> (property, commodities, metals)</li>
+                        <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><ClipboardDocumentListIcon className="h-4 w-4" />Update your Plan</button> to reflect income and expenses</li>
+                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><UsersIcon className="h-4 w-4" />View Summary</button> for AI persona and report card</li>
                     </ul>
                 </div>
             )}

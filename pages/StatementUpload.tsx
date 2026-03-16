@@ -1,10 +1,12 @@
-import React, { useState, useContext, useRef } from 'react';
+import React, { useState, useContext, useRef, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
+import PageLoading from '../components/PageLoading';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, ChatBubbleLeftRightIcon, BanknotesIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
+import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
+import { StatementIcons } from '../constants/statementIcons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
@@ -14,7 +16,7 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
-  const { data, addTransaction, recordTrade } = useContext(DataContext)!;
+  const { data, loading, addTransaction, recordTrade } = useContext(DataContext)!;
   const { uploadStatement } = useStatementProcessing();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -36,9 +38,30 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
 
+  // When switching tabs, clear file state and fix account selection so it matches the tab
+  useEffect(() => {
+    setUploadedFile(null);
+    setProcessingError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (activeTab === 'trading') {
+      if (selectedAccount && !investmentAccounts.some(a => a.id === selectedAccount)) setSelectedAccount('');
+    } else {
+      if (selectedAccount && !bankAccounts.some(a => a.id === selectedAccount)) setSelectedAccount('');
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- only run when tab changes
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (activeTab === 'bank' && !selectedAccount) {
+      alert('Please select an account before uploading a bank statement.');
+      return;
+    }
+    if (activeTab === 'trading' && !selectedAccount) {
+      alert('Please select an investment account before uploading a trading statement.');
+      return;
+    }
 
     setUploadedFile(file);
     setProcessingError(null);
@@ -340,6 +363,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     });
   };
 
+  if (loading || !data) {
+    return <PageLoading ariaLabel="Loading statement upload" message="Loading…" />;
+  }
+
   return (
     <PageLayout
       title="Upload Statements"
@@ -364,37 +391,43 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             <button
               type="button"
               onClick={() => setActiveTab('bank')}
+              aria-pressed={activeTab === 'bank'}
+              aria-label="Upload bank statements"
               className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
                 activeTab === 'bank'
                   ? 'bg-primary text-white'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <BanknotesIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.bank className="h-5 w-5 inline-block mr-2" />
               Bank Statements
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('sms')}
+              aria-pressed={activeTab === 'sms'}
+              aria-label="Paste SMS transactions"
               className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
                 activeTab === 'sms'
                   ? 'bg-primary text-white'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <ChatBubbleLeftRightIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.sms className="h-5 w-5 inline-block mr-2" />
               SMS Transactions
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('trading')}
+              aria-pressed={activeTab === 'trading'}
+              aria-label="Upload trading statements"
               className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
                 activeTab === 'trading'
                   ? 'bg-primary text-white'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <DocumentArrowUpIcon className="h-5 w-5 inline-block mr-2" />
+              <StatementIcons.trading className="h-5 w-5 inline-block mr-2" />
               Trading Statements
             </button>
           </div>
@@ -410,23 +443,28 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
           >
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="bank-account-select">
                   Select Account
                 </label>
                 <select
+                  id="bank-account-select"
                   value={selectedAccount}
                   onChange={(e) => setSelectedAccount(e.target.value)}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
+                  aria-label="Select bank account for statement"
                 >
                   <option value="">Select an account...</option>
                   {bankAccounts.map(acc => (
                     <option key={acc.id} value={acc.id}>{acc.name}</option>
                   ))}
                 </select>
+                {bankAccounts.length === 0 && (
+                  <p className="mt-1 text-sm text-amber-700">Add bank accounts in Settings or Accounts first.</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="bank-statement-upload">
                   Upload Statement File
                 </label>
                 <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-primary transition-colors">
@@ -437,6 +475,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                     onChange={handleFileUpload}
                     className="hidden"
                     id="bank-statement-upload"
+                    aria-label="Upload bank statement file"
                   />
                   <label
                     htmlFor="bank-statement-upload"
@@ -501,26 +540,32 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
           >
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="sms-account-select">
                   Select Account
                 </label>
                 <select
+                  id="sms-account-select"
                   value={selectedAccount}
                   onChange={(e) => setSelectedAccount(e.target.value)}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
+                  aria-label="Select account for SMS transactions"
                 >
                   <option value="">Select an account...</option>
                   {bankAccounts.map(acc => (
                     <option key={acc.id} value={acc.id}>{acc.name}</option>
                   ))}
                 </select>
+                {bankAccounts.length === 0 && (
+                  <p className="mt-1 text-sm text-amber-700">Add bank accounts in Settings or Accounts first.</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="sms-paste-textarea">
                   Paste SMS Text
                 </label>
                 <textarea
+                  id="sms-paste-textarea"
                   value={smsText}
                   onChange={(e) => setSmsText(e.target.value)}
                   placeholder="Paste SMS messages here, one per line or separated by newlines. Example:&#10;Al Rajhi: SAR 500.00 debited from A/C *1234 on 15/01/2024. Bal: SAR 5,000.00&#10;STC: Payment of SAR 100.00 received on 16/01/2024"
@@ -559,23 +604,28 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
           >
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="trading-account-select">
                   Select Investment Account
                 </label>
                 <select
+                  id="trading-account-select"
                   value={selectedAccount}
                   onChange={(e) => setSelectedAccount(e.target.value)}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
+                  aria-label="Select investment account for trading statement"
                 >
                   <option value="">Select an investment account...</option>
                   {investmentAccounts.map(acc => (
                     <option key={acc.id} value={acc.id}>{acc.name}</option>
                   ))}
                 </select>
+                {investmentAccounts.length === 0 && (
+                  <p className="mt-1 text-sm text-amber-700">Add an investment account (platform) in Settings or Accounts first.</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="trading-statement-upload">
                   Upload Trading Statement
                 </label>
                 <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-primary transition-colors">
@@ -586,6 +636,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                     onChange={handleFileUpload}
                     className="hidden"
                     id="trading-statement-upload"
+                    aria-label="Upload trading statement file"
                   />
                   <label
                     htmlFor="trading-statement-upload"

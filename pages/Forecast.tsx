@@ -13,7 +13,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
-
+import type { Page } from '../types';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -33,7 +33,7 @@ const toMonthlyRate = (annualPct: number) => {
     return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
 };
 
-const Forecast: React.FC = () => {
+const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { data, loading } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
@@ -250,10 +250,10 @@ const Forecast: React.FC = () => {
         });
     }, [data?.goals, initialValues.netWorth]);
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading forecast" />
             </div>
         );
     }

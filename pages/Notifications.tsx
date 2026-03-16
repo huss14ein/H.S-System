@@ -8,6 +8,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
+import { HomeIcon } from '../components/icons/HomeIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -243,10 +244,16 @@ const Notifications: React.FC<{ setActivePage: (page: Page) => void }> = ({ setA
 
       <SectionCard className="overflow-hidden p-0">
         {groupedByCategory.length === 0 ? (
-          <div className="empty-state p-12">
-            <ClipboardDocumentListIcon className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+          <div className="empty-state p-12 text-center">
+            <ClipboardDocumentListIcon className="h-12 w-12 text-gray-300 mx-auto mb-3" aria-hidden />
             <p className="font-medium">No notifications</p>
             <p className="text-sm text-gray-400 mt-1">You're all caught up.</p>
+            {setActivePage && (
+              <button type="button" onClick={() => setActivePage('Dashboard')} className="mt-4 px-4 py-2 text-sm font-medium text-primary border border-primary rounded-lg hover:bg-primary/5 transition-colors inline-flex items-center gap-2">
+                <HomeIcon className="h-5 w-5" />
+                Go to Dashboard
+              </button>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-gray-100">

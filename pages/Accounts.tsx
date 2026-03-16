@@ -16,6 +16,10 @@ import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmer
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
+import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
+import { XMarkIcon } from '../components/icons/XMarkIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -26,6 +30,17 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
+
+/** A scheduled (recurring) transfer represented as a pair of expense + income recurring entries. */
+interface ScheduledTransferPair {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    dayOfMonth: number;
+    expenseId: string;
+    incomeId: string;
+    enabled: boolean;
+}
 
 const AccountModal: React.FC<{
     isOpen: boolean;
@@ -55,11 +70,12 @@ const AccountModal: React.FC<{
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const accountData: any = { 
-            name, 
-            type, 
+        const accountData: any = {
+            name,
+            type,
             owner: owner || undefined,
-            ...(type === 'Investment' && linkedAccountIds.length > 0 ? { linkedAccountIds } : {})
+            // Always send linkedAccountIds for Investment so backend can persist (including clearing when empty)
+            ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
         };
 
         try {
@@ -100,10 +116,10 @@ const AccountModal: React.FC<{
                     <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
                 {type === 'Investment' && (
-                    <div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                            Linked Cash Accounts (Optional) 
-                            <InfoHint text="Select cash accounts (Checking/Savings) that can fund this investment platform. Only these accounts will appear when making deposits to this platform." />
+                            Link cash accounts to this platform
+                            <InfoHint text="Select which Checking/Savings accounts can fund this investment platform. When you make a deposit, only linked accounts appear as the source. Save the account to apply changes." />
                         </label>
                         {availableCashAccounts.length === 0 ? (
                             <p className="text-xs text-slate-500 p-2 bg-slate-50 rounded border border-slate-200">
@@ -192,7 +208,7 @@ const AccountCardComponent: React.FC<{
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
                     return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${(account.balance ?? 0) >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance ?? 0)}</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
                     ) : (
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
@@ -209,7 +225,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform, addTransaction } = useContext(DataContext)!;
+    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -231,6 +247,18 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferToAccount, setTransferToAccount] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
     const [transferDescription, setTransferDescription] = useState('');
+    const [isRecurringTransferModalOpen, setIsRecurringTransferModalOpen] = useState(false);
+    const [recurringFromId, setRecurringFromId] = useState('');
+    const [recurringToId, setRecurringToId] = useState('');
+    const [recurringAmount, setRecurringAmount] = useState('');
+    const [recurringDayOfMonth, setRecurringDayOfMonth] = useState('1');
+    const [transferFilterFrom, setTransferFilterFrom] = useState<string>('all');
+    const [transferFilterTo, setTransferFilterTo] = useState<string>('all');
+    const [transferFilterStatus, setTransferFilterStatus] = useState<'all' | 'active' | 'paused'>('all');
+    const [scheduledTransfersFiltersOpen, setScheduledTransfersFiltersOpen] = useState(true);
+    const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
+    const [rescheduleDay, setRescheduleDay] = useState('1');
+    const [rescheduleAmount, setRescheduleAmount] = useState('');
 
     useEffect(() => {
         const loadSharingState = async () => {
@@ -269,16 +297,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
         const accounts = data?.accounts ?? [];
+        const investments = data?.investments ?? [];
         const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
         const credit = accounts.filter(a => a.type === 'Credit');
-        const investments = accounts.filter(a => a.type === 'Investment');
+        const investmentAccountsList = accounts.filter(a => a.type === 'Investment');
 
         const totalCash = cash.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const totalCredit = credit.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
 
-        const investmentsList = data?.investments ?? [];
-        const investmentsWithUpdatedBalance = investments.map(acc => {
-            const portfolioValue = investmentsList
+        const investmentsWithUpdatedBalance = investmentAccountsList.map(acc => {
+            const portfolioValue = investments
                 .filter(p => p.accountId === acc.id)
                 .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
             return { ...acc, balance: portfolioValue };
@@ -292,6 +320,45 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
     const orderedInvestmentAccounts = useMemo(() => [...investmentAccounts].sort((a, b) => a.name.localeCompare(b.name)), [investmentAccounts]);
+
+    const scheduledTransferPairs = useMemo((): ScheduledTransferPair[] => {
+        const recurring = data?.recurringTransactions ?? [];
+        const accounts = data?.accounts ?? [];
+        const transferRecurrings = recurring.filter((r) => r.category === 'Transfers' && r.description.includes('Auto transfer to '));
+        const expenses = transferRecurrings.filter((r) => r.type === 'expense');
+        let incomes = transferRecurrings.filter((r) => r.type === 'income');
+        const pairs: ScheduledTransferPair[] = [];
+        for (const exp of expenses) {
+            const match = exp.description.match(/Auto transfer to (.+?) \(from/);
+            const toName = match ? match[1].trim() : '';
+            const toAcc = accounts.find((a) => a.name === toName);
+            if (!toAcc) continue;
+            const incIndex = incomes.findIndex((i) => i.accountId === toAcc.id && i.amount === exp.amount && i.dayOfMonth === exp.dayOfMonth);
+            if (incIndex === -1) continue;
+            const inc = incomes[incIndex];
+            incomes = incomes.slice(0, incIndex).concat(incomes.slice(incIndex + 1));
+            pairs.push({
+                fromAccountId: exp.accountId,
+                toAccountId: inc.accountId,
+                amount: exp.amount,
+                dayOfMonth: exp.dayOfMonth,
+                expenseId: exp.id,
+                incomeId: inc.id,
+                enabled: exp.enabled && inc.enabled,
+            });
+        }
+        return pairs;
+    }, [data?.recurringTransactions, data?.accounts]);
+
+    const filteredScheduledTransfers = useMemo(() => {
+        return scheduledTransferPairs.filter((p) => {
+            if (transferFilterFrom !== 'all' && p.fromAccountId !== transferFilterFrom) return false;
+            if (transferFilterTo !== 'all' && p.toAccountId !== transferFilterTo) return false;
+            if (transferFilterStatus === 'active' && !p.enabled) return false;
+            if (transferFilterStatus === 'paused' && p.enabled) return false;
+            return true;
+        });
+    }, [scheduledTransferPairs, transferFilterFrom, transferFilterTo, transferFilterStatus]);
 
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
 
@@ -357,7 +424,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return;
         }
         if ((fromAccount.balance ?? 0) < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance ?? 0)}`);
+            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance)}`);
             return;
         }
         if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
@@ -398,6 +465,135 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         }
     };
 
+    const handleAddRecurringTransfer = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!recurringFromId || !recurringToId || !recurringAmount) {
+            alert('Please select both accounts and enter an amount.');
+            return;
+        }
+        const amount = parseFloat(recurringAmount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Please enter a valid positive amount.');
+            return;
+        }
+        const day = Math.min(28, Math.max(1, parseInt(recurringDayOfMonth, 10) || 1));
+        const accounts = data?.accounts ?? [];
+        const fromAcc = accounts.find(a => a.id === recurringFromId);
+        const toAcc = accounts.find(a => a.id === recurringToId);
+        if (!fromAcc || !toAcc) {
+            alert('Selected accounts not found.');
+            return;
+        }
+        const description = `Auto transfer to ${toAcc.name}`;
+        try {
+            await addRecurringTransaction({
+                description: `${description} (from ${fromAcc.name})`,
+                amount,
+                type: 'expense',
+                accountId: recurringFromId,
+                category: 'Transfers',
+                budgetCategory: 'Transfers',
+                dayOfMonth: day,
+                enabled: true,
+            });
+            await addRecurringTransaction({
+                description: `${description} (to ${toAcc.name})`,
+                amount,
+                type: 'income',
+                accountId: recurringToId,
+                category: 'Transfers',
+                budgetCategory: 'Transfers',
+                dayOfMonth: day,
+                enabled: true,
+            });
+            alert(`Recurring transfer set: ${formatCurrencyString(amount)} from ${fromAcc.name} to ${toAcc.name} on day ${day} of each month. You can edit or disable it under Transactions → Recurring.`);
+            setIsRecurringTransferModalOpen(false);
+            setRecurringFromId('');
+            setRecurringToId('');
+            setRecurringAmount('');
+            setRecurringDayOfMonth('1');
+        } catch (err) {
+            alert(`Failed to create recurring transfer: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+    };
+
+    const recurringList = data?.recurringTransactions ?? [];
+    const getRecurringById = (id: string) => recurringList.find((r) => r.id === id);
+
+    const handlePauseTransfer = async (pair: ScheduledTransferPair) => {
+        const exp = getRecurringById(pair.expenseId);
+        const inc = getRecurringById(pair.incomeId);
+        if (exp && inc) {
+            try {
+                await updateRecurringTransaction({ ...exp, enabled: false });
+                await updateRecurringTransaction({ ...inc, enabled: false });
+            } catch (e) {
+                alert(`Failed to pause transfer: ${e instanceof Error ? e.message : 'Unknown error'}`);
+            }
+        }
+    };
+
+    const handleResumeTransfer = async (pair: ScheduledTransferPair) => {
+        const exp = getRecurringById(pair.expenseId);
+        const inc = getRecurringById(pair.incomeId);
+        if (exp && inc) {
+            try {
+                await updateRecurringTransaction({ ...exp, enabled: true });
+                await updateRecurringTransaction({ ...inc, enabled: true });
+            } catch (e) {
+                alert(`Failed to resume transfer: ${e instanceof Error ? e.message : 'Unknown error'}`);
+            }
+        }
+    };
+
+    const handleRemoveTransfer = async (pair: ScheduledTransferPair) => {
+        if (!confirm('Remove this scheduled transfer? The recurring rules will be deleted and can only be recreated by scheduling a new transfer.')) return;
+        try {
+            await deleteRecurringTransaction(pair.expenseId);
+            await deleteRecurringTransaction(pair.incomeId);
+        } catch (e) {
+            alert(`Failed to remove transfer: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+    };
+
+    const handleOpenReschedule = (pair: ScheduledTransferPair) => {
+        setReschedulePair(pair);
+        setRescheduleDay(String(pair.dayOfMonth));
+        setRescheduleAmount(String(pair.amount));
+    };
+
+    const handleSaveReschedule = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!reschedulePair) return;
+        const day = Math.min(28, Math.max(1, parseInt(rescheduleDay, 10) || 1));
+        const amount = parseFloat(rescheduleAmount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            alert('Please enter a valid positive amount.');
+            return;
+        }
+        const exp = getRecurringById(reschedulePair.expenseId);
+        const inc = getRecurringById(reschedulePair.incomeId);
+        if (!exp || !inc) {
+            setReschedulePair(null);
+            return;
+        }
+        try {
+            await updateRecurringTransaction({ ...exp, amount, dayOfMonth: day });
+            await updateRecurringTransaction({ ...inc, amount, dayOfMonth: day });
+            setReschedulePair(null);
+        } catch (err) {
+            alert(`Failed to reschedule: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+    };
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading accounts" />
+            </div>
+        );
+    }
+
     return (
         <PageLayout
             title="Accounts"
@@ -424,47 +620,188 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             {isAdmin && (
                 <section className="section-card mt-4">
                     <h3 className="section-title text-base">Share account with another user</h3>
-                    <p className="text-sm text-slate-600 mb-3">Share read-only account visibility with a specific user, similar to budget sharing.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
-                        <div>
-                            <label className="block text-xs text-slate-500 mb-1">Account</label>
-                            <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base">
-                                <option value="">Select account</option>
-                                {(data?.accounts ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
+                    <p className="text-sm text-slate-600 mb-4">Share read-only account visibility with a specific user, similar to budget sharing.</p>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1.5">Account</label>
+                                <select value={shareAccountId} onChange={(e) => setShareAccountId(e.target.value)} className="select-base w-full">
+                                    <option value="">Select account</option>
+                                    {(data?.accounts ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1.5">User email</label>
+                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base w-full">
+                                    <option value="">Select user</option>
+                                    {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
+                                </select>
+                            </div>
                         </div>
-                        <div>
-                            <label className="block text-xs text-slate-500 mb-1">User email</label>
-                            <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
-                                <option value="">Select user</option>
-                                {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
-                            </select>
-                        </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3 pt-1">
                             <input
                                 type="checkbox"
                                 id="share-show-balance"
                                 checked={shareShowBalance}
                                 onChange={(e) => setShareShowBalance(e.target.checked)}
-                                className="h-4 w-4"
+                                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
                             />
-                            <label htmlFor="share-show-balance" className="text-xs text-slate-600">Show balance</label>
+                            <label htmlFor="share-show-balance" className="text-sm text-slate-700 cursor-pointer">Allow recipient to view balance</label>
                         </div>
-                        <button type="button" onClick={handleShareAccount} className="btn-primary">Share Account</button>
+                        <div className="pt-2">
+                            <button type="button" onClick={handleShareAccount} className="btn-primary px-5 py-2.5">Share Account</button>
+                        </div>
                     </div>
-                    {shareError && <p className="text-sm text-rose-600 mt-2">{shareError}</p>}
-                    {shareSuccess && <p className="text-sm text-emerald-600 mt-2">{shareSuccess}</p>}
+                    {shareError && <p className="text-sm text-rose-600 mt-3">{shareError}</p>}
+                    {shareSuccess && <p className="text-sm text-emerald-600 mt-3">{shareSuccess}</p>}
                 </section>
             )}
 
             <section className="section-card mt-4">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                     <h3 className="section-title text-base">Transfer Between Accounts</h3>
-                    <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary text-sm">
-                        Transfer Funds
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-outline text-sm">
+                            Schedule auto transfer
+                        </button>
+                        <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary text-sm">
+                            Transfer now
+                        </button>
+                    </div>
+                </div>
+                <p className="text-xs text-slate-600">Transfer between any accounts (e.g. Checking, Savings, Retirement/Investment). One-time: &quot;Transfer now&quot; creates matching withdrawal and deposit. Recurring: &quot;Schedule auto transfer&quot; runs on the same day each month.</p>
+            </section>
+
+            <section className="section-card mt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div>
+                        <h3 className="section-title text-base flex items-center gap-2">
+                            <ArrowsRightLeftIcon className="h-5 w-5 text-slate-500" />
+                            Scheduled transfers
+                        </h3>
+                        <p className="text-sm text-slate-600 mt-0.5">Recurring auto transfers between accounts. Pause, reschedule, or remove any time.</p>
+                    </div>
+                    <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-primary text-sm shrink-0">
+                        Schedule auto transfer
                     </button>
                 </div>
-                <p className="text-xs text-slate-600">Move money between your accounts (e.g., Checking → Savings, Savings → Investment). Creates matching withdrawal and deposit transactions.</p>
+
+                {/* Summary and filter toggle */}
+                {scheduledTransferPairs.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <p className="text-sm text-slate-600">
+                            {filteredScheduledTransfers.length === scheduledTransferPairs.length ? (
+                                <span><strong>{scheduledTransferPairs.length}</strong> scheduled transfer{scheduledTransferPairs.length !== 1 ? 's' : ''} ({scheduledTransferPairs.filter(p => p.enabled).length} active{scheduledTransferPairs.some(p => !p.enabled) ? `, ${scheduledTransferPairs.filter(p => !p.enabled).length} paused` : ''})</span>
+                            ) : (
+                                <span>Showing <strong>{filteredScheduledTransfers.length}</strong> of {scheduledTransferPairs.length} transfer{scheduledTransferPairs.length !== 1 ? 's' : ''}</span>
+                            )}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setScheduledTransfersFiltersOpen((v) => !v)}
+                            className="text-xs font-medium text-slate-600 hover:text-slate-800 flex items-center gap-1"
+                            aria-expanded={scheduledTransfersFiltersOpen}
+                        >
+                            Filters {(transferFilterFrom !== 'all' || transferFilterTo !== 'all' || transferFilterStatus !== 'all') && <span className="bg-primary/20 text-primary px-1.5 py-0.5 rounded">on</span>}
+                            <ChevronDownIcon className={`h-4 w-4 transition-transform ${scheduledTransfersFiltersOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                    </div>
+                )}
+
+                {/* Filters: collapsible, clear labels, clear-all when active */}
+                {scheduledTransferPairs.length > 0 && scheduledTransfersFiltersOpen && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 mb-4">
+                        <div className="flex flex-wrap items-center gap-4">
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">From account</label>
+                                <select value={transferFilterFrom} onChange={(e) => setTransferFilterFrom(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                                    <option value="all">All accounts</option>
+                                    {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">To account</label>
+                                <select value={transferFilterTo} onChange={(e) => setTransferFilterTo(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                                    <option value="all">All accounts</option>
+                                    {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">Status</label>
+                                <select value={transferFilterStatus} onChange={(e) => setTransferFilterStatus(e.target.value as 'all' | 'active' | 'paused')} className="select-base text-sm py-1.5 min-w-[100px]">
+                                    <option value="all">All</option>
+                                    <option value="active">Active</option>
+                                    <option value="paused">Paused</option>
+                                </select>
+                            </div>
+                            {(transferFilterFrom !== 'all' || transferFilterTo !== 'all' || transferFilterStatus !== 'all') && (
+                                <button type="button" onClick={() => { setTransferFilterFrom('all'); setTransferFilterTo('all'); setTransferFilterStatus('all'); }} className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1 ml-auto">
+                                    <XMarkIcon className="h-4 w-4" /> Clear filters
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {filteredScheduledTransfers.length === 0 ? (
+                    <div className="text-center py-10 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+                        <ArrowsRightLeftIcon className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                        <p className="text-slate-600 font-medium">
+                            {scheduledTransferPairs.length === 0 ? 'No scheduled transfers yet' : 'No transfers match the current filters'}
+                        </p>
+                        <p className="text-sm text-slate-500 mt-1">
+                            {scheduledTransferPairs.length === 0 ? 'Set up a monthly auto transfer between two accounts.' : 'Try changing or clearing the filters above.'}
+                        </p>
+                        {scheduledTransferPairs.length === 0 && (
+                            <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="mt-4 btn-primary text-sm">
+                                Schedule auto transfer
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {filteredScheduledTransfers.map((pair) => {
+                            const fromAcc = (data?.accounts ?? []).find((a) => a.id === pair.fromAccountId);
+                            const toAcc = (data?.accounts ?? []).find((a) => a.id === pair.toAccountId);
+                            return (
+                                <div key={`${pair.expenseId}-${pair.incomeId}`} className="rounded-xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:shadow-sm transition-all">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="font-medium text-slate-800 truncate">{fromAcc?.name ?? pair.fromAccountId}</span>
+                                                <span className="text-slate-400 shrink-0"><ArrowsRightLeftIcon className="h-4 w-4" /></span>
+                                                <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? pair.toAccountId}</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 mt-2 text-sm text-slate-600">
+                                                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(pair.amount)}</span>
+                                                <span className="text-slate-400">/ month</span>
+                                                <span className="flex items-center gap-1 text-slate-500">
+                                                    <CalendarDaysIcon className="h-4 w-4" /> Day {pair.dayOfMonth}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <span className={`shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${pair.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                            {pair.enabled ? 'Active' : 'Paused'}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center justify-end gap-1 mt-3 pt-3 border-t border-slate-100">
+                                        {pair.enabled ? (
+                                            <button type="button" onClick={() => handlePauseTransfer(pair)} className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100" title="Pause">Pause</button>
+                                        ) : (
+                                            <button type="button" onClick={() => handleResumeTransfer(pair)} className="px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100" title="Resume">Resume</button>
+                                        )}
+                                        <button type="button" onClick={() => handleOpenReschedule(pair)} className="p-1.5 text-slate-500 hover:text-primary hover:bg-slate-100 rounded-lg" title="Reschedule"><PencilIcon className="h-4 w-4" /></button>
+                                        <button type="button" onClick={() => handleRemoveTransfer(pair)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Remove"><TrashIcon className="h-4 w-4" /></button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </section>
 
             {setActivePage && (
@@ -498,7 +835,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             <section>
                 <h2 className="section-title text-xl mb-4">Investment Platforms</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                        {orderedInvestmentAccounts.map((acc) => {
+                    {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
                             <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} />
@@ -520,7 +857,60 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} allAccounts={data?.accounts ?? []} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
-            
+
+            <Modal isOpen={isRecurringTransferModalOpen} onClose={() => setIsRecurringTransferModalOpen(false)} title="Schedule recurring transfer">
+                <form onSubmit={handleAddRecurringTransfer} className="space-y-4">
+                    <p className="text-sm text-slate-600">Create a monthly auto transfer. Two recurring entries (out from source, in to destination) will be added; you can edit or disable them in Transactions → Recurring.</p>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">From account</label>
+                        <select value={recurringFromId} onChange={(e) => setRecurringFromId(e.target.value)} required className="select-base w-full">
+                            <option value="">Select source</option>
+                            {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
+                                <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">To account</label>
+                        <select value={recurringToId} onChange={(e) => setRecurringToId(e.target.value)} required className="select-base w-full">
+                            <option value="">Select destination</option>
+                            {(data?.accounts ?? []).filter(a => a.id !== recurringFromId && a.type !== 'Credit').map(acc => (
+                                <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Amount (each month)</label>
+                        <input type="number" min="0.01" step="0.01" value={recurringAmount} onChange={(e) => setRecurringAmount(e.target.value)} required className="input-base w-full" placeholder="0.00" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
+                        <input type="number" min="1" max="28" value={recurringDayOfMonth} onChange={(e) => setRecurringDayOfMonth(e.target.value)} className="input-base w-full" />
+                    </div>
+                    <button type="submit" className="w-full btn-primary">Create recurring transfer</button>
+                </form>
+            </Modal>
+
+            <Modal isOpen={!!reschedulePair} onClose={() => setReschedulePair(null)} title="Reschedule transfer">
+                {reschedulePair && (
+                    <form onSubmit={handleSaveReschedule} className="space-y-4">
+                        <p className="text-sm text-slate-600">Change the amount and/or day of month for this scheduled transfer.</p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Amount (each month)</label>
+                            <input type="number" min="0.01" step="0.01" value={rescheduleAmount} onChange={(e) => setRescheduleAmount(e.target.value)} required className="input-base w-full" placeholder="0.00" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
+                            <input type="number" min={1} max={28} value={rescheduleDay} onChange={(e) => setRescheduleDay(e.target.value)} className="input-base w-full" />
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                            <button type="button" onClick={() => setReschedulePair(null)} className="btn-outline">Cancel</button>
+                            <button type="submit" className="btn-primary">Save changes</button>
+                        </div>
+                    </form>
+                )}
+            </Modal>
+
             <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">
                 <form onSubmit={(e) => { e.preventDefault(); handleTransfer(); }} className="space-y-4">
                     <div>
@@ -536,7 +926,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select source account</option>
                             {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance ?? 0)})
+                                    {acc.name} ({formatCurrencyString(acc.balance)})
                                 </option>
                             ))}
                         </select>
@@ -544,7 +934,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             const acc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
                             return acc && (
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Available balance: {formatCurrencyString(acc.balance ?? 0)}
+                                    Available balance: {formatCurrencyString(acc.balance)}
                                 </p>
                             );
                         })()}
@@ -562,7 +952,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select destination account</option>
                             {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance ?? 0)})
+                                    {acc.name} ({formatCurrencyString(acc.balance)})
                                 </option>
                             ))}
                         </select>

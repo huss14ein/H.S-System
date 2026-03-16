@@ -87,7 +87,15 @@ export type HouseholdMonthPlan = HouseholdMonthResult;
 /** Alias for consumers that expect HouseholdEngineResult (e.g. stress, shock drill). */
 export type HouseholdEngineResult = HouseholdBudgetPlanResult;
 
-export type HouseholdEngineProfile = 'Moderate' | 'Conservative' | 'Aggressive' | string;
+export type HouseholdEngineProfile = 'Moderate' | 'Conservative' | 'Aggressive' | 'Growth' | string;
+
+/** Profile labels and descriptions for UI (e.g. Budgets household engine selector). */
+export const HOUSEHOLD_ENGINE_PROFILES: Record<HouseholdEngineProfile, { label: string; description: string }> = {
+  Moderate: { label: 'Moderate', description: 'Balanced savings and spending. Good for stable income and medium-term goals.' },
+  Conservative: { label: 'Conservative', description: 'Higher emergency and reserve allocation. Prioritizes safety and liquidity.' },
+  Aggressive: { label: 'Aggressive', description: 'More toward goals and investing. Suited for higher risk tolerance.' },
+  Growth: { label: 'Growth', description: 'Similar to Aggressive; maximizes goal and investment allocation.' },
+};
 
 /** Default months of expenses to target for emergency fund (e.g. 6). */
 export const DEFAULT_EMERGENCY_TARGET_MONTHS = 6;
@@ -135,6 +143,156 @@ export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number 
   return accounts
     .filter((a) => ['Checking', 'Savings', 'Investment'].includes(String(a.type ?? '')))
     .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
+}
+
+/** Suggested budget entry from the household engine (unified bulk-add categories). */
+export interface HouseholdBudgetCategorySuggestion {
+  category: string;
+  limit: number;
+  period: 'monthly' | 'yearly' | 'weekly' | 'daily';
+  tier: 'Core' | 'Supporting' | 'Optional';
+  /** Optional short description for UI. */
+  hint?: string;
+}
+
+/** @deprecated Use HouseholdBudgetCategorySuggestion. */
+export type SaudiBudgetCategorySuggestion = HouseholdBudgetCategorySuggestion;
+
+/** KSA expense category descriptions for UI help text and dropdowns. */
+export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
+  'Housing Rent (Monthly)': 'If paid monthly; common in newer apartments.',
+  'Groceries & Supermarket': 'Food, toiletries, and cleaning supplies.',
+  'Utilities': 'Electricity (SEC), Water (NWC). Note: Electricity spikes in summer.',
+  'Telecommunications': 'Home Fiber/5G internet and mobile data plans.',
+  'Transportation': 'Petrol/Fuel, Riyadh Metro pass, or Uber/Careem budget.',
+  'Domestic Help': 'Salary for live-in housemaids or drivers.',
+  'Dining & Entertainment': 'Restaurants, cafes, and streaming (Netflix/Shahid).',
+  'Insurance Co-pay': 'Small fees paid at clinics during doctor visits.',
+  'Debt/Loans': 'Personal loan installments or credit card minimums.',
+  'Remittances': 'Funds sent to family outside KSA (for expats).',
+  'Pocket Money': 'Cash for small daily needs (tea, snacks, parking).',
+  'Housing Rent (Semi-Annual)': 'Most common in KSA: 2 checks per year.',
+  'School Tuition (Semester)': 'Private/international school fees per semester.',
+  'Bulk Household Maintenance': 'AC cleaning/servicing before and after summer.',
+  'Iqama Renewal': 'Government fee for residency (expats).',
+  'Dependent Fees': 'Total annual cost for family members (e.g. SAR 4,800 per person).',
+  'Exit/Re-entry Visa': 'For vacations outside the Kingdom.',
+  'Vehicle Insurance': 'Mandatory TPL or comprehensive insurance.',
+  'Istimara (Registration)': 'Car registration renewal (every 3 years, often budgeted yearly).',
+  'Fahas (MVPI)': 'Annual periodic vehicle inspection fee.',
+  'School Uniforms & Books': 'Typically one-time in August/September.',
+  'Zakat': 'Religious almsgiving (usually 2.5% of eligible wealth).',
+  'Annual Vacation': 'Flights and travel for home leave or holidays.',
+  'Fresh Produce (Weekly)': 'Fruit, vegetables, bread from local markets (Souqs).',
+  'Household Help (Hourly)': 'Hourly cleaning (e.g. Mudarri or Java).',
+  'Leisure (Weekly)': 'Weekend outings, cinema, or family gatherings.',
+};
+
+/** Household-engine budget categories with suggested limits from household size and salary.
+ * Single source for bulk-add; covers monthly, yearly, weekly. */
+export function generateHouseholdBudgetCategories(
+  adults: number,
+  kids: number,
+  monthlySalary: number,
+  profile: HouseholdEngineProfile
+): HouseholdBudgetCategorySuggestion[] {
+  const baseExpense = monthlySalary > 0 ? monthlySalary * 0.6 : 5000;
+  const income = monthlySalary > 0 ? monthlySalary * 12 : 60000;
+  const pct = (x: number) => Math.round(baseExpense * x);
+  const savingsMultiplier = profile === 'Conservative' ? 1.2 : profile === 'Aggressive' || profile === 'Growth' ? 0.85 : 1;
+  const result: HouseholdBudgetCategorySuggestion[] = [];
+
+  // ——— Monthly (recurring, every 30 days) ———
+  result.push({ category: 'Housing Rent (Monthly)', limit: pct(0.30), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'] });
+  result.push({ category: 'Groceries & Supermarket', limit: pct(0.12 + adults * 0.04 + kids * 0.02), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Groceries & Supermarket'] });
+  result.push({ category: 'Utilities', limit: pct(0.08), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Utilities'] });
+  result.push({ category: 'Telecommunications', limit: pct(0.04), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Telecommunications'] });
+  result.push({ category: 'Transportation', limit: pct(0.10), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Transportation'] });
+  result.push({ category: 'Domestic Help', limit: pct(0.08), period: 'monthly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Domestic Help'] });
+  result.push({ category: 'Dining & Entertainment', limit: pct(0.06), period: 'monthly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Dining & Entertainment'] });
+  result.push({ category: 'Insurance Co-pay', limit: pct(0.02), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Insurance Co-pay'] });
+  result.push({ category: 'Debt/Loans', limit: pct(0.05), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Debt/Loans'] });
+  result.push({ category: 'Remittances', limit: pct(0.08), period: 'monthly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Remittances'] });
+  result.push({ category: 'Pocket Money', limit: pct(0.02), period: 'monthly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Pocket Money'] });
+  result.push({ category: 'Savings & Investments', limit: Math.round(pct(0.15) * savingsMultiplier), period: 'monthly', tier: 'Core' });
+  result.push({ category: 'Health', limit: pct(0.02), period: 'monthly', tier: 'Core' });
+  result.push({ category: 'Personal Care', limit: pct(0.03), period: 'monthly', tier: 'Supporting' });
+  result.push({ category: 'Shopping', limit: pct(0.03), period: 'monthly', tier: 'Optional' });
+  result.push({ category: 'Miscellaneous', limit: pct(0.02), period: 'monthly', tier: 'Optional' });
+  if (kids > 0) {
+    result.push({ category: 'School & Children', limit: pct(0.10) + kids * 500, period: 'monthly', tier: 'Core' });
+  }
+
+  // ——— 6-Month (semi-annual): store as yearly, limit = total per year (2 payments) ———
+  const semiAnnualRent = Math.round(baseExpense * 0.30 * 2);
+  result.push({ category: 'Housing Rent (Semi-Annual)', limit: semiAnnualRent, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Semi-Annual)'] });
+  result.push({ category: 'School Tuition (Semester)', limit: Math.round(baseExpense * 0.10 * 2), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['School Tuition (Semester)'] });
+  result.push({ category: 'Bulk Household Maintenance', limit: Math.round(baseExpense * 0.03 * 2), period: 'yearly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Bulk Household Maintenance'] });
+
+  // ——— Yearly (sinking fund: save a bit each month) ———
+  result.push({ category: 'Iqama Renewal', limit: Math.round(income * 0.02), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Iqama Renewal'] });
+  result.push({ category: 'Dependent Fees', limit: (adults + kids) * 4800, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Dependent Fees'] });
+  result.push({ category: 'Exit/Re-entry Visa', limit: Math.round(income * 0.01), period: 'yearly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Exit/Re-entry Visa'] });
+  result.push({ category: 'Vehicle Insurance', limit: Math.round(income * 0.03), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Vehicle Insurance'] });
+  result.push({ category: 'Istimara (Registration)', limit: Math.round(income * 0.01), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Istimara (Registration)'] });
+  result.push({ category: 'Fahas (MVPI)', limit: Math.round(income * 0.005), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Fahas (MVPI)'] });
+  if (kids > 0) {
+    result.push({ category: 'School Uniforms & Books', limit: kids * 2000, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['School Uniforms & Books'] });
+  }
+  result.push({ category: 'Zakat', limit: Math.round(income * 0.025), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Zakat'] });
+  result.push({ category: 'Annual Vacation', limit: Math.round(income * 0.08), period: 'yearly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Annual Vacation'] });
+
+  // ——— Weekly ———
+  result.push({ category: 'Fresh Produce (Weekly)', limit: Math.round((baseExpense * 0.03) / 4.33), period: 'weekly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Fresh Produce (Weekly)'] });
+  result.push({ category: 'Household Help (Hourly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Household Help (Hourly)'] });
+  result.push({ category: 'Leisure (Weekly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Leisure (Weekly)'] });
+
+  return result;
+}
+
+/** @deprecated Use generateHouseholdBudgetCategories. */
+export const generateSaudiBudgetCategories = generateHouseholdBudgetCategories;
+
+/** Build household engine input from plan-style arrays (e.g. Plan page). */
+export function buildHouseholdEngineInputFromPlanData(
+  monthlyIncomePlanned: number[],
+  monthlyIncomeActual: number[],
+  monthlyExpenseActual: number[],
+  accounts: Array<{ type?: string; balance?: number }>,
+  goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>,
+  options: {
+    expectedMonthlySalary?: number;
+    adults?: number;
+    kids?: number;
+    profile?: HouseholdEngineProfile;
+    monthlyOverrides?: HouseholdMonthlyOverride[];
+    config?: HouseholdEngineConfig;
+  }
+): HouseholdBudgetPlanInput {
+  const salary = options?.expectedMonthlySalary ?? (monthlyIncomePlanned?.length ? monthlyIncomePlanned.reduce((a, b) => a + b, 0) / monthlyIncomePlanned.length : 0);
+  const monthlySalaryPlan = Array.isArray(monthlyIncomePlanned) && monthlyIncomePlanned.length >= 12
+    ? monthlyIncomePlanned.slice(0, 12)
+    : Array(12).fill(salary);
+  const monthlyActualIncome = Array.isArray(monthlyIncomeActual) && monthlyIncomeActual.length >= 12
+    ? monthlyIncomeActual.slice(0, 12)
+    : Array(12).fill(0);
+  const monthlyActualExpense = Array.isArray(monthlyExpenseActual) && monthlyExpenseActual.length >= 12
+    ? monthlyExpenseActual.slice(0, 12)
+    : Array(12).fill(0);
+  const liquidBalance = sumLiquidCash(accounts);
+  const goalsMapped = mapGoalsForRouting(goals);
+  return {
+    monthlySalaryPlan,
+    monthlyActualIncome,
+    monthlyActualExpense,
+    householdDefaults: { adults: options?.adults ?? 2, kids: options?.kids ?? 0 },
+    monthlyOverrides: options?.monthlyOverrides ?? [],
+    liquidBalance,
+    emergencyBalance: liquidBalance,
+    reserveBalance: 0,
+    goals: goalsMapped,
+    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, ...options?.config },
+  };
 }
 
 export function buildHouseholdEngineInputFromData(

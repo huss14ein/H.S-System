@@ -14,11 +14,10 @@ import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
+import { StatementIcons } from '../constants/statementIcons';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
-import { useStatementProcessing } from '../context/StatementProcessingContext';
-import { DocumentArrowUpIcon } from '../components/icons';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -33,7 +32,7 @@ const TransactionModal: React.FC<{
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
-    const [category, setCategory] = useState(allCategories?.[0] || '');
+    const [category, setCategory] = useState(allCategories[0] || '');
     const [subcategory, setSubcategory] = useState('');
     const [budgetCategory, setBudgetCategory] = useState(budgetCategories[0] || '');
     const [type, setType] = useState<'income' | 'expense'>('expense');
@@ -71,7 +70,7 @@ const TransactionModal: React.FC<{
         if (transactionToEdit) {
             setDate(new Date(transactionToEdit.date).toISOString().split('T')[0]);
             setDescription(transactionToEdit.description);
-            setAmount(String(Math.abs(Number(transactionToEdit?.amount) || 0)));
+            setAmount(String(Math.abs(transactionToEdit.amount)));
             setCategory(transactionToEdit.category);
             setSubcategory(transactionToEdit.subcategory || '');
             setBudgetCategory(transactionToEdit.budgetCategory || '');
@@ -83,9 +82,9 @@ const TransactionModal: React.FC<{
             setDate(new Date().toISOString().split('T')[0]);
             setDescription('');
             setAmount('');
-            setCategory(allCategories?.[0] || 'Groceries');
+            setCategory(allCategories[0] || 'Groceries');
             setSubcategory('');
-            setBudgetCategory(budgetCategories?.[0] || '');
+            setBudgetCategory(budgetCategories[0] || '');
             setType('expense');
             setAccountId(accounts[0]?.id || '');
             setTransactionNature('Variable');
@@ -94,66 +93,24 @@ const TransactionModal: React.FC<{
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
-    const buildTransactionData = (): Omit<Transaction, 'id'> => {
-        // Validations
-        const amountValue = parseFloat(amount) || 0;
-        if (amountValue <= 0) {
-            throw new Error('Amount must be greater than zero.');
-        }
-        
-        const transactionDate = new Date(date);
-        const today = new Date();
-        today.setHours(23, 59, 59, 999); // End of today
-        if (transactionDate > today) {
-            if (!confirm('Transaction date is in the future. Continue anyway?')) {
-                throw new Error('Transaction cancelled.');
-            }
-        }
-        
-        if (!description || description.trim() === '') {
-            throw new Error('Description is required.');
-        }
-        
-        if (!accountId) {
-            throw new Error('Account is required.');
-        }
-        
-        return {
-            date,
-            description: description.trim(),
-            amount: type === 'expense' ? -Math.abs(amountValue) : Math.abs(amountValue),
-            category,
-            subcategory: subcategory || undefined,
-            budgetCategory: type === 'expense' ? budgetCategory : undefined,
-            type,
-            accountId,
-            transactionNature: type === 'expense' ? transactionNature : undefined,
-            expenseType: type === 'expense' ? expenseType : undefined,
-            status: 'Approved',
-        };
-    };
-
-    const { data: contextData } = useContext(DataContext)!;
+    const buildTransactionData = (): Omit<Transaction, 'id'> => ({
+        date,
+        description,
+        amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
+        category,
+        subcategory: subcategory || undefined,
+        budgetCategory: type === 'expense' ? budgetCategory : undefined,
+        type,
+        accountId,
+        transactionNature: type === 'expense' ? transactionNature : undefined,
+        expenseType: type === 'expense' ? expenseType : undefined,
+    });
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const transactionData = buildTransactionData();
+        
         try {
-            const transactionData = buildTransactionData();
-            
-            // Check for potential duplicates (same date, amount, description)
-            if (!transactionToEdit) {
-                const existing = (contextData?.transactions ?? []).find(t => 
-                    t.date === transactionData.date &&
-                    Math.abs(t.amount) === Math.abs(transactionData.amount) &&
-                    t.description.toLowerCase() === transactionData.description.toLowerCase()
-                );
-                if (existing) {
-                    if (!confirm('A similar transaction already exists on this date. Continue anyway?')) {
-                        return;
-                    }
-                }
-            }
-            
             if (type === 'expense' && budgetCategory === 'Savings & Investments') {
                 await onSaveAndTrade(transactionData);
             } else if (transactionToEdit) {
@@ -163,8 +120,7 @@ const TransactionModal: React.FC<{
             }
             onClose();
         } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : 'Failed to save transaction.';
-            alert(errorMsg);
+            // Error already alerted in DataContext
         }
     };
     
@@ -304,6 +260,7 @@ const FilterButton: React.FC<{ label: string, value: string, current: string, on
 interface TransactionsProps {
   pageAction?: string | null;
   clearPageAction?: () => void;
+  setActivePage?: (page: Page) => void;
   triggerPageAction: (page: Page, action: string) => void;
 }
 
@@ -328,7 +285,7 @@ const RecurringModal: React.FC<{
     React.useEffect(() => {
         if (recurring) {
             setDescription(recurring.description);
-            setAmount(String(recurring?.amount ?? 0));
+            setAmount(String(recurring.amount));
             setType(recurring.type);
             setAccountId(recurring.accountId);
             setBudgetCategory(recurring.budgetCategory ?? '');
@@ -399,7 +356,7 @@ const RecurringModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
                     <select value={accountId} onChange={e => setAccountId(e.target.value)} className="select-base" required>
                         <option value="">Select account</option>
-                        {accounts.filter(a => a.type !== 'Investment').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                     </select>
                 </div>
                 {type === 'expense' && budgetCategories.length > 0 && (
@@ -437,10 +394,8 @@ const RecurringModal: React.FC<{
     );
 };
 
-const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, triggerPageAction }) => {
+const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
     const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
-    const { getStatementById } = useStatementProcessing();
-    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -604,29 +559,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const filteredTransactions = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
-        // Use UTC dates to avoid timezone issues
-        const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-        const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+        const startDate = new Date(year, month - 1, 1);
+        const endDate = new Date(year, month, 0, 23, 59, 59);
 
         return (data?.transactions ?? []).filter(t => {
-            // Parse transaction date and normalize to start of day for comparison
-            const transactionDateStr = t.date.split('T')[0]; // Get YYYY-MM-DD part
-            const [txYear, txMonth, txDay] = transactionDateStr.split('-').map(Number);
-            const transactionDate = new Date(Date.UTC(txYear, txMonth - 1, txDay, 0, 0, 0, 0));
+            const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isBudgetCategoryMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
+            const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetCategoryMatch && isPermitted;
+            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
         });
     }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
-        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
+        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
@@ -634,7 +585,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             .filter(t => t.type === 'expense' && t.budgetCategory)
             .forEach(t => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
-                spending.set(t.budgetCategory!, currentSpend + Math.abs(Number(t.amount) ?? 0));
+                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
         
         const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
@@ -678,7 +629,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
         addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
-        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(Number(transaction.amount) ?? 0)}`);
+        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
     const handleConfirmDelete = () => {
@@ -699,28 +650,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const handleApplyRecurringForMonth = async () => {
         const [year, month] = filters.month.split('-').map(Number);
-        
-        // Validation
-        if (!year || year < 2000 || year > 2100) {
-            alert('Invalid year selected.');
-            return;
-        }
-        if (!month || month < 1 || month > 12) {
-            alert('Invalid month selected.');
-            return;
-        }
-        
         setApplyingRecurring(true);
         try {
             const { applied, skipped } = await applyRecurringForMonth(year, month);
-            if (applied > 0 || skipped > 0) {
-                alert(`Recurring transactions: ${applied} created, ${skipped} already applied for ${MONTHS[month - 1]} ${year}.`);
-            } else {
-                alert(`No recurring transactions to apply for ${MONTHS[month - 1]} ${year}.`);
-            }
+            alert(`Recurring: ${applied} transaction(s) created, ${skipped} already applied for this month.`);
         } catch (e) {
-            const errorMsg = e instanceof Error ? e.message : 'Failed to apply recurring transactions.';
-            alert(`Error: ${errorMsg}`);
+            // already alerted in context
         } finally {
             setApplyingRecurring(false);
         }
@@ -731,6 +666,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { day: 'numeric', month: 'long', year: 'numeric', numberingSystem: 'latn' }).format(date);
     };
 
+
+    const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
+        if (!supabase) return;
+        const { data: verifyRow } = await supabase
+            .from('transactions')
+            .select('id, status')
+            .eq('id', transactionId)
+            .maybeSingle();
+        const status = String((verifyRow as any)?.status || '').toLowerCase();
+        if (status && status !== 'pending') return;
+        const patch: Record<string, unknown> = { status: nextStatus };
+        if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
+        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
+    };
 
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
@@ -749,13 +698,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             if (approveError) {
-                // If transaction not found, it may have been deleted or already processed - remove from UI
-                if (approveError.message?.includes('not found')) {
-                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-                    return;
-                }
-
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
                 const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
                 if (statusError) {
@@ -781,9 +723,48 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
+            await ensurePendingStatusCleared(transactionId, 'Approved');
+            
+            // Refresh transaction data to get updated status and sync to shared budgets
+            const { data: updatedTx } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('id', transactionId)
+                .maybeSingle();
+            
+            if (updatedTx) {
+                // Find the transaction in local state and update it, which will trigger sync to shared budgets
+                const existingTx = data?.transactions?.find(t => t.id === transactionId);
+                if (existingTx) {
+                    // Use updateTransaction which handles syncSharedBudgetTransactionMirror
+                    await updateTransaction({
+                        ...existingTx,
+                        status: 'Approved' as const,
+                    });
+                } else {
+                    // If not in local state, add it
+                    const newTx = {
+                        id: updatedTx.id,
+                        date: updatedTx.date,
+                        description: updatedTx.description,
+                        amount: Number(updatedTx.amount),
+                        category: updatedTx.category,
+                        subcategory: updatedTx.subcategory,
+                        budgetCategory: updatedTx.budget_category || updatedTx.budgetCategory,
+                        type: updatedTx.type,
+                        accountId: updatedTx.account_id || updatedTx.accountId,
+                        status: 'Approved' as const,
+                        transactionNature: updatedTx.transaction_nature || updatedTx.transactionNature,
+                        expenseType: updatedTx.expense_type || updatedTx.expenseType,
+                    };
+                    await updateTransaction(newTx as Transaction);
+                }
+            }
+            
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            setPendingRefreshKey((k) => k + 1);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
             if (reason === null) {
@@ -805,13 +786,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             if (rejectError) {
-                // If transaction not found, it may have been deleted or already processed - remove from UI
-                if (rejectError.message?.includes('not found')) {
-                    setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
-                    setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
-                    return;
-                }
-
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet
                 const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
                 if (updateError) {
@@ -826,9 +800,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 }
             }
 
+            await ensurePendingStatusCleared(transactionId, 'Rejected', rejectionReason);
             // Successfully rejected - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            setPendingRefreshKey((k) => k + 1);
         }
     };
 
@@ -847,22 +823,26 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     if (loading || !data) {
         return (
-            <PageLayout title="Cash Flow">
-                <div className="flex items-center justify-center min-h-[24rem]">
-                    <div className="text-center">
-                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <p className="text-sm text-slate-600">Loading transaction data...</p>
-                    </div>
-                </div>
-            </PageLayout>
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading transactions" />
+            </div>
         );
     }
 
     return (
         <PageLayout
             title="Cash Flow"
+            description="Track income and expenses. Import from bank or trading statements for less manual entry."
             action={
-                <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                <div className="flex flex-wrap items-center gap-2">
+                    {setActivePage && (
+                        <button type="button" onClick={() => setActivePage('Statement Upload')} className="btn-outline flex items-center gap-2">
+                            <StatementIcons.upload className="h-5 w-5" />
+                            Import from statements
+                        </button>
+                    )}
+                    <button type="button" onClick={() => handleOpenTransactionModal()} className="btn-primary">Add Transaction</button>
+                </div>
             }
         >
             <SectionCard
@@ -893,7 +873,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <div className="flex-1 min-w-0">
                                     <span className="font-medium text-dark">{r.description}</span>
                                     <span className={`ml-2 text-sm font-medium ${r.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount ?? 0)}
+                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount)}
                                     </span>
                                     <span className="text-xs text-gray-500 ml-2">
                                         • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
@@ -943,7 +923,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount ?? 0), { colorize: false })}</span>
+                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
                                     </div>
@@ -967,48 +947,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 </SectionCard>
             </div>
 
-            <SectionCard 
-                title="Transaction History"
-                headerAction={
-                    filteredTransactions.length > 0 ? (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                const csv = [
-                                    ['Date', 'Description', 'Amount', 'Type', 'Category', 'Budget Category', 'Account', 'Nature', 'Expense Type', 'Status'].join(','),
-                                    ...filteredTransactions.map(t => {
-                                        const account = (data?.accounts ?? []).find(a => a.id === t.accountId);
-                                        return [
-                                            t.date,
-                                            `"${(t.description || '').replace(/"/g, '""')}"`,
-                                            t.amount ?? 0,
-                                            t.type,
-                                            t.category || '',
-                                            t.budgetCategory || '',
-                                            account?.name || t.accountId || '',
-                                            t.transactionNature || '',
-                                            t.expenseType || '',
-                                            t.status || 'Approved'
-                                        ].join(',');
-                                    })
-                                ].join('\n');
-                                const blob = new Blob([csv], { type: 'text/csv' });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `transactions-${filters.month}-${new Date().toISOString().split('T')[0]}.csv`;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                                URL.revokeObjectURL(url);
-                            }}
-                            className="text-xs font-medium text-primary hover:underline"
-                        >
-                            Export CSV
-                        </button>
-                    ) : null
-                }
-            >
+            <SectionCard title="Transaction History">
                 <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
                     <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
@@ -1027,13 +966,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                         <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                     </div>
-                    <div className="flex items-center gap-1">
-                        <span className="text-xs font-medium text-slate-500 mr-1">Budget:</span>
-                        <select value={filters.budgetCategory} onChange={(e) => setFilters({...filters, budgetCategory: e.target.value})} className="select-base w-auto min-w-[140px]">
-                            <option value="all">All Categories</option>
-                            {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                    </div>
                 </div>
                 <ul className="divide-y divide-slate-100">
                     {filteredTransactions.map(transaction => (
@@ -1046,25 +978,26 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     {transaction.status && (
                                         <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
                                     )}
-                                    {transaction.statementId && (() => {
-                                        const statement = getStatementById(transaction.statementId);
-                                        return statement ? (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs" title={`Imported from: ${statement.fileName}`}>
-                                                <DocumentArrowUpIcon className="h-3 w-3" />
-                                                Statement
-                                            </span>
-                                        ) : null;
-                                    })()}
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 flex-shrink-0">
-                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction?.amount ?? 0, { colorize: true })}</p>
+                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction.amount, { colorize: true })}</p>
                                 <button type="button" onClick={() => handleOpenTransactionModal(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50" aria-label="Edit"><PencilIcon className="h-5 w-5"/></button>
                                 <button type="button" onClick={() => setItemToDelete(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-danger/50" aria-label="Delete"><TrashIcon className="h-5 w-5"/></button>
                             </div>
                         </li>
                     ))}
-                    {filteredTransactions.length === 0 && <li className="empty-state">No transactions found for the selected period.</li>}
+                    {filteredTransactions.length === 0 && (
+                        <li className="empty-state flex flex-col items-center gap-2 py-6">
+                            <span>No transactions found for the selected period.</span>
+                            {setActivePage && (
+                                <button type="button" onClick={() => setActivePage('Statement Upload')} className="text-sm font-medium text-primary hover:underline inline-flex items-center gap-1.5">
+                                    <StatementIcons.upload className="h-4 w-4" />
+                                    Import from statements →
+                                </button>
+                            )}
+                        </li>
+                    )}
                 </ul>
             </SectionCard>
             

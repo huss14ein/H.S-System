@@ -66,6 +66,7 @@ const Layout: React.FC<LayoutProps> = ({
         ref={mainContentRef}
         id="main-content"
         tabIndex={-1}
+        aria-label="Main content"
         className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full"
       >
         <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">

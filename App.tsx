@@ -1,10 +1,8 @@
-import React, { useState, useContext, useCallback, Suspense, lazy, startTransition } from 'react';
+import React, { useState, useContext, useCallback, useEffect, Suspense, lazy, startTransition } from 'react';
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
-
-const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === 'true';
 import { AuthContext, AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
@@ -36,12 +34,12 @@ const Notifications = lazy(() => import('./pages/Notifications'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Investment & Strategy Pages
+const Investments = lazy(() => import('./pages/Investments'));
 const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
 const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
 const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
 const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
 const WatchlistView = lazy(() => import('./pages/WatchlistView'));
-const Commodities = lazy(() => import('./pages/Commodities'));
 
 // Financial Planning Pages
 const Plan = lazy(() => import('./pages/Plan'));
@@ -49,37 +47,24 @@ const Plan = lazy(() => import('./pages/Plan'));
 // Asset Management Pages
 const Assets = lazy(() => import('./pages/Assets'));
 
-// Statement Upload
-const StatementUpload = lazy(() => import('./pages/StatementUpload'));
-const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
-
 // System & Market Pages
 const MarketEvents = lazy(() => import('./pages/MarketEvents'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+
+// Statement & Data Import
+const StatementUpload = lazy(() => import('./pages/StatementUpload'));
+const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
+
+// Wealth Ultra (allocation engine)
+const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System Health', 'Statement Upload', 'Statement History'
+  'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities'
 ];
-
-function getAuthViewFromHash(allowSignup: boolean): boolean {
-  if (!allowSignup || typeof window === 'undefined') return false;
-  return window.location.hash === '#signup';
-}
-
-const AuthGate: React.FC<{ allowSignup: boolean }> = ({ allowSignup }) => {
-  const [showSignup, setShowSignup] = useState(() => getAuthViewFromHash(allowSignup));
-  React.useEffect(() => {
-    if (!allowSignup) return;
-    const onHashChange = () => setShowSignup(getAuthViewFromHash(allowSignup));
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, [allowSignup]);
-  return showSignup ? <SignupPage /> : <LoginPage />;
-};
 
 function getPageFromHash(): Page | null {
   if (typeof window === 'undefined') return null;
@@ -108,6 +93,13 @@ const App: React.FC = () => {
       if (window.location.hash !== hash) window.location.hash = hash;
     } catch (_) {}
   }, []);
+
+  // Update document title for browser tab / bookmarks
+  useEffect(() => {
+    const base = 'Finova';
+    document.title = activePage === 'Dashboard' ? base : `${base} – ${activePage}`;
+    return () => { document.title = base; };
+  }, [activePage]);
 
   // Sync state from URL when user uses browser back/forward
   React.useEffect(() => {
@@ -153,47 +145,59 @@ const App: React.FC = () => {
       case 'Summary': return <Summary setActivePage={setActivePage} />;
       case 'Accounts': return <Accounts setActivePage={setActivePage} />;
       case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
-      case 'Transactions': return <Transactions {...actionProps} triggerPageAction={triggerPageAction} />;
-      case 'Budgets': return <Budgets triggerPageAction={triggerPageAction} />;
+      case 'Transactions': return <Transactions {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Budgets': return <Budgets triggerPageAction={triggerPageAction} setActivePage={setActivePage} />;
       case 'Goals': return <Goals setActivePage={setActivePage} />;
-      case 'Forecast': return <Forecast />;
-      case 'Analysis': return <Analysis />;
-      case 'Zakat': return <Zakat />;
+      case 'Forecast': return <Forecast setActivePage={setActivePage} />;
+      case 'Analysis': return <Analysis setActivePage={setActivePage} />;
+      case 'Zakat': return <Zakat setActivePage={setActivePage} />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings setActivePage={setActivePage} />;
       
       // Investment & Strategy Pages
-      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} />;
-      case 'Recovery Plan': return <RecoveryPlanView />;
-      case 'AI Rebalancer': return <AIRebalancerView />;
-      case 'Dividend Tracker': return <DividendTrackerView />;
-      case 'Watchlist': return <WatchlistView />;
-      case 'Investments': return <Commodities />;
+      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} setActivePage={setActivePage} />;
+      case 'Recovery Plan': return <RecoveryPlanView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
+      case 'AI Rebalancer': return <AIRebalancerView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
+      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
+      case 'Watchlist': return <WatchlistView setActivePage={setActivePage} />;
+      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages
-      case 'Plan': return <Plan />;
+      case 'Plan': return <Plan setActivePage={setActivePage} />;
       
-      // Asset Management Pages
-      case 'Assets': return <Assets />;
-      
-      // Statement Upload
+      // Asset Management Pages (commodities live inside Assets only; Commodities redirects to Assets)
+      case 'Assets': return <Assets {...actionProps} setActivePage={setActivePage} />;
+      case 'Commodities': return <Assets {...actionProps} setActivePage={setActivePage} />;
+
+      // Statement Import & History
       case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} />;
-      case 'Statement History': return <StatementHistoryView />;
+      case 'Statement History': return <StatementHistoryView setActivePage={setActivePage} />;
       
       // System & Market Pages
-      case 'Market Events': return <MarketEvents />;
-      case 'System Health': return <SystemHealth />;
-      case 'Wealth Ultra': return <InvestmentPlanView onExecutePlan={() => {}} />; // Temporary mapping
+      case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
+      case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;
+      case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       default: return <Dashboard setActivePage={setActivePage} />;
     }
   };
   
+  const [authHash, setAuthHash] = useState(() =>
+    typeof window !== 'undefined' ? window.location.hash : ''
+  );
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHash = () => setAuthHash(window.location.hash);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   if (!isAuthenticated) {
+    const showSignup = authHash === '#signup';
     return (
       <ThemeProvider>
         <AuthProvider>
-          <AuthGate allowSignup={ALLOW_SIGNUP} />
+          {showSignup ? <SignupPage /> : <LoginPage />}
         </AuthProvider>
       </ThemeProvider>
     );

@@ -7,6 +7,8 @@ interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
   /** Optional wrapper class (e.g. for min height) */
   className?: string;
+  /** Accessible label for screen readers (recommended when used for page/section loading) */
+  ariaLabel?: string;
 }
 
 const sizeClasses = {
@@ -15,9 +17,14 @@ const sizeClasses = {
   lg: 'h-16 w-16 border-2',
 };
 
-const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message, size = 'lg', className = '' }) => (
-  <div className={`flex flex-col justify-center items-center gap-3 ${className}`}>
-    <div className={`animate-spin rounded-full border-primary ${sizeClasses[size]}`} aria-hidden="true" />
+const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message, size = 'lg', className = '', ariaLabel }) => (
+  <div className={`flex flex-col justify-center items-center gap-3 ${className}`} aria-busy={!!ariaLabel}>
+    <div
+      className={`animate-spin rounded-full border-primary ${sizeClasses[size]}`}
+      aria-label={ariaLabel}
+      aria-hidden={!ariaLabel}
+      role={ariaLabel ? 'status' : undefined}
+    />
     {message && <p className="text-sm text-gray-500">{message}</p>}
   </div>
 );

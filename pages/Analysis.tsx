@@ -7,7 +7,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { CHART_COLORS, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber } from '../components/charts/chartTheme';
 import ChartContainer from '../components/charts/ChartContainer';
-import type { Transaction } from '../types';
+import type { Transaction, Page } from '../types';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 
@@ -155,7 +155,7 @@ const AssetLiabilityChart: React.FC = () => {
     );
 };
 
-const Analysis: React.FC = () => {
+const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
     const { data, loading } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
 
@@ -194,10 +194,10 @@ const Analysis: React.FC = () => {
         return { spendingData, trendData, compositionData };
     }, [data, exchangeRate]);
 
-    if (loading) {
+    if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" />
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading analysis" />
             </div>
         );
     }

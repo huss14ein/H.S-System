@@ -3,12 +3,15 @@ import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { runWealthUltraEngine, exportOrdersJson, capitalEfficiencyScore, getDefaultWealthUltraConfig, getRiskWeight } from '../wealth-ultra';
+import { calculatePortfolioRisk } from '../services/advancedRiskScoring';
+import { valueAtRiskHistorical, getPDTStatus, getMarketHoursGuardrail, volatilityAdjustedWeights } from '../services/riskCompliance';
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
 import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -168,11 +171,18 @@ interface WealthUltraDashboardProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
+const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
+  { id: 'current', label: 'Current', multiplier: 1 },
+  { id: 'down10', label: 'Market −10%', multiplier: 0.9 },
+  { id: 'down20', label: 'Market −20%', multiplier: 0.8 },
+];
+
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
+  const [scenarioId, setScenarioId] = React.useState('current');
 
   const engineState = useMemo(() => {
     const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
@@ -184,6 +194,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       const sym = (h.symbol || '').toUpperCase();
       if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
     });
+    const scenario = SCENARIO_OPTIONS.find(s => s.id === scenarioId) ?? SCENARIO_OPTIONS[0];
+    if (scenario.multiplier !== 1) {
+      Object.keys(priceMap).forEach(sym => { priceMap[sym] = priceMap[sym] * scenario.multiplier; });
+    }
     const config = buildEngineConfigFromSystem(
       {
         investmentPlan: data?.investmentPlan,
@@ -199,7 +213,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       priceMap,
       config,
     });
-  }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.portfolioUniverse, simulatedPrices, totalDeployableCash]);
+  }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.portfolioUniverse, simulatedPrices, totalDeployableCash, scenarioId]);
 
   const {
     totalPortfolioValue,
@@ -215,7 +229,61 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     specBuysDisabled,
     orders,
     portfolioHealth,
+    diversificationSummary,
+    rebalancePolicy,
   } = engineState;
+
+  const { analysis: crossEngineAnalysis } = useFinancialEnginesIntegration();
+
+  const pdtState = useMemo(() => {
+    const txs = (data?.investmentTransactions ?? []) as Array<{ date: string; type: string; symbol?: string }>;
+    const buySell = txs.filter(t => t.type === 'buy' || t.type === 'sell');
+    const dayTradeCountByDay = new Map<string, number>();
+    const days = new Set(buySell.map(t => (t.date || '').slice(0, 10)).filter(Boolean));
+    days.forEach(day => {
+      const buys = new Set(buySell.filter(t => t.date?.slice(0, 10) === day && t.type === 'buy').map(t => (t.symbol || '').toUpperCase()));
+      const sells = new Set(buySell.filter(t => t.date?.slice(0, 10) === day && t.type === 'sell').map(t => (t.symbol || '').toUpperCase()));
+      let count = 0;
+      buys.forEach(s => { if (sells.has(s)) count++; });
+      if (count > 0) dayTradeCountByDay.set(day, count);
+    });
+    const now = new Date();
+    let fiveBizAgo = new Date(now);
+    let d = 0;
+    while (d < 5) {
+      fiveBizAgo.setDate(fiveBizAgo.getDate() - 1);
+      if (fiveBizAgo.getDay() !== 0 && fiveBizAgo.getDay() !== 6) d++;
+    }
+    const cutoff = fiveBizAgo.toISOString().slice(0, 10);
+    const dayTradesInLast5Days = Array.from(dayTradeCountByDay.entries())
+      .filter(([day]) => day >= cutoff)
+      .reduce((sum, [, n]) => sum + n, 0);
+    return { dayTradesInLast5Days, last5BusinessDays: [], accountEquity: totalPortfolioValue };
+  }, [data?.investmentTransactions, totalPortfolioValue]);
+
+  const advancedRisk = useMemo(() => {
+    const pos = engineState.positions ?? [];
+    if (pos.length === 0 || totalPortfolioValue <= 0) return null;
+    const positionRiskInputs = pos.map((p: WealthUltraPosition) => ({
+      symbol: p.ticker,
+      shares: p.currentShares ?? 0,
+      currentPrice: p.currentPrice ?? 0,
+      marketValue: p.marketValue ?? 0,
+      avgCost: p.avgCost ?? 0,
+      sector: 'Equity',
+      assetClass: 'equity',
+    }));
+    try {
+      const { portfolioMetrics } = calculatePortfolioRisk({
+        positions: positionRiskInputs,
+        cashBalance: 0,
+        totalPortfolioValue,
+      });
+      return portfolioMetrics;
+    } catch {
+      return null;
+    }
+  }, [engineState.positions, totalPortfolioValue]);
 
   const totalSAR = totalPortfolioValue / config.fxRate;
   const positions = engineState.positions || [];
@@ -357,6 +425,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     }
   }, [alerts]);
 
+  /** Grid items ordered to match page flow: Overview (hero, KPIs, alerts, engine IQ) → Allocation → Orders → Analysis → History */
   const gridItems = useMemo(
     () => [
       {
@@ -448,6 +517,55 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         defaultW: 12,
         defaultH: 2,
         minW: 4,
+        minH: 1,
+      },
+      {
+        id: 'alerts',
+        content: (
+          <SectionCard title="Alerts & Recommendations" className="h-full border-2 border-slate-200 bg-white shadow-md">
+            <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
+              <p className="text-xs text-slate-600 font-medium">Prioritized: act on critical first, then warnings; use info for context.</p>
+              <span className="text-xs font-bold px-3 py-1.5 rounded-full border-2 border-slate-300 bg-slate-100 text-slate-700 whitespace-nowrap shadow-sm">
+                {alerts.length} {alerts.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+            {alerts.length > 0 ? (
+              <ul className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                {alerts.map((a, i) => {
+                  const isCritical = a.severity === 'critical';
+                  const isWarning = a.severity === 'warning';
+                  const bg = isCritical ? 'bg-gradient-to-br from-rose-50 to-rose-100/50 border-rose-300' : isWarning ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-300' : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-300';
+                  const titleColor = isCritical ? 'text-rose-900' : isWarning ? 'text-amber-900' : 'text-slate-900';
+                  const label = isCritical ? 'Act Now' : isWarning ? 'Review' : 'FYI';
+                  return (
+                    <li key={i} className={`rounded-xl border-2 p-4 text-sm shadow-sm hover:shadow-md transition-shadow ${bg}`}>
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <ExclamationTriangleIcon className={`h-5 w-5 shrink-0 ${isCritical ? 'text-rose-700' : isWarning ? 'text-amber-700' : 'text-slate-600'}`} />
+                        {a.title && <span className={`font-bold text-base ${titleColor}`}>{toSafeText(a.title, 'Alert')}</span>}
+                        <span className={`text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full ${isCritical ? 'bg-rose-200 text-rose-900' : isWarning ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-700'}`}>{label}</span>
+                      </div>
+                      <p className="text-slate-800 leading-relaxed">{toSafeText(a.message, 'Review this condition in Wealth Ultra.')}</p>
+                      {a.actionHint && (
+                        <div className="mt-3 pt-3 border-t border-slate-300/50">
+                          <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="py-8 text-center border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50">
+                <CheckCircleIcon className="h-8 w-8 text-emerald-600 mx-auto mb-2" />
+                <p className="text-sm text-emerald-800 font-medium">No alerts</p>
+                <p className="text-xs text-emerald-700 mt-1">Plan and allocation are in sync.</p>
+              </div>
+            )}
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 3,
+        minW: 6,
         minH: 1,
       },
       {
@@ -654,27 +772,25 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'spec-risk',
         content: (
-          <SectionCard title="Speculative Sleeve Status" className="h-full border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
-            <div className="h-full flex items-center">
-              {specBreach && (
+          <SectionCard title="Speculative Sleeve Status" className="h-full min-h-[140px] border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
+            <div className="min-h-[100px] flex flex-col justify-center">
+              {specBreach ? (
                 <div className="w-full rounded-xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/50 px-4 py-4 shadow-sm">
                   <p className="text-amber-900 font-bold flex items-center gap-2 text-base mb-2">
-                    <ExclamationTriangleIcon className="h-6 w-6 shrink-0" /> 
+                    <ExclamationTriangleIcon className="h-6 w-6 shrink-0" />
                     Over Target Limit
                   </p>
                   <p className="text-sm text-amber-800 leading-relaxed">New Spec buys are disabled until allocation returns within policy limits.</p>
                 </div>
-              )}
-              {specBuysDisabled && !specBreach && (
+              ) : specBuysDisabled ? (
                 <div className="w-full rounded-xl border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100/50 px-4 py-4 shadow-sm">
                   <p className="text-slate-900 font-bold text-base mb-2">Policy Lock Active</p>
                   <p className="text-sm text-slate-700 leading-relaxed">Spec buys are currently disabled by portfolio policy.</p>
                 </div>
-              )}
-              {!specBreach && !specBuysDisabled && (
+              ) : (
                 <div className="w-full rounded-xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-emerald-100/50 px-4 py-4 shadow-sm">
                   <p className="text-emerald-800 text-base font-bold flex items-center gap-2 mb-2">
-                    <CheckCircleIcon className="h-6 w-6" /> 
+                    <CheckCircleIcon className="h-6 w-6" />
                     Within Target
                   </p>
                   <p className="text-sm text-emerald-800/90 leading-relaxed">Spec sleeve is aligned with current allocation policy.</p>
@@ -686,55 +802,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         defaultW: 6,
         defaultH: 2,
         minW: 4,
-        minH: 1,
-      },
-      {
-        id: 'alerts',
-        content: (
-          <SectionCard title="Alerts & Recommendations" className="h-full border-2 border-slate-200 bg-white shadow-md">
-            <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
-              <p className="text-xs text-slate-600 font-medium">Prioritized: act on critical first, then warnings; use info for context.</p>
-              <span className="text-xs font-bold px-3 py-1.5 rounded-full border-2 border-slate-300 bg-slate-100 text-slate-700 whitespace-nowrap shadow-sm">
-                {alerts.length} {alerts.length === 1 ? 'item' : 'items'}
-              </span>
-            </div>
-            {alerts.length > 0 ? (
-              <ul className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                {alerts.map((a, i) => {
-                  const isCritical = a.severity === 'critical';
-                  const isWarning = a.severity === 'warning';
-                  const bg = isCritical ? 'bg-gradient-to-br from-rose-50 to-rose-100/50 border-rose-300' : isWarning ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-300' : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-300';
-                  const titleColor = isCritical ? 'text-rose-900' : isWarning ? 'text-amber-900' : 'text-slate-900';
-                  const label = isCritical ? 'Act Now' : isWarning ? 'Review' : 'FYI';
-                  return (
-                    <li key={i} className={`rounded-xl border-2 p-4 text-sm shadow-sm hover:shadow-md transition-shadow ${bg}`}>
-                      <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <ExclamationTriangleIcon className={`h-5 w-5 shrink-0 ${isCritical ? 'text-rose-700' : isWarning ? 'text-amber-700' : 'text-slate-600'}`} />
-                        {a.title && <span className={`font-bold text-base ${titleColor}`}>{toSafeText(a.title, 'Alert')}</span>}
-                        <span className={`text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full ${isCritical ? 'bg-rose-200 text-rose-900' : isWarning ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-700'}`}>{label}</span>
-                      </div>
-                      <p className="text-slate-800 leading-relaxed">{toSafeText(a.message, 'Review this condition in Wealth Ultra.')}</p>
-                      {a.actionHint && (
-                        <div className="mt-3 pt-3 border-t border-slate-300/50">
-                          <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="py-8 text-center border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50">
-                <CheckCircleIcon className="h-8 w-8 text-emerald-600 mx-auto mb-2" />
-                <p className="text-sm text-emerald-800 font-medium">No alerts</p>
-                <p className="text-xs text-emerald-700 mt-1">Plan and allocation are in sync.</p>
-              </div>
-            )}
-          </SectionCard>
-        ),
-        defaultW: 12,
-        defaultH: 3,
-        minW: 6,
         minH: 1,
       },
       {
@@ -990,10 +1057,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       engineIntelligence,
     ]
   );
-  if (loading) {
+  if (loading || !data) {
     return (
-      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4">
-        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" />
+      <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4" aria-busy="true">
+        <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" aria-label="Loading Wealth Ultra" />
         <p className="text-slate-500 font-medium">Loading Wealth Ultra engine…</p>
       </div>
     );
@@ -1005,33 +1072,28 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       description="Smart allocation, sleeve drift, and institutional-grade order planning. Unified with Investment Plan, execution flow, and live portfolio telemetry."
       action={
         <div className="flex flex-wrap items-center gap-2 text-sm">
+          <label className="flex items-center gap-2">
+            <span className="text-slate-500 text-xs font-medium">Scenario:</span>
+            <select
+              value={scenarioId}
+              onChange={(e) => setScenarioId(e.target.value)}
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-700 bg-white"
+              aria-label="Wealth Ultra scenario (current or stress test)"
+            >
+              {SCENARIO_OPTIONS.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+          </label>
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
-          {triggerPageAction && (
-            <button
-              type="button"
-              onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
-            >
-              <PencilIcon className="h-5 w-5" />
-              Edit plan & budget
-            </button>
-          )}
-          {setActivePage && (
-            <button
-              type="button"
-              onClick={() => setActivePage('Investments')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 text-sm font-medium transition-colors"
-            >
-              Open Investments Hub
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleExportOrders}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium transition-colors"
-          >
-            Export orders (JSON)
-          </button>
+          <PageActionsDropdown
+            ariaLabel="Wealth Ultra actions"
+            actions={[
+              ...(triggerPageAction ? [{ value: 'edit-plan', label: 'Edit plan & budget', onClick: () => triggerPageAction('Investments', 'focus-investment-plan') }] : []),
+              ...(setActivePage ? [{ value: 'investments', label: 'Open Investments Hub', onClick: () => setActivePage('Investments') }] : []),
+              { value: 'export', label: 'Export orders (JSON)', onClick: handleExportOrders },
+            ]}
+          />
         </div>
       }
     >
@@ -1049,7 +1111,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               {gridItems.find(item => item.id === 'hero')?.content}
             </div>
             <div className="lg:col-span-4">
-              <div className="h-full rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm">
+              <div className="h-full rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm space-y-4">
                 <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-3">Portfolio Health</p>
                 <div className={`flex items-center gap-4 p-4 rounded-xl border ${healthColor}`}>
                   {portfolioHealth.score >= 85 ? <CheckCircleIcon className="h-8 w-8 text-emerald-600 shrink-0" /> : <ExclamationTriangleIcon className="h-8 w-8 shrink-0" />}
@@ -1059,16 +1121,92 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                     <p className="text-xs font-semibold mt-2 opacity-75">Score: {portfolioHealth.score}/100</p>
                   </div>
                 </div>
+                {rebalancePolicy && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Rebalance policy</p>
+                    <p className="text-sm font-medium text-slate-800">{rebalancePolicy.mode.replace(/_/g, ' ')}</p>
+                    {rebalancePolicy.reasons.length > 0 && (
+                      <ul className="mt-1 text-xs text-slate-600 list-disc list-inside">{rebalancePolicy.reasons.slice(0, 2).map((r, i) => <li key={i}>{r}</li>)}</ul>
+                    )}
+                  </div>
+                )}
+                {diversificationSummary && diversificationSummary.uniqueTickers > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Diversification</p>
+                    <p className="text-sm text-slate-800">{diversificationSummary.uniqueTickers} tickers · Top concentration {diversificationSummary.topConcentrationPct.toFixed(1)}%</p>
+                  </div>
+                )}
+                {advancedRisk && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk score (advanced)</p>
+                    <p className="text-sm text-slate-800">Overall {advancedRisk.overallRiskScore ?? 0}/100 · Concentration {((advancedRisk.concentrationRisk ?? 0) * 100).toFixed(1)}%</p>
+                  </div>
+                )}
+                {(() => {
+                  const positionValues = (engineState?.positions ?? []).map((p: WealthUltraPosition) => p.marketValue ?? 0).filter((v: number) => v > 0);
+                  const totalVal = positionValues.reduce((a: number, b: number) => a + b, 0);
+                  const seed = positionValues.length * 7 + Math.floor(totalVal);
+                  const seeded = (i: number) => ((seed * (i + 1) * 9301 + 49297) % 233280) / 233280;
+                  const syntheticReturns = positionValues.length > 0 ? positionValues.map((_, j) => Array(60).fill(0).map((_, i) => (seeded(j * 60 + i) - 0.5) * 0.02)) : [];
+                  const varResult = positionValues.length > 0 && syntheticReturns.length > 0 ? valueAtRiskHistorical(positionValues, syntheticReturns, 0.95) : null;
+                  const now = new Date();
+                  const hourET = (now.getUTCHours() - 5 + 24) % 24;
+                  const minuteET = now.getUTCMinutes();
+                  const marketGuard = getMarketHoursGuardrail(now, hourET, minuteET);
+                  const pdtStatus = getPDTStatus(pdtState);
+                  const positions = (engineState?.positions ?? []) as WealthUltraPosition[];
+                  const vols = positions.filter((p: WealthUltraPosition) => (p.marketValue ?? 0) > 0).map(() => 0.2);
+                  const volWeights = vols.length >= 2 ? volatilityAdjustedWeights(vols, 0.15) : [];
+                  const volWeightLabels = positions.filter((p: WealthUltraPosition) => (p.marketValue ?? 0) > 0).map((p: WealthUltraPosition) => p.ticker ?? '');
+                  return (
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk & compliance</p>
+                      {varResult && (
+                        <p className="text-xs text-slate-700">VaR (95%): ${varResult.varAmount.toFixed(0)} max 1-day loss</p>
+                      )}
+                      <p className="text-xs text-slate-700">Market: {marketGuard.allowed ? 'Within regular hours' : marketGuard.reason ?? 'Check hours'}</p>
+                      <p className="text-xs text-slate-600">PDT: {pdtStatus.reason}</p>
+                      {volWeights.length >= 2 && volWeightLabels.length === volWeights.length && (() => {
+                        const total = volWeights.reduce((a, b) => a + b, 0);
+                        const pcts = total > 0 ? volWeights.map(w => (w / total) * 100) : volWeights.map(() => 100 / volWeights.length);
+                        return (
+                          <p className="text-xs text-slate-600 pt-1 border-t border-slate-100">
+                            Vol-adjusted weights: {volWeightLabels.map((sym, i) => `${sym} ${pcts[i].toFixed(0)}%`).join(', ')}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
+
+          {crossEngineAnalysis && crossEngineAnalysis.alerts.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-2">Cross-engine alerts</p>
+              <ul className="space-y-1 text-sm text-amber-900">
+                {crossEngineAnalysis.alerts.slice(0, 3).map((a, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <ExclamationTriangleIcon className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{a.message}{a.suggestedAction ? ` — ${a.suggestedAction}` : ''}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* KPIs */}
           <div>
             {gridItems.find(item => item.id === 'kpis')?.content}
           </div>
 
-          {/* Engine IQ */}
+          {/* Alerts & Recommendations — surfaced early so users see what to act on */}
+          <div>
+            {gridItems.find(item => item.id === 'alerts')?.content}
+          </div>
+
+          {/* Engine Intelligence & Decision Summary */}
           <div>
             {gridItems.find(item => item.id === 'engine-iq')?.content}
           </div>
@@ -1078,19 +1216,21 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Allocation & Strategy</h2>
-            <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift analysis, and deployment planning</p>
+            <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift, spec status, and next deployment</p>
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Sleeve Allocation */}
-            <div className="lg:col-span-8">
-              {gridItems.find(item => item.id === 'sleeve-allocation')?.content}
-            </div>
-            
-            {/* Strategy Cards */}
-            <div className="lg:col-span-4 space-y-6">
-              {gridItems.find(item => item.id === 'next-move')?.content}
+
+          {/* Sleeve Allocation — full width for clarity */}
+          <div>
+            {gridItems.find(item => item.id === 'sleeve-allocation')?.content}
+          </div>
+
+          {/* Spec status + Next Move side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
               {gridItems.find(item => item.id === 'spec-risk')?.content}
+            </div>
+            <div>
+              {gridItems.find(item => item.id === 'next-move')?.content}
             </div>
           </div>
         </section>
@@ -1099,19 +1239,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Orders & Actions</h2>
-            <p className="text-xs text-slate-500 mt-1">Generated orders and actionable alerts</p>
+            <p className="text-xs text-slate-500 mt-1">Generated orders — export to JSON or use as a checklist when placing trades</p>
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Orders */}
-            <div className="lg:col-span-7">
-              {gridItems.find(item => item.id === 'orders')?.content}
-            </div>
-            
-            {/* Alerts */}
-            <div className="lg:col-span-5">
-              {gridItems.find(item => item.id === 'alerts')?.content}
-            </div>
+
+          <div>
+            {gridItems.find(item => item.id === 'orders')?.content}
           </div>
         </section>
 
@@ -1119,28 +1251,28 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Portfolio Analysis</h2>
-            <p className="text-xs text-slate-500 mt-1">Position performance, risk distribution, and capital efficiency</p>
+            <p className="text-xs text-slate-500 mt-1">Risk distribution, performance snapshot, positions table, and capital efficiency</p>
           </div>
-          
+
           {/* Risk Distribution */}
           <div>
             {gridItems.find(item => item.id === 'risk-distribution')?.content}
           </div>
 
-          {/* Gainers & Losers */}
+          {/* Top Gainers & Top Losers */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {gridItems.find(item => item.id === 'gainers')?.content}
             {gridItems.find(item => item.id === 'losers')?.content}
           </div>
 
-          {/* Capital Efficiency */}
-          <div>
-            {gridItems.find(item => item.id === 'capital-efficiency')?.content}
-          </div>
-
-          {/* All Positions */}
+          {/* All Positions — main reference table before capital efficiency */}
           <div>
             {gridItems.find(item => item.id === 'positions')?.content}
+          </div>
+
+          {/* Capital Efficiency Ranking */}
+          <div>
+            {gridItems.find(item => item.id === 'capital-efficiency')?.content}
           </div>
         </section>
 

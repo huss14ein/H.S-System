@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { CommodityHolding } from '../types';
+import { CommodityHolding, Page } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import PageLayout from '../components/PageLayout';
@@ -150,8 +150,12 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 };
 
 
-const Commodities: React.FC = () => {
-    const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+interface CommoditiesProps {
+    setActivePage?: (page: Page) => void;
+}
+
+const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
+    const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
@@ -204,7 +208,23 @@ const Commodities: React.FC = () => {
     };
     
     return (
-        <PageLayout title="Metals & Crypto" description="Gold, silver, Bitcoin, and other commodities. Use Update Prices to refresh values; Zakat classification affects Zakat page." action={<button type="button" onClick={() => handleOpenCommodityModal()} className="btn-primary">Add Commodity</button>}>
+        <PageLayout
+            title="Metals & Crypto"
+            description="Gold, silver, Bitcoin, and other commodities. Use Update Prices to refresh values; Zakat classification affects your Zakat calculation."
+            action={
+                <div className="flex flex-wrap items-center gap-2">
+                    {setActivePage && (
+                        <button type="button" onClick={() => setActivePage('Zakat')} className="btn-outline text-sm">Zakat Calculator</button>
+                    )}
+                    <button type="button" onClick={() => handleOpenCommodityModal()} className="btn-primary">Add Commodity</button>
+                </div>
+            }
+        >
+        {(loading || !data) ? (
+            <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading commodities" />
+            </div>
+        ) : (
         <div className="space-y-6">
             <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} />
 
@@ -225,6 +245,7 @@ const Commodities: React.FC = () => {
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
+        )}
         </PageLayout>
     );
 };

@@ -31,7 +31,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   
   const auth = useContext(AuthContext);
-  const { data, resetData, loadDemoData } = useContext(DataContext)!;
+  const { data, resetData } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
@@ -59,7 +59,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
   const navRef = useClickOutside<HTMLDivElement>(() => setActiveGroup(null));
 
-  const hasData = data && (data?.accounts?.length ?? 0) > 0;
+  const hasData = data?.accounts && data.accounts.length > 0;
   
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
@@ -96,8 +96,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Statement Upload', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Liabilities'] },
-    { name: 'System', items: ['Notifications', 'Settings'] }
+    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Liabilities', 'Assets'] },
+    { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
   const investmentProgress = useMemo(() => {
@@ -110,11 +110,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
         return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
       })
       .reduce((sum, t) => sum + (t.total ?? 0), 0);
-    
+    const plan = data?.investmentPlan;
     return {
-      percent: Math.min((monthlyInvested / (data?.investmentPlan?.monthlyBudget || 1)) * 100, 100),
+      percent: Math.min((monthlyInvested / (plan?.monthlyBudget || 1)) * 100, 100),
       amount: monthlyInvested,
-      target: data?.investmentPlan?.monthlyBudget ?? 0
+      target: plan?.monthlyBudget ?? 0
     };
   }, [data]);
 
@@ -136,11 +136,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 return (
                   <div key={group.name} className="relative group">
                     <button
-                      type="button"
-                      aria-label={`Open ${group.name} menu`}
-                      aria-expanded={activeGroup === group.name}
                       onClick={() => setActiveGroup(activeGroup === group.name ? null : group.name)}
-                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-all flex items-center space-x-1 touch-target ${
+                      className={`px-4 py-2 text-sm font-medium rounded-xl transition-all flex items-center space-x-1 ${
                         isGroupActive ? 'text-primary bg-primary/5' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
                       }`}
                     >
@@ -178,7 +175,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => setActivePage('Dashboard')}
+              onClick={() => setActivePage('Investments')}
             >
               <div className="flex items-center space-x-2 mb-1">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Monthly Plan</span>
@@ -197,8 +194,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 <button 
                   onClick={refreshPrices} 
                   disabled={isRefreshing}
-                  className={`p-2 min-h-[44px] min-w-[44px] rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full touch-target ${isRefreshing ? 'animate-pulse' : ''}`}
-                  aria-label={isRefreshing ? 'Refreshing prices' : 'Refresh prices'}
+                  className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${isRefreshing ? 'animate-pulse' : ''}`}
                   title={isLive ? (lastUpdated ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.` : 'Live prices. Click to refresh.') : 'Simulated prices. Click to fetch live prices.'}
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -218,7 +214,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               </div>
 
               <div className="relative hidden sm:block" ref={currencyRef}>
-                <button type="button" aria-label="Select currency" aria-haspopup="listbox" aria-expanded={isCurrencyOpen} onClick={() => setIsCurrencyOpen(!isCurrencyOpen)} className="flex items-center text-sm font-semibold text-gray-500 hover:text-primary px-3 py-2.5 min-h-[44px] rounded-xl hover:bg-gray-50 transition-all">
+                <button onClick={() => setIsCurrencyOpen(!isCurrencyOpen)} className="flex items-center text-sm font-semibold text-gray-500 hover:text-primary px-3 py-1.5 rounded-xl hover:bg-gray-50 transition-all">
                   {currency}
                   <ChevronDownIcon className="h-4 w-4 ml-1 opacity-50" />
                 </button>
@@ -265,7 +261,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               <div className="h-8 w-px bg-gray-100 mx-1 hidden sm:block"></div>
 
               <div className="relative" ref={profileRef}>
-                  <button type="button" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded={isProfileOpen} onClick={() => setIsProfileOpen(!isProfileOpen)} className="flex items-center space-x-2 p-2 min-h-[44px] min-w-[44px] rounded-xl text-gray-500 hover:bg-gray-50 transition-all">
+                  <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="flex items-center space-x-2 p-1 rounded-xl text-gray-500 hover:bg-gray-50 transition-all">
                       <UserCircleIcon className="h-8 w-8 text-gray-400" />
                       <ChevronDownIcon className={`h-4 w-4 opacity-50 transition-transform duration-200 ${isProfileOpen ? 'rotate-180' : ''}`} />
                   </button>
@@ -277,10 +273,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                       </div>
                       <div className="py-1">
                         <button onClick={() => { setActivePage('Settings'); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">Settings</button>
-                        {hasData ? (
+                        {hasData && (
                           <button onClick={() => { resetData(); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">Clear All My Data</button>
-                        ) : (
-                          <button onClick={() => { loadDemoData(); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-primary hover:bg-primary/5 transition-colors">Load Demo Data</button>
                         )}
                       </div>
                       <div className="border-t border-gray-100 mt-1 pt-1">
@@ -291,7 +285,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               </div>
 
               <div className="lg:hidden">
-                <button type="button" aria-label="Open navigation menu" onClick={() => setIsMobileMenuOpen(true)} className="p-2 min-h-[44px] min-w-[44px] rounded-xl text-gray-500 hover:bg-gray-50 touch-target">
+                <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 rounded-xl text-gray-500 hover:bg-gray-50">
                   <Bars3Icon className="h-6 w-6" />
                 </button>
               </div>

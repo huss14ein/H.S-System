@@ -3,11 +3,17 @@ import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
-import { DocumentArrowUpIcon, MagnifyingGlassIcon } from '../components/icons';
-import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { MagnifyingGlassIcon } from '../components/icons';
 import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
+import { StatementIcons, getStatementIcon } from '../constants/statementIcons';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import type { Page } from '../types';
 
-const StatementHistoryView: React.FC = () => {
+interface StatementHistoryViewProps {
+  setActivePage?: (page: Page) => void;
+}
+
+const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePage }) => {
   const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,6 +83,18 @@ const StatementHistoryView: React.FC = () => {
     <PageLayout
       title="Statement History"
       description="View and manage all uploaded statements, reconcile transactions, and track import history"
+      action={
+        setActivePage && (
+          <button
+            type="button"
+            onClick={() => setActivePage('Statement Upload')}
+            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
+          >
+            <StatementIcons.upload className="h-5 w-5" />
+            Upload New Statement
+          </button>
+        )
+      }
     >
       <div className="space-y-6">
         {/* Stats Cards */}
@@ -133,13 +151,23 @@ const StatementHistoryView: React.FC = () => {
 
           {filteredStatements.length === 0 ? (
             <div className="text-center py-12">
-              <DocumentArrowUpIcon className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+              <StatementIcons.upload className="h-12 w-12 text-slate-300 mx-auto mb-4" aria-hidden />
               <p className="text-lg font-semibold text-slate-600 mb-2">No statements found</p>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 mb-4">
                 {statements.length === 0
                   ? 'Upload your first statement to get started'
                   : 'Try adjusting your search or filter criteria'}
               </p>
+              {statements.length === 0 && setActivePage && (
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Statement Upload')}
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium inline-flex items-center gap-2"
+                >
+                  <StatementIcons.upload className="h-4 w-4" />
+                  Upload statement
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -151,6 +179,10 @@ const StatementHistoryView: React.FC = () => {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
+                        {(() => {
+                          const StatementTypeIcon = getStatementIcon(statement.bankName, statement.accountType);
+                          return <StatementTypeIcon className="h-5 w-5 text-slate-500 flex-shrink-0" aria-hidden />;
+                        })()}
                         <h3 className="text-lg font-bold text-slate-900">{statement.fileName}</h3>
                         <span
                           className={`px-2.5 py-1 rounded-full text-xs font-semibold ${

@@ -540,7 +540,7 @@ export async function getEconomicCalendar(from: string, to: string): Promise<Eco
   }
   const data = await res.json() as any;
   const events = Array.isArray(data?.economicCalendar) ? data.economicCalendar : [];
-  return events.slice(0, 20).map((e: any) => ({
+  return events.map((e: any) => ({
     date: String(e?.date ?? ''),
     country: String(e?.country ?? 'Global'),
     event: String(e?.event ?? ''),
