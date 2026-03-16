@@ -164,9 +164,9 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total)}</span></div>
                              <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded-md mt-2">
                                 <p>Includes cash, &apos;Zakatable&apos; investments, and &apos;Zakatable&apos; commodities. You can change an asset&apos;s Zakat classification on the {setActivePage ? (
-                                    <> <button type="button" onClick={() => setActivePage('Investments')} className="text-primary font-medium hover:underline">Investments</button> and <button type="button" onClick={() => setActivePage('Commodities')} className="text-primary font-medium hover:underline">Commodities</button> pages.</>
+                                    <> <button type="button" onClick={() => setActivePage('Investments')} className="text-primary font-medium hover:underline">Investments</button> and <button type="button" onClick={() => setActivePage('Assets')} className="text-primary font-medium hover:underline">Assets</button> pages.</>
                                 ) : (
-                                    <>Investments and Commodities pages.</>
+                                    <>Investments and Assets pages.</>
                                 )}</p>
                             </div>
                         </div>
