@@ -239,7 +239,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     setHouseholdProfileSaveStatus('idle');
                     setHouseholdProfileSaveMessage(null);
                     householdProfileResetTimeoutRef.current = null;
-                }, 3000);
+                }, 3000) as unknown as ReturnType<typeof setTimeout>;
             } catch (e) {
                 setHouseholdProfileSaveStatus('error');
                 setHouseholdProfileSaveMessage(e instanceof Error ? e.message : 'Failed to sync profile to cloud.');

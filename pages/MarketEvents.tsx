@@ -415,7 +415,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     getMarketCalendarCached(from, to, trackedSymbols)
       .then(async (result) => {
         if (!alive) return;
-        let macro = result.economic
+        let macro: MarketEventItem[] = result.economic
           .filter((e) => e.date)
           .map((e, idx) => {
             const title = (e.event || '').trim() || 'Economic Calendar Event';
@@ -459,7 +459,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         if (result.mode === 'cache_fresh') {
           getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
             if (!alive) return;
-            let freshMacro = freshResult.economic
+            let freshMacro: MarketEventItem[] = freshResult.economic
               .filter((e) => e.date)
               .map((e, idx) => {
                 const eventDate = parseToLocalDate(e.date);

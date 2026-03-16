@@ -313,7 +313,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         personalCare: 1,
         shopping: 1,
         miscellaneous: 1,
-        entertainment: 1,
         schoolTuition: 6,
         householdMaintenance: 6,
         iqamaRenewal: 12,
