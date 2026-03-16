@@ -184,6 +184,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const [isBulkAiRecoveryLoading, setIsBulkAiRecoveryLoading] = useState(false);
   const [aiRecoveryError, setAiRecoveryError] = useState<string | null>(null);
   const [recoveryStats, setRecoveryStats] = useState<RecoveryPlanStatistics | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [recoveryTimeline, setRecoveryTimeline] = useState<RecoveryTimelineProjection | null>(null);
 
@@ -271,10 +272,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       });
       
       // Refresh statistics after saving
+      setStatsError(null);
       const stats = calculateRecoveryStatistics();
       setRecoveryStats(stats);
     } catch (error) {
       console.warn('Failed to save recovery execution:', error);
+      setStatsError(error instanceof Error ? error.message : 'Failed to save recovery execution.');
     }
   }, []);
 
@@ -334,6 +337,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       setRecoveryTimeline(null);
     }
   }, [selected, selectedPlan]);
+
+  const clearStatsError = useCallback(() => {
+    setStatsError(null);
+    try {
+      const stats = calculateRecoveryStatistics();
+      setRecoveryStats(stats);
+    } catch (error) {
+      console.warn('Failed to calculate recovery statistics:', error);
+      setRecoveryStats(null);
+      setStatsError(error instanceof Error ? error.message : 'Failed to load recovery statistics.');
+    }
+  }, []);
   const selectedCurrencyDeployableCash = selected
     ? (selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR)
     : deployableCashSAR;
@@ -463,16 +478,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   if (loading || !data) {
     return (
-      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-blue-50/40 rounded-2xl border border-slate-200" aria-busy="true">
+      <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
         <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 mt-4 min-h-[40rem] bg-gradient-to-br from-slate-50/90 via-white to-blue-50/40 rounded-2xl p-4 border border-slate-200/80">
-      {/* Enhanced Hero */}
-      <section className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50 p-8 shadow-xl">
+    <div className="page-container space-y-6 sm:space-y-8 mt-4 min-h-[40rem]">
+      {/* Hero */}
+      <section className="section-card p-6 sm:p-8">
         <div className="flex flex-col gap-6">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-4">
@@ -498,14 +513,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <button
                   type="button"
                   onClick={() => setShowStats(!showStats)}
-                  className="px-4 py-2 rounded-xl border-2 border-indigo-300 bg-gradient-to-r from-indigo-50 to-indigo-100 text-indigo-700 hover:from-indigo-100 hover:to-indigo-200 font-bold transition-all duration-200 shadow-sm hover:shadow-md"
+                  className="btn-ghost"
                 >
                   {showStats ? 'Hide' : 'Show'} Performance Stats
                 </button>
               )}
             </div>
           </div>
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
+          <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
             <p className="text-slate-700 leading-relaxed">
               Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
             </p>
@@ -566,52 +581,62 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         </details>
       </section>
 
+      {/* Inline error when stats or execution fail */}
+      {statsError && (
+        <div className="mb-4 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-900" role="alert">
+          <p className="text-sm font-medium">{statsError}</p>
+          <button type="button" onClick={clearStatsError} className="mt-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800">
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Enhanced Performance Statistics */}
       {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
-        <SectionCard title="Recovery Plan Performance Statistics" className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 shadow-xl">
+        <SectionCard title="Recovery Plan Performance Statistics">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-indigo-600 uppercase tracking-wider">Success Rate</p>
-                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">%</span>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Success Rate</p>
+                <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                  <span className="text-primary font-bold text-sm">%</span>
                 </div>
               </div>
-              <p className="text-3xl font-black text-indigo-900 tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
+              <p className="text-3xl font-bold text-dark tabular-nums">{(recoveryStats.successRate * 100).toFixed(1)}%</p>
               <p className="text-sm text-slate-600 mt-2">{recoveryStats.totalExecutions} total executions</p>
             </div>
-            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-emerald-600 uppercase tracking-wider">Avg Recovery Time</p>
-                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">⏱</span>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Avg Recovery Time</p>
+                <div className="w-10 h-10 bg-success/10 rounded-full flex items-center justify-center">
+                  <span className="text-success font-bold text-sm">⏱</span>
                 </div>
               </div>
-              <p className="text-3xl font-black text-emerald-900 tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
+              <p className="text-3xl font-bold text-dark tabular-nums">{recoveryStats.avgRecoveryTimeDays.toFixed(0)}</p>
               <p className="text-sm text-slate-600 mt-2">days</p>
             </div>
-            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-amber-600 uppercase tracking-wider">Avg ROI</p>
-                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-amber-600 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">📈</span>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Avg ROI</p>
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                  <span className="text-amber-700 font-bold text-sm">📈</span>
                 </div>
               </div>
-              <p className={`text-3xl font-black tabular-nums ${
-                recoveryStats.avgRoi >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              <p className={`text-3xl font-bold tabular-nums ${
+                recoveryStats.avgRoi >= 0 ? 'text-success' : 'text-danger'
               }`}>
                 {recoveryStats.avgRoi >= 0 ? '+' : ''}{(recoveryStats.avgRoi * 100).toFixed(1)}%
               </p>
               <p className="text-sm text-slate-600 mt-2">on recovery capital</p>
             </div>
-            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Capital Deployed</p>
-                <div className="w-10 h-10 bg-gradient-to-br from-slate-500 to-slate-600 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">💰</span>
+                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
+                  <span className="text-slate-700 font-bold text-sm">💰</span>
                 </div>
               </div>
-              <p className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
+              <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(recoveryStats.totalCapitalDeployed)}</p>
               <p className="text-sm text-slate-600 mt-2">Total recovered: {formatCurrencyString(recoveryStats.totalRecovered)}</p>
             </div>
           </div>
@@ -620,7 +645,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <p className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-4">Performance by Symbol</p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(recoveryStats.bySymbol).slice(0, 6).map(([symbol, stats]) => (
-                  <div key={symbol} className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-md hover:shadow-lg transition-all duration-300">
+                  <div key={symbol} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-lg font-bold text-slate-900">{symbol}</p>
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
@@ -649,41 +674,38 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         </SectionCard>
       )}
 
-      {/* Enhanced KPI cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-rose-50 to-red-50 border-2 border-rose-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-xl">⬇</span>
+      {/* KPI cards */}
+      <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
+        <div className="section-card">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Losing positions</p>
+            <div className="w-10 h-10 bg-danger/10 rounded-xl flex items-center justify-center">
+              <span className="text-danger font-bold text-lg">⬇</span>
             </div>
-            <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse"></div>
           </div>
-          <p className="text-sm font-bold text-rose-800 uppercase tracking-wider mb-2">Losing positions</p>
-          <p className="text-4xl font-black text-rose-900 tabular-nums">{losingPositions.length}</p>
-          <p className="text-sm text-rose-700 mt-2">Positions requiring attention</p>
+          <p className="text-3xl font-bold text-dark tabular-nums">{losingPositions.length}</p>
+          <p className="text-sm text-slate-600 mt-1">Positions requiring attention</p>
         </div>
-        <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-xl">✓</span>
+        <div className="section-card">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Recovery eligible</p>
+            <div className="w-10 h-10 bg-success/10 rounded-xl flex items-center justify-center">
+              <span className="text-success font-bold text-lg">✓</span>
             </div>
-            <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
           </div>
-          <p className="text-sm font-bold text-emerald-800 uppercase tracking-wider mb-2">Recovery eligible</p>
-          <p className="text-4xl font-black text-emerald-900 tabular-nums">{qualifiedPositions.length}</p>
-          <p className="text-sm text-emerald-700 mt-2">Positions ready for recovery</p>
+          <p className="text-3xl font-bold text-dark tabular-nums">{qualifiedPositions.length}</p>
+          <p className="text-sm text-slate-600 mt-1">Positions ready for recovery</p>
         </div>
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-xl">💰</span>
+        <div className="section-card">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Deployable cash (SAR + USD)</p>
+            <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
+              <span className="text-primary font-bold text-lg">💰</span>
             </div>
-            <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
           </div>
-          <p className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-2">Deployable cash (SAR + USD)</p>
-          <p className="text-3xl font-black text-blue-900 tabular-nums">{formatCurrencyString(deployableCashSAR)}</p>
-          <p className="text-sm text-blue-700 mt-2">Approximate total across currencies</p>
-          <p className="text-xs text-blue-600 mt-3">Per-position values below use each portfolio&apos;s base currency</p>
+          <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(deployableCashSAR)}</p>
+          <p className="text-sm text-slate-600 mt-1">Approximate total across currencies</p>
+          <p className="text-xs text-slate-500 mt-2">Per-position values below use each portfolio&apos;s base currency</p>
         </div>
       </div>
 

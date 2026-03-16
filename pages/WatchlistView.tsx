@@ -922,7 +922,16 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                         })}
                     </tbody>
                 </table>
-                {((data?.watchlist ?? []).length === 0 || filteredWatchlist.length === 0) && (<div className="text-center py-10 text-slate-500">{(data?.watchlist ?? []).length === 0 ? "Your watchlist is empty. Add symbols to track prices and get AI tips." : "No symbols match the selected filters."}</div>)}</div>
+                {((data?.watchlist ?? []).length === 0 || filteredWatchlist.length === 0) && (
+                    <div className="text-center py-10 px-4">
+                        <p className="text-slate-600">{(data?.watchlist ?? []).length === 0 ? "Your watchlist is empty. Add symbols to track prices and get AI tips." : "No symbols match the selected filters."}</p>
+                        {(data?.watchlist ?? []).length === 0 && (
+                            <button type="button" onClick={() => setIsAddModalOpen(true)} className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
+                                Add your first symbol
+                            </button>
+                        )}
+                    </div>
+                )}</div>
             </div>
 
             <div className="lg:col-span-1 space-y-4">

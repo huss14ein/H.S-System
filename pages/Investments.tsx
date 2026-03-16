@@ -736,8 +736,21 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         }
     }, [isOpen]);
 
+    // When holding identity changes (or is cleared), clear analyst/fundamentals so we don't show previous holding's data
+    const holdingKey = holding ? `${holding.id ?? holding.symbol}-${holding.symbol}` : '';
     useEffect(() => {
-        if (!holding || !isOpen) return;
+        setAiAnalysis('');
+        setAiAnalysisError(null);
+        setGroundingChunks([]);
+        setAnalystGeneratedAt(null);
+        setAnalystSource(null);
+        setFundamentals(null);
+        setFundamentalsError(null);
+        setFundamentalsFetchedAt(null);
+    }, [holdingKey]);
+
+    useEffect(() => {
+        if (!holdingKey || !holding || !isOpen) return;
         let cancelled = false;
         setIsFundamentalsLoading(true);
         setFundamentalsError(null);
@@ -761,7 +774,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         return () => {
             cancelled = true;
         };
-    }, [holding?.symbol, isOpen]);
+    }, [holdingKey, isOpen]);
 
     if (!holding) return null;
 
@@ -824,6 +837,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         <p className="metric-label text-[11px] font-semibold tracking-[0.18em] text-slate-500 uppercase">Share details</p>
                         <p className="metric-label text-2xl font-bold text-slate-900 break-words" title={holding.symbol}>{holding.symbol}</p>
                         <p className="metric-label text-sm sm:text-base text-slate-600 font-medium min-w-0 break-words" title={displayName}>{displayName}</p>
+                        {portfolio && <p className="text-xs text-slate-500 mt-1">Portfolio: {portfolio.name ?? '—'}</p>}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
                         <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
@@ -1811,9 +1825,13 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const [isExecuting, setIsExecuting] = useState(false);
     const [showFlowNote, setShowFlowNote] = useState(true);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [isSavingPlan, setIsSavingPlan] = useState(false);
     const [planAdvancedOpen, setPlanAdvancedOpen] = useState(false);
     const [isFillingAnalyst, setIsFillingAnalyst] = useState(false);
     const analystAutoFilledRef = React.useRef(false);
+    const [universeFilter, setUniverseFilter] = useState<'all' | 'Core' | 'High-Upside' | 'Watchlist' | 'Needs mapping'>('all');
+    const [universeSort, setUniverseSort] = useState<'ticker' | 'status' | 'weight'>('ticker');
 
     // Sync plan from server only on first load (or when data first becomes available), so refetches don't overwrite unsaved edits
     useEffect(() => {
@@ -1903,14 +1921,26 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         };
     }, [unifiedUniverse]);
 
+    const filteredAndSortedUniverse = useMemo(() => {
+        let list = unifiedUniverse;
+        if (universeFilter === 'Core') list = list.filter(t => t.status === 'Core');
+        else if (universeFilter === 'High-Upside') list = list.filter(t => t.status === 'High-Upside');
+        else if (universeFilter === 'Watchlist') list = list.filter(t => t.status === 'Watchlist');
+        else if (universeFilter === 'Needs mapping') list = list.filter(t => !t.source?.includes('Universe'));
+        if (universeSort === 'ticker') list = [...list].sort((a, b) => (a.ticker || '').localeCompare(b.ticker || ''));
+        else if (universeSort === 'status') list = [...list].sort((a, b) => (a.status || '').localeCompare(b.status || '') || (a.ticker || '').localeCompare(b.ticker || ''));
+        else if (universeSort === 'weight') list = [...list].sort((a, b) => (b.monthly_weight ?? 0) - (a.monthly_weight ?? 0));
+        return list;
+    }, [unifiedUniverse, universeFilter, universeSort]);
+
     useEffect(() => {
         if (data?.investmentPlan) {
             setPlan(data.investmentPlan);
         }
     }, [data?.investmentPlan]);
 
-    // Auto-derive suggested monthly budget from recent buy activity (last 6 months)
-    const suggestedMonthlyBudget = useMemo(() => {
+    // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
+    const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
         const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
         const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
@@ -1920,13 +1950,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         };
 
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
-        if (buys.length === 0) return 0;
-
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         const recent = buys.filter(t => new Date(t.date) >= sixMonthsAgo);
         const byMonth = new Map<string, number>();
-
         recent.forEach(t => {
             const d = new Date(t.date);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
@@ -1935,11 +1962,23 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
             byMonth.set(key, (byMonth.get(key) ?? 0) + convertedAmount);
         });
+        const historyAmounts = Array.from(byMonth.values()).filter(v => Number.isFinite(v) && v > 0);
+        if (historyAmounts.length > 0) {
+            const amount = Math.round(historyAmounts.reduce((a, b) => a + b, 0) / historyAmounts.length);
+            return { suggestedMonthlyBudget: amount, suggestedBudgetSource: `Last ${historyAmounts.length} month(s) of buys` };
+        }
 
-        const amounts = Array.from(byMonth.values()).filter(v => Number.isFinite(v) && v > 0);
-        if (amounts.length === 0) return 0;
-        return Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length);
-    }, [data?.investmentTransactions, exchangeRate, plan?.budgetCurrency]);
+        const investedBase = (data?.investments ?? []).reduce((sum: number, portfolio: InvestmentPortfolio) => {
+            const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
+            const portfolioTotal = (portfolio.holdings || []).reduce((inner: number, h: Holding) => inner + (h.currentValue || 0), 0);
+            return sum + convertAmount(portfolioTotal, portfolioCurrency, budgetCurrency as TradeCurrency);
+        }, 0);
+        const derivedFromPortfolio = investedBase > 0 ? Math.round(Math.max(1000, Math.min(30000, investedBase * 0.025))) : 0;
+        if (derivedFromPortfolio > 0) {
+            return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
+        }
+        return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
+    }, [data?.investmentTransactions, data?.investments, exchangeRate, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -2052,6 +2091,17 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const actionableCount = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
     const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
 
+    // Live execution preview: estimated order counts from current budget and min order size
+    const executionPreview = useMemo(() => {
+        const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
+        const coreShare = coreShareAmount;
+        const upsideShare = upsideShareAmount;
+        if (!Number.isFinite(minOrder) || minOrder <= 0) return { coreOrders: 0, upsideOrders: 0, totalOrders: 0 };
+        const coreOrders = Math.floor(coreShare / minOrder);
+        const upsideOrders = Math.floor(upsideShare / minOrder);
+        return { coreOrders, upsideOrders, totalOrders: coreOrders + upsideOrders };
+    }, [coreShareAmount, upsideShareAmount, plan.brokerConstraints?.minimumOrderSize]);
+
     const executionUniverse = useMemo<UniverseTicker[]>(() => (
         unifiedUniverse.map((t) => ({
             id: t.id,
@@ -2097,21 +2147,26 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
         let label: string;
         let summary: string;
+        let nextStep: string | null = null;
         if (score >= 85) {
             label = 'Ready to execute';
             summary = 'Budget, allocations, and universe look solid. You can run Execute & View Results or Wealth Ultra.';
         } else if (score >= 65) {
             label = 'Minor tweaks';
             summary = (reasons[0] || 'Small configuration gaps.') + (reasons[1] ? ` · ${reasons[1]}` : '');
+            nextStep = reasons[0] ?? null;
         } else {
             label = 'Action needed';
             summary = reasons.slice(0, 3).join(' · ') || 'Set budget, tickers, and weights before executing.';
+            nextStep = reasons[0] ?? 'Set budget, tickers, and weights';
         }
+        if (score < 100 && !nextStep && reasons.length > 0) nextStep = reasons[0];
 
         return {
             score,
             label,
             summary,
+            nextStep,
             corePct,
             upsidePct,
         };
@@ -2205,14 +2260,24 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setTimeout(() => setSaveMessage(null), 6000);
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (allocationWarning && !window.confirm(`${allocationWarning}
 
 Save anyway?`)) return;
         setSaveMessage(null);
-        saveInvestmentPlan(plan);
-        setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
-        setTimeout(() => setSaveMessage(null), 6000);
+        setSaveError(null);
+        setIsSavingPlan(true);
+        try {
+            await saveInvestmentPlan(plan);
+            setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
+            setTimeout(() => setSaveMessage(null), 6000);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Failed to save plan';
+            setSaveError(msg);
+            setTimeout(() => setSaveError(null), 8000);
+        } finally {
+            setIsSavingPlan(false);
+        }
     };
 
     const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
@@ -2518,12 +2583,20 @@ Save anyway?`)) return;
                         <span className={`mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span>
                     </div>
                     <div className="flex items-center space-x-2">
-                        <button onClick={handleSave} className="px-6 py-2.5 bg-white text-slate-900 rounded-xl hover:bg-slate-100 transition-colors font-semibold">Save Plan</button>
+                        <button type="button" onClick={handleSave} disabled={isSavingPlan} className="px-6 py-2.5 bg-white text-slate-900 rounded-xl hover:bg-slate-100 transition-colors font-semibold disabled:opacity-60 disabled:cursor-not-allowed" aria-busy={isSavingPlan}>
+                            {isSavingPlan ? 'Saving…' : 'Save Plan'}
+                        </button>
                     </div>
                 </div>
             </section>
+            {saveError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex items-center justify-between" role="alert" aria-live="polite">
+                    <span>{saveError}</span>
+                    <button type="button" onClick={() => setSaveError(null)} className="text-red-700 font-medium hover:underline shrink-0 ml-2">Dismiss</button>
+                </div>
+            )}
             {saveMessage && (
-                <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm flex items-center justify-between">
+                <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm flex items-center justify-between" role="status" aria-live="polite">
                     <span>{saveMessage}</span>
                     {onOpenWealthUltra && <button type="button" onClick={onOpenWealthUltra} className="text-green-700 font-medium hover:underline whitespace-nowrap ml-2">Open Wealth Ultra</button>}
                 </div>
@@ -2576,16 +2649,25 @@ Save anyway?`)) return;
                 )}
             </div>
 
-            {/* Plan health — smart readiness summary */}
+            {/* Plan health — smart readiness summary with gauge and next step */}
             <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-emerald-200">
-                            <span className="text-lg font-bold text-emerald-700 tabular-nums">{planHealth.score}</span>
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 lg:gap-6">
+                    <div className="flex items-start gap-4">
+                        <div className="relative shrink-0 w-14 h-14 rounded-full bg-white border-2 border-emerald-200 flex items-center justify-center">
+                            <svg className="absolute inset-0 w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                                <path d="M18 2.084 a 15.916 15.916 0 0 1 0 31.832 a 15.916 15.916 0 0 1 0 -31.832" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-100" strokeLinecap="round" />
+                                <path d="M18 2.084 a 15.916 15.916 0 0 1 0 31.832 a 15.916 15.916 0 0 1 0 -31.832" fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray={`${planHealth.score}, 100`} className={planHealth.score >= 85 ? 'text-emerald-500' : planHealth.score >= 65 ? 'text-amber-500' : 'text-rose-500'} strokeLinecap="round" />
+                            </svg>
+                            <span className="relative text-lg font-bold tabular-nums text-slate-800">{planHealth.score}</span>
                         </div>
                         <div>
                             <p className="text-sm font-semibold text-slate-800">{planHealth.label}</p>
                             <p className="text-xs text-slate-600 mt-0.5">{planHealth.summary}</p>
+                            {planHealth.nextStep && planHealth.score < 100 && (
+                                <p className="mt-2 text-xs font-medium text-amber-800 bg-amber-100/80 rounded-md px-2 py-1 inline-block">
+                                    Next: {planHealth.nextStep}
+                                </p>
+                            )}
                         </div>
                     </div>
                     <dl className="grid grid-cols-2 gap-2 sm:gap-3 text-xs text-slate-600 w-full lg:w-auto lg:min-w-[360px]">
@@ -2612,31 +2694,41 @@ Save anyway?`)) return;
             <div className="cards-grid grid grid-cols-1 xl:grid-cols-5">
                 <div className="xl:col-span-3 space-y-6">
                     {/* Allocation Settings — essential fields first */}
-                    <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div>
-                                <h2 className="text-xl font-semibold text-dark">Monthly Plan</h2>
-                                <p className="text-sm text-gray-500 mt-1">Set how much to invest each month and how to split it between Core (stable) and High-Upside (growth) tickers.</p>
+                                <h2 className="text-xl font-semibold text-slate-800">Monthly Plan</h2>
+                                <p className="text-sm text-slate-500 mt-1">Set how much to invest each month and how to split it between Core (stable) and High-Upside (growth) tickers.</p>
                             </div>
                             <button
                                 type="button"
                                 onClick={applySmartPlan}
-                                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-secondary"
+                                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-primary text-white hover:bg-secondary shadow-sm"
                             >
                                 <SparklesIcon className="h-4 w-4" />
                                 Smart-fill plan
                             </button>
                         </div>
+                        {suggestedMonthlyBudget > 0 && (plan.monthlyBudget ?? 0) !== suggestedMonthlyBudget && (
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-emerald-800">Suggested monthly budget</p>
+                                    <p className="text-xs text-emerald-700 mt-0.5">{suggestedBudgetSource}</p>
+                                    <p className="text-lg font-bold text-emerald-900 tabular-nums mt-1">{formatCurrencyString(suggestedMonthlyBudget, { inCurrency: planCurrency, digits: 0 })}</p>
+                                </div>
+                                <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">Use this budget</button>
+                            </div>
+                        )}
                         {allocationWarning && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{allocationWarning}</div>
+                            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{allocationWarning}</div>
                         )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. You can use the suggested value from your recent buy activity." /></label>
+                                <label className="block text-sm font-medium text-slate-700 flex items-center gap-1.5">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. Suggested value is derived from your recent buys or portfolio size." /></label>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                                    <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2 border rounded-md" />
+                                    <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2.5 border border-slate-200 rounded-lg" />
                                     {suggestedMonthlyBudget > 0 && (
-                                        <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="text-sm text-primary hover:underline whitespace-nowrap">Use suggested ({formatCurrencyString(suggestedMonthlyBudget, { digits: 0 })})</button>
+                                        <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="text-sm text-primary font-medium hover:underline whitespace-nowrap">Use suggested</button>
                                     )}
                                 </div>
                             </div>
@@ -2654,12 +2746,15 @@ Save anyway?`)) return;
                             </div>
                         </div>
 
-                        <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2.5">
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-                                <span className="font-semibold text-slate-700">Execution split ({planCurrency})</span>
-                                <span className="tabular-nums text-slate-700">Core {planHealth.corePct.toFixed(0)}% → <strong>{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
-                                <span className="tabular-nums text-slate-700">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong>{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Live execution split <InfoHint text="Updates as you change budget or allocation. Core and High-Upside amounts drive how much goes to each sleeve when you run Execute." /></p>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
+                                <span className="tabular-nums">Core {planHealth.corePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
+                                <span className="tabular-nums">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
                             </div>
+                            {executionPreview.totalOrders >= 0 && (plan.monthlyBudget ?? 0) > 0 && (
+                                <p className="text-xs text-slate-500 mt-2">If you execute now: ~<strong className="tabular-nums">{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders})</p>
+                            )}
                         </div>
 
                         {planAdvancedOpen && (
@@ -2741,8 +2836,156 @@ Save anyway?`)) return;
                             {planAdvancedOpen ? '▲ Hide advanced options' : '▼ Show advanced options (analyst rules, broker)'}
                         </button>
                     </div>
+                </div>
 
-                    {/* Portfolio Universe */}
+                {/* Execute & Results — right side of Monthly Plan */}
+                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24 self-start">
+                    <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-violet-50 to-slate-50">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
+                                <p className="text-sm text-slate-600">Run AI-assisted execution and instantly review the allocation, trades, and audit log.</p>
+                            </div>
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {isAiAvailable ? 'AI ready' : 'AI unavailable'}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="p-6">
+                        {!isAiAvailable && (
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                                AI provider is temporarily unavailable. Execute with AI will automatically switch to deterministic rule-based logic and still return results.
+                            </div>
+                        )}
+                        {actionableCount > 0 && (plan.monthlyBudget ?? 0) > 0 && (
+                            <div className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
+                                <span className="font-medium">Preview:</span> Running now would deploy <strong className="tabular-nums">{formatCurrencyString(coreShareAmount + upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong> across ~<strong>{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders}).
+                            </div>
+                        )}
+                        {noActionableWarning && (
+                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">{noActionableWarning}</div>
+                        )}
+                        {executionError && (
+                            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex flex-col gap-2">
+                                <span>{executionError}</span>
+                                {onOpenWealthUltra && /quota|Wealth Ultra/i.test(executionError) && (
+                                    <button type="button" onClick={onOpenWealthUltra} className="self-start px-3 py-1.5 rounded-md bg-primary text-white text-sm font-medium hover:bg-secondary">
+                                        Open Wealth Ultra (rule-based, no AI)
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        <div className="flex flex-col gap-2">
+                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Run with AI first, then fall back to rule-based if needed'}>
+                                <SparklesIcon className="h-5 w-5 mr-2" />
+                                {isExecuting ? 'Executing...' : 'Execute with AI'}
+                            </button>
+                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
+                                Run rule-based only
+                            </button>
+                        </div>
+
+                        {isExecuting && <div className="text-center p-4 text-sm text-slate-500 font-medium">Executing plan…</div>}
+
+                        {executionResult && (
+                            <div className="mt-6 space-y-5">
+                                <p className="text-xs text-slate-500">Plan totals are in <strong>{planCurrency}</strong>. Trade rows also show each ticker's native currency (e.g., USD for US shares). Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
+                                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+                                    <p className="font-semibold">Advisor quick brief</p>
+                                    <p className="mt-1">{executionResult.status === 'success'
+                                        ? `Execution completed with ${executionResult.trades.length} trade${executionResult.trades.length === 1 ? '' : 's'} and ${formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })} unallocated; prioritize deploying residual cash in next cycle only if eligibility remains valid.`
+                                        : 'Execution did not produce a valid allocation. Update Core/High-Upside eligibility and rerun to recover plan coverage.'}</p>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                                    <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+                                        <h3 className="font-semibold text-slate-800">Execution Summary</h3>
+                                        <div className="flex items-center gap-2">
+                                            {executionResult.log_details?.includes('Rule-based execution') && (
+                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-200 text-slate-700" title="Computed without AI (rule-based fallback)">Rule-based</span>
+                                            )}
+                                            {!executionResult.log_details?.includes('Rule-based execution') && (
+                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700" title="Computed with AI-assisted execution">AI-assisted</span>
+                                            )}
+                                            <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${executionResult.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                                {executionResult.status.toUpperCase()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    {executionResult.status === 'failure' && (
+                                        <p className="text-sm text-amber-800 mb-3">No allocation could be generated. Add Core or High-Upside tickers in Portfolio Universe and set weights, then run again.</p>
+                                    )}
+                                    <dl className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 text-sm">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                            <dt className="text-slate-600">Monthly budget</dt>
+                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                            <dt className="text-slate-600">Total deployed</dt>
+                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                            <dt className="text-slate-600">Core</dt>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                            <dt className="text-slate-600">High-Upside</dt>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                            <dt className="text-slate-600">Unused</dt>
+                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                        </div>
+                                    </dl>
+                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding).</p>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-slate-800 mb-2">Proposed Trades</h3>
+                                    {executionResult.trades.length === 0 ? (
+                                        <p className="text-sm text-slate-500 py-2">No trades proposed.</p>
+                                    ) : (
+                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <table className="w-full table-fixed text-sm">
+                                                <thead>
+                                                    <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
+                                                        <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
+                                                        <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
+                                                        <th className="px-3 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
+                                                        {onOpenRecordTrade && <th className="px-3 py-2 w-28" />}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {executionResult.trades.map((trade, index) => {
+                                                        const suggestion = getTradeExecutionSuggestion(trade);
+                                                        return (
+                                                            <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                                                                <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
+                                                                <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
+                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">
+                                                                    <div>{formatCurrencyString(suggestion.amountInTradeCurrency, { inCurrency: suggestion.tradeCurrency, digits: 0 })}</div>
+                                                                    {suggestion.tradeCurrency !== planCurrency && <div className="text-[11px] font-normal text-slate-500">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })} in plan currency</div>}
+                                                                </td>
+                                                                {onOpenRecordTrade && (
+                                                                    <td className="px-3 py-2 text-right">
+                                                                        <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: suggestion.amountInTradeCurrency, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
+                                                                    </td>
+                                                                )}
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                    {onOpenWealthUltra && <p className="text-xs text-slate-500 mt-3">Use <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> to see live allocation and export orders.</p>}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Portfolio Universe — full width below */}
+                <div className="xl:col-span-5">
                     <div className="bg-white p-6 rounded-lg shadow">
                         <div className="mb-4">
                             <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
@@ -2763,15 +3006,31 @@ Save anyway?`)) return;
                         {Math.abs(universeHealth.monthlyWeightTotal - 1) > 0.01 && (
                             <p className="text-xs mb-4 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Actionable monthly weights should usually sum close to 100% for predictable allocation behavior.</p>
                         )}
+                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <label className="text-xs font-medium text-slate-600">Filter:</label>
+                            <select value={universeFilter} onChange={e => setUniverseFilter(e.target.value as any)} className="p-2 border border-slate-200 rounded-lg text-sm bg-white">
+                                <option value="all">All ({universeHealth.totalCount})</option>
+                                <option value="Core">Core</option>
+                                <option value="High-Upside">High-Upside</option>
+                                <option value="Watchlist">Watchlist</option>
+                                <option value="Needs mapping">Needs mapping</option>
+                            </select>
+                            <label className="text-xs font-medium text-slate-600 ml-2">Sort:</label>
+                            <select value={universeSort} onChange={e => setUniverseSort(e.target.value as any)} className="p-2 border border-slate-200 rounded-lg text-sm bg-white">
+                                <option value="ticker">Ticker A–Z</option>
+                                <option value="status">Status</option>
+                                <option value="weight">Weight (high first)</option>
+                            </select>
+                        </div>
                         <div className="flex flex-wrap gap-2 mb-4">
                             {canAddWatchlistHoldings && (
-                                <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-md hover:bg-primary/5">Add Watchlist & Holdings to Universe</button>
+                                <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-lg hover:bg-primary/5 font-medium">Add Watchlist & Holdings to Universe</button>
                             )}
-                            <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
-                            <button type="button" onClick={autoConfigureUniverseWeights} className="px-3 py-2 text-sm border border-emerald-300 text-emerald-700 rounded-md hover:bg-emerald-50">Auto-configure weights</button>
-                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border rounded-md" />
-                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border rounded-md" />
-                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-md hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
+                            <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
+                            <button type="button" onClick={autoConfigureUniverseWeights} className="px-3 py-2 text-sm border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50 font-medium">Auto-configure weights</button>
+                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border border-slate-200 rounded-lg min-w-[100px]" />
+                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border border-slate-200 rounded-lg" />
+                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-lg hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
                         </div>
                         <div className="max-h-60 overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -2790,7 +3049,23 @@ Save anyway?`)) return;
                                     <th className="px-3 py-2 text-right font-medium text-gray-500 align-middle">Actions</th>
                                 </tr></thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {unifiedUniverse.map(ticker => (
+                                    {filteredAndSortedUniverse.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                                                {unifiedUniverse.length === 0 ? (
+                                                    <>
+                                                        <p className="font-medium text-slate-700">No tickers in universe yet</p>
+                                                        <p className="text-sm mt-1 max-w-md mx-auto">Add tickers using the fields above, or use &quot;Add Watchlist &amp; Holdings to Universe&quot; to pull from your watchlist and current holdings. Set status to Core or High-Upside for allocation.</p>
+                                                        {onNavigateToTab && (
+                                                            <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="mt-3 text-sm font-medium text-primary hover:underline">Go to Watchlist</button>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <p className="font-medium text-slate-700">No tickers match the current filter. Try &quot;All&quot; or another filter.</p>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ) : filteredAndSortedUniverse.map(ticker => (
                                         <tr key={ticker.id} className="hover:bg-gray-50">
                                             <td className="px-4 py-2 font-bold text-dark">
                                                 {ticker.ticker}
@@ -2862,8 +3137,8 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-
-                <div className="xl:col-span-3 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-3">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
                         <div className="flex items-start justify-between gap-3">
                             <div>
@@ -2936,160 +3211,8 @@ Save anyway?`)) return;
                         )}
                     </div>
                 </div>
-
-                {/* Execution & View Results — allocation from Monthly Plan + Portfolio Universe */}
-                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24 self-start">
-                    <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-violet-50 to-slate-50">
-                        <div className="flex items-start justify-between gap-3">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
-                                <p className="text-sm text-slate-600">Run AI-assisted execution and instantly review the allocation, trades, and audit log.</p>
-                            </div>
-                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isAiAvailable ? 'AI ready' : 'AI unavailable'}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="p-6">
-                        {!isAiAvailable && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-                                AI provider is temporarily unavailable. Execute with AI will automatically switch to deterministic rule-based logic and still return results.
-                            </div>
-                        )}
-                        {noActionableWarning && (
-                            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-2">{noActionableWarning}</div>
-                        )}
-                        {executionError && (
-                            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex flex-col gap-2">
-                                <span>{executionError}</span>
-                                {onOpenWealthUltra && /quota|Wealth Ultra/i.test(executionError) && (
-                                    <button type="button" onClick={onOpenWealthUltra} className="self-start px-3 py-1.5 rounded-md bg-primary text-white text-sm font-medium hover:bg-secondary">
-                                        Open Wealth Ultra (rule-based, no AI)
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                        <div className="flex flex-col gap-2">
-                            <button onClick={() => handleExecutePlan(false)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium" title={actionableCount === 0 ? 'Add Core or High-Upside tickers first' : 'Run with AI first, then fall back to rule-based if needed'}>
-                                <SparklesIcon className="h-5 w-5 mr-2" />
-                                {isExecuting ? 'Executing...' : 'Execute with AI'}
-                            </button>
-                            <button onClick={() => handleExecutePlan(true)} disabled={isExecuting || actionableCount === 0} className="w-full flex items-center justify-center px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:bg-gray-100 disabled:cursor-not-allowed font-medium" title="Skip AI and use rule-based allocation only">
-                                Run rule-based only
-                            </button>
-                        </div>
-
-                        {isExecuting && <div className="text-center p-4 text-sm text-slate-500 font-medium">Executing plan…</div>}
-
-                        {executionResult && (
-                            <div className="mt-6 space-y-5">
-                                <p className="text-xs text-slate-500">Plan totals are in <strong>{planCurrency}</strong>. Trade rows also show each ticker’s native currency (e.g., USD for US shares). Execution date: {executionResult.date ? new Date(executionResult.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}.</p>
-                                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
-                                    <p className="font-semibold">Advisor quick brief</p>
-                                    <p className="mt-1">{executionResult.status === 'success'
-                                        ? `Execution completed with ${executionResult.trades.length} trade${executionResult.trades.length === 1 ? '' : 's'} and ${formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })} unallocated; prioritize deploying residual cash in next cycle only if eligibility remains valid.`
-                                        : 'Execution did not produce a valid allocation. Update Core/High-Upside eligibility and rerun to recover plan coverage.'}</p>
-                                </div>
-
-                                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                                    <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
-                                        <h3 className="font-semibold text-slate-800">Execution Summary</h3>
-                                        <div className="flex items-center gap-2">
-                                            {executionResult.log_details?.includes('Rule-based execution') && (
-                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-200 text-slate-700" title="Computed without AI (rule-based fallback)">Rule-based</span>
-                                            )}
-                                            {!executionResult.log_details?.includes('Rule-based execution') && (
-                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700" title="Computed with AI-assisted execution">AI-assisted</span>
-                                            )}
-                                            <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${executionResult.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                                {executionResult.status.toUpperCase()}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    {executionResult.status === 'failure' && (
-                                        <p className="text-sm text-amber-800 mb-3">No allocation could be generated. Add Core or High-Upside tickers in Portfolio Universe and set weights, then run again.</p>
-                                    )}
-                                    <dl className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 text-sm">
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">Monthly budget</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">Total deployed</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">Core</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">High-Upside</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">Speculative</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.speculativeInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
-                                            <dt className="text-slate-600">Redirected</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.redirectedInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2 sm:col-span-2 xl:col-span-3">
-                                            <dt className="text-slate-600">Unused (not allocated)</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
-                                        </div>
-                                    </dl>
-                                    <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding). Hover values to see converted secondary currency.</p>
-                                </div>
-
-                                <div>
-                                    <h3 className="font-semibold text-slate-800 mb-2">Proposed Trades</h3>
-                                    {executionResult.trades.length === 0 ? (
-                                        <p className="text-sm text-slate-500 py-2">No trades proposed (e.g. amounts below minimum order or no eligible tickers).</p>
-                                    ) : (
-                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                            <table className="w-full table-fixed text-sm">
-                                                <thead>
-                                                    <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
-                                                        <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
-                                                        <th className="px-3 py-2 font-semibold">Sleeve / Reason</th>
-                                                        <th className="px-3 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
-                                                        {onOpenRecordTrade && <th className="px-3 py-2 w-28" />}
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {executionResult.trades.map((trade, index) => {
-                                                        const suggestion = getTradeExecutionSuggestion(trade);
-                                                        return (
-                                                            <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                                                                <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
-                                                                <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">
-                                                                    <div>{formatCurrencyString(suggestion.amountInTradeCurrency, { inCurrency: suggestion.tradeCurrency, digits: 0 })}</div>
-                                                                    {suggestion.tradeCurrency !== planCurrency && (
-                                                                        <div className="text-[11px] font-normal text-slate-500">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })} in plan currency</div>
-                                                                    )}
-                                                                </td>
-                                                                {onOpenRecordTrade && (
-                                                                    <td className="px-3 py-2 text-right">
-                                                                        <button type="button" onClick={() => onOpenRecordTrade({ ticker: trade.ticker, amount: suggestion.amountInTradeCurrency, reason: trade.reason, price: suggestion.suggestedPrice, quantity: suggestion.suggestedQuantity, tradeCurrency: suggestion.tradeCurrency })} className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap">Record trade</button>
-                                                                    </td>
-                                                                )}
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
-                                    {onOpenWealthUltra && (
-                                        <p className="text-xs text-slate-500 mt-3">Use <button type="button" onClick={onOpenWealthUltra} className="text-primary font-medium hover:underline">Wealth Ultra</button> to see live allocation and export orders.</p>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
                 </div>
+
             </div>
         </div>
     );
@@ -3252,7 +3375,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'Overview': return <InvestmentOverview />;
+      case 'Overview': return <InvestmentOverview setActiveTab={setActiveTab} />;
       case 'Portfolios':
         return <PlatformView 
             simulatedPrices={simulatedPrices}
@@ -3407,7 +3530,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         </div>
       </InvestmentTabErrorBoundary>
 
-      <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
+      <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedHolding(null); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 

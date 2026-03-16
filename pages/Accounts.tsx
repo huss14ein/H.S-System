@@ -225,7 +225,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
+    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -431,29 +431,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return;
         }
         try {
-            const description = transferDescription.trim() || `Transfer from ${fromAccount.name} to ${toAccount.name}`;
+            const note = transferDescription.trim() || undefined;
             const today = new Date().toISOString().split('T')[0];
-            
-            // Create withdrawal transaction
-            await addTransaction({
-                date: today,
-                description: `${description} (from ${fromAccount.name})`,
-                amount: -amount,
-                category: 'Transfers',
-                type: 'expense',
-                accountId: transferFromAccount,
-            });
-            
-            // Create deposit transaction
-            await addTransaction({
-                date: today,
-                description: `${description} (to ${toAccount.name})`,
-                amount: amount,
-                category: 'Transfers',
-                type: 'income',
-                accountId: transferToAccount,
-            });
-            
+            await addTransfer(transferFromAccount, transferToAccount, amount, today, note);
+
             alert('Transfer completed successfully.');
             setIsTransferModalOpen(false);
             setTransferFromAccount('');
@@ -658,9 +639,12 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             )}
 
             <section className="section-card mt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <h3 className="section-title text-base">Transfer Between Accounts</h3>
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <ArrowsRightLeftIcon className="h-5 w-5 text-slate-500 shrink-0" />
+                        <h3 className="section-title text-base mb-0">Transfer Between Accounts</h3>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
                         <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-outline text-sm">
                             Schedule auto transfer
                         </button>
@@ -669,22 +653,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-600">Transfer between any accounts (e.g. Checking, Savings, Retirement/Investment). One-time: &quot;Transfer now&quot; creates matching withdrawal and deposit. Recurring: &quot;Schedule auto transfer&quot; runs on the same day each month.</p>
-            </section>
-
-            <section className="section-card mt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <div>
-                        <h3 className="section-title text-base flex items-center gap-2">
-                            <ArrowsRightLeftIcon className="h-5 w-5 text-slate-500" />
-                            Scheduled transfers
-                        </h3>
-                        <p className="text-sm text-slate-600 mt-0.5">Recurring auto transfers between accounts. Pause, reschedule, or remove any time.</p>
-                    </div>
-                    <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-primary text-sm shrink-0">
-                        Schedule auto transfer
-                    </button>
-                </div>
+                <p className="text-sm text-slate-600 mt-1 mb-4">One-time transfers or recurring auto transfers between Checking, Savings, and Investment accounts. Use &quot;Transfer now&quot; for a single move; &quot;Schedule auto transfer&quot; to repeat monthly on a set day.</p>
 
                 {/* Summary and filter toggle */}
                 {scheduledTransferPairs.length > 0 && (

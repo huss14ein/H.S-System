@@ -118,13 +118,16 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
         }
     };
     return (
-        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 ${isPaid ? 'opacity-75 border-l-4 border-slate-300' : ''}`}>
+        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 ${isPaid ? 'opacity-90 border-l-4 border-slate-300 bg-slate-50/50' : ''}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-3">
                     {getIcon(liability.type)}
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500">{liability.type}{isPaid ? ' · Paid' : ''}</p>
+                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                            {liability.type}
+                            {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                        </p>
                     </div>
                 </div>
                 <div className="flex space-x-1 items-center">
@@ -140,8 +143,8 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                 </div>
             </div>
             <div className="mt-4 text-right">
-                <p className="text-sm text-gray-500">Amount owed</p>
-                <p className="text-2xl font-semibold text-danger">{formatCurrencyString(Math.abs(liability.amount))}</p>
+                <p className="text-sm text-gray-500">{isPaid ? 'Balance when paid (reference)' : 'Amount owed'}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-danger'}`}>{formatCurrencyString(Math.abs(liability.amount))}</p>
             </div>
         </div>
     );
@@ -151,13 +154,16 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     return (
-        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 border-l-4 ${isPaid ? 'border-slate-300' : 'border-emerald-500'}`}>
+        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 border-l-4 ${isPaid ? 'border-slate-300 bg-slate-50/50' : 'border-emerald-500'}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-3">
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500">{isPaid ? 'Owed to you · Paid' : 'Owed to you'}</p>
+                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                            Owed to you
+                            {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                        </p>
                     </div>
                 </div>
                 <div className="flex space-x-1 items-center">
@@ -168,8 +174,8 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                 </div>
             </div>
             <div className="mt-4 text-right">
-                <p className="text-sm text-gray-500">Amount owed to you</p>
-                <p className={`text-2xl font-semibold ${isPaid ? 'text-gray-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount)}</p>
+                <p className="text-sm text-gray-500">{isPaid ? 'Amount when paid (reference)' : 'Amount owed to you'}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount)}</p>
             </div>
         </div>
     );

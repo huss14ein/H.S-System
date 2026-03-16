@@ -13,7 +13,9 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 
-const InvestmentOverview: React.FC = () => {
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+
+const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data, loading } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
@@ -92,13 +94,13 @@ const InvestmentOverview: React.FC = () => {
             warnings.length === 0 ? 'healthy' : warnings.length === 1 ? 'watch' : 'alert';
 
         return {
-            totalValue,
+            totalValue: totalValue ?? 0,
             topHolding,
-            topHoldingPct,
+            topHoldingPct: Number.isFinite(topHoldingPct) ? topHoldingPct : 0,
             topAssetClass,
-            topAssetClassPct,
-            hhi,
-            effectiveHoldings,
+            topAssetClassPct: Number.isFinite(topAssetClassPct) ? topAssetClassPct : 0,
+            hhi: Number.isFinite(hhi) ? hhi : 0,
+            effectiveHoldings: Number.isFinite(effectiveHoldings) ? effectiveHoldings : 0,
             warnings,
             status,
         };
@@ -127,8 +129,16 @@ const InvestmentOverview: React.FC = () => {
         );
     }
 
+    const hasNoPortfolios = portfolioAllocation.length === 0;
+
     return (
         <div className="space-y-6 mt-4">
+            {hasNoPortfolios && setActiveTab && (
+                <div className="section-card border-primary/30 bg-primary/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <p className="text-slate-700">You don&apos;t have any portfolios yet. Add platforms and portfolios to see your investment overview and allocation.</p>
+                    <button type="button" onClick={() => setActiveTab('Portfolios')} className="btn-primary whitespace-nowrap">Go to Portfolios</button>
+                </div>
+            )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolios</p>
@@ -257,7 +267,12 @@ const InvestmentOverview: React.FC = () => {
                                 <AllocationPieChart data={portfolioAllocation} />
                             </div>
                         ) : (
-                            <div className="empty-state flex items-center justify-center h-full w-full">No portfolio allocation data.</div>
+                            <div className="empty-state flex flex-col items-center justify-center h-full w-full gap-3 text-slate-600">
+                                <span>No portfolio allocation data.</span>
+                                {setActiveTab && (
+                                    <button type="button" onClick={() => setActiveTab('Portfolios')} className="btn-primary text-sm py-2 px-4 rounded-lg">Go to Portfolios</button>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -276,8 +291,11 @@ const InvestmentOverview: React.FC = () => {
                     {allHoldingsWithGains.length > 0 ? (
                         <PerformanceTreemap data={allHoldingsWithGains} />
                     ) : (
-                        <div className="flex items-center justify-center h-full text-slate-500 text-sm empty-state">
-                            No holdings to display in the treemap.
+                        <div className="flex flex-col items-center justify-center h-full text-slate-500 text-sm empty-state gap-3">
+                            <span>No holdings to display in the treemap.</span>
+                            {setActiveTab && (
+                                <button type="button" onClick={() => setActiveTab('Portfolios')} className="btn-primary text-sm py-2 px-4 rounded-lg">Go to Portfolios</button>
+                            )}
                         </div>
                     )}
                 </div>

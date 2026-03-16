@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useEffect } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useRef } from 'react';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -119,7 +119,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
     const [householdProfileCloudLoadedUserId, setHouseholdProfileCloudLoadedUserId] = useState<string | null>(null);
-    
+    const [householdProfileSaveStatus, setHouseholdProfileSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [householdProfileSaveMessage, setHouseholdProfileSaveMessage] = useState<string | null>(null);
+    const householdProfileResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
     const [expenseStress, setExpenseStress] = useState({ category: 'All', percent: 0 });
@@ -134,6 +137,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const transactions = data?.transactions ?? [];
     const accounts = data?.accounts ?? [];
     const goals = data?.goals ?? [];
+    const liabilities = data?.liabilities ?? [];
     const investmentPlan = data?.investmentPlan;
     const investmentTransactions = data?.investmentTransactions ?? [];
     const recurringTransactions = data?.recurringTransactions ?? [];
@@ -173,7 +177,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const { data, error } = await db
                     .from('household_budget_profiles')
                     .select('profile')
-.eq('user_id', userId)
+                    .eq('user_id', userId)
                     .maybeSingle();
                 if (error || !data || !isMounted) return;
                 const profile = (data as { profile?: any })?.profile;
@@ -222,15 +226,32 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
         };
         const t = window.setTimeout(async () => {
+            setHouseholdProfileSaveStatus('saving');
+            setHouseholdProfileSaveMessage(null);
             try {
                 await db
                     .from('household_budget_profiles')
                     .upsert({ user_id: userId, profile: payload }, { onConflict: 'user_id' });
-            } catch {
-                // Optional cloud sync path, safe to ignore when migration is not applied.
+                setHouseholdProfileSaveStatus('saved');
+                setHouseholdProfileSaveMessage('Profile synced to cloud.');
+                if (householdProfileResetTimeoutRef.current) window.clearTimeout(householdProfileResetTimeoutRef.current);
+                householdProfileResetTimeoutRef.current = window.setTimeout(() => {
+                    setHouseholdProfileSaveStatus('idle');
+                    setHouseholdProfileSaveMessage(null);
+                    householdProfileResetTimeoutRef.current = null;
+                }, 3000);
+            } catch (e) {
+                setHouseholdProfileSaveStatus('error');
+                setHouseholdProfileSaveMessage(e instanceof Error ? e.message : 'Failed to sync profile to cloud.');
             }
         }, 700);
-        return () => window.clearTimeout(t);
+        return () => {
+            window.clearTimeout(t);
+            if (householdProfileResetTimeoutRef.current) {
+                window.clearTimeout(householdProfileResetTimeoutRef.current);
+                householdProfileResetTimeoutRef.current = null;
+            }
+        };
     }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
 
     // Build plan from transactions, budgets, recurring, and investment data — fully integrated
@@ -547,12 +568,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     return (
         <PageLayout
             title="Annual Financial Plan"
-            description="Income & expense actuals from Transactions; planned limits from Budgets; recurring from Transactions (auto or manual); investment from Investment Plan. Fully integrated with your data."
+            description="Fed from Accounts, Budgets, Transactions, Goals, Liabilities, and Investment Plan. Income & expense actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals progress from Goals; investment planned & actual from Investment Plan; debt context from Liabilities."
             action={
                 <div className="w-full flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
-                    <div className="inline-flex items-center p-1 rounded-lg border border-slate-200 bg-white self-start lg:self-auto">
-                        <button type="button" onClick={() => setPlanSubPage('overview')} className={`px-3 py-1.5 text-xs rounded-md font-medium ${planSubPage === 'overview' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Plan Overview</button>
-                        <button type="button" onClick={() => setPlanSubPage('experts')} className={`px-3 py-1.5 text-xs rounded-md font-medium ${planSubPage === 'experts' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Salary & Planning Experts</button>
+                    <div className="inline-flex items-center p-1 rounded-xl border border-slate-200 bg-slate-100/80 self-start lg:self-auto shadow-sm">
+                        <button type="button" onClick={() => setPlanSubPage('overview')} className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${planSubPage === 'overview' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 hover:text-slate-800 hover:bg-white/80'}`}>Plan Overview</button>
+                        <button type="button" onClick={() => setPlanSubPage('experts')} className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${planSubPage === 'experts' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 hover:text-slate-800 hover:bg-white/80'}`}>Salary & Planning Experts</button>
                     </div>
                     <div className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-2 py-1 self-start lg:self-auto">
                         <button type="button" onClick={() => setYear(y => y - 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronLeftIcon className="h-5 w-5"/></button>
@@ -563,8 +584,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <PageActionsDropdown
                             ariaLabel="Plan quick links"
                             actions={[
+                                { value: 'accounts', label: 'Accounts', onClick: () => setActivePage('Accounts') },
                                 { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
                                 { value: 'goals', label: 'Goals', onClick: () => setActivePage('Goals') },
+                                { value: 'liabilities', label: 'Liabilities', onClick: () => setActivePage('Liabilities') },
+                                { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
                                 { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investments') },
                             ]}
                         />
@@ -579,32 +603,47 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             ) : (
             <div className="space-y-6 sm:space-y-8">
             <div className="space-y-4 sm:space-y-5">
-            {/* Data sources: aligned with Transactions, Budgets, Recurring, Investment Plan */}
+            {/* Data sources: Plan is fed from all these pages via DataContext */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <span className="font-semibold text-slate-800">Plan data aligned with:</span>
+                <span className="font-semibold text-slate-800">Plan fed from:</span>
                 {setActivePage && (
                     <>
-                        <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Actuals & recurring (auto or manual)">
-                            <CreditCardIcon className="h-4 w-4" /> Transactions
+                        <button type="button" onClick={() => setActivePage('Accounts')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Cash balances, scheduled transfers">
+                            <BuildingLibraryIcon className="h-4 w-4" /> Accounts
                         </button>
                         <span className="text-slate-400">·</span>
                         <button type="button" onClick={() => setActivePage('Budgets')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Planned limits">
                             <PiggyBankIcon className="h-4 w-4" /> Budgets
                         </button>
                         <span className="text-slate-400">·</span>
-                        <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Monthly investment planned & actual buys">
-                            <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan
+                        <button type="button" onClick={() => setActivePage('Transactions')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Actuals & recurring">
+                            <CreditCardIcon className="h-4 w-4" /> Transactions
                         </button>
                         <span className="text-slate-400">·</span>
-                        <button type="button" onClick={() => setActivePage('Accounts')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
-                            <BuildingLibraryIcon className="h-4 w-4" /> Accounts (cash)
+                        <button type="button" onClick={() => setActivePage('Goals')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Goals & when you'll reach them">
+                            <TrophyIcon className="h-4 w-4" /> Goals
+                        </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Liabilities')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Debt & liabilities context">
+                            <CreditCardIcon className="h-4 w-4" /> Liabilities
+                        </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Monthly investment planned & actual">
+                            <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan
                         </button>
                     </>
                 )}
                 <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
-                    Actuals from Transactions; planned limits from Budgets; recurring (auto or manual) from Transactions; investment from Investment Plan.
+                    Actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals from Goals; investment from Investment Plan; debt context from Liabilities.
                 </span>
+                {householdProfileCloudEnabled && householdProfileSaveStatus !== 'idle' && (
+                    <p className={`text-xs w-full pt-2 mt-1 border-t border-slate-200/80 ${householdProfileSaveStatus === 'error' ? 'text-amber-700' : householdProfileSaveStatus === 'saved' ? 'text-emerald-600' : 'text-slate-500'}`} role="status" aria-live="polite">
+                        {householdProfileSaveStatus === 'saving' && 'Syncing household profile…'}
+                        {householdProfileSaveStatus === 'saved' && (householdProfileSaveMessage ?? 'Profile synced to cloud.')}
+                        {householdProfileSaveStatus === 'error' && (householdProfileSaveMessage ?? 'Profile sync failed.')}
+                    </p>
+                )}
                 </div>
             </div>
 
@@ -647,19 +686,42 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             )}
 
-            {/* Liquid cash from Accounts (cash flow context) */}
+            {/* Liquid cash from Accounts; debt from Liabilities (plan fed from these pages) */}
+            {((accounts.length > 0) || (liabilities.length > 0)) && (
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
             {accounts.length > 0 && (() => {
                 const liquidCash = accounts
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
                 return liquidCash !== 0 ? (
-                    <div className="mt-4 p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
-                        <p className="text-xs text-slate-600 mt-0.5">From Accounts. Use Transactions to track inflows and outflows.</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Accounts.</p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
+                        )}
                     </div>
                 ) : null;
             })()}
+            {liabilities.length > 0 && (() => {
+                // Total debt: exclude Receivables; sum |amount| so it works whether debt is stored positive or negative
+                const totalDebt = liabilities
+                    .filter((l: { type?: string; amount?: number }) => (l.type ?? '') !== 'Receivable')
+                    .reduce((sum: number, l: { amount?: number }) => sum + Math.abs(Number(l.amount) || 0), 0);
+                return totalDebt > 0 ? (
+                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
+                        <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full">Total debt (Liabilities)</p>
+                        <p className="metric-value text-xl font-bold text-slate-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(totalDebt, { digits: 0 })}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Liabilities.</p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Liabilities')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Liabilities →</button>
+                        )}
+                    </div>
+                ) : null;
+            })()}
+            </div>
+            )}
 
             {/* Executive summary */}
             {totals && (

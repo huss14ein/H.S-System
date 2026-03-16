@@ -3,6 +3,7 @@ import PageLayout from '../components/PageLayout';
 import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
 import type { Page } from '../types';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
@@ -363,109 +364,221 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const to = end.toISOString().slice(0, 10);
     let alive = true;
 
-    getMarketHolidays('US').then((holidays) => {
-      if (!alive) return;
-      const items: MarketEventItem[] = (holidays ?? []).map((h, idx) => {
-        const eventDate = parseToLocalDate(h.date);
-        return {
-          id: `us-holiday-${h.date}-${idx}-${(h.name || '').replace(/\s+/g, '-')}`,
-          date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(h.date),
-          title: h.name || `US Market Holiday (${h.date})`,
-          description: `US exchange closed. ${h.status ? `Status: ${h.status}` : ''}`.trim(),
-          source: 'US market calendar',
-          category: 'Holiday' as const,
-          impact: 'High' as const,
-          estimated: false,
-        };
-      }).filter((e) => Number.isFinite(e.date.getTime()));
-      setHolidayEvents(items);
-    }).catch(() => setHolidayEvents([]));
+    Promise.resolve()
+      .then(() => getMarketHolidays('US'))
+      .catch(() => [] as { date: string; name?: string; status?: string }[])
+      .then(async (holidays) => {
+        if (!alive) return;
+        let fromStatic = false;
+        if (!holidays?.length) {
+          holidays = await getStaticMarketHolidays();
+          fromStatic = true;
+        }
+        const items: MarketEventItem[] = (holidays ?? []).map((h, idx) => {
+          const eventDate = parseToLocalDate(h.date);
+          return {
+            id: `us-holiday-${h.date}-${idx}-${(h.name || '').replace(/\s+/g, '-')}`,
+            date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(h.date),
+            title: h.name || `US Market Holiday (${h.date})`,
+            description: `US exchange closed. ${h.status ? `Status: ${h.status}` : ''}`.trim(),
+            source: fromStatic ? 'US market calendar (static)' : 'US market calendar',
+            category: 'Holiday' as const,
+            impact: 'High' as const,
+            estimated: false,
+          };
+        }).filter((e) => Number.isFinite(e.date.getTime()));
+        setHolidayEvents(items);
+      })
+      .catch(() => setHolidayEvents([]));
 
-    getMarketCalendarCached(from, to, trackedSymbols).then((result) => {
-      if (!alive) return;
-      const macro = result.economic
+    function staticEconomicToItems(staticEcon: { date: string; country: string; event: string }[], sourceLabel: string): MarketEventItem[] {
+      return staticEcon
         .filter((e) => e.date)
         .map((e, idx) => {
           const title = (e.event || '').trim() || 'Economic Calendar Event';
           const impact: Impact = /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(title) ? 'High' : 'Medium';
           const eventDate = parseToLocalDate(e.date);
           return {
-            id: `finnhub-econ-${e.date}-${idx}-${title}`,
+            id: `static-econ-${e.date}-${idx}-${title}`,
             date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
             title,
-            description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
-            source: result.mode === 'fresh' ? 'Finnhub economic calendar' : 'Finnhub economic calendar (cached)',
+            description: `${e.country || 'US'} economic event`,
+            source: sourceLabel,
             category: 'Macro' as const,
             impact,
             estimated: false,
           } satisfies MarketEventItem;
-        });
+        })
+        .filter((e) => Number.isFinite(e.date.getTime()));
+    }
 
-      const earnings = result.earnings
-        .filter((e) => e.date)
-        .map((e) => {
-          const eventDate = parseToLocalDate(e.date!);
-          return {
-          id: `finnhub-earnings-${e.symbol}-${e.date}`,
-          date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
-          title: `${e.symbol} earnings (Finnhub)`,
-          description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
-          source: result.mode === 'fresh' ? 'Finnhub earnings calendar' : 'Finnhub earnings calendar (cached)',
-          category: 'Earnings' as const,
-          impact: 'High' as const,
-          symbol: e.symbol,
-          estimated: false,
-        };
-        });
-
-      setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
-
-      if (result.mode === 'cache_fresh') {
-        getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
-          if (!alive) return;
-          const freshMacro = freshResult.economic
-            .filter((e) => e.date)
-            .map((e, idx) => {
-              const eventDate = parseToLocalDate(e.date);
-              return {
-              id: `finnhub-econ-fresh-${e.date}-${idx}-${e.event}`,
+    getMarketCalendarCached(from, to, trackedSymbols)
+      .then(async (result) => {
+        if (!alive) return;
+        let macro = result.economic
+          .filter((e) => e.date)
+          .map((e, idx) => {
+            const title = (e.event || '').trim() || 'Economic Calendar Event';
+            const impact: Impact = /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(title) ? 'High' : 'Medium';
+            const eventDate = parseToLocalDate(e.date);
+            return {
+              id: `finnhub-econ-${e.date}-${idx}-${title}`,
               date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
-              title: (e.event || '').trim() || 'Economic Calendar Event',
+              title,
               description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
-              source: 'Finnhub economic calendar',
+              source: result.mode === 'fresh' ? 'Finnhub economic calendar' : 'Finnhub economic calendar (cached)',
               category: 'Macro' as const,
-              impact: /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(e.event || '') ? 'High' as const : 'Medium' as const,
+              impact,
               estimated: false,
-            };
-            });
-          const freshEarnings = freshResult.earnings
-            .filter((e) => e.date)
-            .map((e) => {
-              const eventDate = parseToLocalDate(e.date!);
-              return {
-              id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
+            } satisfies MarketEventItem;
+          });
+        if (macro.length === 0) {
+          const staticEcon = await getStaticEconomicCalendar(from, to);
+          macro = staticEconomicToItems(staticEcon, 'Economic calendar (static)');
+        }
+
+        const earnings = result.earnings
+          .filter((e) => e.date)
+          .map((e) => {
+            const eventDate = parseToLocalDate(e.date!);
+            return {
+              id: `finnhub-earnings-${e.symbol}-${e.date}`,
               date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
               title: `${e.symbol} earnings (Finnhub)`,
               description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
-              source: 'Finnhub earnings calendar',
+              source: result.mode === 'fresh' ? 'Finnhub earnings calendar' : 'Finnhub earnings calendar (cached)',
               category: 'Earnings' as const,
               impact: 'High' as const,
               symbol: e.symbol,
               estimated: false,
             };
-            });
-          setFinnhubState({
-            mode: 'fresh',
-            cachedAt: freshResult.cachedAt,
-            warnings: freshResult.warnings || [],
-            events: [...freshMacro, ...freshEarnings].filter((e) => Number.isFinite(e.date.getTime())),
           });
-        }).catch(() => {});
-      }
-    }).catch(() => {
-      if (!alive) return;
-      setFinnhubState({ mode: 'none', events: [], warnings: ['Live Finnhub calendar is unavailable right now. You can enable modeled estimates from the filter bar if needed.'] });
-    });
+
+        setFinnhubState({ mode: result.mode, cachedAt: result.cachedAt, warnings: result.warnings || [], events: [...macro, ...earnings].filter((e) => Number.isFinite(e.date.getTime())) });
+
+        if (result.mode === 'cache_fresh') {
+          getMarketCalendarFresh(from, to, trackedSymbols).then((freshResult) => {
+            if (!alive) return;
+            let freshMacro = freshResult.economic
+              .filter((e) => e.date)
+              .map((e, idx) => {
+                const eventDate = parseToLocalDate(e.date);
+                return {
+                  id: `finnhub-econ-fresh-${e.date}-${idx}-${e.event}`,
+                  date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
+                  title: (e.event || '').trim() || 'Economic Calendar Event',
+                  description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
+                  source: 'Finnhub economic calendar',
+                  category: 'Macro' as const,
+                  impact: /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(e.event || '') ? 'High' as const : 'Medium' as const,
+                  estimated: false,
+                };
+              });
+            if (freshMacro.length === 0) {
+              getStaticEconomicCalendar(from, to)
+                .then((staticEcon) => {
+                  if (!alive) return;
+                  freshMacro = staticEconomicToItems(staticEcon, 'Economic calendar (static)');
+                  const freshEarnings = freshResult.earnings
+                    .filter((e) => e.date)
+                    .map((e) => {
+                      const eventDate = parseToLocalDate(e.date!);
+                      return {
+                        id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
+                        date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
+                        title: `${e.symbol} earnings (Finnhub)`,
+                        description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
+                        source: 'Finnhub earnings calendar',
+                        category: 'Earnings' as const,
+                        impact: 'High' as const,
+                        symbol: e.symbol,
+                        estimated: false,
+                      };
+                    });
+                  setFinnhubState({
+                    mode: 'fresh',
+                    cachedAt: freshResult.cachedAt,
+                    warnings: freshResult.warnings || [],
+                    events: [...freshMacro, ...freshEarnings].filter((e) => Number.isFinite(e.date.getTime())),
+                  });
+                })
+                .catch(() => {
+                  if (!alive) return;
+                  const macroFromFinnhub = freshResult.economic
+                    .filter((e) => e.date)
+                    .map((e, idx) => {
+                      const eventDate = parseToLocalDate(e.date);
+                      return {
+                        id: `finnhub-econ-fresh-${e.date}-${idx}-${e.event}`,
+                        date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date),
+                        title: (e.event || '').trim() || 'Economic Calendar Event',
+                        description: `${e.country || 'Global'} economic event${e.estimate ? ` • Estimate: ${e.estimate}` : ''}${e.actual ? ` • Actual: ${e.actual}` : ''}`,
+                        source: 'Finnhub economic calendar',
+                        category: 'Macro' as const,
+                        impact: /(rate|fomc|cpi|inflation|payroll|gdp|employment|pmi)/i.test(e.event || '') ? 'High' as const : 'Medium' as const,
+                        estimated: false,
+                      };
+                    });
+                  const fallbackEarnings = freshResult.earnings
+                    .filter((e) => e.date)
+                    .map((e) => {
+                      const eventDate = parseToLocalDate(e.date!);
+                      return {
+                        id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
+                        date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
+                        title: `${e.symbol} earnings (Finnhub)`,
+                        description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
+                        source: 'Finnhub earnings calendar',
+                        category: 'Earnings' as const,
+                        impact: 'High' as const,
+                        symbol: e.symbol,
+                        estimated: false,
+                      };
+                    });
+                  setFinnhubState({
+                    mode: 'fresh',
+                    cachedAt: freshResult.cachedAt,
+                    warnings: [...(freshResult.warnings || []), 'Static economic calendar fallback failed.'],
+                    events: [...macroFromFinnhub, ...fallbackEarnings].filter((e) => Number.isFinite(e.date.getTime())),
+                  });
+                });
+            } else {
+              const freshEarnings = freshResult.earnings
+                .filter((e) => e.date)
+                .map((e) => {
+                  const eventDate = parseToLocalDate(e.date!);
+                  return {
+                    id: `finnhub-earnings-fresh-${e.symbol}-${e.date}`,
+                    date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(e.date!),
+                    title: `${e.symbol} earnings (Finnhub)`,
+                    description: `Quarter ${e.quarter} ${e.year}${e.revenueEstimate != null ? ` • Revenue est: ${e.revenueEstimate}` : ''}`,
+                    source: 'Finnhub earnings calendar',
+                    category: 'Earnings' as const,
+                    impact: 'High' as const,
+                    symbol: e.symbol,
+                    estimated: false,
+                  };
+                });
+              setFinnhubState({
+                mode: 'fresh',
+                cachedAt: freshResult.cachedAt,
+                warnings: freshResult.warnings || [],
+                events: [...freshMacro, ...freshEarnings].filter((e) => Number.isFinite(e.date.getTime())),
+              });
+            }
+          }).catch(() => {});
+        }
+      })
+      .catch(async () => {
+        if (!alive) return;
+        const staticEcon = await getStaticEconomicCalendar(from, to);
+        const staticMacro = staticEconomicToItems(staticEcon, 'Economic calendar (static)');
+        setFinnhubState({
+          mode: 'none',
+          events: staticMacro,
+          warnings: ['Live Finnhub calendar is unavailable. Showing static US economic calendar (FOMC, NFP, CPI). Enable modeled estimates in the filter bar for more events.'],
+        });
+      });
 
     return () => { alive = false; };
   }, [trackedSymbols]);
@@ -724,70 +837,98 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     <PageLayout
       title="Market Events"
       description="Important upcoming dates for markets, your watchlist, and your investment holdings."
-      action={
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode('calendar')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-            >
-              <CalendarDaysIcon className="h-4 w-4" />
-              Calendar
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-            >
-              <Bars3Icon className="h-4 w-4" />
-              List
-            </button>
-          </div>
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search symbol, event, source"
-            className="input-base h-9 w-56 text-sm"
-          />
-          <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
-            <input
-              type="checkbox"
-              checked={includeEstimated}
-              onChange={(e) => setIncludeEstimated(e.target.checked)}
-            />
-            Include modeled estimates
-          </label>
-          <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
-            <input
-              type="checkbox"
-              checked={remindersOnly}
-              onChange={(e) => setRemindersOnly(e.target.checked)}
-            />
-            Reminders only
-          </label>
-          <select className="select-base text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}>
-            <option value="All">All categories</option>
-            <option value="Macro">Macro</option>
-            <option value="Holiday">Holiday</option>
-            <option value="Earnings">Earnings</option>
-            <option value="Dividend">Dividend</option>
-            <option value="Portfolio">Portfolio</option>
-          </select>
-          <select className="select-base text-sm" value={impactFilter} onChange={(e) => setImpactFilter(e.target.value as 'All' | Impact)}>
-            <option value="All">All impact levels</option>
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
-          </select>
-        </div>
-      }
     >
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
-          <p className="mt-1 text-sm text-slate-700">US market–impacting events: <strong>Macro</strong> (NFP, CPI, FOMC rate decisions, tax deadlines), <strong>US market holidays</strong>, <strong>Earnings</strong> and <strong>Dividend</strong> for your holdings. Filter by category to see what matters and when markets are closed.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-6">
+      <div className="space-y-6">
+        {/* Filters bar */}
+        <div className="section-card">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">Filters</p>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:flex-wrap">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-slate-600">View</span>
+              <div className="flex rounded-xl border border-slate-200 bg-slate-50/80 p-0.5 w-fit">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('calendar')}
+                  className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${viewMode === 'calendar' ? 'bg-white text-primary shadow-sm border border-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  <CalendarDaysIcon className="h-4 w-4" />
+                  Calendar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('list')}
+                  className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${viewMode === 'list' ? 'bg-white text-primary shadow-sm border border-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  <Bars3Icon className="h-4 w-4" />
+                  List
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0 flex-1 lg:max-w-xs">
+              <span className="text-xs font-medium text-slate-600">Search</span>
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Symbol, event, or source…"
+                className="input-base h-10 text-sm"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-slate-600">Category</span>
+              <select
+                className="select-base h-10 text-sm w-full min-w-[140px] lg:w-40"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}
+              >
+                <option value="All">All categories</option>
+                <option value="Macro">Macro</option>
+                <option value="Holiday">Holiday</option>
+                <option value="Earnings">Earnings</option>
+                <option value="Dividend">Dividend</option>
+                <option value="Portfolio">Portfolio</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-slate-600">Impact</span>
+              <select
+                className="select-base h-10 text-sm w-full min-w-[140px] lg:w-40"
+                value={impactFilter}
+                onChange={(e) => setImpactFilter(e.target.value as 'All' | Impact)}
+              >
+                <option value="All">All impact levels</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+            </div>
+            <div className="flex flex-wrap items-center gap-6 pt-1">
+              <label className="inline-flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={includeEstimated}
+                  onChange={(e) => setIncludeEstimated(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                />
+                <span className="text-sm text-slate-700 group-hover:text-slate-900">Include modeled estimates</span>
+              </label>
+              <label className="inline-flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={remindersOnly}
+                  onChange={(e) => setRemindersOnly(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                />
+                <span className="text-sm text-slate-700 group-hover:text-slate-900">Reminders only</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats summary */}
+        <div className="section-card">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Summary</p>
+          <p className="text-sm text-slate-600 mb-4">Macro (NFP, CPI, FOMC), US market holidays, earnings and dividend events for your holdings. Use filters above to narrow by category or impact.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
             <StatCard label="Macro" value={String(stats.macroCount)} />
@@ -871,7 +1012,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             </div>
             {calendarMonthEventCount === 0 && (
               <p className="p-3 text-center text-sm text-slate-500 border-t border-slate-200">
-                No market events in {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. Try another month or enable modeled estimates in the filter bar.
+                No market events in {calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. Try another month or enable modeled estimates above.
               </p>
             )}
           </div>
@@ -969,9 +1110,9 @@ function highImpactLabel(v: number): string {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/70 bg-white/80 px-3 py-2">
-      <p className="text-[11px] text-slate-500">{label}</p>
-      <p className="text-base font-semibold text-slate-800">{value}</p>
+    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</p>
+      <p className="mt-0.5 text-lg font-semibold text-slate-800 tabular-nums">{value}</p>
     </div>
   );
 }

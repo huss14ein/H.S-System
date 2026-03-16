@@ -176,15 +176,18 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
               onClick={() => setActivePage('Investments')}
+              title={investmentProgress.target > 0 ? `Invested ${investmentProgress.amount.toLocaleString()} of ${investmentProgress.target.toLocaleString()} this month` : 'Set monthly budget in Investments → Monthly Plan'}
             >
               <div className="flex items-center space-x-2 mb-1">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Monthly Plan</span>
-                <span className="text-xs font-bold text-primary">{investmentProgress.percent.toFixed(0)}%</span>
+                <span className="text-xs font-bold text-primary">
+                  {investmentProgress.target > 0 ? `${investmentProgress.percent.toFixed(0)}%` : '—'}
+                </span>
               </div>
               <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-primary transition-all duration-1000" 
-                  style={{ width: `${investmentProgress.percent}%` }}
+                  style={{ width: `${investmentProgress.target > 0 ? investmentProgress.percent : 0}%` }}
                 />
               </div>
             </div>
