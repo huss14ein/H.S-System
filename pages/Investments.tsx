@@ -3304,7 +3304,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   if (loading || !data) {
     return (
-      <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200" aria-busy="true">
         <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investments" />
       </div>
     );
@@ -3312,26 +3312,26 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   return (
     <div className="space-y-6">
-        <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-5 py-6 sm:px-6 shadow-sm">
+        <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-indigo-50 px-5 py-6 sm:px-6 shadow-sm">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <div className="flex flex-wrap items-center gap-3">
-                        <h1 className="text-3xl font-bold tracking-tight text-white">Investments</h1>
-                        <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100 backdrop-blur">Unified portfolio workspace</span>
+                        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Investments</h1>
+                        <span className="inline-flex items-center rounded-full bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-800">Unified portfolio workspace</span>
                     </div>
-                    <p className="mt-2 max-w-2xl text-sm text-slate-200/90">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-600">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
                     <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-100" />
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>
+                        <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-700" />
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                             {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
                         </span>
                     </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
+                    <button onClick={() => setActiveTab('Investment Plan')} className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-medium text-indigo-800 transition hover:bg-indigo-100">
                         <SparklesIcon className="h-4 w-4" /> Smart Plan
                     </button>
-                    <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-100">
+                    <button onClick={() => setIsTradeModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:bg-slate-50">
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Record Trade
                     </button>
                 </div>
@@ -3400,9 +3400,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         </nav>
       
       <InvestmentTabErrorBoundary activeTab={activeTab} onReset={() => setActiveTab('Overview')}>
-        <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem]" />}>
-          {renderContent()}
-        </Suspense>
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50/80 via-white to-indigo-50/50 min-h-[28rem] overflow-hidden">
+          <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem] bg-transparent" />}>
+            {renderContent()}
+          </Suspense>
+        </div>
       </InvestmentTabErrorBoundary>
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />

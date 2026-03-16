@@ -297,10 +297,10 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 )}
             </SectionCard>
 
-            <SectionCard title="Liabilities" className="mt-6">
-                <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Managed under liabilities so all entries stay in one flow.</p>
+            <SectionCard title="What I'm Owed" className="mt-6">
+                <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Add and track receivables here.</p>
                 {receivables.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">No liability entries in this group for this filter. Switch filter to Paid/All to review historical items.</p>
+                    <p className="text-center text-gray-500 py-8">No receivables in this group. Switch filter to Paid/All to review historical items, or add an entry.</p>
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (

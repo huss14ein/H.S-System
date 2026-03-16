@@ -19,7 +19,6 @@ import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
 import { PresentationChartLineIcon } from './components/icons/PresentationChartLineIcon';
 import { DocumentArrowUpIcon } from './components/icons/DocumentArrowUpIcon';
 import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
-import { CubeIcon } from './components/icons/CubeIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
@@ -36,7 +35,6 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Plan', icon: ClipboardDocumentListIcon },
   { name: 'Summary', icon: UsersIcon },
   { name: 'Assets', icon: GoldBarIcon },
-  { name: 'Commodities', icon: CubeIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Forecast', icon: AcademicCapIcon },
   { name: 'Analysis', icon: ChartBarIcon },

@@ -22,7 +22,7 @@ import {
     buildHouseholdEngineInputFromData,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
-    generateSaudiBudgetCategories,
+    generateHouseholdBudgetCategories,
     KSA_EXPENSE_CATEGORY_HINTS,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
@@ -232,16 +232,61 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+    /** Map household engine bucket keys (from buildHouseholdBudgetPlan) to budget category names for projection mode. */
+    const ENGINE_BUCKET_TO_CATEGORY: Record<string, string> = useMemo(() => ({
+        housing: 'Housing',
+        housingSemiAnnual: 'Housing Rent (Semi-Annual)',
+        groceries: 'Groceries & Supermarket',
+        food: 'Food',
+        utilities: 'Utilities',
+        telecommunications: 'Telecommunications',
+        transportation: 'Transportation',
+        domesticHelp: 'Domestic Help',
+        diningEntertainment: 'Dining & Entertainment',
+        entertainment: 'Dining & Entertainment',
+        insuranceCoPay: 'Insurance Co-pay',
+        health: 'Health',
+        debtLoans: 'Debt/Loans',
+        remittances: 'Remittances',
+        pocketMoney: 'Pocket Money',
+        personalCare: 'Personal Care',
+        shopping: 'Shopping',
+        miscellaneous: 'Miscellaneous',
+        schoolTuition: 'School Tuition (Semester)',
+        householdMaintenance: 'Bulk Household Maintenance',
+        iqamaRenewal: 'Iqama Renewal',
+        dependentFees: 'Dependent Fees',
+        exitReentryVisa: 'Exit/Re-entry Visa',
+        vehicleInsurance: 'Vehicle Insurance',
+        istimara: 'Istimara (Registration)',
+        fahas: 'Fahas (MVPI)',
+        schoolUniformsBooks: 'School Uniforms & Books',
+        zakat: 'Zakat',
+        annualVacation: 'Annual Vacation',
+        freshProduce: 'Fresh Produce (Weekly)',
+        householdHelpHourly: 'Household Help (Hourly)',
+        leisureWeekly: 'Leisure (Weekly)',
+        emergencySavings: 'Savings & Investments',
+        reserveSavings: 'Savings & Investments',
+        goalSavings: 'Savings & Investments',
+        retirementSavings: 'Savings & Investments',
+        investing: 'Savings & Investments',
+        kidsFutureSavings: 'Education',
+    }), []);
+
     // Approved Budgets Overview (admin) filters and scope
     const [approvedOverviewMonth, setApprovedOverviewMonth] = useState(currentMonth);
     const [approvedOverviewYear, setApprovedOverviewYear] = useState(currentYear);
     const [approvedOverviewPeriodFilter, setApprovedOverviewPeriodFilter] = useState<'all' | 'monthly' | 'weekly' | 'yearly' | 'daily'>('all');
     const [approvedOverviewTierFilter, setApprovedOverviewTierFilter] = useState<'all' | 'Core' | 'Supporting' | 'Optional'>('all');
     const [approvedOverviewSearch, setApprovedOverviewSearch] = useState('');
-    const [approvedOverviewCreateFromSalary, setApprovedOverviewCreateFromSalary] = useState(false);
-    const [approvedOverviewSalaryInput, setApprovedOverviewSalaryInput] = useState<number | ''>('');
-    /** Category names selected for "Create from salary" (only these will be created). */
-    const [approvedOverviewSelectedForCreate, setApprovedOverviewSelectedForCreate] = useState<string[]>([]);
+
+    /** Household engine: bulk add — target month/year and template mode state (only in Household Engine section). */
+    const [bulkAddTargetMonth, setBulkAddTargetMonth] = useState(currentMonth);
+    const [bulkAddTargetYear, setBulkAddTargetYear] = useState(currentYear);
+    const [bulkAddSalary, setBulkAddSalary] = useState<number | ''>('');
+    const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
+    const [bulkAddMode, setBulkAddMode] = useState<'template' | 'projection'>('template');
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -793,18 +838,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         return list;
     }, [adminApprovedOverviewRaw, approvedOverviewPeriodFilter, approvedOverviewTierFilter, approvedOverviewSearch]);
 
-    // Suggested categories for "Create from salary" (when salary is valid)
-    const approvedOverviewSuggestedCategories = useMemo(() => {
-        const salary = Number(approvedOverviewSalaryInput);
-        if (!Number.isFinite(salary) || salary <= 0) return [];
-        return generateSaudiBudgetCategories(householdAdults, householdKids, salary, engineProfile);
-    }, [approvedOverviewSalaryInput, householdAdults, householdKids, engineProfile]);
+    // Household engine: suggested categories for bulk add (template mode)
+    const bulkAddSuggestedCategories = useMemo(() => {
+        const salary = Number(bulkAddSalary);
+        const fallback = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0)
+            ? expectedMonthlySalary
+            : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
+        const s = Number.isFinite(salary) && salary > 0 ? salary : fallback;
+        if (!s || s <= 0) return [];
+        return generateHouseholdBudgetCategories(householdAdults, householdKids, s, engineProfile);
+    }, [bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, householdAdults, householdKids, engineProfile]);
 
-    // When salary or household params change, default selection to all suggested categories
+    // Default bulk-add selection to all suggested categories when list changes
     React.useEffect(() => {
-        if (!approvedOverviewCreateFromSalary || approvedOverviewSuggestedCategories.length === 0) return;
-        setApprovedOverviewSelectedForCreate(approvedOverviewSuggestedCategories.map((c) => c.category));
-    }, [approvedOverviewCreateFromSalary, approvedOverviewSalaryInput, householdAdults, householdKids, engineProfile]);
+        if (bulkAddSuggestedCategories.length === 0) return;
+        setBulkAddSelectedCategories((prev) => {
+            const names = bulkAddSuggestedCategories.map((c) => c.category);
+            const same = names.length === prev.length && names.every((n, i) => n === prev[i]);
+            return same ? prev : names;
+        });
+    }, [bulkAddSuggestedCategories]);
 
     React.useEffect(() => {
         setCardOrder((prev) => {
@@ -1908,97 +1961,184 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     </div>
                 )}
                 <div className="mt-6 pt-4 border-t border-slate-200">
-                    <p className="text-sm font-semibold text-slate-800 mb-1">Create or update budgets for this month</p>
-                    <p className="text-xs text-slate-600 mb-4">Choose one method. Both create or update budget categories for the current month; they use different sources for the amounts.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                            <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-1">1. Saudi household template</p>
-                            <p className="text-xs text-slate-600 mb-3">Uses the family size and salary above to generate KSA-focused categories (rent, groceries, utilities, schooling, etc.) with suggested amounts. Creates missing budgets and updates existing ones.</p>
-                            <button
-                                type="button"
-                                onClick={async () => {
-                                    if (!isAdmin) {
-                                        alert('Only admins can create budgets from household engine.');
-                                        return;
-                                    }
-                                    const monthlySalary = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : suggestedMonthlySalary;
-                                    if (!monthlySalary || monthlySalary <= 0) {
-                                        alert('Please enter an expected monthly salary above to generate budget categories.');
-                                        return;
-                                    }
-                                    if (!window.confirm(`Create or update budgets for ${currentYear}-${currentMonth} from the Saudi template (${householdAdults} adults, ${householdKids} kids, ${formatCurrencyString(monthlySalary)}/month)? Existing budgets for this month will be updated.`)) return;
-                                    const categories = generateSaudiBudgetCategories(householdAdults, householdKids, monthlySalary, engineProfile);
-                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                                    let created = 0, updated = 0;
-                                    for (const cat of categories) {
-                                        const existing = existingBudgets.find((b) => b.category === cat.category);
-                                        if (existing) {
-                                            updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
-                                            updated++;
-                                        } else {
-                                            addBudget({ category: cat.category, limit: cat.limit, month: currentMonth, year: currentYear, period: cat.period, tier: cat.tier });
-                                            created++;
-                                        }
-                                    }
-                                    alert(`Saudi template: ${created} created, ${updated} updated.`);
+                    <h3 className="text-sm font-semibold text-slate-800 mb-1">Household engine: Bulk add budgets</h3>
+                    <p className="text-xs text-slate-600 mb-4">One place to create or update many budgets at once. Choose <strong>Household template</strong> (salary + family size + category selection) or <strong>Engine projection</strong> (from your plan buckets).</p>
+
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        <button type="button" onClick={() => setBulkAddMode('template')} className={`px-3 py-1.5 text-xs font-medium rounded-lg ${bulkAddMode === 'template' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>From household template</button>
+                        <button type="button" onClick={() => setBulkAddMode('projection')} className={`px-3 py-1.5 text-xs font-medium rounded-lg ${bulkAddMode === 'projection' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>From engine projection</button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-600 font-medium">Target month</label>
+                            <input
+                                type="month"
+                                value={`${bulkAddTargetYear}-${String(bulkAddTargetMonth).padStart(2, '0')}`}
+                                onChange={(e) => {
+                                    const [y, m] = e.target.value.split('-').map(Number);
+                                    setBulkAddTargetYear(y);
+                                    setBulkAddTargetMonth(m);
                                 }}
-                                className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-                                disabled={!isAdmin}
-                            >
-                                Apply Saudi template
-                            </button>
-                        </div>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                            <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">2. Household engine projection</p>
-                            <p className="text-xs text-slate-600 mb-3">Uses your transactions, accounts, and goals to suggest amounts. Applies the engine’s projected buckets (Housing, Food, Transport, etc.) to the current month. Overwrites existing budgets with engine values.</p>
-                            <button
-                                type="button"
-                                onClick={async () => {
-                                    if (!isAdmin) {
-                                        alert('Only admins can apply household engine budgets.');
-                                        return;
-                                    }
-                                    if (!window.confirm(`Apply the household engine projection to ${currentYear}-${currentMonth}? Existing budgets for this month will be updated with engine amounts.`)) return;
-                                    const currentMonthPlan = householdBudgetEngine.months.find((m) => m.month === currentMonth);
-                                    if (!currentMonthPlan) {
-                                        alert('No household engine plan for this month. The engine runs from your data above.');
-                                        return;
-                                    }
-                                    const buckets = currentMonthPlan.buckets || {};
-                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === currentYear && b.month === currentMonth);
-                                    const categoryMap: Record<string, string> = {
-                                        'Fixed Obligations': 'Housing', 'Household Essentials': 'Food', 'Household Operations': 'Utilities', 'Transport': 'Transportation',
-                                        'Personal Support': 'Personal Care', 'Reserve Savings': 'Savings & Investments', 'Emergency Savings': 'Savings & Investments',
-                                        'Goal Savings': 'Savings & Investments', 'Kids Future Savings': 'Education', 'Retirement Savings': 'Savings & Investments', 'Investing': 'Savings & Investments',
-                                    };
-                                    let created = 0, updated = 0;
-                                    for (const [bucketName, amount] of Object.entries(buckets)) {
-                                        if (!amount || amount <= 0) continue;
-                                        const category = categoryMap[bucketName] || bucketName;
-                                        const existing = existingBudgets.find((b) => b.category === category);
-                                        if (existing) {
-                                            updateBudget({ ...existing, limit: amount });
-                                            updated++;
-                                        } else {
-                                            addBudget({
-                                                category, limit: amount, month: currentMonth, year: currentYear, period: 'monthly',
-                                                tier: ['Fixed Obligations', 'Household Essentials', 'Household Operations', 'Transport'].includes(bucketName) ? 'Core' : 'Optional',
-                                            });
-                                            created++;
-                                        }
-                                    }
-                                    alert(`Engine projection applied: ${created} created, ${updated} updated.`);
-                                }}
-                                className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-                                disabled={!isAdmin}
-                            >
-                                Apply engine projection
-                            </button>
+                                className="p-1.5 border border-slate-300 rounded text-sm"
+                            />
                         </div>
                     </div>
+
+                    {bulkAddMode === 'template' && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                            <p className="text-xs text-slate-600">Uses family size and salary above to suggest categories (rent, groceries, utilities, schooling, etc.). Select which to create; existing budgets for the target month are updated.</p>
+                            <div className="flex flex-wrap items-end gap-3">
+                                <div>
+                                    <label className="block text-xs text-slate-600 font-medium mb-1">Monthly salary (SAR)</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={100}
+                                        value={bulkAddSalary}
+                                        onChange={(e) => setBulkAddSalary(e.target.value === '' ? '' : Number(e.target.value))}
+                                        placeholder={suggestedMonthlySalary > 0 ? `From income: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? String(expectedMonthlySalary) : 'e.g. 15000')}
+                                        className="w-36 p-2 border border-slate-300 rounded text-sm"
+                                    />
+                                </div>
+                                <span className="text-xs text-slate-500">Adults: {householdAdults}, Kids: {householdKids}, Profile: {HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.label ?? engineProfile}</span>
+                            </div>
+                            {bulkAddSuggestedCategories.length > 0 && (
+                                <>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-medium text-slate-600">Select categories to create or update:</span>
+                                        <span className="flex gap-2">
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddSuggestedCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
+                                            <span className="text-slate-300">|</span>
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories([])} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Deselect all</button>
+                                        </span>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-white p-2 space-y-1.5">
+                                        {bulkAddSuggestedCategories.map((cat) => {
+                                            const selected = bulkAddSelectedCategories.includes(cat.category);
+                                            const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
+                                            return (
+                                                <label key={cat.category} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-slate-50 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selected}
+                                                        onChange={() => {
+                                                            if (selected) setBulkAddSelectedCategories((prev) => prev.filter((n) => n !== cat.category));
+                                                            else setBulkAddSelectedCategories((prev) => [...prev, cat.category]);
+                                                        }}
+                                                        className="rounded border-slate-300 text-emerald-600"
+                                                    />
+                                                    <span className="text-sm text-slate-800 flex-1">{cat.category}</span>
+                                                    <span className="text-xs text-slate-500 tabular-nums">{formatCurrencyString(cat.limit, { digits: 0 })}{periodLabel}</span>
+                                                    <span className={`text-xs px-1.5 py-0.5 rounded ${cat.tier === 'Core' ? 'bg-emerald-100 text-emerald-700' : cat.tier === 'Supporting' ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-600'}`}>{cat.tier}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        disabled={!isAdmin || bulkAddSelectedCategories.length === 0}
+                                        onClick={async () => {
+                                            if (!isAdmin) { alert('Only admins can create budgets from the household engine.'); return; }
+                                            const salary = Number(bulkAddSalary);
+                                            const fallback = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) ? expectedMonthlySalary : suggestedMonthlySalary;
+                                            const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
+                                            if (!monthlySalary || monthlySalary <= 0) {
+                                                alert('Enter a monthly salary or use the value from the table above.');
+                                                return;
+                                            }
+                                            const selectedSet = new Set(bulkAddSelectedCategories);
+                                            const categories = bulkAddSuggestedCategories.filter((c) => selectedSet.has(c.category));
+                                            if (!window.confirm(`Create or update ${categories.length} budgets for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated.`)) return;
+                                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
+                                            let created = 0, updated = 0;
+                                            try {
+                                                for (const cat of categories) {
+                                                    const existing = existingBudgets.find((b) => b.category === cat.category);
+                                                    if (existing) {
+                                                        await updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
+                                                        updated++;
+                                                    } else {
+                                                        await addBudget({ category: cat.category, limit: cat.limit, month: bulkAddTargetMonth, year: bulkAddTargetYear, period: cat.period, tier: cat.tier });
+                                                        created++;
+                                                    }
+                                                }
+                                                alert(`Bulk add: ${created} created, ${updated} updated for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
+                                            } catch (err) {
+                                                console.error('Bulk add budgets failed:', err);
+                                                alert(`Some budgets could not be saved. ${created} created, ${updated} updated. Check console for details.`);
+                                            }
+                                        }}
+                                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        Create/update {bulkAddSelectedCategories.length} selected for {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
+                                    </button>
+                                </>
+                            )}
+                            {((Number(bulkAddSalary) > 0) || (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) || (suggestedMonthlySalary > 0)) && bulkAddSuggestedCategories.length === 0 && (
+                                <p className="text-xs text-slate-500">Enter a valid salary above to see suggested categories.</p>
+                            )}
+                        </div>
+                    )}
+
+                    {bulkAddMode === 'projection' && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                            <p className="text-xs text-slate-600 mb-3">Uses your transactions, accounts, and goals to suggest amounts. Applies the engine's projected buckets (Housing, Food, Transport, etc.) to the target month. Overwrites existing budgets with engine values.</p>
+                            {bulkAddTargetYear !== currentYear && (
+                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-3">Projection amounts are based on the current year ({currentYear}) plan. Target month is {bulkAddTargetYear}.</p>
+                            )}
+                            <button
+                                type="button"
+                                disabled={!isAdmin}
+                                onClick={async () => {
+                                    if (!isAdmin) { alert('Only admins can apply household engine budgets.'); return; }
+                                    if (!window.confirm(`Apply the household engine projection to ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated with engine amounts.`)) return;
+                                    const monthPlan = householdBudgetEngine.months.find((m) => m.month === bulkAddTargetMonth);
+                                    if (!monthPlan) {
+                                        alert('No household engine plan for the selected month. The engine runs from your data above; ensure you have transactions or salary set.');
+                                        return;
+                                    }
+                                    const buckets = monthPlan.buckets || {};
+                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
+                                    const coreBuckets = new Set(['housing', 'housingSemiAnnual', 'groceries', 'food', 'utilities', 'telecommunications', 'transportation', 'debtLoans', 'insuranceCoPay', 'health']);
+                                    let created = 0, updated = 0;
+                                    try {
+                                        for (const [bucketName, amount] of Object.entries(buckets)) {
+                                            if (!amount || amount <= 0) continue;
+                                            const category = ENGINE_BUCKET_TO_CATEGORY[bucketName] || bucketName.charAt(0).toUpperCase() + bucketName.slice(1);
+                                            const existing = existingBudgets.find((b) => b.category === category);
+                                            const tier: BudgetTier = coreBuckets.has(bucketName) ? 'Core' : 'Optional';
+                                            if (existing) {
+                                                await updateBudget({ ...existing, limit: Math.round(amount), period: existing.period ?? 'monthly', tier: existing.tier ?? tier });
+                                                updated++;
+                                            } else {
+                                                await addBudget({
+                                                    category,
+                                                    limit: Math.round(amount),
+                                                    month: bulkAddTargetMonth,
+                                                    year: bulkAddTargetYear,
+                                                    period: 'monthly',
+                                                    tier,
+                                                });
+                                                created++;
+                                            }
+                                        }
+                                        alert(`Engine projection applied: ${created} created, ${updated} updated for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
+                                    } catch (err) {
+                                        console.error('Engine projection apply failed:', err);
+                                        alert(`Some budgets could not be saved. ${created} created, ${updated} updated. Check console for details.`);
+                                    }
+                                }}
+                                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                            >
+                                Apply engine projection to {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
+                            </button>
+                        </div>
+                    )}
+
                     <div className="mt-3">
                         <button type="button" onClick={() => setShowKsaExpenseRef((v) => !v)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                            {showKsaExpenseRef ? 'Hide' : 'View'} KSA expense reference
+                            {showKsaExpenseRef ? 'Hide' : 'View'} household expense reference
                         </button>
                         {showKsaExpenseRef && (
                             <div className="mt-2 p-2 rounded border border-slate-200 bg-slate-50 text-xs text-slate-700 max-h-48 overflow-y-auto">
@@ -2449,104 +2589,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
                     <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
                         <h3 className="text-sm font-semibold text-indigo-900 mb-3">Approved Budgets Overview</h3>
-
-                        {/* Create from salary */}
-                        <div className="mb-4 p-3 rounded-lg border border-indigo-100 bg-white">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                        setApprovedOverviewCreateFromSalary((v) => !v);
-                                        if (!approvedOverviewCreateFromSalary) {
-                                            const prefill = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0)
-                                                ? expectedMonthlySalary
-                                                : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : '');
-                                            setApprovedOverviewSalaryInput(prefill);
-                                        }
-                                    }}
-                                className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
-                            >
-                                {approvedOverviewCreateFromSalary ? '− Hide create from salary' : '+ Create budgets from salary'}
-                            </button>
-                            {approvedOverviewCreateFromSalary && (
-                                <div className="mt-3 space-y-3">
-                                    <div className="flex flex-wrap items-end gap-3">
-                                        <div>
-                                            <label className="block text-xs text-slate-600 font-medium mb-1">Monthly salary (SAR)</label>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                step={100}
-                                                value={approvedOverviewSalaryInput}
-                                                onChange={(e) => setApprovedOverviewSalaryInput(e.target.value === '' ? '' : Number(e.target.value))}
-                                                placeholder={suggestedMonthlySalary > 0 ? `From income: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : 'e.g. 15000'}
-                                                className="w-36 p-2 border border-slate-300 rounded text-sm"
-                                            />
-                                        </div>
-                                    </div>
-                                    {approvedOverviewSuggestedCategories.length > 0 && (
-                                        <>
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="text-xs font-medium text-slate-600">Select categories to create:</span>
-                                                <span className="flex gap-2">
-                                                    <button type="button" onClick={() => setApprovedOverviewSelectedForCreate(approvedOverviewSuggestedCategories.map((c) => c.category))} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Select all</button>
-                                                    <span className="text-slate-300">|</span>
-                                                    <button type="button" onClick={() => setApprovedOverviewSelectedForCreate([])} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Deselect all</button>
-                                                </span>
-                                            </div>
-                                            <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-slate-50/50 p-2 space-y-1.5">
-                                                {approvedOverviewSuggestedCategories.map((cat) => {
-                                                    const selected = approvedOverviewSelectedForCreate.includes(cat.category);
-                                                    const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
-                                                    return (
-                                                        <label key={cat.category} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-white cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={selected}
-                                                                onChange={() => {
-                                                                    if (selected) setApprovedOverviewSelectedForCreate((prev) => prev.filter((n) => n !== cat.category));
-                                                                    else setApprovedOverviewSelectedForCreate((prev) => [...prev, cat.category]);
-                                                                }}
-                                                                className="rounded border-slate-300 text-indigo-600"
-                                                            />
-                                                            <span className="text-sm text-slate-800 flex-1">{cat.category}</span>
-                                                            <span className="text-xs text-slate-500 tabular-nums">{formatCurrencyString(cat.limit, { digits: 0 })}{periodLabel}</span>
-                                                            <span className={`text-xs px-1.5 py-0.5 rounded ${cat.tier === 'Core' ? 'bg-indigo-100 text-indigo-700' : cat.tier === 'Supporting' ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-600'}`}>{cat.tier}</span>
-                                                        </label>
-                                                    );
-                                                })}
-                                            </div>
-                                            <button
-                                                type="button"
-                                                disabled={approvedOverviewSelectedForCreate.length === 0}
-                                                onClick={async () => {
-                                                    const salary = Number(approvedOverviewSalaryInput);
-                                                    if (!Number.isFinite(salary) || salary <= 0) return;
-                                                    const selectedSet = new Set(approvedOverviewSelectedForCreate);
-                                                    const categories = approvedOverviewSuggestedCategories.filter((c) => selectedSet.has(c.category));
-                                                    for (const cat of categories) {
-                                                        await addBudget({
-                                                            category: cat.category,
-                                                            limit: cat.limit,
-                                                            month: approvedOverviewMonth,
-                                                            year: approvedOverviewYear,
-                                                            period: cat.period ?? 'monthly',
-                                                            tier: (cat.tier ?? 'Optional') as BudgetTier,
-                                                        });
-                                                    }
-                                                    setApprovedOverviewCreateFromSalary(false);
-                                                }}
-                                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                Create {approvedOverviewSelectedForCreate.length} selected for {MONTHS[approvedOverviewMonth - 1]} {approvedOverviewYear}
-                                            </button>
-                                        </>
-                                    )}
-                                    {Number.isFinite(Number(approvedOverviewSalaryInput)) && Number(approvedOverviewSalaryInput) > 0 && approvedOverviewSuggestedCategories.length === 0 && (
-                                        <p className="text-xs text-slate-500">Enter a valid salary to see suggested categories.</p>
-                                    )}
-                                </div>
-                            )}
-                        </div>
+                        <p className="text-xs text-indigo-700 mb-3">To create or update many budgets at once, use <strong>Household Engine</strong> tab → <strong>Bulk add budgets</strong>.</p>
 
                         {/* Filters */}
                         <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -2707,7 +2750,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             </div>
                         )}
                         {adminApprovedOverviewFiltered.length === 0 && (
-                            <p className="text-sm text-slate-500 py-3">No budgets match the selected filters for {MONTHS[approvedOverviewMonth - 1]} {approvedOverviewYear}. Adjust filters or create from salary above.</p>
+                            <p className="text-sm text-slate-500 py-3">No budgets match the selected filters for {MONTHS[approvedOverviewMonth - 1]} {approvedOverviewYear}. Adjust filters or use Household Engine → Bulk add budgets.</p>
                         )}
                     </div>
 

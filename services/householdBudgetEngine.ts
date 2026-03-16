@@ -145,15 +145,18 @@ export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number 
     .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
 }
 
-/** Suggested budget entry for a Saudi/KSA household category. */
-export interface SaudiBudgetCategorySuggestion {
+/** Suggested budget entry from the household engine (unified bulk-add categories). */
+export interface HouseholdBudgetCategorySuggestion {
   category: string;
   limit: number;
   period: 'monthly' | 'yearly' | 'weekly' | 'daily';
   tier: 'Core' | 'Supporting' | 'Optional';
-  /** Optional short description for UI (e.g. "If paid monthly; common in newer apartments"). */
+  /** Optional short description for UI. */
   hint?: string;
 }
+
+/** @deprecated Use HouseholdBudgetCategorySuggestion. */
+export type SaudiBudgetCategorySuggestion = HouseholdBudgetCategorySuggestion;
 
 /** KSA expense category descriptions for UI help text and dropdowns. */
 export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
@@ -185,19 +188,19 @@ export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
   'Leisure (Weekly)': 'Weekend outings, cinema, or family gatherings.',
 };
 
-/** Saudi/KSA-oriented budget categories with suggested limits from household size and salary.
- * Covers monthly recurring, semi-annual (as yearly), annual sinking funds, and weekly expenses. */
-export function generateSaudiBudgetCategories(
+/** Household-engine budget categories with suggested limits from household size and salary.
+ * Single source for bulk-add; covers monthly, yearly, weekly. */
+export function generateHouseholdBudgetCategories(
   adults: number,
   kids: number,
   monthlySalary: number,
   profile: HouseholdEngineProfile
-): SaudiBudgetCategorySuggestion[] {
+): HouseholdBudgetCategorySuggestion[] {
   const baseExpense = monthlySalary > 0 ? monthlySalary * 0.6 : 5000;
   const income = monthlySalary > 0 ? monthlySalary * 12 : 60000;
   const pct = (x: number) => Math.round(baseExpense * x);
   const savingsMultiplier = profile === 'Conservative' ? 1.2 : profile === 'Aggressive' || profile === 'Growth' ? 0.85 : 1;
-  const result: SaudiBudgetCategorySuggestion[] = [];
+  const result: HouseholdBudgetCategorySuggestion[] = [];
 
   // ——— Monthly (recurring, every 30 days) ———
   result.push({ category: 'Housing Rent (Monthly)', limit: pct(0.30), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'] });
@@ -246,6 +249,9 @@ export function generateSaudiBudgetCategories(
 
   return result;
 }
+
+/** @deprecated Use generateHouseholdBudgetCategories. */
+export const generateSaudiBudgetCategories = generateHouseholdBudgetCategories;
 
 /** Build household engine input from plan-style arrays (e.g. Plan page). */
 export function buildHouseholdEngineInputFromPlanData(

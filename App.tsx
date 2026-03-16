@@ -58,9 +58,6 @@ const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
 // Wealth Ultra (allocation engine)
 const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
 
-// Commodities (standalone)
-const Commodities = lazy(() => import('./pages/Commodities'));
-
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
@@ -168,10 +165,10 @@ const App: React.FC = () => {
       // Financial Planning Pages
       case 'Plan': return <Plan setActivePage={setActivePage} />;
       
-      // Asset Management Pages
+      // Asset Management Pages (commodities live inside Assets only; Commodities redirects to Assets)
       case 'Assets': return <Assets {...actionProps} setActivePage={setActivePage} />;
-      case 'Commodities': return <Commodities setActivePage={setActivePage} />;
-      
+      case 'Commodities': return <Assets {...actionProps} setActivePage={setActivePage} />;
+
       // Statement Import & History
       case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} />;
       case 'Statement History': return <StatementHistoryView setActivePage={setActivePage} />;

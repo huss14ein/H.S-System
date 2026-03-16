@@ -70,8 +70,8 @@ const ExecutionHistoryView: React.FC = () => {
 
   if (loading || !data) {
     return (
-      <div className="space-y-6" aria-busy="true">
-        <SectionCard title="Execution History">
+      <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6" aria-busy="true">
+        <SectionCard title="Execution History" className="bg-white/80 border-slate-200">
           <div className="flex items-center justify-center py-12 gap-3">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
             <span className="text-sm text-slate-600">Loading execution history…</span>
@@ -82,8 +82,8 @@ const ExecutionHistoryView: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <SectionCard title="Execution History">
+    <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6">
+      <SectionCard title="Execution History" className="bg-white/90 border-slate-200">
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">

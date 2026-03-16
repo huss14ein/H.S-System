@@ -40,7 +40,7 @@ This document reflects features and functionalities implemented in the codebase.
 - **Location:** `pages/Budgets.tsx`, `services/enhancedBudgetEngine.ts`, `services/hybridBudgetCategorization.ts`
 - Scenario analysis (recession, job loss, promotion), life events, household stress assessment
 - Dynamic baselines, predictive spend, recurring bills & price benchmarks
-- Saudi household budget: “Create budgets from household (Saudi)” using family size and salary
+- Household engine bulk add: one place to create or update many budgets (household template with salary + family size + category selection, or engine projection from plan buckets); lives only under Household Engine tab
 - Shared budgets, budget requests (New Category / Increase Limit), approval flow, governance categories
 - Shared budget transactions: current month default, month/status/category filters
 

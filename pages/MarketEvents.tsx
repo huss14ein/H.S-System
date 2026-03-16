@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
-import { getMarketCalendarCached, getMarketCalendarFresh, type MarketCalendarLoadMode } from '../services/finnhubService';
+import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import type { Page } from '../types';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
@@ -10,7 +10,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 
 type Impact = 'High' | 'Medium' | 'Low';
-type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio';
+type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio' | 'Holiday';
 
 interface MarketEventItem {
   id: string;
@@ -42,6 +42,7 @@ const CATEGORY_STYLES: Record<EventCategory, string> = {
   Earnings: 'bg-violet-50 text-violet-700 border-violet-200',
   Dividend: 'bg-cyan-50 text-cyan-700 border-cyan-200',
   Portfolio: 'bg-slate-100 text-slate-700 border-slate-300',
+  Holiday: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
 const MONTHS_AHEAD = 6;
@@ -222,6 +223,26 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
       estimated: true,
     },
     {
+      id: `retail-sales-${year}-${month}`,
+      date: nthWeekdayOfMonth(year, month, 2, 2),
+      title: 'US Retail Sales',
+      description: 'Consumer spending data; impacts growth expectations and sector sentiment.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
+      id: `ism-mfg-${year}-${month}`,
+      date: firstWeekdayOfMonth(year, month, 1),
+      title: 'ISM Manufacturing (PMI)',
+      description: 'US manufacturing activity; leading indicator for earnings and recession risk.',
+      source: 'Macro (estimated schedule)',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: true,
+    },
+    {
       id: `opex-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 5, 3),
       title: 'Monthly Options Expiration (OpEx)',
@@ -243,12 +264,38 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
     },
   ];
 
+  // US federal tax deadlines (impact liquidity and sentiment)
+  if (month === 3) {
+    events.push({
+      id: `us-tax-day-${year}`,
+      date: new Date(year, 3, 15),
+      title: 'US Tax Day (Federal Individual Return)',
+      description: 'April 15 deadline; can affect market liquidity and retail flows.',
+      source: 'US tax calendar',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: false,
+    });
+  }
+  if (month === 9) {
+    events.push({
+      id: `us-tax-extension-${year}`,
+      date: new Date(year, 9, 15),
+      title: 'US Tax Extension Deadline (Oct 15)',
+      description: 'Extended filing deadline; can affect flows and year-end planning.',
+      source: 'US tax calendar',
+      category: 'Macro',
+      impact: 'Medium',
+      estimated: false,
+    });
+  }
+
   if ([0, 2, 4, 5, 6, 8, 10, 11].includes(month % 12)) {
     events.push({
       id: `fomc-${year}-${month}`,
       date: nthWeekdayOfMonth(year, month, 3, 3),
-      title: 'Federal Reserve (FOMC) Decision',
-      description: 'Policy statement and rate decision; major cross-asset volatility catalyst.',
+      title: 'Federal Reserve (FOMC) Rate Decision',
+      description: 'Fed funds rate decision (cuts or hikes); policy statement and dot plot. Major catalyst for US shares and bonds.',
       source: 'Macro (estimated schedule)',
       category: 'Macro',
       impact: 'High',
@@ -279,6 +326,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [searchQuery, setSearchQuery] = useState('');
   const [remindersOnly, setRemindersOnly] = useState(false);
   const [finnhubState, setFinnhubState] = useState<FinnhubCalendarState>({ mode: 'none', events: [], warnings: [] });
+  const [holidayEvents, setHolidayEvents] = useState<MarketEventItem[]>([]);
   const [reminders, setReminders] = useState<Record<string, true>>({});
   const [includeEstimated, setIncludeEstimated] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
@@ -314,6 +362,24 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const from = now.toISOString().slice(0, 10);
     const to = end.toISOString().slice(0, 10);
     let alive = true;
+
+    getMarketHolidays('US').then((holidays) => {
+      if (!alive) return;
+      const items: MarketEventItem[] = (holidays ?? []).map((h, idx) => {
+        const eventDate = parseToLocalDate(h.date);
+        return {
+          id: `us-holiday-${h.date}-${idx}-${(h.name || '').replace(/\s+/g, '-')}`,
+          date: Number.isFinite(eventDate.getTime()) ? eventDate : new Date(h.date),
+          title: h.name || `US Market Holiday (${h.date})`,
+          description: `US exchange closed. ${h.status ? `Status: ${h.status}` : ''}`.trim(),
+          source: 'US market calendar',
+          category: 'Holiday' as const,
+          impact: 'High' as const,
+          estimated: false,
+        };
+      }).filter((e) => Number.isFinite(e.date.getTime()));
+      setHolidayEvents(items);
+    }).catch(() => setHolidayEvents([]));
 
     getMarketCalendarCached(from, to, trackedSymbols).then((result) => {
       if (!alive) return;
@@ -503,7 +569,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       ];
     });
 
-    const reliableEvents = [...finnhubState.events, ...portfolioEvents];
+    const reliableEvents = [...finnhubState.events, ...holidayEvents, ...portfolioEvents];
     const modeledEvents = [...modeledMacro, ...modeledSymbolEvents];
 
     return [...reliableEvents, ...(includeEstimated ? modeledEvents : [])]
@@ -512,7 +578,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         return t >= now.getTime() && t <= end.getTime();
       })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data, trackedSymbols, finnhubState.events, includeEstimated]);
+  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated]);
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -528,6 +594,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const stats = useMemo(() => {
     const macroCount = filtered.filter((e) => e.category === 'Macro').length;
+    const holidayCount = filtered.filter((e) => e.category === 'Holiday').length;
     const symbolCount = filtered.filter((e) => Boolean(e.symbol)).length;
     const highImpact = filtered.filter((e) => e.impact === 'High').length;
     const reminderCount = filtered.filter((e) => reminders[e.id]).length;
@@ -536,7 +603,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       const days = Math.floor((startOfDay(e.date).getTime() - today) / (1000 * 60 * 60 * 24));
       return days >= 0 && days <= 7;
     }).length;
-    return { macroCount, symbolCount, highImpact, reminderCount, next7 };
+    return { macroCount, holidayCount, symbolCount, highImpact, reminderCount, next7 };
   }, [filtered, reminders]);
 
   const topFocusEvents = useMemo(() => {
@@ -702,6 +769,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
           <select className="select-base text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as 'All' | EventCategory)}>
             <option value="All">All categories</option>
             <option value="Macro">Macro</option>
+            <option value="Holiday">Holiday</option>
             <option value="Earnings">Earnings</option>
             <option value="Dividend">Dividend</option>
             <option value="Portfolio">Portfolio</option>
@@ -718,11 +786,12 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       <div className="space-y-4">
         <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Smart market command center</p>
-          <p className="mt-1 text-sm text-slate-700">Priority-ranked market intelligence aligned with your portfolio, watchlist, and macro risk windows. <strong>Macro</strong> events (US NFP, CPI, FOMC) impact rates and global equities; <strong>Earnings</strong> and <strong>Dividend</strong> events affect your holdings. Use filters to see what matters to you and how to react.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <p className="mt-1 text-sm text-slate-700">US market–impacting events: <strong>Macro</strong> (NFP, CPI, FOMC rate decisions, tax deadlines), <strong>US market holidays</strong>, <strong>Earnings</strong> and <strong>Dividend</strong> for your holdings. Filter by category to see what matters and when markets are closed.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-6">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
             <StatCard label="Macro" value={String(stats.macroCount)} />
+            <StatCard label="Holidays" value={String(stats.holidayCount)} />
             <StatCard label="Symbol-linked" value={String(stats.symbolCount)} />
             <StatCard label="Reminders" value={String(stats.reminderCount)} />
           </div>
@@ -826,8 +895,8 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         </div>
 
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          The calendar shows provider-backed events (Finnhub economic + earnings) and your portfolio timeline by default. You can optionally enable modeled estimates for broader planning windows.
-          The calendar includes broad market-impacting dates (rates, inflation, labor, policy, derivatives expiry, and rebalancing windows) plus symbol-linked windows from your watchlist and holdings. Some dates are model-based estimates to reduce manual entry.
+          The calendar shows US market holidays, Finnhub economic + earnings, and your portfolio timeline by default. Enable modeled estimates for FOMC, NFP, CPI, tax deadlines, and other key US macro dates when API data is limited.
+          Included: US exchange holidays, Fed (FOMC) rate decisions, NFP, CPI, PPI, GDP, retail sales, ISM, tax deadlines (Apr 15, Oct 15), options expiry, and symbol-linked earnings/dividends. Some dates are estimated; verify critical dates with official sources.
           <div className="mt-1 text-xs text-amber-700">
             Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
             {finnhubState.mode === 'fresh' && ' Source mode: fresh fetch.'}

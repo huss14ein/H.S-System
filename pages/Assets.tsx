@@ -409,7 +409,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
-const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActivePage }) => {
+const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
@@ -510,7 +510,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction, setActiveP
                     <PageActionsDropdown
                         ariaLabel="Assets actions"
                         actions={[
-                            ...(setActivePage ? [{ value: 'commodities-page', label: 'Open Commodities page', onClick: () => setActivePage('Commodities') }] : []),
                             { value: 'physical', label: 'Add Physical Asset', onClick: () => handleOpenAssetModal(null, 'Property') },
                             { value: 'sukuk', label: 'Add Sukuk', onClick: () => handleOpenAssetModal(null, 'Sukuk') },
                             { value: 'commodity', label: 'Add Commodity', onClick: () => handleOpenCommodityModal() },

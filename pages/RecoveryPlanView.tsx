@@ -463,14 +463,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   if (loading || !data) {
     return (
-      <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-blue-50/40 rounded-2xl border border-slate-200" aria-busy="true">
         <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 mt-4">
+    <div className="space-y-6 mt-4 min-h-[40rem] bg-gradient-to-br from-slate-50/90 via-white to-blue-50/40 rounded-2xl p-4 border border-slate-200/80">
       {/* Enhanced Hero */}
       <section className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50 p-8 shadow-xl">
         <div className="flex flex-col gap-6">

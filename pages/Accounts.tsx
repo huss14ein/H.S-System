@@ -16,6 +16,10 @@ import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmer
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
+import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
+import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
+import { XMarkIcon } from '../components/icons/XMarkIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -251,6 +255,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferFilterFrom, setTransferFilterFrom] = useState<string>('all');
     const [transferFilterTo, setTransferFilterTo] = useState<string>('all');
     const [transferFilterStatus, setTransferFilterStatus] = useState<'all' | 'active' | 'paused'>('all');
+    const [scheduledTransfersFiltersOpen, setScheduledTransfersFiltersOpen] = useState(true);
     const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
     const [rescheduleDay, setRescheduleDay] = useState('1');
     const [rescheduleAmount, setRescheduleAmount] = useState('');
@@ -668,85 +673,133 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             </section>
 
             <section className="section-card mt-4">
-                <h3 className="section-title text-base">Scheduled transfers</h3>
-                <p className="text-sm text-slate-600 mb-4">View, pause, resume, reschedule, or remove your recurring auto transfers.</p>
-                <div className="flex flex-wrap items-center gap-3 mb-4">
-                    <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Filters</span>
-                    <select value={transferFilterFrom} onChange={(e) => setTransferFilterFrom(e.target.value)} className="select-base text-sm py-1.5">
-                        <option value="all">From: All</option>
-                        {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
-                            <option key={acc.id} value={acc.id}>From: {acc.name}</option>
-                        ))}
-                    </select>
-                    <select value={transferFilterTo} onChange={(e) => setTransferFilterTo(e.target.value)} className="select-base text-sm py-1.5">
-                        <option value="all">To: All</option>
-                        {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
-                            <option key={acc.id} value={acc.id}>To: {acc.name}</option>
-                        ))}
-                    </select>
-                    <select value={transferFilterStatus} onChange={(e) => setTransferFilterStatus(e.target.value as 'all' | 'active' | 'paused')} className="select-base text-sm py-1.5">
-                        <option value="all">Status: All</option>
-                        <option value="active">Status: Active</option>
-                        <option value="paused">Status: Paused</option>
-                    </select>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div>
+                        <h3 className="section-title text-base flex items-center gap-2">
+                            <ArrowsRightLeftIcon className="h-5 w-5 text-slate-500" />
+                            Scheduled transfers
+                        </h3>
+                        <p className="text-sm text-slate-600 mt-0.5">Recurring auto transfers between accounts. Pause, reschedule, or remove any time.</p>
+                    </div>
+                    <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-primary text-sm shrink-0">
+                        Schedule auto transfer
+                    </button>
                 </div>
+
+                {/* Summary and filter toggle */}
+                {scheduledTransferPairs.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <p className="text-sm text-slate-600">
+                            {filteredScheduledTransfers.length === scheduledTransferPairs.length ? (
+                                <span><strong>{scheduledTransferPairs.length}</strong> scheduled transfer{scheduledTransferPairs.length !== 1 ? 's' : ''} ({scheduledTransferPairs.filter(p => p.enabled).length} active{scheduledTransferPairs.some(p => !p.enabled) ? `, ${scheduledTransferPairs.filter(p => !p.enabled).length} paused` : ''})</span>
+                            ) : (
+                                <span>Showing <strong>{filteredScheduledTransfers.length}</strong> of {scheduledTransferPairs.length} transfer{scheduledTransferPairs.length !== 1 ? 's' : ''}</span>
+                            )}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setScheduledTransfersFiltersOpen((v) => !v)}
+                            className="text-xs font-medium text-slate-600 hover:text-slate-800 flex items-center gap-1"
+                            aria-expanded={scheduledTransfersFiltersOpen}
+                        >
+                            Filters {(transferFilterFrom !== 'all' || transferFilterTo !== 'all' || transferFilterStatus !== 'all') && <span className="bg-primary/20 text-primary px-1.5 py-0.5 rounded">on</span>}
+                            <ChevronDownIcon className={`h-4 w-4 transition-transform ${scheduledTransfersFiltersOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                    </div>
+                )}
+
+                {/* Filters: collapsible, clear labels, clear-all when active */}
+                {scheduledTransferPairs.length > 0 && scheduledTransfersFiltersOpen && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 mb-4">
+                        <div className="flex flex-wrap items-center gap-4">
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">From account</label>
+                                <select value={transferFilterFrom} onChange={(e) => setTransferFilterFrom(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                                    <option value="all">All accounts</option>
+                                    {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">To account</label>
+                                <select value={transferFilterTo} onChange={(e) => setTransferFilterTo(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                                    <option value="all">All accounts</option>
+                                    {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs font-medium text-slate-600 whitespace-nowrap">Status</label>
+                                <select value={transferFilterStatus} onChange={(e) => setTransferFilterStatus(e.target.value as 'all' | 'active' | 'paused')} className="select-base text-sm py-1.5 min-w-[100px]">
+                                    <option value="all">All</option>
+                                    <option value="active">Active</option>
+                                    <option value="paused">Paused</option>
+                                </select>
+                            </div>
+                            {(transferFilterFrom !== 'all' || transferFilterTo !== 'all' || transferFilterStatus !== 'all') && (
+                                <button type="button" onClick={() => { setTransferFilterFrom('all'); setTransferFilterTo('all'); setTransferFilterStatus('all'); }} className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1 ml-auto">
+                                    <XMarkIcon className="h-4 w-4" /> Clear filters
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {filteredScheduledTransfers.length === 0 ? (
-                    <div className="text-center py-8 rounded-lg border border-dashed border-slate-200 bg-slate-50/50">
-                        <p className="text-slate-600">
-                            {scheduledTransferPairs.length === 0
-                                ? 'No scheduled transfers yet.'
-                                : 'No scheduled transfers match the current filters.'}
+                    <div className="text-center py-10 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+                        <ArrowsRightLeftIcon className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                        <p className="text-slate-600 font-medium">
+                            {scheduledTransferPairs.length === 0 ? 'No scheduled transfers yet' : 'No transfers match the current filters'}
+                        </p>
+                        <p className="text-sm text-slate-500 mt-1">
+                            {scheduledTransferPairs.length === 0 ? 'Set up a monthly auto transfer between two accounts.' : 'Try changing or clearing the filters above.'}
                         </p>
                         {scheduledTransferPairs.length === 0 && (
-                            <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="mt-3 btn-primary text-sm">
+                            <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="mt-4 btn-primary text-sm">
                                 Schedule auto transfer
                             </button>
                         )}
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-slate-200 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                                    <th className="pb-2 pr-4">From</th>
-                                    <th className="pb-2 pr-4">To</th>
-                                    <th className="pb-2 pr-4">Amount</th>
-                                    <th className="pb-2 pr-4">Day</th>
-                                    <th className="pb-2 pr-4">Status</th>
-                                    <th className="pb-2 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredScheduledTransfers.map((pair) => {
-                                    const fromAcc = (data?.accounts ?? []).find((a) => a.id === pair.fromAccountId);
-                                    const toAcc = (data?.accounts ?? []).find((a) => a.id === pair.toAccountId);
-                                    return (
-                                        <tr key={`${pair.expenseId}-${pair.incomeId}`} className="border-b border-slate-100 hover:bg-slate-50/50">
-                                            <td className="py-3 pr-4 font-medium text-slate-800">{fromAcc?.name ?? pair.fromAccountId}</td>
-                                            <td className="py-3 pr-4 font-medium text-slate-800">{toAcc?.name ?? pair.toAccountId}</td>
-                                            <td className="py-3 pr-4 tabular-nums">{formatCurrencyString(pair.amount)}</td>
-                                            <td className="py-3 pr-4">Day {pair.dayOfMonth}</td>
-                                            <td className="py-3 pr-4">
-                                                <span className={pair.enabled ? 'text-emerald-600 font-medium' : 'text-amber-600 font-medium'}>
-                                                    {pair.enabled ? 'Active' : 'Paused'}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {filteredScheduledTransfers.map((pair) => {
+                            const fromAcc = (data?.accounts ?? []).find((a) => a.id === pair.fromAccountId);
+                            const toAcc = (data?.accounts ?? []).find((a) => a.id === pair.toAccountId);
+                            return (
+                                <div key={`${pair.expenseId}-${pair.incomeId}`} className="rounded-xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:shadow-sm transition-all">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="font-medium text-slate-800 truncate">{fromAcc?.name ?? pair.fromAccountId}</span>
+                                                <span className="text-slate-400 shrink-0"><ArrowsRightLeftIcon className="h-4 w-4" /></span>
+                                                <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? pair.toAccountId}</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 mt-2 text-sm text-slate-600">
+                                                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(pair.amount)}</span>
+                                                <span className="text-slate-400">/ month</span>
+                                                <span className="flex items-center gap-1 text-slate-500">
+                                                    <CalendarDaysIcon className="h-4 w-4" /> Day {pair.dayOfMonth}
                                                 </span>
-                                            </td>
-                                            <td className="py-3 text-right">
-                                                <div className="flex flex-wrap items-center justify-end gap-1">
-                                                    {pair.enabled ? (
-                                                        <button type="button" onClick={() => handlePauseTransfer(pair)} className="px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100" title="Pause">Pause</button>
-                                                    ) : (
-                                                        <button type="button" onClick={() => handleResumeTransfer(pair)} className="px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 rounded hover:bg-emerald-100" title="Resume">Resume</button>
-                                                    )}
-                                                    <button type="button" onClick={() => handleOpenReschedule(pair)} className="p-1.5 text-slate-500 hover:text-primary rounded" title="Reschedule"><PencilIcon className="h-4 w-4" /></button>
-                                                    <button type="button" onClick={() => handleRemoveTransfer(pair)} className="p-1.5 text-slate-500 hover:text-red-600 rounded" title="Remove"><TrashIcon className="h-4 w-4" /></button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                                            </div>
+                                        </div>
+                                        <span className={`shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${pair.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                            {pair.enabled ? 'Active' : 'Paused'}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center justify-end gap-1 mt-3 pt-3 border-t border-slate-100">
+                                        {pair.enabled ? (
+                                            <button type="button" onClick={() => handlePauseTransfer(pair)} className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100" title="Pause">Pause</button>
+                                        ) : (
+                                            <button type="button" onClick={() => handleResumeTransfer(pair)} className="px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100" title="Resume">Resume</button>
+                                        )}
+                                        <button type="button" onClick={() => handleOpenReschedule(pair)} className="p-1.5 text-slate-500 hover:text-primary hover:bg-slate-100 rounded-lg" title="Reschedule"><PencilIcon className="h-4 w-4" /></button>
+                                        <button type="button" onClick={() => handleRemoveTransfer(pair)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Remove"><TrashIcon className="h-4 w-4" /></button>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </section>

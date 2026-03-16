@@ -425,6 +425,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     }
   }, [alerts]);
 
+  /** Grid items ordered to match page flow: Overview (hero, KPIs, alerts, engine IQ) → Allocation → Orders → Analysis → History */
   const gridItems = useMemo(
     () => [
       {
@@ -516,6 +517,55 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         defaultW: 12,
         defaultH: 2,
         minW: 4,
+        minH: 1,
+      },
+      {
+        id: 'alerts',
+        content: (
+          <SectionCard title="Alerts & Recommendations" className="h-full border-2 border-slate-200 bg-white shadow-md">
+            <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
+              <p className="text-xs text-slate-600 font-medium">Prioritized: act on critical first, then warnings; use info for context.</p>
+              <span className="text-xs font-bold px-3 py-1.5 rounded-full border-2 border-slate-300 bg-slate-100 text-slate-700 whitespace-nowrap shadow-sm">
+                {alerts.length} {alerts.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+            {alerts.length > 0 ? (
+              <ul className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                {alerts.map((a, i) => {
+                  const isCritical = a.severity === 'critical';
+                  const isWarning = a.severity === 'warning';
+                  const bg = isCritical ? 'bg-gradient-to-br from-rose-50 to-rose-100/50 border-rose-300' : isWarning ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-300' : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-300';
+                  const titleColor = isCritical ? 'text-rose-900' : isWarning ? 'text-amber-900' : 'text-slate-900';
+                  const label = isCritical ? 'Act Now' : isWarning ? 'Review' : 'FYI';
+                  return (
+                    <li key={i} className={`rounded-xl border-2 p-4 text-sm shadow-sm hover:shadow-md transition-shadow ${bg}`}>
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <ExclamationTriangleIcon className={`h-5 w-5 shrink-0 ${isCritical ? 'text-rose-700' : isWarning ? 'text-amber-700' : 'text-slate-600'}`} />
+                        {a.title && <span className={`font-bold text-base ${titleColor}`}>{toSafeText(a.title, 'Alert')}</span>}
+                        <span className={`text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full ${isCritical ? 'bg-rose-200 text-rose-900' : isWarning ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-700'}`}>{label}</span>
+                      </div>
+                      <p className="text-slate-800 leading-relaxed">{toSafeText(a.message, 'Review this condition in Wealth Ultra.')}</p>
+                      {a.actionHint && (
+                        <div className="mt-3 pt-3 border-t border-slate-300/50">
+                          <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="py-8 text-center border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50">
+                <CheckCircleIcon className="h-8 w-8 text-emerald-600 mx-auto mb-2" />
+                <p className="text-sm text-emerald-800 font-medium">No alerts</p>
+                <p className="text-xs text-emerald-700 mt-1">Plan and allocation are in sync.</p>
+              </div>
+            )}
+          </SectionCard>
+        ),
+        defaultW: 12,
+        defaultH: 3,
+        minW: 6,
         minH: 1,
       },
       {
@@ -722,27 +772,25 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'spec-risk',
         content: (
-          <SectionCard title="Speculative Sleeve Status" className="h-full border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
-            <div className="h-full flex items-center">
-              {specBreach && (
+          <SectionCard title="Speculative Sleeve Status" className="h-full min-h-[140px] border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
+            <div className="min-h-[100px] flex flex-col justify-center">
+              {specBreach ? (
                 <div className="w-full rounded-xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/50 px-4 py-4 shadow-sm">
                   <p className="text-amber-900 font-bold flex items-center gap-2 text-base mb-2">
-                    <ExclamationTriangleIcon className="h-6 w-6 shrink-0" /> 
+                    <ExclamationTriangleIcon className="h-6 w-6 shrink-0" />
                     Over Target Limit
                   </p>
                   <p className="text-sm text-amber-800 leading-relaxed">New Spec buys are disabled until allocation returns within policy limits.</p>
                 </div>
-              )}
-              {specBuysDisabled && !specBreach && (
+              ) : specBuysDisabled ? (
                 <div className="w-full rounded-xl border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100/50 px-4 py-4 shadow-sm">
                   <p className="text-slate-900 font-bold text-base mb-2">Policy Lock Active</p>
                   <p className="text-sm text-slate-700 leading-relaxed">Spec buys are currently disabled by portfolio policy.</p>
                 </div>
-              )}
-              {!specBreach && !specBuysDisabled && (
+              ) : (
                 <div className="w-full rounded-xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-emerald-100/50 px-4 py-4 shadow-sm">
                   <p className="text-emerald-800 text-base font-bold flex items-center gap-2 mb-2">
-                    <CheckCircleIcon className="h-6 w-6" /> 
+                    <CheckCircleIcon className="h-6 w-6" />
                     Within Target
                   </p>
                   <p className="text-sm text-emerald-800/90 leading-relaxed">Spec sleeve is aligned with current allocation policy.</p>
@@ -754,55 +802,6 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         defaultW: 6,
         defaultH: 2,
         minW: 4,
-        minH: 1,
-      },
-      {
-        id: 'alerts',
-        content: (
-          <SectionCard title="Alerts & Recommendations" className="h-full border-2 border-slate-200 bg-white shadow-md">
-            <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
-              <p className="text-xs text-slate-600 font-medium">Prioritized: act on critical first, then warnings; use info for context.</p>
-              <span className="text-xs font-bold px-3 py-1.5 rounded-full border-2 border-slate-300 bg-slate-100 text-slate-700 whitespace-nowrap shadow-sm">
-                {alerts.length} {alerts.length === 1 ? 'item' : 'items'}
-              </span>
-            </div>
-            {alerts.length > 0 ? (
-              <ul className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                {alerts.map((a, i) => {
-                  const isCritical = a.severity === 'critical';
-                  const isWarning = a.severity === 'warning';
-                  const bg = isCritical ? 'bg-gradient-to-br from-rose-50 to-rose-100/50 border-rose-300' : isWarning ? 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-300' : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-300';
-                  const titleColor = isCritical ? 'text-rose-900' : isWarning ? 'text-amber-900' : 'text-slate-900';
-                  const label = isCritical ? 'Act Now' : isWarning ? 'Review' : 'FYI';
-                  return (
-                    <li key={i} className={`rounded-xl border-2 p-4 text-sm shadow-sm hover:shadow-md transition-shadow ${bg}`}>
-                      <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <ExclamationTriangleIcon className={`h-5 w-5 shrink-0 ${isCritical ? 'text-rose-700' : isWarning ? 'text-amber-700' : 'text-slate-600'}`} />
-                        {a.title && <span className={`font-bold text-base ${titleColor}`}>{toSafeText(a.title, 'Alert')}</span>}
-                        <span className={`text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full ${isCritical ? 'bg-rose-200 text-rose-900' : isWarning ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-700'}`}>{label}</span>
-                      </div>
-                      <p className="text-slate-800 leading-relaxed">{toSafeText(a.message, 'Review this condition in Wealth Ultra.')}</p>
-                      {a.actionHint && (
-                        <div className="mt-3 pt-3 border-t border-slate-300/50">
-                          <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="py-8 text-center border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50">
-                <CheckCircleIcon className="h-8 w-8 text-emerald-600 mx-auto mb-2" />
-                <p className="text-sm text-emerald-800 font-medium">No alerts</p>
-                <p className="text-xs text-emerald-700 mt-1">Plan and allocation are in sync.</p>
-              </div>
-            )}
-          </SectionCard>
-        ),
-        defaultW: 12,
-        defaultH: 3,
-        minW: 6,
         minH: 1,
       },
       {
@@ -1202,7 +1201,12 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             {gridItems.find(item => item.id === 'kpis')?.content}
           </div>
 
-          {/* Engine IQ */}
+          {/* Alerts & Recommendations — surfaced early so users see what to act on */}
+          <div>
+            {gridItems.find(item => item.id === 'alerts')?.content}
+          </div>
+
+          {/* Engine Intelligence & Decision Summary */}
           <div>
             {gridItems.find(item => item.id === 'engine-iq')?.content}
           </div>
@@ -1212,19 +1216,21 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Allocation & Strategy</h2>
-            <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift analysis, and deployment planning</p>
+            <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift, spec status, and next deployment</p>
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Sleeve Allocation */}
-            <div className="lg:col-span-8">
-              {gridItems.find(item => item.id === 'sleeve-allocation')?.content}
-            </div>
-            
-            {/* Strategy Cards */}
-            <div className="lg:col-span-4 space-y-6">
-              {gridItems.find(item => item.id === 'next-move')?.content}
+
+          {/* Sleeve Allocation — full width for clarity */}
+          <div>
+            {gridItems.find(item => item.id === 'sleeve-allocation')?.content}
+          </div>
+
+          {/* Spec status + Next Move side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
               {gridItems.find(item => item.id === 'spec-risk')?.content}
+            </div>
+            <div>
+              {gridItems.find(item => item.id === 'next-move')?.content}
             </div>
           </div>
         </section>
@@ -1233,19 +1239,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Orders & Actions</h2>
-            <p className="text-xs text-slate-500 mt-1">Generated orders and actionable alerts</p>
+            <p className="text-xs text-slate-500 mt-1">Generated orders — export to JSON or use as a checklist when placing trades</p>
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Orders */}
-            <div className="lg:col-span-7">
-              {gridItems.find(item => item.id === 'orders')?.content}
-            </div>
-            
-            {/* Alerts */}
-            <div className="lg:col-span-5">
-              {gridItems.find(item => item.id === 'alerts')?.content}
-            </div>
+
+          <div>
+            {gridItems.find(item => item.id === 'orders')?.content}
           </div>
         </section>
 
@@ -1253,28 +1251,28 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Portfolio Analysis</h2>
-            <p className="text-xs text-slate-500 mt-1">Position performance, risk distribution, and capital efficiency</p>
+            <p className="text-xs text-slate-500 mt-1">Risk distribution, performance snapshot, positions table, and capital efficiency</p>
           </div>
-          
+
           {/* Risk Distribution */}
           <div>
             {gridItems.find(item => item.id === 'risk-distribution')?.content}
           </div>
 
-          {/* Gainers & Losers */}
+          {/* Top Gainers & Top Losers */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {gridItems.find(item => item.id === 'gainers')?.content}
             {gridItems.find(item => item.id === 'losers')?.content}
           </div>
 
-          {/* Capital Efficiency */}
-          <div>
-            {gridItems.find(item => item.id === 'capital-efficiency')?.content}
-          </div>
-
-          {/* All Positions */}
+          {/* All Positions — main reference table before capital efficiency */}
           <div>
             {gridItems.find(item => item.id === 'positions')?.content}
+          </div>
+
+          {/* Capital Efficiency Ranking */}
+          <div>
+            {gridItems.find(item => item.id === 'capital-efficiency')?.content}
           </div>
         </section>
 
