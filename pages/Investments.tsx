@@ -2179,85 +2179,92 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     };
 
     const applySmartPlan = () => {
-        const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
-        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
-        const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
-            if (!Number.isFinite(amount) || amount <= 0) return 0;
-            if (fromCurrency === toCurrency) return amount;
-            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
-        };
+        setSaveError(null);
+        try {
+            const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
+            const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+            const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
+                if (!Number.isFinite(amount) || amount <= 0) return 0;
+                if (fromCurrency === toCurrency) return amount;
+                return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+            };
 
-        const investedBase = (data?.investments ?? []).reduce((sum, portfolio) => {
-            const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
-            const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
-            return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
-        }, 0);
+            const investedBase = (data?.investments ?? []).reduce((sum, portfolio) => {
+                const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
+                const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
+                return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
+            }, 0);
 
-        const historyBudget = suggestedMonthlyBudget > 0 ? suggestedMonthlyBudget : 0;
-        const derivedFromPortfolio = investedBase > 0 ? Math.round(Math.max(1000, Math.min(30000, investedBase * 0.025))) : 0;
-        const fallbackBudget = 2500;
-        const monthly = historyBudget || plan.monthlyBudget || derivedFromPortfolio || fallbackBudget;
+            const historyBudget = suggestedMonthlyBudget > 0 ? suggestedMonthlyBudget : 0;
+            const derivedFromPortfolio = investedBase > 0 ? Math.round(Math.max(1000, Math.min(30000, investedBase * 0.025))) : 0;
+            const fallbackBudget = 2500;
+            const monthly = historyBudget || plan.monthlyBudget || derivedFromPortfolio || fallbackBudget;
 
-        const actionableUniverse = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
-        const coreUniverse = actionableUniverse.filter(t => t.status === 'Core');
-        const upsideUniverse = actionableUniverse.filter(t => t.status === 'High-Upside');
+            const actionableUniverse = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
+            const coreUniverse = actionableUniverse.filter(t => t.status === 'Core');
+            const upsideUniverse = actionableUniverse.filter(t => t.status === 'High-Upside');
 
-        const normalizeSleeve = (tickers: (UniverseTicker & { source?: string })[]) => {
-            if (tickers.length === 0) return [] as { ticker: string; weight: number }[];
-            const rawTotal = tickers.reduce((sum, t) => sum + ((t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1), 0);
-            return tickers.map(t => {
-                const rawWeight = (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1;
-                return {
-                    ticker: t.ticker,
-                    weight: Number((rawTotal > 0 ? rawWeight / rawTotal : 1 / tickers.length).toFixed(6)),
-                };
-            });
-        };
+            const normalizeSleeve = (tickers: (UniverseTicker & { source?: string })[]) => {
+                if (tickers.length === 0) return [] as { ticker: string; weight: number }[];
+                const rawTotal = tickers.reduce((sum, t) => sum + ((t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1), 0);
+                return tickers.map(t => {
+                    const rawWeight = (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1;
+                    return {
+                        ticker: t.ticker,
+                        weight: Number((rawTotal > 0 ? rawWeight / rawTotal : 1 / tickers.length).toFixed(6)),
+                    };
+                });
+            };
 
-        const normalizedCore = normalizeSleeve(coreUniverse);
-        const normalizedUpside = normalizeSleeve(upsideUniverse);
+            const normalizedCore = normalizeSleeve(coreUniverse);
+            const normalizedUpside = normalizeSleeve(upsideUniverse);
 
-        let coreAlloc = plan.coreAllocation ?? 0.7;
-        let upsideAlloc = plan.upsideAllocation ?? 0.3;
+            let coreAlloc = plan.coreAllocation ?? 0.7;
+            let upsideAlloc = plan.upsideAllocation ?? 0.3;
 
-        const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
-        const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
-        const totalWt = coreWt + upWt;
+            const coreWt = coreUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
+            const upWt = upsideUniverse.reduce((s, t) => s + (t.monthly_weight || 0), 0);
+            const totalWt = coreWt + upWt;
 
-        if (totalWt > 0) {
-            coreAlloc = coreWt / totalWt;
-            upsideAlloc = upWt / totalWt;
-        } else if (actionableUniverse.length > 0) {
-            coreAlloc = coreUniverse.length / actionableUniverse.length;
-            upsideAlloc = upsideUniverse.length / actionableUniverse.length;
-            if (coreAlloc === 0 || upsideAlloc === 0) {
-                coreAlloc = coreUniverse.length > 0 ? 0.8 : 0.2;
-                upsideAlloc = 1 - coreAlloc;
+            if (totalWt > 0) {
+                coreAlloc = coreWt / totalWt;
+                upsideAlloc = upWt / totalWt;
+            } else if (actionableUniverse.length > 0) {
+                coreAlloc = coreUniverse.length / actionableUniverse.length;
+                upsideAlloc = upsideUniverse.length / actionableUniverse.length;
+                if (coreAlloc === 0 || upsideAlloc === 0) {
+                    coreAlloc = coreUniverse.length > 0 ? 0.8 : 0.2;
+                    upsideAlloc = 1 - coreAlloc;
+                }
             }
+
+            const normalizedAlloc = normalizeAllocationPair(coreAlloc, upsideAlloc);
+
+            const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
+
+            setPlan(prev => ({
+                ...prev,
+                monthlyBudget: monthly,
+                coreAllocation: normalizedAlloc.core,
+                upsideAllocation: normalizedAlloc.upside,
+                corePortfolio: normalizedCore,
+                upsideSleeve: normalizedUpside,
+                brokerConstraints: {
+                    ...prev.brokerConstraints,
+                    minimumOrderSize: nextMinOrder,
+                },
+            }));
+
+            const budgetSource = historyBudget > 0
+                ? `recent buy history (${planCurrency})`
+                : (plan.monthlyBudget > 0 ? 'your existing plan value' : (derivedFromPortfolio > 0 ? 'current holdings size' : 'smart default'));
+            setSaveMessage(`Smart-fill applied: budget ${formatCurrencyString(monthly, { inCurrency: planCurrency, digits: 0 })}, ${actionableUniverse.length} actionable tickers (${budgetSource}). Review and save below.`);
+            setTimeout(() => setSaveMessage(null), 6000);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Smart-fill failed';
+            setSaveError(msg);
+            setTimeout(() => setSaveError(null), 6000);
         }
-
-        const normalizedAlloc = normalizeAllocationPair(coreAlloc, upsideAlloc);
-
-        const nextMinOrder = Math.max(100, Math.round((monthly * 0.1) / 100) * 100);
-
-        setPlan(prev => ({
-            ...prev,
-            monthlyBudget: monthly,
-            coreAllocation: normalizedAlloc.core,
-            upsideAllocation: normalizedAlloc.upside,
-            corePortfolio: normalizedCore,
-            upsideSleeve: normalizedUpside,
-            brokerConstraints: {
-                ...prev.brokerConstraints,
-                minimumOrderSize: nextMinOrder,
-            },
-        }));
-
-        const budgetSource = historyBudget > 0
-            ? `recent buy history (${planCurrency})`
-            : (plan.monthlyBudget > 0 ? 'your existing plan value' : (derivedFromPortfolio > 0 ? 'current holdings size' : 'smart default'));
-        setSaveMessage(`Smart-fill synced budget, allocation, and ${actionableUniverse.length} actionable tickers using ${budgetSource}. Review and save before execution.`);
-        setTimeout(() => setSaveMessage(null), 6000);
     };
 
     const handleSave = async () => {
@@ -2709,6 +2716,11 @@ Save anyway?`)) return;
                                 Smart-fill plan
                             </button>
                         </div>
+                        {saveMessage && (
+                            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm" role="status" aria-live="polite">
+                                {saveMessage}
+                            </div>
+                        )}
                         {suggestedMonthlyBudget > 0 && (plan.monthlyBudget ?? 0) !== suggestedMonthlyBudget && (
                             <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div>

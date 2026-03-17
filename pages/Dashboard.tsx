@@ -550,9 +550,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             
             {isAdmin ? (
                 <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                    <div className="lg:col-span-3 section-card flex flex-col h-[400px]">
-                        <h3 className="section-title mb-4">Net Worth Composition</h3>
-                        <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                    <div
+                        className="lg:col-span-3 section-card-hover section-card flex flex-col h-[400px] cursor-pointer"
+                        onClick={() => setActivePage('Summary')}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === 'Enter' && setActivePage('Summary')}
+                    >
+                        <div className="flex-1 min-h-0 rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
                             <NetWorthCompositionChart title="Net Worth Composition" />
                         </div>
                     </div>
