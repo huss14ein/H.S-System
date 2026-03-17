@@ -27,6 +27,28 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+
+/** Explanations for each budget category (KSA + generic). Used for InfoHint next to category names. */
+const BUDGET_CATEGORY_HINTS: Record<string, string> = {
+    ...KSA_EXPENSE_CATEGORY_HINTS,
+    Food: 'Groceries, dining out, and household food spending. Track all food-related expenses here.',
+    Transportation: 'Fuel, public transport, ride-share, and vehicle costs. Petrol, metro, Uber/Careem, or car maintenance.',
+    Housing: 'Rent, mortgage, or housing-related payments. One budget per housing type (e.g. monthly vs semi-annual rent).',
+    Utilities: 'Electricity, water, gas, and similar bills. Note: electricity often spikes in summer.',
+    Shopping: 'General retail and non-essential purchases. Clothing, household items, or discretionary shopping.',
+    Entertainment: 'Subscriptions, dining out, and leisure. Restaurants, streaming (Netflix/Shahid), cinema, and hobbies.',
+    Health: 'Medical, pharmacy, and wellness. Doctor visits, prescriptions, and health-related expenses.',
+    Education: 'Tuition, books, and training. School fees, courses, and learning materials.',
+    'Savings & Investments': 'Money set aside or invested. Use for transfers to savings accounts or investment contributions.',
+    'Personal Care': 'Toiletries, grooming, and self-care. Haircuts, skincare, and personal hygiene products.',
+    Miscellaneous: 'Other or uncategorized expenses. Use when a transaction does not fit other categories.',
+    'School & Children': 'School fees, uniforms, books, and child-related education or activities.',
+    Rent: 'Rent payments. Use Housing if you prefer a single housing category.',
+};
+
+function getCategoryHint(category: string): string {
+    return BUDGET_CATEGORY_HINTS[category] ?? `Track spending in "${category}". Assign transactions to this category to compare against the limit.`;
+}
 import {
     predictFutureMonths,
     generateCommonScenarios,
@@ -122,7 +144,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         <Modal isOpen={isOpen} onClose={onClose} title={budgetToEdit ? 'Edit Budget' : 'Add Budget'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div>
-                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this." /></label>
+                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text={category ? getCategoryHint(category) : 'Budget category (e.g. Food, Housing). One budget per category per month; spending is tracked against this.'} /></label>
                     {budgetToEdit ? (
                         <input type="text" id="category" value={category} disabled className="mt-1 w-full p-2 border border-gray-300 rounded-md bg-gray-100" />
                     ) : (
@@ -232,18 +254,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [seasonalityPatterns, setSeasonalityPatterns] = useState<SeasonalityPattern[]>([]);
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-    /** Map household engine bucket keys (from buildHouseholdBudgetPlan) to budget category names for projection mode. */
+    /** Map household engine bucket keys to budget category names (for merging engine projection with template). */
     const ENGINE_BUCKET_TO_CATEGORY: Record<string, string> = useMemo(() => ({
-        housing: 'Housing',
+        housing: 'Housing Rent (Monthly)',
         housingSemiAnnual: 'Housing Rent (Semi-Annual)',
         groceries: 'Groceries & Supermarket',
-        food: 'Food',
         utilities: 'Utilities',
         telecommunications: 'Telecommunications',
         transportation: 'Transportation',
         domesticHelp: 'Domestic Help',
         diningEntertainment: 'Dining & Entertainment',
-        entertainment: 'Dining & Entertainment',
         insuranceCoPay: 'Insurance Co-pay',
         health: 'Health',
         debtLoans: 'Debt/Loans',
@@ -271,7 +291,48 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         goalSavings: 'Savings & Investments',
         retirementSavings: 'Savings & Investments',
         investing: 'Savings & Investments',
-        kidsFutureSavings: 'Education',
+        kidsFutureSavings: 'School & Children',
+    }), []);
+
+    /** Engine buckets are stored as monthly (or monthly-equivalent sinking). Multiplier converts to stored limit for that category's period. */
+    const ENGINE_BUCKET_TO_STORED_MULTIPLIER: Record<string, number> = useMemo(() => ({
+        housing: 1,
+        housingSemiAnnual: 6,
+        groceries: 1,
+        utilities: 1,
+        telecommunications: 1,
+        transportation: 1,
+        domesticHelp: 1,
+        diningEntertainment: 1,
+        entertainment: 1,
+        insuranceCoPay: 1,
+        health: 1,
+        debtLoans: 1,
+        remittances: 1,
+        pocketMoney: 1,
+        personalCare: 1,
+        shopping: 1,
+        miscellaneous: 1,
+        schoolTuition: 6,
+        householdMaintenance: 6,
+        iqamaRenewal: 12,
+        dependentFees: 12,
+        exitReentryVisa: 12,
+        vehicleInsurance: 12,
+        istimara: 12,
+        fahas: 12,
+        schoolUniformsBooks: 12,
+        zakat: 12,
+        annualVacation: 12,
+        freshProduce: 1 / 4.33,
+        householdHelpHourly: 1 / 4.33,
+        leisureWeekly: 1 / 4.33,
+        emergencySavings: 1,
+        reserveSavings: 1,
+        goalSavings: 1,
+        retirementSavings: 1,
+        investing: 1,
+        kidsFutureSavings: 1,
     }), []);
 
     // Approved Budgets Overview (admin) filters and scope
@@ -281,12 +342,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [approvedOverviewTierFilter, setApprovedOverviewTierFilter] = useState<'all' | 'Core' | 'Supporting' | 'Optional'>('all');
     const [approvedOverviewSearch, setApprovedOverviewSearch] = useState('');
 
-    /** Household engine: bulk add — target month/year and template mode state (only in Household Engine section). */
+    /** Household engine: bulk add — target month/year (single unified mode). */
     const [bulkAddTargetMonth, setBulkAddTargetMonth] = useState(currentMonth);
     const [bulkAddTargetYear, setBulkAddTargetYear] = useState(currentYear);
     const [bulkAddSalary, setBulkAddSalary] = useState<number | ''>('');
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
-    const [bulkAddMode, setBulkAddMode] = useState<'template' | 'projection'>('template');
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -838,7 +898,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         return list;
     }, [adminApprovedOverviewRaw, approvedOverviewPeriodFilter, approvedOverviewTierFilter, approvedOverviewSearch]);
 
-    // Household engine: suggested categories for bulk add (template mode)
+    // Household engine: merged suggested categories (template + engine projection). Template uses family size (adults, kids) and profile for amounts; when engine has run for target month, engine bucket values override for accuracy.
     const bulkAddSuggestedCategories = useMemo(() => {
         const salary = Number(bulkAddSalary);
         const fallback = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0)
@@ -846,8 +906,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
         const s = Number.isFinite(salary) && salary > 0 ? salary : fallback;
         if (!s || s <= 0) return [];
-        return generateHouseholdBudgetCategories(householdAdults, householdKids, s, engineProfile);
-    }, [bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, householdAdults, householdKids, engineProfile]);
+        const templateList = generateHouseholdBudgetCategories(householdAdults, householdKids, s, engineProfile);
+        const monthPlan = householdBudgetEngine.months?.find((m) => m.month === bulkAddTargetMonth);
+        const buckets = monthPlan?.buckets ?? {};
+        if (Object.keys(buckets).length === 0) return templateList;
+        return templateList.map((cat) => {
+            const contributingBuckets = Object.entries(ENGINE_BUCKET_TO_CATEGORY).filter(([, v]) => v === cat.category);
+            let engineTotal = 0;
+            for (const [key] of contributingBuckets) {
+                const val = buckets[key];
+                const mult = ENGINE_BUCKET_TO_STORED_MULTIPLIER[key] ?? 1;
+                if (typeof val === 'number' && val > 0) engineTotal += val * mult;
+            }
+            const limit = engineTotal > 0 ? Math.round(engineTotal) : cat.limit;
+            return { ...cat, limit };
+        });
+    }, [bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, householdAdults, householdKids, engineProfile, householdBudgetEngine.months, bulkAddTargetMonth]);
 
     // Default bulk-add selection to all suggested categories when list changes
     React.useEffect(() => {
@@ -1629,7 +1703,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 </div>
                             ) : (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Category to increase</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Category to increase <InfoHint text={selectedCategoryName ? getCategoryHint(selectedCategoryName) : 'Choose which budget category you want to request a higher limit for.'} /></label>
                                     <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
                                         <option value="">Select category</option>
                                         {availableIncreaseCategories.map((opt) => (
@@ -1962,16 +2036,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 )}
                 <div className="mt-6 pt-4 border-t border-slate-200">
                     <h3 className="text-sm font-semibold text-slate-800 mb-1">Household engine: Bulk add budgets</h3>
-                    <p className="text-xs text-slate-600 mb-4">One place to create or update many budgets at once. Choose <strong>Household template</strong> (salary + family size + category selection) or <strong>Engine projection</strong> (from your plan buckets).</p>
+                    <p className="text-xs text-slate-600 mb-4">One place to create or update many budgets at once. Amounts are based on <strong>salary</strong>, <strong>family size (adults &amp; kids)</strong>, and <strong>profile</strong>. When the engine has run for the target month, its projected buckets are merged in for accuracy.</p>
 
-                    <div className="flex flex-wrap gap-2 mb-3">
-                        <button type="button" onClick={() => setBulkAddMode('template')} className={`px-3 py-1.5 text-xs font-medium rounded-lg ${bulkAddMode === 'template' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>From household template</button>
-                        <button type="button" onClick={() => setBulkAddMode('projection')} className={`px-3 py-1.5 text-xs font-medium rounded-lg ${bulkAddMode === 'projection' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>From engine projection</button>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 mb-4">
-                        <div className="flex items-center gap-2">
-                            <label className="text-xs text-slate-600 font-medium">Target month</label>
+                    <div className="flex flex-wrap items-end gap-4 mb-4">
+                        <div>
+                            <label className="block text-xs text-slate-600 font-medium mb-1">Target month</label>
                             <input
                                 type="month"
                                 value={`${bulkAddTargetYear}-${String(bulkAddTargetMonth).padStart(2, '0')}`}
@@ -1983,26 +2052,36 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 className="p-1.5 border border-slate-300 rounded text-sm"
                             />
                         </div>
+                        <div>
+                            <label className="block text-xs text-slate-600 font-medium mb-1">Monthly salary (SAR)</label>
+                            <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                value={bulkAddSalary}
+                                onChange={(e) => setBulkAddSalary(e.target.value === '' ? '' : Number(e.target.value))}
+                                placeholder={suggestedMonthlySalary > 0 ? `From income: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? String(expectedMonthlySalary) : 'e.g. 15000')}
+                                className="w-36 p-2 border border-slate-300 rounded text-sm"
+                            />
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <div>
+                                <label className="block text-xs text-slate-600 font-medium mb-1">Adults</label>
+                                <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="w-14 p-2 border border-slate-300 rounded text-sm" />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-600 font-medium mb-1">Kids</label>
+                                <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="w-14 p-2 border border-slate-300 rounded text-sm" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs text-slate-600 font-medium mb-1">Profile</label>
+                            <span className="text-sm text-slate-700">{HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.label ?? engineProfile}</span>
+                        </div>
                     </div>
 
-                    {bulkAddMode === 'template' && (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
-                            <p className="text-xs text-slate-600">Uses family size and salary above to suggest categories (rent, groceries, utilities, schooling, etc.). Select which to create; existing budgets for the target month are updated.</p>
-                            <div className="flex flex-wrap items-end gap-3">
-                                <div>
-                                    <label className="block text-xs text-slate-600 font-medium mb-1">Monthly salary (SAR)</label>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        step={100}
-                                        value={bulkAddSalary}
-                                        onChange={(e) => setBulkAddSalary(e.target.value === '' ? '' : Number(e.target.value))}
-                                        placeholder={suggestedMonthlySalary > 0 ? `From income: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? String(expectedMonthlySalary) : 'e.g. 15000')}
-                                        className="w-36 p-2 border border-slate-300 rounded text-sm"
-                                    />
-                                </div>
-                                <span className="text-xs text-slate-500">Adults: {householdAdults}, Kids: {householdKids}, Profile: {HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.label ?? engineProfile}</span>
-                            </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                            <p className="text-xs text-slate-600">Suggested limits use the same formulas as the engine (groceries scale with family size; rent, utilities, transport, schooling, etc. are consistent). If you have run the engine above for this year, amounts for the target month may reflect engine projections. Select categories to create or update.</p>
                             {bulkAddSuggestedCategories.length > 0 && (
                                 <>
                                     <div className="flex items-center justify-between gap-2">
@@ -2028,7 +2107,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                         }}
                                                         className="rounded border-slate-300 text-emerald-600"
                                                     />
-                                                    <span className="text-sm text-slate-800 flex-1">{cat.category}</span>
+                                                    <span className="text-sm text-slate-800 flex-1 inline-flex items-center gap-1">
+                                                        {cat.category}
+                                                        <InfoHint text={(cat as { hint?: string }).hint ?? getCategoryHint(cat.category)} placement="bottom" />
+                                                    </span>
                                                     <span className="text-xs text-slate-500 tabular-nums">{formatCurrencyString(cat.limit, { digits: 0 })}{periodLabel}</span>
                                                     <span className={`text-xs px-1.5 py-0.5 rounded ${cat.tier === 'Core' ? 'bg-emerald-100 text-emerald-700' : cat.tier === 'Supporting' ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-600'}`}>{cat.tier}</span>
                                                 </label>
@@ -2079,62 +2161,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 <p className="text-xs text-slate-500">Enter a valid salary above to see suggested categories.</p>
                             )}
                         </div>
-                    )}
-
-                    {bulkAddMode === 'projection' && (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                            <p className="text-xs text-slate-600 mb-3">Uses your transactions, accounts, and goals to suggest amounts. Applies the engine's projected buckets (Housing, Food, Transport, etc.) to the target month. Overwrites existing budgets with engine values.</p>
-                            {bulkAddTargetYear !== currentYear && (
-                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-3">Projection amounts are based on the current year ({currentYear}) plan. Target month is {bulkAddTargetYear}.</p>
-                            )}
-                            <button
-                                type="button"
-                                disabled={!isAdmin}
-                                onClick={async () => {
-                                    if (!isAdmin) { alert('Only admins can apply household engine budgets.'); return; }
-                                    if (!window.confirm(`Apply the household engine projection to ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated with engine amounts.`)) return;
-                                    const monthPlan = householdBudgetEngine.months.find((m) => m.month === bulkAddTargetMonth);
-                                    if (!monthPlan) {
-                                        alert('No household engine plan for the selected month. The engine runs from your data above; ensure you have transactions or salary set.');
-                                        return;
-                                    }
-                                    const buckets = monthPlan.buckets || {};
-                                    const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
-                                    const coreBuckets = new Set(['housing', 'housingSemiAnnual', 'groceries', 'food', 'utilities', 'telecommunications', 'transportation', 'debtLoans', 'insuranceCoPay', 'health']);
-                                    let created = 0, updated = 0;
-                                    try {
-                                        for (const [bucketName, amount] of Object.entries(buckets)) {
-                                            if (!amount || amount <= 0) continue;
-                                            const category = ENGINE_BUCKET_TO_CATEGORY[bucketName] || bucketName.charAt(0).toUpperCase() + bucketName.slice(1);
-                                            const existing = existingBudgets.find((b) => b.category === category);
-                                            const tier: BudgetTier = coreBuckets.has(bucketName) ? 'Core' : 'Optional';
-                                            if (existing) {
-                                                await updateBudget({ ...existing, limit: Math.round(amount), period: existing.period ?? 'monthly', tier: existing.tier ?? tier });
-                                                updated++;
-                                            } else {
-                                                await addBudget({
-                                                    category,
-                                                    limit: Math.round(amount),
-                                                    month: bulkAddTargetMonth,
-                                                    year: bulkAddTargetYear,
-                                                    period: 'monthly',
-                                                    tier,
-                                                });
-                                                created++;
-                                            }
-                                        }
-                                        alert(`Engine projection applied: ${created} created, ${updated} updated for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
-                                    } catch (err) {
-                                        console.error('Engine projection apply failed:', err);
-                                        alert(`Some budgets could not be saved. ${created} created, ${updated} updated. Check console for details.`);
-                                    }
-                                }}
-                                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-                            >
-                                Apply engine projection to {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
-                            </button>
-                        </div>
-                    )}
 
                     <div className="mt-3">
                         <button type="button" onClick={() => setShowKsaExpenseRef((v) => !v)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
@@ -2565,7 +2591,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                             <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">{budget.budgetTier ?? 'Optional'}</span>
                                         </div>
 
-                                        <h4 className="mt-3 text-base font-semibold text-slate-900">{budget.category}</h4>
+                                        <h4 className="mt-3 text-base font-semibold text-slate-900 inline-flex items-center gap-1">
+                                            {budget.category}
+                                            <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
+                                        </h4>
 
                                         <div className="mt-4">
                                             <div className="flex justify-between items-baseline mb-1">
@@ -2694,7 +2723,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                             const canEditRemove = !b.id.startsWith('synthetic-') && !b.id.startsWith('approved-request-');
                                             return (
                                                 <tr key={`admin-budget-${b.id}`} className="border-t border-slate-100">
-                                                    <td className="px-3 py-2 font-medium text-slate-900">{b.category}</td>
+                                                    <td className="px-3 py-2 font-medium text-slate-900">
+                                                        <span className="inline-flex items-center gap-1">{b.category}<InfoHint text={getCategoryHint(b.category)} placement="bottom" /></span>
+                                                    </td>
                                                     <td className="px-3 py-2">
                                                         <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">{periodLabel}</span>
                                                     </td>
@@ -2997,7 +3028,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     >
                         <div className="flex-grow">
                             <div className="flex items-center justify-between gap-2">
-                                <h3 className="text-lg font-semibold text-dark">{budget.category}</h3>
+                                <h3 className="text-lg font-semibold text-dark inline-flex items-center gap-1">
+                                    {budget.category}
+                                    <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
+                                </h3>
                                 <span className={`text-[11px] px-2 py-1 rounded ${budget.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : budget.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>{budget.budgetTier}</span>
                             </div>
                             <div className="mt-4">

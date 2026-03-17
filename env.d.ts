@@ -4,6 +4,7 @@
 // /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly BASE_URL: string;
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
   // FIX: Add DEV property for Vite's dev mode flag, used in geminiService.ts.
