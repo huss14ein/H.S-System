@@ -1275,27 +1275,50 @@ const PlatformCard: React.FC<{
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
         const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
-        let valueSAR = 0, valueUSD = 0;
+
+        // Treat simulated prices as SAR; convert to platform currency only for display.
+        let valueSarFromSim = 0;
+        let valueSarFromStored = 0;
+        let valueUsdFromStored = 0;
+
         portfolios.forEach(p => {
-            const cur = (p.currency || 'USD') as TradeCurrency;
-            const v = (p.holdings || []).reduce((s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
-            if (cur === 'SAR') valueSAR += v; else valueUSD += v;
+            const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+            (p.holdings || []).forEach(h => {
+                const symbol = (h.symbol || '').trim().toUpperCase();
+                const priceInfo = simulatedPrices[symbol];
+                if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
+                    // Live SAR price
+                    const liveSar = priceInfo.price * (h.quantity || 0);
+                    if (Number.isFinite(liveSar) && liveSar > 0) {
+                        valueSarFromSim += liveSar;
+                        return;
+                    }
+                }
+                // Fallback: use stored currentValue in portfolio currency
+                const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
+                if (!Number.isFinite(fallback) || fallback <= 0) return;
+                if (cur === 'SAR') valueSarFromStored += fallback;
+                else valueUsdFromStored += fallback;
+            });
         });
-        const totalValueInSAR = valueSAR + valueUSD * rate;
+
+        const totalValueInSAR = valueSarFromSim + valueSarFromStored + valueUsdFromStored * rate;
         const totalValue =
             platformCurrency === 'SAR'
-                ? valueSAR + valueUSD * rate
+                ? totalValueInSAR
                 : platformCurrency === 'USD'
-                ? valueUSD + valueSAR / rate
+                ? (totalValueInSAR / rate)
                 : totalValueInSAR;
 
+        // Capital flows: deposits into the platform vs withdrawals OUT of the platform.
+        // These are explicit cash movements, not buys/sells of holdings.
         let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-        transactions.filter(t => t.type === 'buy').forEach(t => {
+        transactions.filter(t => t.type === 'deposit').forEach(t => {
             const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
             if (c === 'SAR') invSAR += t.total ?? 0;
             else invUSD += t.total ?? 0;
         });
-        transactions.filter(t => t.type === 'sell').forEach(t => {
+        transactions.filter(t => t.type === 'withdrawal').forEach(t => {
             const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
             if (c === 'SAR') wdrSAR += t.total ?? 0;
             else wdrUSD += t.total ?? 0;
@@ -1316,10 +1339,23 @@ const PlatformCard: React.FC<{
         const netCapital = totalInvested - totalWithdrawn;
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-        const dailyPnL = allHoldings.reduce(
-            (s, h) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].change * h.quantity : 0),
+
+        // Daily P/L: simulated change is assumed in SAR; convert for display currency.
+        const dailyPnLSar = allHoldings.reduce(
+            (s, h) => {
+                const symbol = (h.symbol || '').trim().toUpperCase();
+                const info = simulatedPrices[symbol];
+                if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return s;
+                return s + info.change * (h.quantity || 0);
+            },
             0
         );
+        const dailyPnL =
+            platformCurrency === 'SAR'
+                ? dailyPnLSar
+                : platformCurrency === 'USD'
+                ? (dailyPnLSar / rate)
+                : dailyPnLSar;
 
         const cashSAR = availableCashByCurrency.SAR ?? 0;
         const cashUSD = availableCashByCurrency.USD ?? 0;
@@ -1639,11 +1675,19 @@ const PlatformView: React.FC<{
         return platformsData.reduce((sum, p) => {
             const platformTotalSar = p.portfolios.reduce((portfolioSum, portfolio) => {
                 const portfolioCurrency = portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD';
-                const holdingsTotal = (portfolio.holdings || []).reduce((holdingSum, h) => {
-                    const liveValue = props.simulatedPrices[h.symbol] ? props.simulatedPrices[h.symbol].price * h.quantity : h.currentValue;
-                    return holdingSum + toSar(Number(liveValue) || 0, portfolioCurrency);
+                const holdingsTotalSar = (portfolio.holdings || []).reduce((holdingSum, h) => {
+                    const symbol = (h.symbol || '').trim().toUpperCase();
+                    const priceInfo = props.simulatedPrices[symbol];
+                    // If we have a simulated price, treat it as SAR price and skip FX
+                    if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
+                        const liveSar = priceInfo.price * (h.quantity || 0);
+                        return holdingSum + (Number.isFinite(liveSar) ? liveSar : 0);
+                    }
+                    // Fallback: use stored currentValue in portfolio currency and convert to SAR
+                    const fallbackValue = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
+                    return holdingSum + toSar(fallbackValue, portfolioCurrency);
                 }, 0);
-                return portfolioSum + holdingsTotal;
+                return portfolioSum + holdingsTotalSar;
             }, 0);
             return sum + platformTotalSar;
         }, 0);
