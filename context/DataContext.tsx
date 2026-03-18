@@ -284,6 +284,12 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     };
     const rawAssetClass = holding.assetClass ?? (holding as any).asset_class;
     row.asset_class = normalizeAssetClassForDb(rawAssetClass) ?? 'Other';
+    // Persist goal linkage if provided
+    if (holding.goalId != null) {
+        row.goal_id = holding.goalId;
+    } else if ((holding as any).goal_id != null) {
+        row.goal_id = (holding as any).goal_id;
+    }
     return row;
 }
 
@@ -300,6 +306,7 @@ function normalizeHoldingFromRow(row: any): Holding {
         realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
+        goalId: row.goal_id ?? row.goalId,
     };
 }
 
@@ -674,120 +681,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     const loadDemoData = async () => {
-        if (!supabase || !auth?.user) return;
-        const db = supabase;
-        setLoading(true);
-
-        const mock = getMockData();
-        const userId = auth.user.id;
-        
-        try {
-            // Non-relational data
-            await Promise.all([
-                db.from('assets').insert(mock.assets.map(({ id, ...a }) => ({ ...a, user_id: userId }))),
-                db.from('liabilities').insert(mock.liabilities.map(({ id, ...l }) => ({ ...l, user_id: userId }))),
-                // FIX: Removed hardcoded `id` from budget insertion to prevent UUID type error.
-                db.from('budgets').insert(mock.budgets.map(({ id, ...b }) => ({ ...b, user_id: userId }))),
-                db.from('watchlist').insert(mock.watchlist.map(w => ({ ...w, user_id: userId }))),
-                db.from('goals').insert(mock.goals.map(({ id, ...g }) => ({ ...g, user_id: userId }))),
-                db.from('commodity_holdings').insert(mock.commodityHoldings.map(({ id, ...c }) => ({ ...commodityHoldingToRow(c), user_id: userId }))),
-                db.from('planned_trades').insert(mock.plannedTrades.map(({ id, ...pt }) => ({ ...pt, user_id: userId }))),
-                db.from('settings').insert([{ ...mock.settings, user_id: userId }]),
-            ]);
-            await db.from('price_alerts').insert([
-                { user_id: userId, symbol: 'AAPL', target_price: 200, status: 'active', created_at: new Date().toISOString() },
-                { user_id: userId, symbol: '7010.SR', target_price: 45, status: 'active', created_at: new Date().toISOString() },
-            ]).then(() => {}, () => {});
-
-            // Accounts
-            const { data: newAccounts, error: accError } = await db.from('accounts').insert(mock.accounts.map(({ id, ...a }) => ({...a, user_id: userId}))).select();
-            if (accError || !newAccounts) throw accError || new Error("Failed to create accounts");
-            
-            const accountIdMap = new Map(mock.accounts.map((mockAcc, i) => [mockAcc.id, newAccounts[i].id]));
-            
-            // Transactions
-            await db.from('transactions').insert(mock.transactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, accountId: accountIdMap.get(accountId)! })));
-
-            // Recurring transactions (demo data for Transactions page)
-            if (mock.recurringTransactions?.length) {
-                await db.from('recurring_transactions').insert(mock.recurringTransactions.map(({ id, accountId, ...r }) => ({
-                    user_id: userId,
-                    description: r.description,
-                    amount: r.amount,
-                    type: r.type,
-                    account_id: accountIdMap.get(accountId)!,
-                    budget_category: r.budgetCategory ?? null,
-                    category: r.category,
-                    day_of_month: r.dayOfMonth,
-                    enabled: r.enabled,
-                }))).then(() => {}, () => {});
-            }
-
-            // Portfolios
-            const { data: newPortfolios, error: portError } = await db.from('investment_portfolios').insert(mock.investments.map(p => ({ name: p.name, account_id: accountIdMap.get(p.accountId)!, user_id: userId }))).select();
-            if (portError || !newPortfolios) throw portError || new Error("Failed to create portfolios");
-
-            const portfolioIdMap = new Map(mock.investments.map((mockPort, i) => [mockPort.id, newPortfolios[i].id]));
-            
-            // Holdings and Investment Transactions (snake_case for DB)
-            const holdingsToInsert = mock.investments.flatMap(p =>
-                p.holdings.map(({ id, ...h }) => ({ ...holdingToRow({ ...h, portfolio_id: portfolioIdMap.get(p.id)! }), user_id: userId }))
-            );
-            await db.from('holdings').insert(holdingsToInsert);
-            await db.from('investment_transactions').insert(mock.investmentTransactions.map(({ id, accountId, ...t }) => ({ ...t, user_id: userId, account_id: accountIdMap.get(accountId)! })));
-
-            // Investment plan and system datasets used across Investments/Wealth Ultra/Recovery pages
-            await db.from('investment_plan').insert({
-                ...investmentPlanToRow(mock.investmentPlan),
-                user_id: userId,
-            }).then(() => {}, () => {});
-
-            if (mock.portfolioUniverse?.length) {
-                await db.from('portfolio_universe').insert(
-                    mock.portfolioUniverse.map(({ id, ...u }) => ({ ...u, user_id: userId }))
-                ).then(() => {}, () => {});
-            }
-
-            if (mock.statusChangeLog?.length) {
-                await db.from('status_change_log').insert(
-                    mock.statusChangeLog.map(({ id, ...l }) => ({ ...l, user_id: userId }))
-                ).then(() => {}, () => {});
-            }
-
-            if (mock.executionLogs?.length) {
-                await db.from('execution_logs').insert(
-                    mock.executionLogs.map(({ id, user_id, created_at, ...log }) => ({
-                        user_id: userId,
-                        created_at: created_at || new Date().toISOString(),
-                        date: log.date,
-                        total_investment: log.totalInvestment,
-                        core_investment: log.coreInvestment,
-                        upside_investment: log.upsideInvestment,
-                        speculative_investment: log.speculativeInvestment,
-                        redirected_investment: log.redirectedInvestment,
-                        unused_upside_funds: log.unusedUpsideFunds,
-                        trades: log.trades,
-                        status: log.status,
-                        log_details: log.log_details,
-                    }))
-                ).then(() => {}, () => {});
-            }
-
-            alert("Demo data loaded successfully!");
-        } catch(error) {
-            console.error("Error loading demo data:", error);
-            let errorMessage = "Unknown error";
-            if (error instanceof Error) {
-                errorMessage = error.message;
-            } else if (error && typeof error === 'object' && 'message' in error) {
-                // Handle Supabase PostgrestError which is not an instance of Error
-                errorMessage = String((error as any).message);
-            }
-            alert(`Failed to load demo data: ${errorMessage}. Cleaning up...`);
-            await _internalResetData();
-        } finally {
-            await fetchData(); // Refetch all data to update UI
-        }
+        console.warn('[DataContext] loadDemoData is disabled to protect real user data. No demo data was loaded.');
+        return;
     };
 
 
