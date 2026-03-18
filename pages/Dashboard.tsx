@@ -31,7 +31,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -372,9 +372,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const totalInvested = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + (t.total ?? 0), 0);
-            const totalWithdrawn = Math.abs((data?.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + (t.total ?? 0), 0));
-            const netCapital = totalInvested - totalWithdrawn;
+            // Investment capital in SAR: use explicit deposits/withdrawals, not buys/sells.
+            const totalInvestedSar = (data?.investmentTransactions ?? [])
+                .filter(t => t.type === 'deposit')
+                .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+            const totalWithdrawnSar = (data?.investmentTransactions ?? [])
+                .filter(t => t.type === 'withdrawal')
+                .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+            const netCapital = totalInvestedSar - totalWithdrawnSar;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
             

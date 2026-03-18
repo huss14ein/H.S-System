@@ -31,7 +31,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   
   const auth = useContext(AuthContext);
-  const { data, resetData } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
@@ -276,9 +276,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                       </div>
                       <div className="py-1">
                         <button onClick={() => { setActivePage('Settings'); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors">Settings</button>
-                        {hasData && (
-                          <button onClick={() => { resetData(); setIsProfileOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">Clear All My Data</button>
-                        )}
                       </div>
                       <div className="border-t border-gray-100 mt-1 pt-1">
                         <button onClick={auth?.logout} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors font-medium">Logout</button>
