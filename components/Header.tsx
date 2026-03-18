@@ -59,8 +59,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
   const navRef = useClickOutside<HTMLDivElement>(() => setActiveGroup(null));
 
-  const hasData = data?.accounts && data.accounts.length > 0;
-  
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
 
