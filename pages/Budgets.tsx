@@ -918,7 +918,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 const mult = ENGINE_BUCKET_TO_STORED_MULTIPLIER[key] ?? 1;
                 if (typeof val === 'number' && val > 0) engineTotal += val * mult;
             }
-            const limit = engineTotal > 0 ? Math.round(engineTotal) : cat.limit;
+            let limit = engineTotal > 0 ? Math.round(engineTotal) : cat.limit;
+            // Guardrail: for Groceries, do not let engine override exceed the conservative template limit.
+            if (cat.category === 'Groceries & Supermarket' && limit > cat.limit) {
+                limit = cat.limit;
+            }
             return { ...cat, limit };
         });
     }, [bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, householdAdults, householdKids, engineProfile, householdBudgetEngine.months, bulkAddTargetMonth]);

@@ -7,7 +7,7 @@ import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, loading, updateSettings, resetData } = useContext(DataContext)!;
+    const { data, loading, updateSettings } = useContext(DataContext)!;
     const auth = useContext(AuthContext)!;
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
 
@@ -166,10 +166,6 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                     URL.revokeObjectURL(url);
                                 }} className="btn-outline flex-shrink-0">
                                     Export my data
-                                </button>
-                                <span className="text-xs text-slate-500 self-center">Then permanently delete:</span>
-                                <button type="button" onClick={resetData} className="btn-danger w-full md:w-auto flex-shrink-0">
-                                    Clear All Data
                                 </button>
                             </div>
                         </>

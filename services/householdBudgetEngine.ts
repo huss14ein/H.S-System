@@ -204,7 +204,18 @@ export function generateHouseholdBudgetCategories(
 
   // ——— Monthly (recurring, every 30 days) ———
   result.push({ category: 'Housing Rent (Monthly)', limit: pct(0.30), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'] });
-  result.push({ category: 'Groceries & Supermarket', limit: pct(0.12 + adults * 0.04 + kids * 0.02), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Groceries & Supermarket'] });
+  // Groceries: conservative Saudi-specific baseline.
+  // Start from a low base percent and scale with adults and kids, then clamp to a safe band.
+  const extraAdults = Math.max(adults - 1, 0);
+  const groceriesPctRaw = 0.06 + extraAdults * 0.015 + kids * 0.012;
+  const groceriesPct = Math.max(0.06, Math.min(groceriesPctRaw, 0.14)); // 6%–14% of baseExpense
+  result.push({
+    category: 'Groceries & Supermarket',
+    limit: pct(groceriesPct),
+    period: 'monthly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Groceries & Supermarket'],
+  });
   result.push({ category: 'Utilities', limit: pct(0.08), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Utilities'] });
   result.push({ category: 'Telecommunications', limit: pct(0.04), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Telecommunications'] });
   result.push({ category: 'Transportation', limit: pct(0.10), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Transportation'] });

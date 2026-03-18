@@ -31,7 +31,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -306,7 +306,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     }, [auth?.user?.id]);
 
     const investmentProgress = useMemo(() => {
-        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
+        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
+        const plan = data.investmentPlan;
+        const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
+        const rate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
         const monthlyInvested = (data?.investmentTransactions ?? [])
@@ -314,14 +317,20 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
-            .reduce((sum, t) => sum + (t.total ?? 0), 0);
-        
+            .reduce((sum, t) => {
+                const txCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
+                const sar = toSAR(t.total ?? 0, txCurrency, rate);
+                const inPlanCurrency = planCurrency === 'SAR' ? sar : sar / rate;
+                return sum + inPlanCurrency;
+            }, 0);
+        const target = plan.monthlyBudget ?? 0;
         return {
-            percent: Math.min((monthlyInvested / ((data?.investmentPlan?.monthlyBudget) || 1)) * 100, 100),
+            percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
             amount: monthlyInvested,
-            target: data?.investmentPlan?.monthlyBudget ?? 0
+            target,
+            planCurrency,
         };
-    }, [data]);
+    }, [data, exchangeRate]);
 
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
@@ -372,9 +381,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const totalInvested = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy').reduce((sum, t) => sum + (t.total ?? 0), 0);
-            const totalWithdrawn = Math.abs((data?.investmentTransactions ?? []).filter(t => t.type === 'sell').reduce((sum, t) => sum + (t.total ?? 0), 0));
-            const netCapital = totalInvested - totalWithdrawn;
+            // Investment capital in SAR: use explicit deposits/withdrawals, not buys/sells.
+            const totalInvestedSar = (data?.investmentTransactions ?? [])
+                .filter(t => t.type === 'deposit')
+                .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+            const totalWithdrawnSar = (data?.investmentTransactions ?? [])
+                .filter(t => t.type === 'withdrawal')
+                .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+            const netCapital = totalInvestedSar - totalWithdrawnSar;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
             
@@ -457,7 +471,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             emergencyFund: <Card {...cardProps} title="Emergency Fund" value={`${emergencyFund.monthsCovered.toFixed(1)} mo`} trend={efTrend} indicatorColor={efColor} tooltip={`Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
             investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0 })} / ${formatCurrencyString(investmentProgress.target, { digits: 0 })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, federal tax policy, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
