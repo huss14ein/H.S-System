@@ -3318,17 +3318,26 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     let valueSAR = 0, valueUSD = 0;
     (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
-        const v = (p.holdings || []).reduce((s: number, h: Holding) => s + (simulatedPrices[h.symbol] ? simulatedPrices[h.symbol].price * h.quantity : h.currentValue), 0);
-        if (cur === 'SAR') valueSAR += v; else valueUSD += v;
+        (p.holdings || []).forEach((h: Holding) => {
+            const sym = (h.symbol || '').trim().toUpperCase();
+            const priceInfo = simulatedPrices[sym];
+            if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
+                valueSAR += priceInfo.price * (h.quantity || 0);
+            } else {
+                const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
+                if (cur === 'SAR') valueSAR += fallback; else valueUSD += fallback;
+            }
+        });
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
     const allCommodities = data?.commodityHoldings ?? [];
     const totalCommoditiesValue = allCommodities.reduce((sum, ch) => sum + (simulatedPrices[ch.symbol] ? simulatedPrices[ch.symbol].price * ch.quantity : ch.currentValue), 0);
     const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
 
+    // Capital flows: use deposit/withdrawal (not buy/sell) for invested/withdrawn
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'buy').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'sell').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'deposit').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
+    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'withdrawal').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
