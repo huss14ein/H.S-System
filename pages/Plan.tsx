@@ -134,12 +134,13 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [planSubPage, setPlanSubPage] = useState<'overview' | 'experts'>('overview');
 
     const budgets = data?.budgets ?? [];
-    const transactions = data?.transactions ?? [];
-    const accounts = data?.accounts ?? [];
+    const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
     const goals = data?.goals ?? [];
-    const liabilities = data?.liabilities ?? [];
+    const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
     const investmentPlan = data?.investmentPlan;
-    const investmentTransactions = data?.investmentTransactions ?? [];
+    const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
+    const investmentTransactions = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
     const recurringTransactions = data?.recurringTransactions ?? [];
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);

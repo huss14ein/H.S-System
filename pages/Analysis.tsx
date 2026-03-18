@@ -54,9 +54,9 @@ const SpendingByCategoryChart: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
         const spending = new Map<string, number>();
-        (data?.transactions ?? [])
-            .filter(isExpenseTx)
-            .forEach((t) => {
+        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        txs.filter(isExpenseTx)
+            .forEach((t: { budgetCategory?: string; category?: string; amount?: number }) => {
                 const rawCategory = (t.budgetCategory || t.category || 'Uncategorized').trim();
                 const category = rawCategory.length > 0 ? rawCategory : 'Uncategorized';
                 spending.set(category, (spending.get(category) || 0) + Math.abs(Number(t.amount) ?? 0));
@@ -64,7 +64,7 @@ const SpendingByCategoryChart: React.FC = () => {
         return Array.from(spending, ([name, value]) => ({ name, value }))
             .filter((x) => Number.isFinite(x.value) && x.value > 0)
             .sort((a, b) => b.value - a.value);
-    }, [data?.transactions]);
+    }, [data?.transactions, (data as any)?.personalTransactions]);
     const isEmpty = !chartData.length;
 
     return (
@@ -85,7 +85,7 @@ const SpendingByCategoryChart: React.FC = () => {
 const IncomeExpenseTrendChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const chartData = useMemo(() => buildTrendData(data?.transactions ?? [], 6), [data?.transactions]);
+    const chartData = useMemo(() => buildTrendData((data as any)?.personalTransactions ?? data?.transactions ?? [], 6), [data?.transactions, (data as any)?.personalTransactions]);
     const hasSignal = chartData.some((x) => x.income > 0 || x.expenses > 0);
     const isEmpty = !hasSignal;
 
@@ -111,17 +111,18 @@ const AssetLiabilityChart: React.FC = () => {
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
-        const inv = data?.investments ?? [];
-        const acc = data?.accounts ?? [];
-        const ast = data?.assets ?? [];
-        const liab = data?.liabilities ?? [];
+        const d = data as any;
+        const inv = d?.personalInvestments ?? data?.investments ?? [];
+        const acc = d?.personalAccounts ?? data?.accounts ?? [];
+        const ast = d?.personalAssets ?? data?.assets ?? [];
+        const liab = d?.personalLiabilities ?? data?.liabilities ?? [];
 
         const totalInvestments = getAllInvestmentsValueInSAR(inv, exchangeRate);
-        const totalCash = acc.filter(a => a.type !== 'Credit').reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
-        const totalPhysicalAssets = ast.reduce((sum, asset) => sum + Math.max(0, asset.value || 0), 0);
-        const totalDebt = liab.filter((l) => (l.amount ?? 0) < 0).reduce((sum, l) => sum + Math.abs(l.amount ?? 0), 0)
-            + acc.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, a) => sum + Math.abs(a.balance ?? 0), 0);
-        const totalReceivable = liab.filter((l) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum, l) => sum + Math.max(0, l.amount ?? 0), 0);
+        const totalCash = acc.filter((a: { type?: string; balance?: number }) => a.type !== 'Credit').reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
+        const totalPhysicalAssets = ast.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
+        const totalDebt = liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0)
+            + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, a: { balance?: number }) => sum + Math.abs(a.balance ?? 0), 0);
+        const totalReceivable = liab.filter((l: { amount?: number; type?: string }) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum: number, l: { amount?: number }) => sum + Math.max(0, l.amount ?? 0), 0);
 
         return [
             { name: 'Investments', value: totalInvestments },
@@ -160,29 +161,30 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
     const { exchangeRate } = useCurrency();
 
     const contextData = useMemo(() => {
-        const transactions = data?.transactions ?? [];
-        const investments = data?.investments ?? [];
-        const accounts = data?.accounts ?? [];
-        const assets = data?.assets ?? [];
-        const liabilities = data?.liabilities ?? [];
+        const d = data as any;
+        const transactions = d?.personalTransactions ?? data?.transactions ?? [];
+        const investments = d?.personalInvestments ?? data?.investments ?? [];
+        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
+        const assets = d?.personalAssets ?? data?.assets ?? [];
+        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
 
         const spendingMap = new Map<string, number>();
-        transactions.filter(isExpenseTx).forEach((t) => {
+        transactions.filter(isExpenseTx).forEach((t: { budgetCategory?: string; category?: string; amount?: number }) => {
             const category = (t.budgetCategory || t.category || 'Uncategorized').trim() || 'Uncategorized';
             spendingMap.set(category, (spendingMap.get(category) || 0) + Math.abs(Number(t.amount) ?? 0));
         });
-        const spendingData = Array.from(spendingMap, ([name, value]) => ({ name, value }))
+        const spendingData = Array.from(spendingMap, ([name, value]: [string, number]) => ({ name, value }))
             .filter((x) => x.value > 0)
             .sort((a, b) => b.value - a.value);
 
         const trendData = buildTrendData(transactions, 6);
 
         const totalInvestments = getAllInvestmentsValueInSAR(investments, exchangeRate);
-        const totalCash = accounts.filter(a => a.type !== 'Credit').reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
-        const totalPhysicalAssets = assets.reduce((sum, asset) => sum + Math.max(0, asset.value || 0), 0);
-        const totalDebt = liabilities.filter((l) => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0)
-            + accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivable = liabilities.filter((l) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum, liab) => sum + Math.max(0, liab.amount ?? 0), 0);
+        const totalCash = accounts.filter((a: { type?: string; balance?: number }) => a.type !== 'Credit').reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
+        const totalPhysicalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
+        const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0)
+            + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivable = liabilities.filter((l: { amount?: number; type?: string }) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum: number, liab: { amount?: number }) => sum + Math.max(0, liab.amount ?? 0), 0);
         const compositionData = [
             { name: 'Investments', value: totalInvestments },
             { name: 'Cash', value: totalCash },

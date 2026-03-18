@@ -17,6 +17,7 @@ import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
+import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
@@ -28,6 +29,7 @@ import { computeRiskLaneFromData } from '../services/riskLaneEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
 import { computeDisciplineScore } from '../services/disciplineScoreEngine';
 import { runShockDrill, SHOCK_TEMPLATES } from '../services/shockDrillEngine';
+import { getPersonalWealthData } from '../utils/wealthScope';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -90,7 +92,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { financialMetrics, investmentTreemapData } = useMemo(() => {
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const transactions = data?.transactions ?? [];
+        const transactions = (data?.personalTransactions ?? data?.transactions ?? []);
         const recentTransactions = transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
 
         const monthlyIncome = recentTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
@@ -98,11 +100,11 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
         const monthlyPnL = monthlyIncome - monthlyExpenses;
 
-        const liabilities = data?.liabilities ?? [];
-        const accounts = data?.accounts ?? [];
-        const assets = data?.assets ?? [];
-        const commodityHoldings = data?.commodityHoldings ?? [];
-        const investments = data?.investments ?? [];
+        const liabilities = data?.personalLiabilities ?? data?.liabilities ?? [];
+        const accounts = data?.personalAccounts ?? data?.accounts ?? [];
+        const assets = data?.personalAssets ?? data?.assets ?? [];
+        const commodityHoldings = data?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const investments = data?.personalInvestments ?? data?.investments ?? [];
         const cashSavingsAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
         const cashAndSavingsPositive = cashSavingsAccounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
         const cashAndSavingsNegative = cashSavingsAccounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
@@ -143,6 +145,32 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         };
     }, [data, exchangeRate]);
 
+    const managedWealthTotal = useMemo(() => {
+        if (!data) return 0;
+        const fullAccounts = data.accounts ?? [];
+        const fullAssets = data.assets ?? [];
+        const fullLiabilities = data.liabilities ?? [];
+        const fullInvestments = data.investments ?? [];
+        const fullCommodities = data.commodityHoldings ?? [];
+        const {
+            personalAccounts,
+            personalAssets,
+            personalLiabilities,
+            personalInvestments,
+            personalCommodityHoldings: personalCommodities,
+        } = getPersonalWealthData(data);
+        const cash = (acc: { type?: string; balance?: number }[]) => acc.filter(a => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
+        const cashNegative = (acc: { type?: string; balance?: number }[]) => acc.filter(a => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.abs(Math.min(0, a.balance ?? 0)), 0);
+        const debt = (acc: { type?: string; balance?: number }[], liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0) + cashNegative(acc);
+        const rec = (liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
+        const fullCash = cash(fullAccounts), fullDebt = debt(fullAccounts, fullLiabilities), fullRec = rec(fullLiabilities);
+        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, exchangeRate);
+        const personalCash = cash(personalAccounts), personalDebt = debt(personalAccounts, personalLiabilities), personalRec = rec(personalLiabilities);
+        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, exchangeRate);
+        const fullNW = fullAst - fullDebt + fullRec, personalNW = personalAst - personalDebt + personalRec;
+        return Math.round(fullNW - personalNW);
+    }, [data, exchangeRate]);
+
     const emergencyFund = useEmergencyFund(data);
     const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
     const efTrend = emergencyFund.status === 'healthy' ? 'Healthy' : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Low' : 'Critical';
@@ -158,8 +186,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const householdStress = useMemo(() => {
         if (!data) return null;
         const input = buildHouseholdEngineInputFromData(
-            (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
-            (data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            (data?.personalTransactions ?? data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
+            (data?.personalAccounts ?? data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
             (data?.goals ?? []) as any[],
             {
                 year: new Date().getFullYear(),
@@ -251,12 +279,18 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                         className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary cursor-pointer hover:shadow-md transition-shadow"
                         aria-label="View and manage assets"
                     >
-                        <h2 className="text-lg font-medium text-gray-500">Net Worth</h2>
+                        <h2 className="text-lg font-medium text-gray-500 flex items-center gap-1">
+                            My Net Worth
+                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" />
+                        </h2>
                         <p className="text-5xl font-extrabold text-dark my-2">{formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 })}</p>
                         <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
                             {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
                         </p>
-                        <p className="text-xs text-slate-500 mt-2">Click to manage assets</p>
+                        <p className="text-xs text-slate-500 mt-2">Personal wealth only · Click to manage assets</p>
+                        {managedWealthTotal > 0 && (
+                            <p className="text-xs text-amber-700 mt-2 font-medium">Wealth under management: {formatCurrencyString(managedWealthTotal, { digits: 0 })}</p>
+                        )}
                     </div>
                 ) : (
                     <div className="lg:col-span-1 section-card border-l-4 border-amber-400">

@@ -33,8 +33,12 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
-        const totalAssets = (data?.assets ?? []).reduce((sum, asset) => sum + asset.value, 0) + (data?.accounts ?? []).filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = (data?.liabilities ?? []).reduce((sum, liab) => sum + (liab.amount ?? 0), 0) + (data?.accounts ?? []).filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const d = data as any;
+        const assets = d?.personalAssets ?? data?.assets ?? [];
+        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
+        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
+        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
         return { netWorth: totalAssets + totalLiabilities };
     }, [data]);
 
@@ -44,15 +48,17 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const spent = (data?.transactions ?? [])
-            .filter(t => t.type === 'expense' && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
-            .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const spent = transactions
+            .filter((t: { type?: string; date: string; budgetCategory?: string }) => t.type === 'expense' && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
+            .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
         return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
     }, [data]);
     
      const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {
-        const sortedTransactions = [...(data?.transactions ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        return { transactions: sortedTransactions.slice(0, limit).map(t => ({ description: t.description, amount: t.amount })) };
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const sortedTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        return { transactions: sortedTransactions.slice(0, limit).map((t: { description?: string; amount?: number }) => ({ description: t.description, amount: t.amount })) };
     }, [data]);
     
     const handleAddWatchlistItem_ = useCallback(async ({ symbol, name }: { symbol: string, name: string }) => {
@@ -88,7 +94,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 contents: chatHistory,
                 config: { 
                     tools: [{ functionDeclarations }],
-                    systemInstruction: "You are Finova AI, a very clever expert financial and investment advisor. Be ultra direct: lead with the answer in one sentence, then 2-3 short bullets. Use Markdown: ### for sections, ** for emphasis. Use tools when the user asks about their data; cite specific numbers from tool results. Speak with authority and insight. No HTML. No filler."
+                    systemInstruction: "You are Finova AI, a very clever expert financial and investment advisor. Be ultra direct: lead with the answer in one sentence, then 2-3 short bullets. Use Markdown: ### for sections, ** for emphasis. Use tools when the user asks about their data; cite specific numbers from tool results. Speak with authority and insight. No HTML. No filler. Important: All data from tools (net worth, budgets, transactions) is the user's personal wealth only—do not reference or mix in any third-party or managed wealth; respond only about the user's personal finances."
                 }
             });
 

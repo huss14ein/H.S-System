@@ -337,7 +337,28 @@ export interface FinancialData {
   allBudgets?: Budget[];
   /** Budget requests (e.g. new category / increase limit) for governance */
   budgetRequests?: BudgetRequest[];
+  /** Personal wealth only (owner empty): use for "my" net worth and KPIs. Populated by DataContext. */
+  personalAccounts?: Account[];
+  personalAssets?: Asset[];
+  personalLiabilities?: Liability[];
+  personalInvestments?: InvestmentPortfolio[];
+  personalCommodityHoldings?: CommodityHolding[];
+  /** Transactions that hit personal accounts only (for "my" income/expense). */
+  personalTransactions?: Transaction[];
 }
+
+/**
+ * Financial data as provided by DataContext: personal* arrays are always populated.
+ * Use this type when you know the source is DataContext (e.g. context.data) so "my" metrics use personal* directly.
+ */
+export type DataContextFinancialData = FinancialData & {
+  personalAccounts: Account[];
+  personalAssets: Asset[];
+  personalLiabilities: Liability[];
+  personalInvestments: InvestmentPortfolio[];
+  personalCommodityHoldings: CommodityHolding[];
+  personalTransactions: Transaction[];
+};
 
 export interface KPISummary {
   netWorth: number;

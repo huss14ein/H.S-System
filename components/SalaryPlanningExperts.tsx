@@ -41,8 +41,9 @@ const SalaryPlanningExperts: React.FC = () => {
     const [copiedId, setCopiedId] = useState<string | null>(null);
 
     const suggestedSalary = React.useMemo(() => {
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const incomeByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
+        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
             const d = new Date(t.date);
             if (d.getFullYear() !== new Date().getFullYear() || (t as any).type !== 'income') return;
             incomeByMonth[d.getMonth()] += Math.max(0, Number((t as any).amount) || 0);
@@ -52,15 +53,16 @@ const SalaryPlanningExperts: React.FC = () => {
     }, [data?.transactions]);
 
     const suggestedSavings = React.useMemo(() => {
-        const cash = (data?.accounts ?? []).filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, (a.balance ?? 0)), 0);
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const cash = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, (a.balance ?? 0)), 0);
         return cash;
-    }, [data?.accounts]);
+    }, [data?.accounts, (data as any)?.personalAccounts]);
 
     const suggestedNetWorth = React.useMemo(() => {
-        const assets = (data?.assets ?? []).reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0);
-        const accounts = (data?.accounts ?? []).reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
-        const liabilities = (data?.liabilities ?? []).reduce((s: number, l: { amount?: number }) => s + Math.max(0, (l.amount ?? 0)), 0);
-        const commodities = (data?.commodityHoldings ?? []).reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0);
+        const assets = ((data as any)?.personalAssets ?? data?.assets ?? []).reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0);
+        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []).reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
+        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []).reduce((s: number, l: { amount?: number }) => s + Math.max(0, (l.amount ?? 0)), 0);
+        const commodities = ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []).reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0);
         return assets + accounts - liabilities + commodities;
     }, [data?.assets, data?.accounts, data?.liabilities, data?.commodityHoldings]);
 
@@ -75,7 +77,7 @@ const SalaryPlanningExperts: React.FC = () => {
             .reduce((s, b) => s + Math.max(0, Number(b.limit) ?? 0), 0);
         if (budgetSum > 0) return { suggestedFixedExpenses: Math.round(budgetSum), suggestedFixedExpensesSource: 'Budgets' };
 
-        const transactions = (data?.transactions ?? []) as { date: string; type?: string; amount?: number; transactionNature?: string }[];
+        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number; transactionNature?: string }[];
         const threeMonthsAgo = new Date();
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
         const fixedExpenses = transactions.filter(
@@ -99,7 +101,7 @@ const SalaryPlanningExperts: React.FC = () => {
             const lines = forMonth.map((b) => `${b.category || 'Other'}: ${Math.round(Number(b.limit) || 0)}`).join(', ');
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Budgets' };
         }
-        const transactions = (data?.transactions ?? []) as { date: string; type?: string; amount?: number; category?: string; budgetCategory?: string }[];
+        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number; category?: string; budgetCategory?: string }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         const expenses = transactions.filter((t) => t.type === 'expense' && new Date(t.date) >= sixMonthsAgo);
@@ -118,15 +120,17 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Transactions (avg/month)' };
         }
         return { suggestedExpenseBreakdown: '', suggestedExpenseBreakdownSource: '' };
-    }, [data?.budgets, data?.transactions]);
+    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions]);
 
-    // Monthly investment: from Investment Plan or from investment transactions (avg monthly buy)
+    // Monthly investment: from Investment Plan or from investment transactions (avg monthly buy, personal accounts only)
     const { suggestedMonthlyInvestment, suggestedMonthlyInvestmentSource } = React.useMemo(() => {
         const plan = data?.investmentPlan as { monthlyBudget?: number } | undefined;
         if (plan?.monthlyBudget != null && Number(plan.monthlyBudget) > 0)
             return { suggestedMonthlyInvestment: Math.round(Number(plan.monthlyBudget)), suggestedMonthlyInvestmentSource: 'Investment Plan' };
 
-        const txns = (data?.investmentTransactions ?? []) as { date: string; type?: string; total?: number; quantity?: number; price?: number }[];
+        const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
+        const allTxns = (data?.investmentTransactions ?? []) as { date: string; type?: string; accountId?: string; total?: number; quantity?: number; price?: number }[];
+        const txns = allTxns.filter((t) => personalAccountIds.has(t.accountId ?? ''));
         const buys = txns.filter((t) => t.type === 'buy');
         if (buys.length === 0) return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
         const sixMonthsAgo = new Date();
@@ -143,16 +147,16 @@ const SalaryPlanningExperts: React.FC = () => {
         const avg = byMonth > 0 ? total / byMonth : 0;
         if (avg > 0) return { suggestedMonthlyInvestment: Math.round(avg), suggestedMonthlyInvestmentSource: 'Investment transactions' };
         return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
-    }, [data?.investmentPlan, data?.investmentTransactions]);
+    }, [data?.investmentPlan, data?.investmentTransactions, data?.accounts, (data as any)?.personalAccounts]);
 
     // Debt list: from Liabilities
     const { suggestedDebtList, suggestedDebtListSource } = React.useMemo(() => {
-        const liabilities = (data?.liabilities ?? []) as { name?: string; amount?: number; type?: string; status?: string }[];
+        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as { name?: string; amount?: number; type?: string; status?: string }[];
         const active = liabilities.filter((l) => (l.status || 'Active') === 'Active' && Number(l.amount) > 0);
         if (active.length === 0) return { suggestedDebtList: '', suggestedDebtListSource: '' };
         const lines = active.map((l) => `${l.name || l.type || 'Debt'}: ${Math.round(Number(l.amount) || 0)} SAR`).join('; ');
         return { suggestedDebtList: lines, suggestedDebtListSource: 'Liabilities' };
-    }, [data?.liabilities]);
+    }, [data?.liabilities, (data as any)?.personalLiabilities]);
 
     // Primary goal: from Goals (first or highest priority)
     const { suggestedGoal, suggestedGoalSource } = React.useMemo(() => {
@@ -170,7 +174,7 @@ const SalaryPlanningExperts: React.FC = () => {
 
     // Monthly / current expenses: from Transactions (expense total, last 6 months avg)
     const { suggestedMonthlyExpenses, suggestedCurrentExpenses, suggestedCurrentExpensesSource } = React.useMemo(() => {
-        const transactions = (data?.transactions ?? []) as { date: string; type?: string; amount?: number }[];
+        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         const expenses = transactions.filter((t) => t.type === 'expense' && new Date(t.date) >= sixMonthsAgo);
@@ -182,7 +186,7 @@ const SalaryPlanningExperts: React.FC = () => {
             suggestedCurrentExpenses: avg,
             suggestedCurrentExpensesSource: avg > 0 ? 'Transactions (avg/month)' : '',
         };
-    }, [data?.transactions]);
+    }, [data?.transactions, (data as any)?.personalTransactions]);
 
     // Current portfolio / investable: same as net worth for this context
     const suggestedCurrentPortfolio = suggestedNetWorth;

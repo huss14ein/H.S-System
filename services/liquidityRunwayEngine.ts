@@ -13,21 +13,21 @@ export function computeLiquidityRunwayFromData(data: FinancialData | null | unde
   if (!data) return null;
 
   const stress = computeHouseholdStressFromData(data);
-  const accounts = data.accounts ?? [];
-  const transactions = data.transactions ?? [];
+  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
+  const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
 
   const now = new Date();
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-  const recentExpenses = transactions.filter(t => {
+  const recentExpenses = transactions.filter((t: { type?: string; date: string }) => {
     if (t.type !== 'expense') return false;
     const d = new Date(t.date);
     return d >= sixMonthsAgo && d <= now;
   });
   const byMonth = new Map<string, number>();
-  recentExpenses.forEach(t => {
+  recentExpenses.forEach((t: { date: string; amount?: number }) => {
     const d = new Date(t.date);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(t.amount));
+    byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(t.amount ?? 0));
   });
   const avgMonthlyExpense =
     byMonth.size > 0
@@ -35,8 +35,8 @@ export function computeLiquidityRunwayFromData(data: FinancialData | null | unde
       : 0;
 
   const liquidCash = accounts
-    .filter(a => a.type === 'Checking' || a.type === 'Savings')
-    .reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
+    .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+    .reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
 
   const monthsOfRunway = avgMonthlyExpense > 0 ? liquidCash / avgMonthlyExpense : liquidCash > 0 ? 99 : 0;
 

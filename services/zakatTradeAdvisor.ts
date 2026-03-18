@@ -14,13 +14,14 @@ export interface ZakatAdviceSummary {
 export function buildZakatTradeAdvice(data: FinancialData | null | undefined): ZakatAdviceSummary {
   if (!data) return { suggestions: [] };
 
-  const investments = data.investments ?? [];
+  const investments = (data as any)?.personalInvestments ?? data.investments ?? [];
+  const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data.accounts ?? []).map((a: { id: string }) => a.id));
   const exchangeRate = (data as any).exchangeRate ?? 1;
   const zakatableHoldings: { holding: Holding; portfolioCurrency: 'USD' | 'SAR' }[] = [];
 
-  investments.forEach(p => {
+  investments.forEach((p: { currency?: string; holdings?: Holding[] }) => {
     const currency = (p.currency === 'SAR' ? 'SAR' : 'USD') as 'USD' | 'SAR';
-    (p.holdings ?? []).forEach(h => {
+    (p.holdings ?? []).forEach((h: Holding) => {
       if (h.zakahClass === 'Zakatable') {
         zakatableHoldings.push({ holding: h, portfolioCurrency: currency });
       }
@@ -60,7 +61,8 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
     }
   });
 
-  const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+  const allTxs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+  const txs = personalAccountIds.size > 0 ? allTxs.filter(t => personalAccountIds.has(t.accountId ?? '')) : allTxs;
   const year = new Date().getFullYear();
   const recentBuys = txs.filter(t => {
     const d = new Date(t.date);

@@ -63,8 +63,10 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
             .slice(0, 10);
 
-        const allHoldings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
-        const totalInvestmentValue = allHoldings.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate), 0);
+        const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        type HoldingRow = { currentValue?: number; dividendYield?: number; name?: string; symbol?: string };
+        const allHoldings = portfolios.flatMap((p: { holdings?: HoldingRow[]; currency?: string }) => ((p.holdings ?? []) as HoldingRow[]).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' }))) as (HoldingRow & { portfolioCurrency?: string })[];
+        const totalInvestmentValue = allHoldings.reduce((sum: number, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
 
         const holdingsWithProjectedDividends = allHoldings
             .filter(h => {
@@ -73,13 +75,13 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             })
             .map(h => ({
                 name: h.name ?? h.symbol ?? '—',
-                projected: toSAR(h.currentValue ?? 0, h.portfolioCurrency ?? 'USD', exchangeRate) * ((h.dividendYield ?? 0) / 100),
+                projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate) * ((h.dividendYield ?? 0) / 100),
             }));
 
-        const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum, h) => sum + h.projected, 0);
+        const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum: number, h: { projected: number }) => sum + h.projected, 0);
         const averageYield = totalInvestmentValue > 0 ? (projectedAnnualIncome / totalInvestmentValue) * 100 : 0;
         const topPayers = holdingsWithProjectedDividends
-            .sort((a, b) => b.projected - a.projected)
+            .sort((a: { projected: number }, b: { projected: number }) => b.projected - a.projected)
             .slice(0, 5)
             .map((h) => ({ name: h.name ?? '', projected: h.projected }));
 
@@ -337,7 +339,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <h3 className="section-title">Top 5 Dividend Payers</h3>
                     <p className="text-sm text-slate-500 mb-4">Based on projected annual income</p>
                     <div className="space-y-3">
-                        {topPayers.map((payer, index) => (
+                        {topPayers.map((payer: { name: string; projected: number }, index: number) => (
                             <div key={payer.name} className="list-row">
                                 <div className="flex items-center gap-3">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${

@@ -333,10 +333,11 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
-  const trackedSymbols = useMemo(() => Array.from(new Set([
-    ...(data?.watchlist ?? []).map(w => w.symbol?.trim().toUpperCase()).filter(Boolean),
-    ...((data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => h.symbol?.trim().toUpperCase())).filter(Boolean) as string[]),
-  ])), [data]);
+  const trackedSymbols = useMemo((): string[] => {
+    const fromWatchlist = (data?.watchlist ?? []).map((w: { symbol?: string }) => w.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s));
+    const fromHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: { symbol?: string }[] }) => (p.holdings ?? []).map((h: { symbol?: string }) => h.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s)));
+    return Array.from(new Set([...fromWatchlist, ...fromHoldings]));
+  }, [data]);
 
   useEffect(() => {
     try {

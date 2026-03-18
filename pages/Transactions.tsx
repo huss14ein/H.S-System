@@ -562,7 +562,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
-        return (data?.transactions ?? []).filter(t => {
+        const baseTransactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        return baseTransactions.filter((t: { date: string; accountId?: string; transactionNature?: string; expenseType?: string; budgetCategory?: string }) => {
             const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
@@ -572,18 +573,18 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
         });
-    }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
+    }, [data?.transactions, (data as any)?.personalTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
-        const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const approvedTransactions = filteredTransactions.filter((t: Transaction) => (t.status ?? 'Approved') === 'Approved');
+        const monthlyIncome = approvedTransactions.filter((t: Transaction) => t.type === 'income').reduce((sum: number, t: Transaction) => sum + t.amount, 0);
+        const monthlyExpenses = approvedTransactions.filter((t: Transaction) => t.type === 'expense').reduce((sum: number, t: Transaction) => sum + Math.abs(t.amount), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
         approvedTransactions
-            .filter(t => t.type === 'expense' && t.budgetCategory)
-            .forEach(t => {
+            .filter((t: Transaction) => t.type === 'expense' && t.budgetCategory)
+            .forEach((t: Transaction) => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
@@ -593,7 +594,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
     }, [filteredTransactions]);
     
-    const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
+    const allCategories = useMemo((): string[] => Array.from(new Set(((data as any)?.personalTransactions ?? data?.transactions ?? []).map((t: { category: string }) => t.category))), [data?.transactions, (data as any)?.personalTransactions]);
     const budgetCategories = useMemo(() => {
         const ownCategories = (data?.budgets ?? []).map(b => b.category);
         if (userRole === 'Admin') return ownCategories;
@@ -968,7 +969,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     </div>
                 </div>
                 <ul className="divide-y divide-slate-100">
-                    {filteredTransactions.map(transaction => (
+                    {filteredTransactions.map((transaction: Transaction) => (
                         <li key={transaction.id} className="list-row">
                             <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-dark">{transaction.description}</p>

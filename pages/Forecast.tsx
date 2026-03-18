@@ -47,7 +47,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             monthlyNet.set(d.toISOString().slice(0, 7), 0);
         }
 
-        (data?.transactions ?? []).forEach(t => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number }) => {
             const monthKey = t.date.slice(0, 7);
             if (!monthlyNet.has(monthKey)) return;
             monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + (Number(t.amount) ?? 0));
@@ -114,13 +114,14 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [savingsAnalytics.medianMonthlySavings]);
 
     const initialValues = useMemo(() => {
-        const assets = data?.assets ?? [];
-        const accounts = data?.accounts ?? [];
-        const liabilities = data?.liabilities ?? [];
-        const investments = data?.investments ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivables = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
+        const d = data as any;
+        const assets = d?.personalAssets ?? data?.assets ?? [];
+        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
+        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
+        const investments = d?.personalInvestments ?? data?.investments ?? [];
+        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivables = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
         const netWorth = totalAssets - totalLiabilities + totalReceivables;
         const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };

@@ -682,11 +682,12 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
 
     const recentTransactions = (data?.investmentTransactions ?? []).slice(0, 10);
     const analysisContext = useMemo(() => {
-        const holdings = (data?.investments ?? []).flatMap(p => (p.holdings ?? []).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
+        const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const holdings = portfolios.flatMap((p: { holdings?: { symbol?: string; currentValue?: number }[]; currency?: string }) => (p.holdings ?? []).map((h: { symbol?: string; currentValue?: number }) => ({ ...h, portfolioCurrency: p.currency ?? 'USD' })));
         const bySymbol = new Map<string, number>();
-        holdings.forEach(h => {
+        holdings.forEach((h: { symbol?: string; currentValue?: number; portfolioCurrency?: string }) => {
         const sym = h.symbol ?? '';
-        if (sym) bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate));
+        if (sym) bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate));
       });
         const summary = Array.from(bySymbol.entries()).map(([s, v]) => `${s}: ${v.toFixed(0)}`).join('; ') || 'None';
         const watchlistSymbols = (data?.watchlist ?? []).map(w => w.symbol ?? '');
@@ -698,7 +699,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             corePct: plan?.coreAllocation,
             upsidePct: plan?.upsideAllocation,
         };
-    }, [data?.investments, data?.watchlist, data?.investmentPlan, exchangeRate]);
+    }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, exchangeRate]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);

@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Liability, Page } from '../types';
+import { Account, Liability, Page } from '../types';
+import { isPersonalWealth } from '../utils/wealthScope';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
@@ -14,6 +15,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import OwnerBadge from '../components/OwnerBadge';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -29,6 +31,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<Liability['status']>('Active');
+    const [owner, setOwner] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -36,11 +39,13 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setType(liabilityToEdit.type);
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
+            setOwner(liabilityToEdit.owner ?? '');
         } else {
             setName('');
             setType('Personal Loan');
             setAmount('');
             setStatus('Active');
+            setOwner('');
         }
     }, [liabilityToEdit, isOpen]);
 
@@ -54,6 +59,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             amount: type === 'Receivable' ? value : -value,
             status,
             goalId: liabilityToEdit?.goalId,
+            owner: owner.trim() || undefined,
         };
         onSave(newLiability);
         onClose();
@@ -87,6 +93,10 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                         <InfoHint text={isReceivable ? "Amount they owe you (outstanding)." : "Outstanding balance; affects net worth and Zakat deductible liabilities."} />
                     </label>
                     <input type="number" step="any" min="0" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label>
+                    <input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base"/>
                 </div>
                 {liabilityToEdit && (
                     <div>
@@ -124,9 +134,10 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                     {getIcon(liability.type)}
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                        <p className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
                             {liability.type}
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                            <OwnerBadge owner={liability.owner} />
                         </p>
                     </div>
                 </div>
@@ -194,7 +205,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const liabilities = data?.liabilities ?? [];
         const creditCardDebts = accounts
             .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance ?? 0, status: 'Active' as const }));
+            .map((a: Account) => ({
+                id: a.id,
+                name: a.name,
+                type: 'Credit Card' as const,
+                amount: a.balance ?? 0,
+                status: 'Active' as const,
+                owner: a.owner?.trim() ? a.owner : undefined,
+            }));
         return [...liabilities, ...creditCardDebts];
     }, [data?.liabilities, data?.accounts]);
 
@@ -205,17 +223,33 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
 
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
-        const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
-        const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
-        const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
-        const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const assets = data?.assets ?? [];
-        const accounts = data?.accounts ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const personalLiabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+        const allAccounts = data?.accounts ?? [];
+        /** Credit-card debt rows for "my" totals: only accounts with no owner (same rule as isPersonalWealth). */
+        const personalCreditCards = allAccounts
+            .filter((a: Account) => a.type === 'Credit' && (a.balance ?? 0) < 0 && isPersonalWealth(a))
+            .map((a: Account) => ({
+                id: a.id,
+                name: a.name,
+                type: 'Credit Card' as const,
+                amount: a.balance ?? 0,
+                status: 'Active' as const,
+                owner: a.owner?.trim() ? a.owner : undefined,
+            }));
+        const personalAll = [...personalLiabilities, ...personalCreditCards];
+        const personalDebts = personalAll.filter((l: { amount?: number }) => (l.amount ?? 0) < 0);
+        const personalReceivables = personalAll.filter((l: { amount?: number }) => (l.amount ?? 0) > 0);
+        const activeDebts = personalDebts.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
+        const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
+        const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
+        const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [allDebts, allReceivables, data?.assets, data?.accounts]);
+    }, [data]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);

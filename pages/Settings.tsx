@@ -21,7 +21,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         updateSettings({ [key]: value });
     };
 
-    const hasData = data?.accounts && data.accounts.length > 0;
+    const accountsForEmptyCheck = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
 
     if (loading || !data) {

@@ -18,6 +18,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import InfoHint from '../components/InfoHint';
+import OwnerBadge from '../components/OwnerBadge';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
@@ -75,7 +76,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                 </select>
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
                 <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Useful for family-level, multi-user governance and Zakat attribution." /></label><input type="text" placeholder="Owner (e.g., Spouse, Son)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label><input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
@@ -118,7 +119,7 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                     <button type="button" onClick={() => onDelete(asset)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-            {asset.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">{asset.owner}</span>}
+            <OwnerBadge owner={asset.owner} className="mt-2" />
             <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 min-w-0 overflow-hidden">
                 <div><dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt><dd className="metric-value font-bold text-dark text-xl tabular-nums mt-0.5">{formatCurrencyString(asset.value)}</dd></div>
                 <div className="grid grid-cols-2 gap-3 text-sm min-w-0">
@@ -311,7 +312,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                     </div>
                 )}
                 <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
-                <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Optional ownership label for shared/family tracking." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <div><label className="block text-sm font-medium text-gray-700">Link to Goal <InfoHint text="Connect this commodity to a goal so goal progress includes it." /></label><select value={goalId || 'none'} onChange={(e) => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} className="mt-1 w-full p-2 border rounded-md"><option value="none">Not linked</option>{goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
                 {formError && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
@@ -373,7 +374,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     <button type="button" onClick={() => onDelete(holding)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
                 </div>
             </div>
-            {holding.owner && <span className="mt-2 inline-block text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full w-fit">{holding.owner}</span>}
+            <OwnerBadge owner={holding.owner} className="mt-2" />
             <div className="mt-4 pt-4 border-t border-slate-100 space-y-3 min-w-0 overflow-hidden">
                 <div>
                     <dt className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Value</dt>
@@ -440,13 +441,13 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     }, [pageAction, clearPageAction]);
 
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
-        const assets = data?.assets ?? [];
-        const commodityHoldings = data?.commodityHoldings ?? [];
-        const physicalValue = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0);
-        const commodityValue = commodityHoldings.reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
-        const rentalIncome = assets.filter(a => a.isRental && a.monthlyRent).reduce((sum, a) => sum + (a.monthlyRent ?? 0), 0);
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const commodityHoldings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const physicalValue = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+        const commodityValue = commodityHoldings.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+        const rentalIncome = assets.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
         return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
-    }, [data?.assets, data?.commodityHoldings]);
+    }, [data?.assets, data?.commodityHoldings, (data as any)?.personalAssets, (data as any)?.personalCommodityHoldings]);
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };

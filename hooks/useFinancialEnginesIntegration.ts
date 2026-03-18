@@ -100,11 +100,12 @@ export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegration
       };
     }
 
-    const transactions = data.transactions ?? [];
-    const accounts = data.accounts ?? [];
+    const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
+    const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
     const budgets = data.budgets ?? [];
     const goals = data.goals ?? [];
-    const investmentsFlat = mapInvestmentsForContext(data.investments ?? []);
+    const investments = (data as any).personalInvestments ?? data.investments ?? [];
+    const investmentsFlat = mapInvestmentsForContext(investments);
 
     const context = buildUnifiedFinancialContext(
       transactions,

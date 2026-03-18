@@ -21,9 +21,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     const { exchangeRate } = useCurrency();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
-        const investments = data?.investments ?? [];
-        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap((p) =>
-            (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency })),
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap((p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
+            (p.holdings || []).map((h: Holding) => ({ ...h, portfolioCurrency: p.currency })),
         );
 
         const allHoldingsWithGains = allHoldings
@@ -46,13 +46,13 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             const assetClass = h.assetClass || 'Other';
             assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
         });
-        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]) => ({ name, value }))
-            .filter((x) => Number.isFinite(x.value) && x.value > 0)
-            .sort((a, b) => b.value - a.value);
+        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]: [string, number]) => ({ name, value }))
+            .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
 
         const portfolioAllocation = investments
-            .map((p) => {
-                const portfolioValue = (p.holdings || []).reduce((sum, h) => {
+            .map((p: { name?: string; currency?: string; holdings?: { quantity?: number; avgCost?: number; currentValue?: number }[] }) => {
+                const portfolioValue = (p.holdings || []).reduce((sum: number, h: { quantity?: number; avgCost?: number; currentValue?: number }) => {
                     const qty = Number(h.quantity || 0);
                     const avgCost = Number(h.avgCost || 0);
                     const marketValue = Number(h.currentValue || 0);
@@ -60,13 +60,13 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
                     return sum + effectiveValue;
                 }, 0);
-                return { name: p.name, value: toSAR(portfolioValue, p.currency, exchangeRate) };
+                return { name: p.name, value: toSAR(portfolioValue, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate) };
             })
-            .filter((x) => Number.isFinite(x.value) && x.value > 0)
-            .sort((a, b) => b.value - a.value);
+            .filter((x: { name?: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
+            .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
 
         return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation };
-    }, [data?.investments, exchangeRate]);
+    }, [data, exchangeRate]);
 
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);

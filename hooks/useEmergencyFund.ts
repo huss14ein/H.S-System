@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { FinancialData, Account, Transaction, Budget } from '../types';
+import { getPersonalWealthData } from '../utils/wealthScope';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -41,10 +42,11 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         targetAmount: 0,
     };
 
-    if (!data?.accounts?.length) return defaultResult;
-
-    const accounts = data.accounts as Account[];
-    const transactions = (data.transactions ?? []) as Transaction[];
+    if (!data) return defaultResult;
+    const { personalAccounts, personalTransactions } = getPersonalWealthData(data);
+    if (!personalAccounts.length) return defaultResult;
+    const accounts = personalAccounts as Account[];
+    const transactions = personalTransactions as Transaction[];
     const budgets = (data.budgets ?? []) as Budget[];
 
     const emergencyCash = accounts

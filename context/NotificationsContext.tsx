@@ -214,12 +214,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    // Cash runway automation (checking+savings vs avg monthly expense)
-    const liquidCash = (data.accounts ?? [])
+    // Cash runway automation (checking+savings vs avg monthly expense) — use personal wealth only
+    const accountsForRunway = (data as any)?.personalAccounts ?? data.accounts ?? [];
+    const transactionsForRunway = (data as any)?.personalTransactions ?? data.transactions ?? [];
+    const liquidCash = accountsForRunway
       .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
       .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
     const monthlyExpensesByKey = new Map<string, number>();
-    (data.transactions ?? []).forEach((t: any) => {
+    transactionsForRunway.forEach((t: any) => {
       if (t.type !== 'expense' || !t.date) return;
       const d = new Date(t.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

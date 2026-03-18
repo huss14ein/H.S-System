@@ -50,15 +50,17 @@ function buildEngineConfigFromSystem(
   const defaults = getDefaultWealthUltraConfig();
   const base = { ...defaults, ...systemConfig } as typeof defaults;
 
+  const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+  const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
   const cashAvailable =
     totalDeployableCash ??
-    (data?.accounts ?? []).reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
+    accounts.reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
 
-  const allHoldingTickers =
-    (data?.investments ?? [])
+  const allHoldingTickers: string[] =
+    investments
       .flatMap((p: { holdings?: Array<{ symbol?: string }> }) => p.holdings || [])
       .map((h: { symbol?: string }) => (h.symbol || '').toUpperCase())
-      .filter(Boolean) || [];
+      .filter((s: string) => Boolean(s));
 
   const universe = data?.portfolioUniverse ?? [];
 
@@ -100,7 +102,7 @@ function buildEngineConfigFromSystem(
   const upsideSet = new Set(upsideTickers.map(t => t.toUpperCase()));
   const specSet = new Set(specTickers.map(t => t.toUpperCase()));
   const universeByTicker = new Map(universe.map((t: { ticker: string; status?: string }) => [(t.ticker || '').toUpperCase(), (t.status || '').toLowerCase()]));
-  allHoldingTickers.forEach(sym => {
+  allHoldingTickers.forEach((sym: string) => {
     if (coreSet.has(sym) || upsideSet.has(sym) || specSet.has(sym)) return;
     const status = universeByTicker.get(sym);
     if (status === 'core') coreSet.add(sym);
@@ -185,14 +187,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const [scenarioId, setScenarioId] = React.useState('current');
 
   const engineState = useMemo(() => {
-    const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
+    const personalInvestments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+    const personalAccounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const allHoldings = personalInvestments.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
     const priceMap: Record<string, number> = {};
     Object.entries(simulatedPrices).forEach(([sym, o]) => {
       priceMap[sym.toUpperCase()] = (o as { price: number }).price;
     });
-    allHoldings.forEach(h => {
+    allHoldings.forEach((h: { symbol?: string; quantity?: number; currentValue?: number }) => {
       const sym = (h.symbol || '').toUpperCase();
-      if (!priceMap[sym] && h.quantity > 0) priceMap[sym] = h.currentValue / h.quantity;
+      if (!priceMap[sym] && (h.quantity ?? 0) > 0) priceMap[sym] = (h.currentValue ?? 0) / (h.quantity ?? 1);
     });
     const scenario = SCENARIO_OPTIONS.find(s => s.id === scenarioId) ?? SCENARIO_OPTIONS[0];
     if (scenario.multiplier !== 1) {
@@ -202,9 +206,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         investmentPlan: data?.investmentPlan,
         wealthUltraConfig: data?.wealthUltraConfig,
-        accounts: data?.accounts ?? [],
+        accounts: personalAccounts,
         portfolioUniverse: data?.portfolioUniverse ?? [],
-        investments: data?.investments ?? [],
+        investments: personalInvestments,
       },
       totalDeployableCash
     );
@@ -213,7 +217,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       priceMap,
       config,
     });
-  }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.portfolioUniverse, simulatedPrices, totalDeployableCash, scenarioId]);
+  }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.portfolioUniverse, (data as any)?.personalInvestments, (data as any)?.personalAccounts, simulatedPrices, totalDeployableCash, scenarioId]);
 
   const {
     totalPortfolioValue,
@@ -290,7 +294,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const top5Gainers = positions.filter(p => p.plPct > 0).sort((a, b) => b.plPct - a.plPct).slice(0, 5);
   const top5Losers = positions.filter(p => p.plPct < 0).sort((a, b) => a.plPct - b.plPct).slice(0, 5);
   const positionCount = positions.length;
-  const portfolioCount = (data?.investments ?? []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
+  const portfolioCount = ((data as any)?.personalInvestments ?? data?.investments ?? []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
   const buyOrders = orders.filter(o => o.type === 'BUY');
   const sellOrders = orders.filter(o => o.type === 'SELL');
 

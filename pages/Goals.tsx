@@ -148,21 +148,21 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
-        const assets = data?.assets ?? [];
-        const investments = data?.investments ?? [];
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
 
-        assets.filter(a => a.goalId === goal.id).forEach(a => {
+        assets.filter((a: { goalId?: string }) => a.goalId === goal.id).forEach((a: { name?: string; value?: number }) => {
             linkedItems.push({ name: a.name ?? '—', value: a.value ?? 0 });
         });
 
-        investments.forEach(p => {
+        investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number }[] }) => {
             const holdings = p.holdings ?? [];
             if (p.goalId === goal.id) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
+                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
                 linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
             } else {
-                holdings.filter(h => h.goalId === goal.id).forEach(h => {
-                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue, p.currency, exchangeRate) });
+                holdings.filter((h: { goalId?: string }) => h.goalId === goal.id).forEach((h: { symbol?: string; currentValue?: number }) => {
+                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate) });
                 });
             }
         });
@@ -352,7 +352,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-        (data?.transactions ?? []).filter(t => new Date(t.date) > sixMonthsAgo).forEach(t => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { date: string }) => new Date(t.date) > sixMonthsAgo).forEach((t: { date: string; amount?: number }) => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
             monthlyNet.set(monthKey, currentNet + (Number(t.amount) ?? 0)); // amount is positive for income, negative for expense
@@ -362,31 +362,31 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
-    }, [data?.transactions]);
+    }, [data?.transactions, (data as any)?.personalTransactions]);
 
     const { totalTargetAmount, totalCurrentAmount } = useMemo(() => {
         let totalTarget = 0;
         let totalCurrent = 0;
-        const assets = data?.assets ?? [];
-        const investments = data?.investments ?? [];
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const goals = data?.goals ?? [];
         const goalAssetValues = new Map<string, number>();
 
-        assets.forEach(a => {
+        assets.forEach((a: { goalId?: string; value?: number }) => {
             if (a.goalId) {
                 goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + (a.value ?? 0));
             }
         });
 
-        investments.forEach(p => {
+        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
             const holdings = p.holdings ?? [];
             if (p.goalId) {
-                const portfolioValue = holdings.reduce((sum, h) => sum + toSAR(h.currentValue, p.currency, exchangeRate), 0);
+                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
                 goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
             } else {
-                holdings.forEach(h => {
+                holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
                     if (h.goalId) {
-                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue, p.currency, exchangeRate));
+                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate));
                     }
                 });
             }
@@ -405,7 +405,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const projectedAnnualSurplus = useMemo(() => {
         const monthlyNet = new Map<string, number>();
         const year = new Date().getFullYear();
-        (data?.transactions ?? []).forEach(t => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number }) => {
             const d = new Date(t.date);
             if (d.getFullYear() !== year) return;
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

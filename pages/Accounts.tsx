@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { Account, Page } from '../types';
+import { Account, Page, InvestmentPortfolio } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -25,6 +25,7 @@ import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
+import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
@@ -112,8 +113,8 @@ const AccountModal: React.FC<{
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Useful for shared/family tracking (e.g. self, spouse)." /></label>
-                    <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded from your net worth)." /></label>
+                    <input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
                 {type === 'Investment' && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
@@ -219,6 +220,7 @@ const AccountCardComponent: React.FC<{
                     </p>
                 )}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
+                {!readOnly && account.owner && <OwnerBadge owner={account.owner} className="mt-2" />}
             </div>
         </div>
     );
@@ -296,26 +298,26 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [auth?.user?.id, data?.accounts?.length]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const investments = data?.investments ?? [];
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
-        const credit = accounts.filter(a => a.type === 'Credit');
-        const investmentAccountsList = accounts.filter(a => a.type === 'Investment');
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
+        const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
+        const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
 
-        const totalCash = cash.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalCredit = credit.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalCash = cash.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalCredit = credit.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
-        const investmentsWithUpdatedBalance = investmentAccountsList.map(acc => {
+        const investmentsWithUpdatedBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
             const portfolioValue = investments
-                .filter(p => p.accountId === acc.id)
-                .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
+                .filter((p: { accountId?: string }) => p.accountId === acc.id)
+                .reduce((pSum: number, p: InvestmentPortfolio) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
             return { ...acc, balance: portfolioValue };
         });
 
-        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
         return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
-    }, [data?.accounts, data?.investments, exchangeRate]);
+    }, [data?.accounts, data?.investments, (data as any)?.personalAccounts, (data as any)?.personalInvestments, exchangeRate]);
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);

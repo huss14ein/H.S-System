@@ -102,11 +102,13 @@ export function computeHouseholdStressFromData(
   const profile = options?.profile ?? 'Moderate';
   const overrides = options?.overrides ?? [];
 
+  const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
+  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
   const incomeByMonth = Array(12).fill(0);
-  (data.transactions ?? []).forEach((t) => {
+  transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
     const d = new Date(t.date);
     if (d.getFullYear() !== year || t.type !== 'income') return;
-    incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+    incomeByMonth[d.getMonth()] += Math.max(0, Number((t as any).amount) || 0);
   });
   const incomeWithData = incomeByMonth.filter((v) => v > 0);
   const inferredAvg =
@@ -115,8 +117,8 @@ export function computeHouseholdStressFromData(
       : 0;
 
   const input = buildHouseholdEngineInputFromData(
-    (data.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
-    (data.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+    transactions as Array<{ date: string; type?: string; amount?: number }>,
+    accounts as Array<{ type?: string; balance?: number }>,
     (data.goals ?? []) as any[],
     {
       year,

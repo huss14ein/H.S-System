@@ -11,15 +11,15 @@ const SinkingFunds: React.FC = () => {
         const twoYearsAgo = new Date();
         twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
 
-        // 1. Find large, fixed, recurring expenses from the last 2 years
-        (data?.transactions ?? [])
-            .filter(t => 
-                t.type === 'expense' && 
-                t.transactionNature === 'Fixed' && 
+        // 1. Find large, fixed, recurring expenses from the last 2 years (personal accounts only)
+        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+            .filter((t: { type?: string; transactionNature?: string; amount?: number; date: string }) =>
+                t.type === 'expense' &&
+                t.transactionNature === 'Fixed' &&
                 Math.abs(Number(t.amount) || 0) > 2000 && // Significant amount
                 new Date(t.date) > twoYearsAgo
             )
-            .forEach(t => {
+            .forEach((t: { description?: string; amount?: number; date: string }) => {
                 const existing = recurringExpenses.get(t.description ?? '') || { amount: Math.abs(Number(t.amount) || 0), dates: [] };
                 existing.dates.push(new Date(t.date));
                 recurringExpenses.set(t.description ?? '', existing);
@@ -53,7 +53,7 @@ const SinkingFunds: React.FC = () => {
             }
         }
         return funds.sort((a,b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
-    }, [data?.transactions]);
+    }, [data?.transactions, (data as any)?.personalTransactions]);
 
     if (loading || !data) {
         return (
