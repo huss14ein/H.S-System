@@ -3,6 +3,7 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
+import { getPersonalWealthData } from '../utils/wealthScope';
 
 // Default parameters live in app settings/config (here and wealth-ultra/config), not in the DB.
 // DB only stores user overrides; we merge with these defaults when reading.
@@ -27,6 +28,9 @@ const initialData: FinancialData = {
     wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
     budgetRequests: [],
 };
+
+/** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
+const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
 
 interface DataContextType {
   data: FinancialData;
@@ -1821,16 +1825,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { SAR: v.SAR, USD: v.USD };
     }, [availableCashByAccountId]);
 
+    const dataWithPersonal = useMemo(() => {
+        const personal = getPersonalWealthData(data);
+        return { ...data, ...personal };
+    }, [data]);
+
+    const accountsForDeployable = useMemo((): Account[] => {
+        const d = dataWithPersonal as FinancialData & { personalAccounts?: Account[] };
+        return (d.personalAccounts ?? d.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[];
+    }, [dataWithPersonal]);
+
     const totalDeployableCash = useMemo(() => {
-        const bank = (data.accounts ?? []).filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
-        const platformCash = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
+        const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
             return s + cash.SAR + cash.USD;
         }, 0);
         return bank + platformCash;
-    }, [data?.accounts, getAvailableCashForAccount]);
+    }, [accountsForDeployable, getAvailableCashForAccount]);
 
-    const value = { data, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

@@ -93,28 +93,28 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     }, [useNisabAmount, localNisabAmount, nisabAmountSetting, localGoldPrice, goldPrice]);
 
     const zakatableAssets = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const investments = data?.investments ?? [];
-        const commodityHoldings = data?.commodityHoldings ?? [];
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance), 0);
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const commodityHoldings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? '')).reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
         const invValue = investments
-            .flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })))
-            .filter(h => h.zakahClass === 'Zakatable')
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
-        const commodities = commodityHoldings.filter(c => c.zakahClass === 'Zakatable').reduce((sum, c) => sum + c.currentValue, 0);
+            .flatMap((p: { holdings?: { zakahClass?: string; currentValue?: number }[]; currency?: string }) => (p.holdings || []).map((h: { zakahClass?: string; currentValue?: number; portfolioCurrency?: string }) => ({ ...h, portfolioCurrency: p.currency })))
+            .filter((h: { zakahClass?: string }) => h.zakahClass === 'Zakatable')
+            .reduce((sum: number, h: { currentValue?: number; portfolioCurrency?: string }) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency as 'USD' | 'SAR' | undefined, exchangeRate), 0);
+        const commodities = commodityHoldings.filter((c: { zakahClass?: string }) => c.zakahClass === 'Zakatable').reduce((sum: number, c: { currentValue?: number }) => sum + (c.currentValue ?? 0), 0);
         const total = cash + invValue + commodities;
         return { cash, investments: invValue, commodities, total };
-    }, [data?.accounts, data?.investments, data?.commodityHoldings, exchangeRate]);
+    }, [data?.accounts, data?.investments, data?.commodityHoldings, (data as any)?.personalAccounts, (data as any)?.personalInvestments, (data as any)?.personalCommodityHoldings, exchangeRate]);
 
     const deductibleLiabilities = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const liabilities = data?.liabilities ?? [];
-        const shortTermDebts = accounts.filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+        const shortTermDebts = accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
         // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
-        const trackedLiabilities = liabilities.filter(l => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum, liability) => sum + Math.abs(liability.amount ?? 0), 0);
+        const trackedLiabilities = liabilities.filter((l: { status?: string; amount?: number }) => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum: number, liability: { amount?: number }) => sum + Math.abs(liability.amount ?? 0), 0);
         const total = shortTermDebts + trackedLiabilities + otherDebts;
         return { shortTermDebts, trackedLiabilities, otherDebts, total };
-    }, [otherDebts, data?.accounts, data?.liabilities]);
+    }, [otherDebts, data?.accounts, data?.liabilities, (data as any)?.personalAccounts, (data as any)?.personalLiabilities]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);

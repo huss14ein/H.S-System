@@ -13,6 +13,7 @@ import { BitcoinIcon } from '../components/icons/BitcoinIcon';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
+import OwnerBadge from '../components/OwnerBadge';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 
 const CommodityHoldingModal: React.FC<{
@@ -108,7 +109,7 @@ const CommodityHoldingModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase & Current Value <InfoHint text="Cost basis and current market value; use Update Prices to refresh current value from APIs." /></label>
                     <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" /></div>
                 </div>
-                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="For shared/family tracking (e.g. Spouse, Son)." /></label><input type="text" placeholder="e.g., Spouse, Son" value={owner} onChange={e => setOwner(e.target.value)} className="input-base mt-1 w-full" /></div>
+                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base mt-1 w-full" /></div>
                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Zakat Classification <InfoHint text="Zakatable: included in Zakat calculation. Non-Zakatable: excluded (e.g. personal use)." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="select-base mt-1 w-full"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <button type="submit" className="w-full btn-primary">Save</button>
             </form>
@@ -138,7 +139,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     </div>
                     <div className="flex space-x-1"><button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button></div>
                 </div>
-                {holding.owner && <span className="mt-2 inline-block text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{holding.owner}</span>}
+                <OwnerBadge owner={holding.owner} className="mt-2" />
                 <div className="mt-4 space-y-3 min-w-0 overflow-hidden">
                     <div className="min-w-0 overflow-hidden"><dt className="metric-label text-sm text-gray-500">Current Value</dt><dd className="metric-value font-semibold text-dark text-2xl">{formatCurrencyString(holding.currentValue ?? 0)}</dd></div>
                     <div className="grid grid-cols-2 gap-4 text-sm min-w-0"><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Purchase Value</dt><dd className="metric-value font-medium text-gray-700">{formatCurrencyString(holding.purchaseValue)}</dd></div><div className="min-w-0 overflow-hidden"><dt className="metric-label text-gray-500">Unrealized G/L</dt><dd className="metric-value font-semibold">{formatCurrency(unrealizedGain, { colorize: true })}</dd></div></div>
@@ -164,8 +165,9 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
     const totalCommodityValue = useMemo(() => {
-        return (data?.commodityHoldings ?? []).reduce((sum, h) => sum + (h.currentValue ?? 0), 0);
-    }, [data?.commodityHoldings]);
+        const holdings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        return holdings.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+    }, [data?.commodityHoldings, (data as any)?.personalCommodityHoldings]);
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
@@ -179,23 +181,24 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const handleConfirmCommodityDelete = () => { if(commodityToDelete) { deleteCommodityHolding(commodityToDelete.id); setCommodityToDelete(null); } };
 
     const handleUpdatePrices = async () => {
-        if (!(data?.commodityHoldings ?? []).length) return;
+        const holdingsForPrices = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        if (!holdingsForPrices.length) return;
         setIsUpdatingPrices(true);
         try {
-            const { prices } = await getAICommodityPrices((data?.commodityHoldings ?? []).map(c => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
+            const { prices } = await getAICommodityPrices(holdingsForPrices.map((c: { symbol?: string; name?: string; goldKarat?: number }) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
             const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
-                const updates = (data?.commodityHoldings ?? [])
-                    .map(h => {
-                        const newPriceInfo = prices.find(p => match(p, h));
-                        return newPriceInfo ? { id: h.id, currentValue: newPriceInfo.price * h.quantity } : null;
+                const updates = holdingsForPrices
+                    .map((h: CommodityHolding) => {
+                        const newPriceInfo = prices.find((p: { symbol: string; price: number }) => match(p, h));
+                        return newPriceInfo ? { id: h.id, currentValue: newPriceInfo.price * (h.quantity ?? 0) } : null;
                     })
-                    .filter((u): u is { id: string; currentValue: number; } => u !== null);
+                    .filter((u: { id: string; currentValue: number } | null): u is { id: string; currentValue: number } => u !== null);
                 
                 if (updates.length > 0) {
                     await batchUpdateCommodityHoldingValues(updates);
-                    if (updates.length < (data?.commodityHoldings ?? []).length) {
-                        console.warn(`Updated ${updates.length} of ${(data?.commodityHoldings ?? []).length} commodity prices.`);
+                    if (updates.length < holdingsForPrices.length) {
+                        console.warn(`Updated ${updates.length} of ${holdingsForPrices.length} commodity prices.`);
                     }
                 }
             }
