@@ -2,7 +2,6 @@ import React, { createContext, useState, ReactNode, useEffect, useContext, useRe
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction } from '../types';
-import { getMockData } from '../data/mockData';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 
 // Default parameters live in app settings/config (here and wealth-ultra/config), not in the DB.
