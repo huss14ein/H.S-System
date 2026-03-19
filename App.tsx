@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import PendingApprovalPage from './pages/PendingApprovalPage';
 import { AuthContext, AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
@@ -128,7 +129,7 @@ const App: React.FC = () => {
     return null; // Or a loading spinner
   }
 
-  const { isAuthenticated } = auth;
+  const { isAuthenticated, isApproved } = auth;
 
   const triggerPageAction = (page: Page, action: string) => {
     setActivePage(page);
@@ -200,6 +201,28 @@ const App: React.FC = () => {
       <ThemeProvider>
         <AuthProvider>
           {showSignup ? <SignupPage /> : <LoginPage />}
+        </AuthProvider>
+      </ThemeProvider>
+    );
+  }
+
+  if (isApproved === false) {
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <PendingApprovalPage />
+        </AuthProvider>
+      </ThemeProvider>
+    );
+  }
+
+  if (isApproved === null) {
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <div className="flex justify-center items-center min-h-screen bg-gray-50">
+            <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Checking access" />
+          </div>
         </AuthProvider>
       </ThemeProvider>
     );

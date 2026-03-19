@@ -9,15 +9,19 @@ const SignupPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
   const auth = useContext(AuthContext);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    setSuccess(false);
     const result = await auth!.signup(name.trim(), email.trim(), password);
     if (result.error) {
       setError(result.error.message);
+    } else if (result.user) {
+      setSuccess(true);
     }
     setLoading(false);
   };
@@ -43,6 +47,11 @@ const SignupPage: React.FC = () => {
             <p className="text-center text-gray-500 mb-6">Sign up for your Finova account.</p>
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && <p className="text-red-500 text-sm text-center bg-red-50 p-3 rounded-md">{error}</p>}
+              {success && (
+                <p className="text-emerald-700 text-sm text-center bg-emerald-50 p-3 rounded-md border border-emerald-200">
+                  Account created. Your access is pending admin approval. You can sign in to check your status.
+                </p>
+              )}
               <div>
                 <label htmlFor="signup-name" className="block text-sm font-medium text-gray-700">Full name</label>
                 <input

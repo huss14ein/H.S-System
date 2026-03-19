@@ -2,6 +2,8 @@ import React, { useContext, useState, useEffect, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { RiskProfile, Page } from '../types';
+import { supabase } from '../services/supabaseClient';
+import { inferIsAdmin } from '../utils/role';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
@@ -47,6 +49,50 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     useEffect(() => {
         setAuditEntries(getAuditLog(80));
     }, [data?.transactions?.length]);
+
+    useEffect(() => {
+        const loadAdminAndPending = async () => {
+            if (!supabase || !auth?.user) return;
+            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
+            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
+            setIsAdmin(admin);
+            if (admin) {
+                const { data: users } = await supabase
+                    .from('users')
+                    .select('id, name, email, created_at')
+                    .eq('approved', false)
+                    .order('created_at', { ascending: false });
+                setPendingUsers(users ?? []);
+            }
+        };
+        loadAdminAndPending();
+    }, [auth?.user]);
+
+    const handleApproveUser = async (userId: string) => {
+        if (!supabase) return;
+        setApprovalLoading(userId);
+        try {
+            await supabase.rpc('approve_signup_user', { p_user_id: userId });
+            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+        } catch (e) {
+            console.error('Approve failed:', e);
+        } finally {
+            setApprovalLoading(null);
+        }
+    };
+
+    const handleRejectUser = async (userId: string) => {
+        if (!supabase) return;
+        setApprovalLoading(userId);
+        try {
+            await supabase.rpc('reject_signup_user', { p_user_id: userId });
+            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+        } catch (e) {
+            console.error('Reject failed:', e);
+        } finally {
+            setApprovalLoading(null);
+        }
+    };
 
     const handleSettingChange = <K extends keyof typeof localSettings>(key: K, value: (typeof localSettings)[K]) => {
         const newSettings = { ...localSettings, [key]: value };
@@ -111,6 +157,44 @@ const hasData = accountsForEmptyCheck.length > 0;
                     </div>
                 </div>
             </SectionCard>
+
+            {isAdmin && (
+                <SectionCard title="User Approvals" className="border border-slate-200">
+                    <p className="text-sm text-slate-600 mb-4">Approve or reject new signups. Pending users cannot access the platform until approved.</p>
+                    {pendingUsers.length === 0 ? (
+                        <p className="text-slate-500 text-sm">No pending signups.</p>
+                    ) : (
+                        <ul className="space-y-3">
+                            {pendingUsers.map((u) => (
+                                <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <div>
+                                        <p className="font-medium text-slate-800">{u.name || '—'}</p>
+                                        <p className="text-sm text-slate-500">{u.email || u.id}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleApproveUser(u.id)}
+                                            disabled={approvalLoading === u.id}
+                                            className="px-3 py-1.5 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                                        >
+                                            {approvalLoading === u.id ? '…' : 'Approve'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRejectUser(u.id)}
+                                            disabled={approvalLoading === u.id}
+                                            className="px-3 py-1.5 text-sm font-medium rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                        >
+                                            Reject
+                                        </button>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </SectionCard>
+            )}
 
             <SectionCard title="Financial Preferences" className="border border-slate-200">
                 <div className="space-y-6">

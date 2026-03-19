@@ -585,6 +585,7 @@ export interface SecurityValidationResult {
 
 interface AuthContextType {
   isAuthenticated: boolean;
+  isApproved: boolean | null;
   user: User | null;
   session: Session | null;
   login: (email: string, password: string) => Promise<{ error: AuthError | null; user?: User | null }>;
@@ -606,6 +607,7 @@ interface AuthContextType {
   extendSession: () => Promise<{ error: AuthError | null }>;
   isSessionExpiring: boolean;
   timeUntilExpiry: number;
+  refetchApprovalStatus: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -614,6 +616,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
     const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isApproved, setIsApproved] = useState<boolean | null>(null);
     const [isEmailVerified, setIsEmailVerified] = useState(false);
     const [is2FAEnabled, setIs2FAEnabled] = useState(false);
     const [twoFactorMethod, setTwoFactorMethod] = useState<'email' | 'sms' | 'totp' | null>(null);
@@ -684,6 +687,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [supabase, session, user]);
 
+    const fetchApprovalStatus = useCallback(async (userId: string) => {
+        if (!supabase) {
+            setIsApproved(true);
+            return;
+        }
+        try {
+            const { data, error } = await supabase
+                .from('users')
+                .select('approved')
+                .eq('id', userId)
+                .maybeSingle();
+            if (error) {
+                setIsApproved(true);
+                return;
+            }
+            setIsApproved(data?.approved ?? true);
+        } catch {
+            setIsApproved(true);
+        }
+    }, []);
+
     useEffect(() => {
         const currentSupabase = supabase;
         if (!currentSupabase) {
@@ -692,6 +716,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             }
             setLoading(false);
+            setIsApproved(true);
             return;
         }
     
@@ -700,20 +725,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setSession(session);
             setUser(session?.user ?? null);
             setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
+            if (session?.user?.id) {
+                await fetchApprovalStatus(session.user.id);
+            } else {
+                setIsApproved(null);
+            }
             setLoading(false);
         };
     
         getSession();
     
-        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange(async (_event, session) => {
             setSession(session);
             setUser(session?.user ?? null);
             setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
+            if (session?.user?.id) {
+                await fetchApprovalStatus(session.user.id);
+            } else {
+                setIsApproved(null);
+            }
             setLoading(false);
         });
     
         return () => subscription.unsubscribe();
-    }, []);
+    }, [fetchApprovalStatus]);
 
     const login = async (email: string, pass: string) => {
         if (!supabase) return { error: { name: 'AuthApiError', message: 'Supabase not configured' } as AuthError };
@@ -1008,8 +1043,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    const refetchApprovalStatus = useCallback(async () => {
+        if (user?.id) await fetchApprovalStatus(user.id);
+    }, [user?.id, fetchApprovalStatus]);
+
     const value = {
         isAuthenticated: !!user,
+        isApproved,
         user,
         session,
         login,
@@ -1028,7 +1068,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         sessionExpiryTime,
         extendSession,
         isSessionExpiring,
-        timeUntilExpiry
+        timeUntilExpiry,
+        refetchApprovalStatus
     };
     
     if (loading) {
