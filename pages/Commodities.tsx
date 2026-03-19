@@ -164,10 +164,14 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const [commodityToDelete, setCommodityToDelete] = useState<CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
+    const commodityRows = useMemo(
+        () => (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [],
+        [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings]
+    );
+
     const totalCommodityValue = useMemo(() => {
-        const holdings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
-        return holdings.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
-    }, [data?.commodityHoldings, (data as any)?.personalCommodityHoldings]);
+        return commodityRows.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+    }, [commodityRows]);
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
@@ -181,7 +185,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const handleConfirmCommodityDelete = () => { if(commodityToDelete) { deleteCommodityHolding(commodityToDelete.id); setCommodityToDelete(null); } };
 
     const handleUpdatePrices = async () => {
-        const holdingsForPrices = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const holdingsForPrices = commodityRows;
         if (!holdingsForPrices.length) return;
         setIsUpdatingPrices(true);
         try {
@@ -229,7 +233,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
             </div>
         ) : (
         <div className="space-y-6">
-            <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} />
+            <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} tooltip="Personal holdings only (excludes commodities with Owner set). Matches Assets page metals/crypto total." />
 
             <div className="section-card">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
@@ -240,8 +244,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                     </button>
                 </div>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {(data?.commodityHoldings ?? []).map(h => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
-                    {(data?.commodityHoldings ?? []).length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
+                    {commodityRows.map((h: CommodityHolding) => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
+                    {commodityRows.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </div>
             

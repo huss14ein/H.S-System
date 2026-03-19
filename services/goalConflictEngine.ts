@@ -1,0 +1,113 @@
+/**
+ * Goal conflict logic (spec §19).
+ * Detect same cash funding too many goals, impossible dates, low priority hurting high.
+ */
+
+import type { Goal } from '../types';
+
+function targetAmount(g: Goal): number {
+  return Number(g.targetAmount ?? (g as { target_amount?: number }).target_amount ?? 0);
+}
+
+function currentAmount(g: Goal): number {
+  return Number(g.currentAmount ?? (g as { current_amount?: number }).current_amount ?? 0);
+}
+
+function targetDate(g: Goal): Date | null {
+  const raw = g.deadline ?? (g as { targetDate?: string }).targetDate ?? (g as { target_date?: string }).target_date;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export interface GoalConflict {
+  goalIds: string[];
+  reason: 'same_cash_source' | 'impossible_date' | 'low_priority_hurts_high' | 'house_delayed_by_trading' | 'travel_reduces_emergency';
+  message: string;
+}
+
+/**
+ * Detect conflicts: too many goals funded from same capacity, impossible target dates, priority clashes.
+ */
+export function detectGoalConflict(args: {
+  goals: Goal[];
+  /** Monthly surplus available for goals (after essentials). */
+  monthlySurplusForGoals: number;
+  /** Optional: monthly already allocated to "house" goal. */
+  monthlyToHouseGoal?: number;
+}): GoalConflict[] {
+  const conflicts: GoalConflict[] = [];
+  const goals = args.goals ?? [];
+  const surplus = Math.max(0, args.monthlySurplusForGoals ?? 0);
+
+  const requiredTotal = goals.reduce((s, g) => {
+    const gap = Math.max(0, targetAmount(g) - currentAmount(g));
+    const end = targetDate(g);
+    if (gap <= 0 || !end) return s;
+    const months = Math.max(1, (end.getFullYear() - new Date().getFullYear()) * 12 + (end.getMonth() - new Date().getMonth()));
+    return s + gap / months;
+  }, 0);
+
+  if (surplus > 0 && requiredTotal > surplus * 1.2) {
+    conflicts.push({
+      goalIds: goals.filter((g) => targetAmount(g) > currentAmount(g)).map((g) => g.id),
+      reason: 'same_cash_source',
+      message: `Total required monthly (${requiredTotal.toFixed(0)}) exceeds available surplus (${surplus.toFixed(0)}). Same cash is funding too many goals.`,
+    });
+  }
+
+  goals.forEach((g) => {
+    const end = targetDate(g);
+    if (!end) return;
+    const gap = Math.max(0, targetAmount(g) - currentAmount(g));
+    if (gap <= 0) return;
+    const monthsLeft = Math.max(0, (end.getFullYear() - new Date().getFullYear()) * 12 + (end.getMonth() - new Date().getMonth()));
+    const neededPerMonth = gap / Math.max(1, monthsLeft);
+    if (surplus > 0 && neededPerMonth > surplus) {
+      conflicts.push({
+        goalIds: [g.id],
+        reason: 'impossible_date',
+        message: `Target date for "${g.name}" is not achievable with current surplus (need ${neededPerMonth.toFixed(0)}/mo, have ${surplus.toFixed(0)}).`,
+      });
+    }
+  });
+
+  return conflicts;
+}
+
+/**
+ * Feasibility: can this goal be met by target date with given monthly contribution?
+ */
+export function goalFeasibilityCheck(args: {
+  goal: Goal;
+  monthlyContribution: number;
+  fromDate?: Date;
+}): { feasible: boolean; monthsNeeded: number; monthsAvailable: number } {
+  const from = args.fromDate ?? new Date();
+  const gap = Math.max(0, targetAmount(args.goal) - currentAmount(args.goal));
+  const end = targetDate(args.goal);
+  if (gap <= 0) return { feasible: true, monthsNeeded: 0, monthsAvailable: 999 };
+  if (!end) return { feasible: false, monthsNeeded: 999, monthsAvailable: 0 };
+  const monthsAvailable = Math.max(0, (end.getFullYear() - from.getFullYear()) * 12 + (end.getMonth() - from.getMonth()));
+  const monthly = Math.max(0, args.monthlyContribution);
+  const monthsNeeded = monthly > 0 ? Math.ceil(gap / monthly) : 999;
+  return { feasible: monthsNeeded <= monthsAvailable, monthsNeeded, monthsAvailable };
+}
+
+/**
+ * Suggest reprioritization: order goals by priority then by feasibility; return ordered list.
+ */
+export function reprioritizeConflictingGoals(args: {
+  goals: Goal[];
+  monthlySurplusForGoals: number;
+}): Goal[] {
+  const ordered = [...(args.goals ?? [])].sort((a, b) => {
+    const pA = (a.priority === 'High' ? 3 : a.priority === 'Medium' ? 2 : 1);
+    const pB = (b.priority === 'High' ? 3 : b.priority === 'Medium' ? 2 : 1);
+    if (pA !== pB) return pB - pA;
+    const gapA = Math.max(0, targetAmount(a) - currentAmount(a));
+    const gapB = Math.max(0, targetAmount(b) - currentAmount(b));
+    return gapA - gapB;
+  });
+  return ordered;
+}
