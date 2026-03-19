@@ -16,6 +16,9 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import OwnerBadge from '../components/OwnerBadge';
+import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
+import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -251,6 +254,68 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
     }, [data]);
 
+    const { liquidityRatioVal, debtServicePct } = useMemo(() => {
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const liquid = accounts
+            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const liq = liquidityRatio(liquid, Math.max(1, totalDebt));
+        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const incomes = txs.filter(
+            (t: { date: string; type?: string; category?: string; amount?: number }) =>
+                countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+        );
+        const byM = new Map<string, number>();
+        incomes.forEach((t: { date: string; amount?: number }) => {
+            const d = new Date(t.date);
+            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
+        });
+        const avgMonthlyIncome =
+            byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
+        const annualDebtGuess = totalDebt * 0.12;
+        const dsr =
+            avgMonthlyIncome > 0 ? debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100 : null;
+        return { liquidityRatioVal: liq, debtServicePct: dsr };
+    }, [data, totalDebt]);
+
+    const debtPayoffOrder = useMemo(() => {
+        const active = allDebts.filter((l) => (l.status ?? 'Active') === 'Active');
+        if (active.length === 0) return [];
+        const items = active.map((l) => ({
+            id: l.id,
+            balance: Math.abs(l.amount ?? 0),
+            annualRatePct: 12,
+            monthlyPayment: Math.abs(l.amount ?? 0) * 0.02,
+        }));
+        return debtPayoffPlan(items, 'avalanche');
+    }, [allDebts]);
+
+    const debtStress = useMemo(() => {
+        const avgMonthlyIncome =
+            (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const txs = (avgMonthlyIncome as { date: string; type?: string; category?: string; amount?: number }[]).filter(
+            (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+        );
+        const byM = new Map<string, number>();
+        txs.forEach((t: { date: string; amount?: number }) => {
+            const d = new Date(t.date);
+            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
+        });
+        const grossMonthly = byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const liquid = accounts
+            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const monthlyPaymentsEst = totalDebt * 0.02;
+        return debtStressScore(monthlyPaymentsEst, grossMonthly, liquid);
+    }, [data, totalDebt]);
+
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
         setIsModalOpen(true);
@@ -309,12 +374,37 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Sum of unpaid money you owe." />
                 <Card title="Money Owed to You" value={formatCurrencyString(totalReceivable)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of unpaid amounts others owe you." />
                 <Card title="Net (Receivables − Debt)" value={formatCurrencyString(netPosition)} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Positive = you are owed more than you owe; negative = you owe more than you are owed." />
                 <Card title="Debt-to-Asset Ratio" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Debt as a percentage of your assets (excludes receivables)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
+                <Card title="Liquidity ratio" value={liquidityRatioVal.toFixed(2)} tooltip="Checking+Savings vs total debt (higher = more cash to cover debt)." indicatorColor={liquidityRatioVal >= 0.5 ? 'green' : liquidityRatioVal >= 0.2 ? 'yellow' : 'red'} valueColor={liquidityRatioVal >= 0.5 ? 'text-emerald-700' : liquidityRatioVal >= 0.2 ? 'text-amber-700' : 'text-red-700'} />
+                <Card title="Debt service (est.)" value={debtServicePct != null ? `${debtServicePct.toFixed(1)}%` : '—'} tooltip="Rough: ~12% of debt balance as annual payments vs your 6-mo avg income." indicatorColor={debtServicePct != null && debtServicePct > 40 ? 'red' : debtServicePct != null && debtServicePct > 25 ? 'yellow' : 'green'} valueColor={debtServicePct != null && debtServicePct > 40 ? 'text-red-700' : debtServicePct != null && debtServicePct > 25 ? 'text-amber-700' : 'text-slate-700'} />
             </div>
+
+            {allDebts.filter((l) => (l.status ?? 'Active') === 'Active').length > 0 && (
+                <SectionCard title="Debt intelligence" className="mt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <h4 className="font-semibold text-slate-800 mb-1">Payoff order (avalanche)</h4>
+                            <p className="text-xs text-slate-500 mb-2">Prioritize highest effective rate first.</p>
+                            <ol className="list-decimal list-inside text-sm text-slate-700 space-y-1">
+                                {debtPayoffOrder.map((id) => {
+                                    const liab = allDebts.find((l) => l.id === id);
+                                    return liab ? <li key={id}>{liab.name}</li> : null;
+                                })}
+                            </ol>
+                        </div>
+                        <div>
+                            <h4 className="font-semibold text-slate-800 mb-1">Debt stress</h4>
+                            <p className="text-xs text-slate-500 mb-2">Payment coverage and pressure.</p>
+                            <p className="text-lg font-bold text-slate-900">{debtStress.score} / 100</p>
+                            <p className="text-sm text-slate-600">{debtStress.label} · Payment-to-income: {(debtStress.paymentToIncomeRatio * 100).toFixed(1)}%</p>
+                        </div>
+                    </div>
+                </SectionCard>
+            )}
 
             <SectionCard title="What I Owe" className="mt-6">
                 <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>

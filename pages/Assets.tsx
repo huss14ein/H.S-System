@@ -415,14 +415,6 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { isAiAvailable } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
 
-    if (loading || !data) {
-        return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading assets" />
-            </div>
-        );
-    }
-    
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
@@ -440,21 +432,23 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         }
     }, [pageAction, clearPageAction]);
 
+    /** Personal wealth only — matches Summary/Dashboard net worth (excludes items with Owner set). */
+    const assetsList = (data as any)?.personalAssets ?? data?.assets ?? [];
+    const commodityList = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
-        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
-        const commodityHoldings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
-        const physicalValue = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
-        const commodityValue = commodityHoldings.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
-        const rentalIncome = assets.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
+        const physicalValue = assetsList.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+        const commodityValue = commodityList.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+        const rentalIncome = assetsList.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
         return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
-    }, [data?.assets, data?.commodityHoldings, (data as any)?.personalAssets, (data as any)?.personalCommodityHoldings]);
+    }, [assetsList, commodityList]);
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
-    const handleSaveAsset = (asset: Asset) => { if ((data?.assets ?? []).some(a => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
-    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = (data?.assets ?? []).find(a => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
+    const handleSaveAsset = (asset: Asset) => { if (assetsList.some((a: Asset) => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleLinkGoal = (assetId: string, goalId: string) => { const asset = assetsList.find((a: Asset) => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
     const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
-        const holding = (data?.commodityHoldings ?? []).find((h) => h.id === holdingId);
+        const holding = commodityList.find((h: CommodityHolding) => h.id === holdingId);
         if (holding) updateCommodityHolding({ ...holding, goalId: goalId === 'none' ? undefined : goalId });
     };
     
@@ -478,18 +472,18 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     };
     
     const handleUpdatePrices = async () => {
-        const commodityHoldings = data?.commodityHoldings ?? [];
+        const commodityHoldings = commodityList;
         if (commodityHoldings.length === 0) return;
         setIsUpdatingPrices(true);
         setGroundingChunks([]);
         try {
-            const { prices, groundingChunks: chunks } = await getAICommodityPrices(commodityHoldings.map(c => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(commodityHoldings.map((c: CommodityHolding) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
             if (chunks) {
                 setGroundingChunks(chunks);
             }
             if (prices.length > 0) {
                 const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
-                const updates = commodityHoldings.map(h => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u): u is { id: string; currentValue: number; } => u !== null);
+                const updates = commodityHoldings.map((h: CommodityHolding) => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u: { id: string; currentValue: number } | null): u is { id: string; currentValue: number } => u !== null);
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
@@ -499,13 +493,21 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     };
 
 
-    const orderedAssets = useMemo(() => [...(data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [data?.assets]);
-    const orderedCommodities = useMemo(() => [...(data?.commodityHoldings ?? [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [data?.commodityHoldings]);
+    const orderedAssets = useMemo(() => [...assetsList].sort((a, b) => a.name.localeCompare(b.name)), [assetsList]);
+    const orderedCommodities = useMemo(() => [...commodityList].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [commodityList]);
+
+    if (loading || !data) {
+        return (
+            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
+                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading assets" />
+            </div>
+        );
+    }
 
     return (
         <PageLayout
             title="Assets"
-            description="Physical assets and commodities (metals & crypto). Manage property, vehicles, Sukuk, gold, silver, bitcoin and other holdings. Link to goals and use Update Prices for current commodity values."
+            description="Physical assets and commodities (metals & crypto) for your personal net worth. Totals and lists exclude items with Owner set (managed wealth). Link to goals and use Update Prices for current commodity values."
             action={
                 <div className="flex flex-wrap items-center gap-2">
                     <PageActionsDropdown
@@ -538,10 +540,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             </SectionCard>
 
             <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of physical assets and metals/crypto." />
-                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of physical assets (property, vehicles, etc.)." />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Current value of metals and crypto holdings." />
-                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Estimated monthly rental income from physical assets." />
+                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set." />
+                <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Personal physical assets (property, vehicles, Sukuk, etc.)." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Personal commodity holdings only." />
+                <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
 
             <SectionCard title="Physical Assets" className="overflow-visible">
@@ -549,7 +551,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     {orderedAssets.map((asset) => (
                         <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data?.goals ?? []} />
                     ))}
-                    {(data?.assets?.length ?? 0) === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
+                    {assetsList.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
                 </div>
             </SectionCard>
 
@@ -560,8 +562,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <button
                         type="button"
                         onClick={handleUpdatePrices}
-                        disabled={isUpdatingPrices || (data?.commodityHoldings?.length ?? 0) === 0}
-                        title={(data?.commodityHoldings?.length ?? 0) === 0 ? "Add a commodity to update prices" : "Update prices"}
+                        disabled={isUpdatingPrices || commodityList.length === 0}
+                        title={commodityList.length === 0 ? "Add a commodity to update prices" : "Update prices"}
                         className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <SparklesIcon className="h-4 w-4" />
@@ -577,7 +579,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>
                 </div>
-                {!isAiAvailable && (data?.commodityHoldings?.length ?? 0) > 0 && (
+                {!isAiAvailable && commodityList.length > 0 && (
                     <div className="alert-warning mb-4 rounded-lg">
                         <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
                     </div>
@@ -596,7 +598,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     {orderedCommodities.map((h) => (
                         <CommodityHoldingCard key={h.id} holding={h} goals={data?.goals ?? []} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
                     ))}
-                    {(data?.commodityHoldings?.length ?? 0) === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
+                    {commodityList.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
                 </div>
             </SectionCard>
             

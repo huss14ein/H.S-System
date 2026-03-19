@@ -64,17 +64,17 @@ export interface RecurringBillPattern {
 export const EXPENSE_CATEGORIES: CategoryDefinition[] = [
   {
     name: 'Housing',
-    description: 'Rent, mortgage, property taxes, HOA fees',
+    description: 'Rent, mortgage, HOA and housing charges',
     typicalRange: { min: 800, max: 5000 },
     frequency: 'monthly',
     essentialLevel: 'critical',
-    keywords: ['rent', 'mortgage', 'property tax', 'hoa', 'housing', 'apartment', 'lease'],
+    keywords: ['rent', 'mortgage', 'hoa', 'housing', 'apartment', 'lease'],
     merchantPatterns: ['*rent*', '*mortgage*', '*property*', '*hoa*'],
     priceBenchmarks: [
       { item: '1BR Apartment (City Center)', typicalPrice: 2500, unit: 'monthly', priceRange: { low: 1500, high: 4000 }, source: 'ai_aggregated', lastUpdated: new Date() },
       { item: '3BR House (Suburban)', typicalPrice: 3500, unit: 'monthly', priceRange: { low: 2000, high: 6000 }, source: 'ai_aggregated', lastUpdated: new Date() }
     ],
-    aiTrainingExamples: ['Monthly rent payment', 'Mortgage payment to bank', 'Quarterly property tax']
+    aiTrainingExamples: ['Monthly rent payment', 'Mortgage payment to bank', 'HOA or housing fee']
   },
   {
     name: 'Utilities',
@@ -288,8 +288,8 @@ export function classifyTransaction(
  */
 function classifyWithLocalRules(transaction: Transaction): ClassificationResult {
   const description = (transaction.description || '').toLowerCase();
-  // @ts-ignore - merchant field may exist on extended transaction types
-  const merchant = ((transaction as any).merchant || '').toLowerCase();
+  const merchantRaw = (transaction as Transaction & { merchant?: string }).merchant;
+  const merchant = (typeof merchantRaw === 'string' ? merchantRaw : '').toLowerCase();
   const combinedText = `${description} ${merchant}`;
   
   let bestMatch: CategoryDefinition | null = null;
@@ -429,8 +429,8 @@ export function detectRecurringBillPatterns(
   
   // Group by merchant
   transactions.forEach(tx => {
-    // @ts-ignore - merchant field may exist on extended transaction types
-    const merchant = ((tx as any).merchant || tx.description || 'Unknown');
+    const m = (tx as Transaction & { merchant?: string }).merchant;
+    const merchant = (typeof m === 'string' && m.trim() ? m : tx.description) || 'Unknown';
     if (!merchantGroups[merchant]) {
       merchantGroups[merchant] = [];
     }

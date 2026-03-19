@@ -44,6 +44,11 @@ import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getV
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
 import { ClockIcon } from '../components/icons/ClockIcon';
 import ExecutionHistoryView from './ExecutionHistoryView';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
+import { sellScore } from '../services/decisionEngine';
+import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import type { Transaction } from '../types';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -249,10 +254,14 @@ const RecordTradeModal: React.FC<{
     const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
     const [tif, setTif] = useState<TIF>('GTC');
     const [t1ConfirmChecked, setT1ConfirmChecked] = useState(false);
+    const [policyBuyOverrideAck, setPolicyBuyOverrideAck] = useState(false);
+    const [largeSellAck, setLargeSellAck] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const efRunway = useEmergencyFund(data ?? null);
+    const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
@@ -281,6 +290,8 @@ const RecordTradeModal: React.FC<{
         setOrderType('LIMIT');
         setTif('GTC');
         setT1ConfirmChecked(false);
+        setPolicyBuyOverrideAck(false);
+        setLargeSellAck(false);
         setSubmitError(null);
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
@@ -292,6 +303,8 @@ const RecordTradeModal: React.FC<{
             setSubmitError(null);
             setIsSubmitting(false);
             setT1ConfirmChecked(false);
+            setPolicyBuyOverrideAck(false);
+            setLargeSellAck(false);
             setTradeCurrency(appCurrency);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
@@ -410,6 +423,67 @@ const RecordTradeModal: React.FC<{
         return { t1SettlementWarning: msg };
     }, [type, symbol, data?.investmentTransactions]);
 
+    const monthlyNetLast30d = useMemo(() => {
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const d0 = new Date();
+        d0.setDate(d0.getDate() - 30);
+        let net = 0;
+        txs.forEach((t) => {
+            if (new Date(t.date) < d0) return;
+            if (countsAsIncomeForCashflowKpi(t)) net += Number(t.amount) || 0;
+            if (countsAsExpenseForCashflowKpi(t)) net -= Math.abs(Number(t.amount) || 0);
+        });
+        return net;
+    }, [data, isOpen]);
+
+    const buyPolicyCheck = useMemo(() => {
+        if (type !== 'buy' || !portfolioId || isCashFlow) return { allowed: true as const };
+        const p = portfolios.find((x) => x.id === portfolioId);
+        if (!p) return { allowed: true as const };
+        const q = parseFloat(quantity);
+        const pr = parseFloat(price);
+        if (!Number.isFinite(q) || !Number.isFinite(pr) || q <= 0 || pr <= 0) return { allowed: true as const };
+        const notional = q * pr;
+        const totalSec = (p.holdings ?? []).reduce((s, h) => s + (Number(h.currentValue) || 0), 0);
+        const norm = symbol.toUpperCase().trim();
+        const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
+        const curSym = Number(h?.currentValue) || 0;
+        const afterSym = curSym + notional;
+        const denom = totalSec + notional;
+        const posPct = denom > 0 ? (afterSym / denom) * 100 : 0;
+        return evaluateBuyAgainstPolicy({
+            policy: tradingPolicy,
+            runwayMonths: efRunway.monthsCovered,
+            monthlyNetLast30d,
+            positionWeightAfterBuyPct: posPct,
+        });
+    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, efRunway.monthsCovered, monthlyNetLast30d, isCashFlow]);
+
+    const sellRuleScore = useMemo(() => {
+        if (type !== 'sell' || !portfolioId || isCashFlow) return null;
+        const p = portfolios.find((x) => x.id === portfolioId);
+        if (!p || !symbol.trim()) return null;
+        const norm = symbol.toUpperCase().trim();
+        const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
+        if (!h) return null;
+        const totalSec = (p.holdings ?? []).reduce((s, x) => s + (Number(x.currentValue) || 0), 0);
+        if (totalSec <= 0) return null;
+        const w = ((Number(h.currentValue) || 0) / totalSec) * 100;
+        const q = parseFloat(quantity);
+        const pr = parseFloat(price);
+        const notional = Number.isFinite(q) && Number.isFinite(pr) ? q * pr : 0;
+        return {
+            ...sellScore({ aboveTargetWeightPct: Math.max(0, w - 15), needCash: w > 20 }),
+            notional,
+        };
+    }, [type, portfolioId, symbol, portfolios, quantity, price, isCashFlow]);
+
+    const largeSellNeedsAck = Boolean(
+        type === 'sell' &&
+            sellRuleScore &&
+            sellRuleScore.notional >= tradingPolicy.requireAckLargeSellNotional
+    );
+
     const sorStub = useMemo(() => {
         if (isCashFlow || !symbol.trim()) return null;
         const q = parseFloat(quantity);
@@ -468,6 +542,14 @@ const RecordTradeModal: React.FC<{
             setSubmitError('Please confirm you have other settled cash (or understand T+1) before selling.');
             return;
         }
+        if (type === 'buy' && !buyPolicyCheck.allowed && !policyBuyOverrideAck) {
+            setSubmitError(buyPolicyCheck.reason ?? 'Buy blocked by your trading policy. Acknowledge override or adjust the trade.');
+            return;
+        }
+        if (largeSellNeedsAck && !largeSellAck) {
+            setSubmitError(`Large sell (≥ ${tradingPolicy.requireAckLargeSellNotional.toLocaleString()}): confirm below.`);
+            return;
+        }
         if (!isCashFlow && (type === 'buy' || type === 'sell') && orderType === 'MARKET') {
             const now = new Date();
             const hourET = (now.getUTCHours() - 5 + 24) % 24;
@@ -513,7 +595,11 @@ const RecordTradeModal: React.FC<{
 
     const hasNoAccounts = !investmentAccounts.length;
     const hasNoPortfolios = accountId ? portfoliosForAccount.length === 0 : true;
-    const submitDisabled = isCashFlow ? !accountId || !cashAmount || !!validationError || isSubmitting : (!!validationError || isSubmitting || hasNoPortfolios);
+    const buyPolicyBlocked = type === 'buy' && !isCashFlow && !buyPolicyCheck.allowed && !policyBuyOverrideAck;
+    const sellAckBlocked = type === 'sell' && largeSellNeedsAck && !largeSellAck;
+    const submitDisabled = isCashFlow
+        ? !accountId || !cashAmount || !!validationError || isSubmitting
+        : !!validationError || isSubmitting || hasNoPortfolios || buyPolicyBlocked || sellAckBlocked;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
@@ -539,6 +625,29 @@ const RecordTradeModal: React.FC<{
                  {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} {tradeCurrency}</span></div>}
                  {hasNoPortfolios && accountId && !isCashFlow && (
                     <div className="p-2 bg-amber-50 text-amber-800 text-sm rounded-md">No portfolio in this account. Create a portfolio first from the Investments page.</div>
+                 )}
+                 {type === 'buy' && !buyPolicyCheck.allowed && buyPolicyCheck.reason && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 text-sm rounded-lg space-y-2">
+                        <p className="font-medium">Trading policy</p>
+                        <p>{buyPolicyCheck.reason}</p>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs">
+                            <input type="checkbox" checked={policyBuyOverrideAck} onChange={(e) => setPolicyBuyOverrideAck(e.target.checked)} className="rounded border-rose-300" />
+                            I understand and want to record this buy anyway
+                        </label>
+                    </div>
+                 )}
+                 {type === 'sell' && sellRuleScore && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 text-sm rounded-lg">
+                        <span className="font-medium text-slate-800">Sell-score (rules): </span>
+                        <span className="font-bold text-violet-700">{sellRuleScore.score}</span>
+                        <span className="text-slate-600 text-xs ml-2">({sellRuleScore.reasons.join(', ')})</span>
+                    </div>
+                 )}
+                 {largeSellNeedsAck && (
+                    <label className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-sm cursor-pointer">
+                        <input type="checkbox" checked={largeSellAck} onChange={(e) => setLargeSellAck(e.target.checked)} />
+                        Confirm large sell (notional ≥ policy threshold)
+                    </label>
                  )}
                  {t1SettlementWarning && (
                     <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex flex-col gap-2">

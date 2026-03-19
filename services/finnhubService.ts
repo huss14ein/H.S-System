@@ -170,6 +170,43 @@ export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> 
 }
 
 // --- Market status (exchange open/closed) ---
+/**
+ * Finnhub `/stock/market-status` may return `session` with different casing or separators
+ * (e.g. `pre_market`, `after hours`). Normalize so UI only branches on stable tokens.
+ * @returns One of: pre-market | post-market | regular | closed | unknown | (lowercased raw if unrecognized)
+ */
+export function normalizeFinnhubMarketSession(raw: string): string {
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-');
+  if (!s || s === 'unknown' || s === 'n/a' || s === 'na') return 'unknown';
+  if (s === 'closed' || s === 'close') return 'closed';
+  if (s === 'regular' || s === 'open' || s === 'regular-market' || s === 'market-hours') return 'regular';
+  if (
+    s === 'pre-market' ||
+    s === 'premarket' ||
+    s === 'pre' ||
+    s.startsWith('pre-market') ||
+    s.includes('premarket')
+  ) {
+    return 'pre-market';
+  }
+  if (
+    s === 'post-market' ||
+    s === 'postmarket' ||
+    s === 'after-hours' ||
+    s === 'afterhours' ||
+    s.startsWith('post-market') ||
+    s.includes('postmarket') ||
+    s.includes('after-hour')
+  ) {
+    return 'post-market';
+  }
+  return s;
+}
+
 export interface MarketStatusItem {
   exchange: string;
   holiday: string | null;
@@ -182,11 +219,12 @@ export interface MarketStatusItem {
 export async function getMarketStatus(exchange: string = 'US'): Promise<MarketStatusItem | null> {
   try {
     const data = await get<{ exchange?: string; timezone?: string; tztime?: string; session?: string; isOpen?: boolean }>('/stock/market-status', { exchange });
+    const rawSession = String((data as any).session ?? '').trim();
     return {
       exchange: data.exchange ?? exchange,
       holiday: (data as any).holiday ?? null,
       isOpen: (data as any).isOpen ?? false,
-      session: (data as any).session ?? '',
+      session: normalizeFinnhubMarketSession(rawSession || 'unknown'),
       timezone: data.timezone ?? 'US/Eastern',
       tztime: data.tztime ?? '',
     };
@@ -267,6 +305,30 @@ export interface QuoteWith52W {
   low52?: number;
 }
 
+/** US, TADAWUL, etc. — session from Finnhub: pre-market | regular | post-market | closed */
+export interface ExchangeMarketStatus {
+  exchange: string;
+  holiday: boolean;
+  session: string;
+}
+
+export async function getExchangeMarketStatus(exchange: string): Promise<ExchangeMarketStatus | null> {
+  try {
+    const data = await get<{ exchange?: string; holiday?: boolean; session?: string }>('/stock/market-status', {
+      exchange,
+    });
+    const raw = String(data.session ?? '').trim();
+    const session = normalizeFinnhubMarketSession(raw || 'unknown');
+    return {
+      exchange: (data.exchange || exchange).toUpperCase(),
+      holiday: !!data.holiday,
+      session,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
   try {
     const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: toFinnhubSymbol(symbol) });
@@ -316,6 +378,13 @@ export async function getEarningsCalendar(from: string, to: string): Promise<Ear
 export interface HoldingFundamentals {
   symbol: string;
   currency?: string;
+  /** Day range from last quote; 52w from metrics when Finnhub returns them. */
+  priceContext?: {
+    dayHigh?: number;
+    dayLow?: number;
+    week52High?: number;
+    week52Low?: number;
+  };
   nextEarnings?: {
     date?: string;
     period?: string;
@@ -416,9 +485,23 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
   const currencyFromMetrics = (metrics?.metric?.['currency'] as string | undefined) || undefined;
   const currency = (currencyFromProfile || currencyFromMetrics || '').toUpperCase() || undefined;
 
+  const m52 = metrics?.metric as Record<string, number> | undefined;
+  const week52High = m52 && typeof m52['52WeekHigh'] === 'number' ? m52['52WeekHigh'] : undefined;
+  const week52Low = m52 && typeof m52['52WeekLow'] === 'number' ? m52['52WeekLow'] : undefined;
+  const priceContext =
+    quote || week52High != null || week52Low != null
+      ? {
+          dayHigh: quote?.h,
+          dayLow: quote?.l,
+          week52High,
+          week52Low,
+        }
+      : undefined;
+
   return {
     symbol,
     currency,
+    priceContext,
     nextEarnings,
     dividend,
   };

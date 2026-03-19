@@ -1,8 +1,7 @@
 /**
  * Integration tests for Household, Budget, and Wealth Ultra engine glue.
- * To run: use a test runner that compiles the project (e.g. Vitest/Jest with ts-node), or run the app and verify Plan/Budgets/Wealth Ultra/Investment Plan pages use the integration.
- * Ensures buildUnifiedFinancialContext, runCrossEngineAnalysis, and validateInvestmentAction
- * run without errors and share constraints consistently.
+ * Run this file directly: `npx tsx tests/engineIntegration.test.ts` (self-invoking `runTests()` at EOF).
+ * Unit tests under `tests/*.vitest.test.ts` run with **`npm run test`** (Vitest) alongside lint + `tsc`.
  */
 
 import {

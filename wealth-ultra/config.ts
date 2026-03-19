@@ -23,7 +23,7 @@ export function getDefaultWealthUltraConfig(): WealthUltraConfig {
   return { ...DEFAULT_CONFIG };
 }
 
-/** Front-end Wealth Ultra system config (no DB). Use this everywhere instead of fetching wealth_ultra_config. */
+/** Default Wealth Ultra system parameters. DataContext merges `wealth_ultra_config` from Supabase (user row, else global row) over this when the table exists. */
 export function getDefaultWealthUltraSystemConfig(): WealthUltraSystemConfig {
   return {
     fxRate: DEFAULT_CONFIG.fxRate,

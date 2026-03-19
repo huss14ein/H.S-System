@@ -17,6 +17,7 @@ import PageActionsDropdown from '../components/PageActionsDropdown';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
@@ -425,6 +426,47 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return { monthsOverBudget, worst, ytdPlannedIncome, ytdActualIncome };
     }, [processedPlanData]);
 
+    /** Planned vs actual through end of selected period (YTD for current year, full year for past years). Hidden for future years. */
+    const planProgressPeriod = useMemo(() => {
+        const curY = new Date().getFullYear();
+        const curM = new Date().getMonth();
+        if (year > curY) return null;
+        const endIdx = year < curY ? 11 : curM;
+        const label = year < curY ? `Full year ${year}` : `Year-to-date through ${MONTHS[endIdx]}`;
+        const sumSlice = (planned: number[], actual: number[]) => ({
+            planned: planned.slice(0, endIdx + 1).reduce((a, b) => a + b, 0),
+            actual: actual.slice(0, endIdx + 1).reduce((a, b) => a + b, 0),
+        });
+        const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
+        const inv = processedPlanData.find((r: PlanRow) => r.category === 'Monthly investment');
+        const expenseRows = processedPlanData.filter(
+            (r: PlanRow) => r.type === 'expense' && r.category !== 'Monthly investment'
+        );
+        const incomePair = income ? sumSlice(income.monthly_planned, income.monthly_actual) : null;
+        let expensesPlanned = 0;
+        let expensesActual = 0;
+        expenseRows.forEach((row: PlanRow) => {
+            expensesPlanned += row.monthly_planned.slice(0, endIdx + 1).reduce((a, b) => a + b, 0);
+            expensesActual += row.monthly_actual.slice(0, endIdx + 1).reduce((a, b) => a + b, 0);
+        });
+        const investmentPair = inv ? sumSlice(inv.monthly_planned, inv.monthly_actual) : null;
+        const hasInvestment =
+            investmentPair && (investmentPair.planned > 0 || investmentPair.actual > 0);
+        const hasAny =
+            (incomePair && (incomePair.planned > 0 || incomePair.actual > 0)) ||
+            expensesPlanned > 0 ||
+            expensesActual > 0 ||
+            hasInvestment;
+        if (!hasAny) return null;
+        return {
+            label,
+            endIdx,
+            income: incomePair,
+            expenses: { planned: expensesPlanned, actual: expensesActual },
+            investment: hasInvestment ? investmentPair! : null,
+        };
+    }, [processedPlanData, year]);
+
     // Goals: when will you reach them? Required per month vs projected surplus (after expenses + investment)
     const goalsAnalysis = useMemo(() => {
         const monthlySurplusAfterInvestment = (totals?.projectedNet ?? 0) / 12;
@@ -569,7 +611,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     return (
         <PageLayout
             title="Annual Financial Plan"
-            description="Fed from Accounts, Budgets, Transactions, Goals, Liabilities, and Investment Plan. Income & expense actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals progress from Goals; investment planned & actual from Investment Plan; debt context from Liabilities."
+            description="Fed from Accounts, Budgets, Transactions, Goals, Liabilities, and Investment Plan. Use Forecast for multi-year net worth scenarios alongside this annual view. Income & expense actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals progress from Goals; investment planned & actual from Investment Plan; debt context from Liabilities."
             action={
                 <div className="w-full flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
                     <div className="inline-flex items-center p-1 rounded-xl border border-slate-200 bg-slate-100/80 self-start lg:self-auto shadow-sm">
@@ -591,6 +633,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 { value: 'liabilities', label: 'Liabilities', onClick: () => setActivePage('Liabilities') },
                                 { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
                                 { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investments') },
+                                { value: 'forecast', label: 'Forecast (long-range)', onClick: () => setActivePage('Forecast') },
                             ]}
                         />
                     )}
@@ -633,6 +676,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <button type="button" onClick={() => setActivePage('Investments')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Monthly investment planned & actual">
                             <ArrowTrendingUpIcon className="h-4 w-4" /> Investment Plan
                         </button>
+                        <span className="text-slate-400">·</span>
+                        <button type="button" onClick={() => setActivePage('Forecast')} className="inline-flex items-center gap-1 text-primary hover:underline font-medium" title="Long-range net worth scenarios">
+                            <PresentationChartLineIcon className="h-4 w-4" /> Forecast
+                        </button>
                     </>
                 )}
                 <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
@@ -651,7 +698,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             {/* Dynamic baselines & predictive spend (household engine enhancement) */}
             {(dynamicBaselines.length > 0 || (householdConstraints?.cashflowStressSignals?.length ?? 0) > 0) && (
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Household intelligence</p>
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-1">
+                        Household intelligence
+                        <InfoHint text="Signals from the household budget engine: dynamic category baselines, predictive spend for the current month, and optional cashflow stress notes. Data comes from your transactions and budgets." />
+                    </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {dynamicBaselines.length > 0 && (
                             <div>
@@ -712,7 +762,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     .reduce((sum: number, l: { amount?: number }) => sum + Math.abs(Number(l.amount) || 0), 0);
                 return totalDebt > 0 ? (
                     <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full">Total debt (Liabilities)</p>
+                        <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full flex items-center gap-1 flex-wrap">
+                            Total debt (Liabilities)
+                            <InfoHint text="Sum of absolute amounts on liability rows except type Receivable. Matches Liabilities page context for annual planning." />
+                        </p>
                         <p className="metric-value text-xl font-bold text-slate-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(totalDebt, { digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Liabilities.</p>
                         {setActivePage && (
@@ -754,6 +807,90 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             {insights.monthsOverBudget}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">Category-months above plan</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Progress vs plan: same months as the grid; planned from budgets/recurring/plan, actual from transactions */}
+            {planProgressPeriod && (
+                <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2 flex-wrap">
+                        <PresentationChartLineIcon className="h-5 w-5 text-primary shrink-0" />
+                        Progress vs plan
+                        <InfoHint text="Planned amounts use this page’s grid (budgets, recurring, investment plan). Actuals use transactions (and investment buys) for the same calendar months—year-to-date for the current year, or the full selected year for past years." />
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1 mb-3">{planProgressPeriod.label}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {planProgressPeriod.income && (planProgressPeriod.income.planned > 0 || planProgressPeriod.income.actual > 0) && (
+                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0">
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Income</p>
+                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                                    Planned <strong>{formatCurrencyString(planProgressPeriod.income.planned, { digits: 0 })}</strong>
+                                    <span className="text-slate-400 mx-1">·</span>
+                                    Actual <strong>{formatCurrencyString(planProgressPeriod.income.actual, { digits: 0 })}</strong>
+                                </p>
+                                {(() => {
+                                    const d = planProgressPeriod.income!.actual - planProgressPeriod.income!.planned;
+                                    if (Math.abs(d) < 1) return <p className="text-xs text-slate-500 mt-1">On plan</p>;
+                                    return (
+                                        <p className={`text-xs font-medium mt-1 ${d >= 0 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                                            {d >= 0 ? '+' : ''}
+                                            {formatCurrencyString(d, { digits: 0 })} vs planned
+                                        </p>
+                                    );
+                                })()}
+                            </div>
+                        )}
+                        {(planProgressPeriod.expenses.planned > 0 || planProgressPeriod.expenses.actual > 0) && (
+                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0">
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Expenses</p>
+                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                                    Planned <strong>{formatCurrencyString(planProgressPeriod.expenses.planned, { digits: 0 })}</strong>
+                                    <span className="text-slate-400 mx-1">·</span>
+                                    Actual <strong>{formatCurrencyString(planProgressPeriod.expenses.actual, { digits: 0 })}</strong>
+                                </p>
+                                {(() => {
+                                    const d = planProgressPeriod.expenses.actual - planProgressPeriod.expenses.planned;
+                                    if (Math.abs(d) < 1) return <p className="text-xs text-slate-500 mt-1">On plan</p>;
+                                    return (
+                                        <p className={`text-xs font-medium mt-1 ${d <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {d >= 0 ? '+' : ''}
+                                            {formatCurrencyString(d, { digits: 0 })} vs planned
+                                        </p>
+                                    );
+                                })()}
+                                <p className="text-[10px] text-slate-400 mt-1">Excludes monthly investment row</p>
+                            </div>
+                        )}
+                        {planProgressPeriod.investment && (
+                            <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3 min-w-0">
+                                <p className="text-xs font-medium text-violet-700 uppercase tracking-wide">Monthly investment</p>
+                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                                    Planned <strong>{formatCurrencyString(planProgressPeriod.investment.planned, { digits: 0 })}</strong>
+                                    <span className="text-slate-400 mx-1">·</span>
+                                    Actual <strong>{formatCurrencyString(planProgressPeriod.investment.actual, { digits: 0 })}</strong>
+                                </p>
+                                {(() => {
+                                    const d = planProgressPeriod.investment!.actual - planProgressPeriod.investment!.planned;
+                                    if (Math.abs(d) < 1) return <p className="text-xs text-slate-500 mt-1">On plan</p>;
+                                    return (
+                                        <p className={`text-xs font-medium mt-1 ${d >= 0 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                                            {d >= 0 ? '+' : ''}
+                                            {formatCurrencyString(d, { digits: 0 })} vs planned
+                                        </p>
+                                    );
+                                })()}
+                                {setActivePage && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActivePage('Investments')}
+                                        className="mt-2 text-[11px] font-medium text-primary hover:underline"
+                                    >
+                                        Investment Plan →
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

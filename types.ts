@@ -4,10 +4,54 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Risk & Trading Hub' | 'Logic & Engines' | 'Financial Journal' | 'Liquidation Planner';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
+
+/** Account role for cash allocation and sweep logic (logic layer). */
+export type AccountRole =
+  | 'operating_cash'
+  | 'salary_receiving'
+  | 'bills_payment'
+  | 'emergency_reserve'
+  | 'investment_funding'
+  | 'trading_capital'
+  | 'long_term_savings'
+  | 'goal_reserve'
+  | 'debt_servicing';
+
+/** Bucket type for cash separation (operating vs investable etc.). */
+export type AccountBucketType = 'operating' | 'reserve' | 'provision' | 'goal' | 'investable';
+
+/** Transaction type for classification and reporting (logic layer). */
+export type TransactionType =
+  | 'income'
+  | 'transfer'
+  | 'expense'
+  | 'investment_buy'
+  | 'investment_sell'
+  | 'dividend'
+  | 'interest'
+  | 'fee'
+  | 'refund'
+  | 'debt_payment'
+  | 'goal_contribution'
+  | 'goal_withdrawal'
+  | 'adjustment'
+  | 'fx_conversion'
+  | 'cash_deposit'
+  | 'cash_withdrawal';
+
+/** Profile fields for logic (base currency, timezone, etc.). Can be backed by Settings or a profile table later. */
+export interface Profile {
+  baseCurrency?: 'SAR' | 'USD';
+  timezone?: string;
+  riskProfile?: RiskProfile;
+  investmentStyle?: string;
+  familySize?: number;
+  salaryCycle?: 'monthly' | 'bi-weekly' | 'annual';
+}
 
 export interface Goal {
   id: string;
@@ -95,6 +139,8 @@ export interface Transaction {
   recurringId?: string;
   /** Optional link to the financial statement (e.g. bank/trading) this transaction was imported from. */
   statementId?: string;
+  /** Parsed from note (see transactionSplitNote); not a separate DB column. */
+  splitLines?: { category: string; amount: number }[];
 }
 
 export type HoldingAssetClass =
@@ -440,6 +486,8 @@ export interface InvestmentPlanSettings {
   /** General sleeve definitions from system. If set, used instead of core/upside/spec split. */
   sleeves?: SleeveDefinition[] | null;
   brokerConstraints: BrokerConstraints;
+  /** Set when user saves monthly plan (DB + notifications for FX freshness). */
+  fxRateUpdatedAt?: string | null;
 }
 
 /** Wealth Ultra default parameters (from app settings/config, not DB). General share/sleeve config. */

@@ -1072,20 +1072,39 @@ export interface TradeAnalysisContext {
     planBudget?: number;
     corePct?: number;
     upsidePct?: number;
+    /** Plan / execution currencies for grounding. */
+    planBudgetCurrency?: string;
+    planExecutionCurrency?: string;
+    /** User risk profile label from Settings. */
+    riskProfile?: string;
+    /** One-line summary e.g. "8 buys, 2 sells over 90d". */
+    tradeActivitySummary?: string;
+    /** ISO date for "as of" grounding. */
+    asOfDate?: string;
 }
 
 export const getAITradeAnalysis = async (
     transactions: InvestmentTransaction[],
     context?: TradeAnalysisContext
 ): Promise<string> => {
-    const txList = transactions.slice(0, 15).map(t => `${t.type} ${t.symbol} ${t.quantity} @ ${t.price} = ${t.total} on ${t.date}`).join('\n');
+    const txList = transactions
+        .slice(0, 20)
+        .map(
+            (t) =>
+                `${t.type} ${t.symbol} qty=${t.quantity} @ ${t.price} total=${t.total} ${t.currency ?? ''} acct=${t.accountId?.slice(0, 8) ?? '—'}… on ${t.date}`,
+        )
+        .join('\n');
     const contextBlock = context
         ? `
-Current context (use to tailor feedback):
-${context.holdingsSummary ? `Holdings: ${context.holdingsSummary}` : ''}
-${context.watchlistSymbols?.length ? `Watchlist: ${context.watchlistSymbols.join(', ')}` : ''}
-${context.planBudget != null ? `Monthly plan budget: ${context.planBudget}` : ''}
-${context.corePct != null ? `Core/Upside split: ${(context.corePct * 100).toFixed(0)}% / ${(context.upsidePct ?? 0) * 100}%` : ''}
+Current context (use to tailor feedback; educational only):
+${context.asOfDate ? `As-of date: ${context.asOfDate}` : ''}
+${context.riskProfile ? `User risk profile (from settings): ${context.riskProfile}` : ''}
+${context.holdingsSummary ? `Holdings (approx. SAR book): ${context.holdingsSummary}` : ''}
+${context.watchlistSymbols?.length ? `Watchlist symbols: ${context.watchlistSymbols.join(', ')}` : ''}
+${context.planBudget != null ? `Monthly plan budget: ${context.planBudget} ${context.planBudgetCurrency ?? ''}`.trim() : ''}
+${context.planExecutionCurrency ? `Plan execution currency: ${context.planExecutionCurrency}` : ''}
+${context.corePct != null ? `Core/Upside sleeve split: ${(context.corePct * 100).toFixed(0)}% / ${((context.upsidePct ?? 0) * 100).toFixed(0)}%` : ''}
+${context.tradeActivitySummary ? `Recent activity summary: ${context.tradeActivitySummary}` : ''}
 `.trim()
         : '';
 
@@ -1095,7 +1114,7 @@ ${contextBlock ? '\n' + contextBlock + '\n' : ''}
 Transactions:
 ${txList || 'None.'}
 
-Respond with exactly these ### sections (one short paragraph or 2-3 bullets each; be specific):
+Respond with exactly these ### sections in order (one short paragraph or 2-3 bullets each; be specific):
 ### Summary
 What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 
@@ -1105,11 +1124,17 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 ### Portfolio Impact
 - 1-2 bullets on what this implies for the portfolio (diversification, cost basis, risk). Plain language.
 
+### Do’s (habits)
+- 1-2 bullets: good practices you see or could reinforce (e.g. journaling, sizing, plan alignment).
+
+### Don’ts (pitfalls)
+- 1-2 bullets: common mistakes to avoid in general terms (no shaming; no buy/sell commands).
+
 ### Suggestions
 - One or two concrete, educational suggestions (e.g. "Consider tracking X", "Look up Y"). No buy/sell recommendations.
 
 ### Concept to Research
-- One concept to look up (e.g. dollar-cost averaging, tax-loss harvesting, rebalancing). One sentence.
+- One concept to look up (e.g. dollar-cost averaging, rebalancing, diversification). One sentence.
 Do not give buy/sell advice. Markdown only.`;
 
     const execute = async () => {
@@ -1768,7 +1793,7 @@ ${detailedContext}
 Provide a comprehensive analysis in JSON format:
 {
   "insight": "One clear, detailed sentence explaining how this event impacts your portfolio specifically, considering the historical context and market impact patterns",
-  "action": "One specific, actionable step you should take (e.g., 'Review AAPL position before earnings', 'Reduce leverage before FOMC meeting', 'Consider tax-loss harvesting before year-end tax policy changes'). Reference the preparation tips if applicable.",
+  "action": "One specific, actionable step you should take (e.g., 'Review AAPL position before earnings', 'Reduce leverage before FOMC meeting', 'Revisit position size vs your risk budget'). Reference the preparation tips if applicable.",
   "relevance": "Brief explanation of why this matters to your investments (High/Medium/Low relevance). Consider both direct portfolio impact and broader market implications."
 }
 

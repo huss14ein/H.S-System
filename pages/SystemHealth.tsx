@@ -4,12 +4,24 @@ import type { Page } from '../types';
 import { invokeAI } from '../services/geminiService';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { MarketDataContext } from '../context/MarketDataContext';
+import { DataContext } from '../context/DataContext';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
+import { reconcileCashAccountBalance } from '../services/dataQuality';
+import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
+import {
+  validateSystemIntegrity,
+  detectBrokenReferences,
+  repairSuggestionEngine,
+  pushException,
+  clearExceptionQueue,
+  getExceptionQueue,
+} from '../services/exceptionHandlingEngine';
+import type { InvestmentTransaction, Holding, Transaction, Account, Goal } from '../types';
 
 type ServiceStatus = 'Operational' | 'Degraded Performance' | 'Outage' | 'Checking...' | 'Simulated';
 
@@ -65,6 +77,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_SECONDS);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const marketContext = useContext(MarketDataContext);
+  const appDataCtx = useContext(DataContext);
 
   const runHealthChecks = useCallback(async (trigger: 'manual' | 'auto' = 'manual') => {
     setIsLoading(true);
@@ -253,6 +266,88 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     return { degraded, outages, avgLatency: Math.round(avgLatency), topIncident, recommendations: recommendations.slice(0, 3) };
   }, [services, incidents]);
 
+  const integritySummary = useMemo(() => {
+    const financialData = appDataCtx?.data;
+    if (!financialData) return null;
+
+    const accounts = (financialData.accounts ?? []) as Account[];
+    const transactions = (financialData.transactions ?? []) as Transaction[];
+    const goals = (financialData.goals ?? []) as Goal[];
+
+    const integrity = validateSystemIntegrity({
+      accounts: accounts.map((a) => ({ id: a.id, balance: a.balance })),
+      transactions: transactions.map((t) => ({ accountId: t.accountId })),
+      goals: goals.map((g) => ({ id: g.id })),
+    });
+
+    const brokenRefs = detectBrokenReferences({
+      goals: goals.map((g) => ({ id: g.id })),
+      accounts: accounts.map((a) => ({ id: a.id })),
+      transactions: transactions.map((t) => ({ accountId: t.accountId, goalId: (t as any).goalId })),
+    });
+
+    const cashExceptions = (accounts ?? [])
+      .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+      .map((a) => reconcileCashAccountBalance(a as any, transactions))
+      .filter((x): x is NonNullable<typeof x> => x != null && x.showWarning)
+      .map((x) => ({ accountId: x.accountId, drift: x.drift, showWarning: x.showWarning }));
+
+    const holdings: Holding[] = (financialData.investments ?? []).flatMap((p: any) => (p.holdings ?? [])) as Holding[];
+    const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []) as InvestmentTransaction[];
+
+    const storedBySymbol = new Map<string, number>();
+    holdings.forEach((h) => {
+      const sym = String(h.symbol ?? '').toUpperCase();
+      if (!sym) return;
+      storedBySymbol.set(sym, (storedBySymbol.get(sym) ?? 0) + (Number(h.quantity) || 0));
+    });
+
+    const tradesBySymbol: Record<string, { symbol: string; type: 'buy' | 'sell'; quantity: number }[]> = {};
+    investmentTxs.forEach((t) => {
+      if (t.type !== 'buy' && t.type !== 'sell') return;
+      const sym = String(t.symbol ?? '').toUpperCase();
+      if (!sym) return;
+      if (!tradesBySymbol[sym]) tradesBySymbol[sym] = [];
+      tradesBySymbol[sym].push({ symbol: sym, type: t.type, quantity: Number(t.quantity) || 0 });
+    });
+
+    const allSymbols = new Set<string>([...storedBySymbol.keys(), ...Object.keys(tradesBySymbol)]);
+    const holdingExceptions = Array.from(allSymbols).map((symbol) => {
+      const stored = storedBySymbol.get(symbol) ?? 0;
+      const trades = tradesBySymbol[symbol] ?? [];
+      const holding = { id: `h-${symbol}`, symbol, quantity: stored };
+      const rec = reconcileHoldings({ holding: holding as any, trades: trades as any });
+      return { symbol, drift: rec.drift };
+    }).filter((h) => Math.abs(h.drift) >= 0.0001);
+
+    const reconciliation = reconciliationExceptionReport({
+      cashExceptions,
+      holdingExceptions,
+    });
+
+    const missingCategory = (transactions ?? []).some((t) => t.type === 'expense' && !t.budgetCategory);
+    const cashDrift = cashExceptions[0] ? { accountId: cashExceptions[0].accountId, drift: cashExceptions[0].drift } : undefined;
+    const repairSuggestions = repairSuggestionEngine({ cashDrift, missingCategory });
+
+    // Populate the in-memory exception queue so other UI can consume it later.
+    clearExceptionQueue();
+    const combined = [
+      ...(integrity.exceptions ?? []),
+      ...(brokenRefs ?? []),
+      ...reconciliation.map((r) => ({
+        code: `RECONCILE_${r.type.toUpperCase()}`,
+        message: r.message,
+        entity: r.type,
+        entityId: r.id,
+        severity: r.severity,
+      })),
+    ];
+    combined.forEach((ex: any) => pushException(ex));
+    const queue = getExceptionQueue();
+
+    return { integrityOk: integrity.ok, integrityExceptions: integrity.exceptions, brokenRefs, cashExceptions, holdingExceptions, reconciliation, repairSuggestions, queue };
+  }, [appDataCtx]);
+
   const OverallStatusCard: React.FC<{ status: ServiceStatus }> = ({ status }) => {
     const { text, icon } = getStatusInfo(status);
     const message = {
@@ -299,6 +394,59 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
       <OverallStatusCard status={overallStatus} />
 
+      {integritySummary && (
+        <div className="bg-white shadow rounded-lg p-4 border border-slate-200">
+          <div className="flex items-start gap-3">
+            <div className="py-1">
+              <ExclamationTriangleIcon className="h-6 w-6 text-amber-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-slate-700 mb-1">Data integrity & reconciliation</h3>
+              <p className="text-sm text-slate-600">
+                {integritySummary.integrityOk ? 'Basic checks look good.' : 'Potential integrity issues detected.'}{' '}
+                ({(integritySummary.queue?.length ?? 0)} exception(s))
+              </p>
+              {integritySummary.reconciliation.length > 0 && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Reconciliation warnings: {integritySummary.reconciliation.length} (cash drift + holding drift).
+                </p>
+              )}
+            </div>
+          </div>
+
+          {integritySummary.queue?.length ? (
+            <div className="mt-3">
+              <p className="text-xs font-semibold text-slate-500 mb-2">Top issues</p>
+              <ul className="space-y-2 max-h-44 overflow-y-auto pr-2">
+                {integritySummary.queue.slice(0, 8).map((ex, i) => (
+                  <li key={`${ex.code}-${ex.entityId ?? i}-${i}`} className="text-sm border border-slate-200 rounded-lg p-2 bg-slate-50">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${ex.severity === 'error' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {ex.severity.toUpperCase()}
+                      </span>
+                      <span className="font-medium text-slate-800">{ex.message}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-sm text-emerald-800 mt-3">No exceptions queued.</p>
+          )}
+
+          {integritySummary.repairSuggestions.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <p className="text-xs font-semibold text-slate-500 mb-2">Repair suggestions</p>
+              <ul className="space-y-1 text-sm text-slate-700">
+                {integritySummary.repairSuggestions.map((s, i) => (
+                  <li key={`repair-${i}`}>{s.action}{s.entityId ? ` (${s.entityId})` : ''}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Metric title="Health score" value={`${healthScore}/100`} tone={healthScore >= 85 ? 'good' : healthScore >= 60 ? 'warn' : 'bad'} />
         <Metric title="Degraded services" value={String(smartInsights.degraded)} tone={smartInsights.degraded > 0 ? 'warn' : 'good'} />
@@ -320,7 +468,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
           {marketStatus && (
             <p className="text-sm text-gray-700">
               US: <span className={marketStatus.isOpen ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'}>{marketStatus.isOpen ? 'Open' : 'Closed'}</span>
-              {marketStatus.session && ` · ${marketStatus.session}`}
+              {marketStatus.session && marketStatus.session !== 'unknown' && ` · ${marketStatus.session}`}
               {marketStatus.tztime && ` · ${marketStatus.tztime}`}
             </p>
           )}

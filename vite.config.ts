@@ -14,8 +14,16 @@ export default defineConfig(({ mode }) => {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
 
-            if (id.includes('recharts') || id.includes('d3-')) {
-              return 'vendor-charts';
+            if (id.includes('recharts')) {
+              return 'vendor-recharts';
+            }
+
+            if (id.includes('/d3-') || id.includes('d3-array') || id.includes('d3-scale') || id.includes('d3-shape')) {
+              return 'vendor-d3';
+            }
+
+            if (id.includes('react') || id.includes('scheduler')) {
+              return 'vendor-react';
             }
 
             if (id.includes('@google/genai') || id.includes('@supabase/supabase-js')) {

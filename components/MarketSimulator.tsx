@@ -22,7 +22,7 @@ const MarketSimulator: React.FC = () => {
             if (!dataContext || !marketContext || !dataContext.data) return;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
-            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated } = marketContext;
+            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
             
             const allHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
             const allWatchlistItems = data?.watchlist ?? [];
@@ -125,6 +125,7 @@ const MarketSimulator: React.FC = () => {
             
             setSimulatedPrices(newPrices);
             setIsLive(liveStatus);
+            touchQuoteTimestamps(Object.keys(newPrices));
 
             (allHoldings as { id?: string; symbol?: string; quantity?: number }[]).forEach((holding: { id?: string; symbol?: string; quantity?: number }) => {
                 const sym = holding.symbol;

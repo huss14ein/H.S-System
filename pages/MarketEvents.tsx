@@ -265,32 +265,6 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
     },
   ];
 
-  // US federal tax deadlines (impact liquidity and sentiment)
-  if (month === 3) {
-    events.push({
-      id: `us-tax-day-${year}`,
-      date: new Date(year, 3, 15),
-      title: 'US Tax Day (Federal Individual Return)',
-      description: 'April 15 deadline; can affect market liquidity and retail flows.',
-      source: 'US tax calendar',
-      category: 'Macro',
-      impact: 'Medium',
-      estimated: false,
-    });
-  }
-  if (month === 9) {
-    events.push({
-      id: `us-tax-extension-${year}`,
-      date: new Date(year, 9, 15),
-      title: 'US Tax Extension Deadline (Oct 15)',
-      description: 'Extended filing deadline; can affect flows and year-end planning.',
-      source: 'US tax calendar',
-      category: 'Macro',
-      impact: 'Medium',
-      estimated: false,
-    });
-  }
-
   if ([0, 2, 4, 5, 6, 8, 10, 11].includes(month % 12)) {
     events.push({
       id: `fomc-${year}-${month}`,
@@ -977,16 +951,19 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                   </tr>
                 </thead>
                 <tbody>
-                  {calendarWeeks.map((week, wi) => (
+                  {(() => {
+                    const todayKey = toLocalDateKey(startOfDay(new Date()));
+                    return calendarWeeks.map((week, wi) => (
                     <tr key={`week-${wi}`}>
                       {week.map((cell) => {
                         const dayEvents = eventsByDate.get(cell.dateKey) || [];
+                        const isToday = cell.dateKey === todayKey;
                         return (
                           <td
                             key={cell.dateKey}
-                            className={`border border-slate-200 align-top p-1 min-w-[80px] ${cell.isCurrentMonth ? 'bg-white' : 'bg-slate-50/60'}`}
+                            className={`border border-slate-200 align-top p-1 min-w-[80px] ${cell.isCurrentMonth ? 'bg-white' : 'bg-slate-50/60'} ${isToday ? 'ring-2 ring-primary ring-inset bg-primary/10' : ''}`}
                           >
-                            <div className={`text-right text-xs font-medium mb-1 ${cell.isCurrentMonth ? 'text-slate-800' : 'text-slate-400'}`}>
+                            <div className={`text-right text-xs font-medium mb-1 ${cell.isCurrentMonth ? 'text-slate-800' : 'text-slate-400'} ${isToday ? 'font-bold text-primary' : ''}`}>
                               {cell.dayNum}
                             </div>
                             <div className="space-y-1 min-h-[44px]">
@@ -1007,7 +984,8 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                         );
                       })}
                     </tr>
-                  ))}
+                  ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1037,8 +1015,8 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         </div>
 
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          The calendar shows US market holidays, Finnhub economic + earnings, and your portfolio timeline by default. Enable modeled estimates for FOMC, NFP, CPI, tax deadlines, and other key US macro dates when API data is limited.
-          Included: US exchange holidays, Fed (FOMC) rate decisions, NFP, CPI, PPI, GDP, retail sales, ISM, tax deadlines (Apr 15, Oct 15), options expiry, and symbol-linked earnings/dividends. Some dates are estimated; verify critical dates with official sources.
+          The calendar shows US market holidays, Finnhub economic + earnings, and your portfolio timeline by default. Enable modeled estimates for FOMC, NFP, CPI, and other key US macro dates when API data is limited.
+          Included: US exchange holidays, Fed (FOMC) rate decisions, NFP, CPI, PPI, GDP, retail sales, ISM, options expiry, and symbol-linked earnings/dividends. Some dates are estimated; verify critical dates with official sources.
           <div className="mt-1 text-xs text-amber-700">
             Finnhub events are cached locally for 12 hours to avoid requesting the same calendar data every page load and still work in offline mode.
             {finnhubState.mode === 'fresh' && ' Source mode: fresh fetch.'}

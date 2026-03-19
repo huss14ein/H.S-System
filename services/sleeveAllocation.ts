@@ -58,7 +58,7 @@ export interface RebalancePolicy {
   driftTolerance: number;        // % drift before rebalancing (default: 5%)
   maxTurnover: number;          // Max % of portfolio to trade (default: 20%)
   minTradeSize: number;          // Min trade in currency (default: 1000)
-  taxEfficiency: boolean;        // Consider tax implications
+  taxEfficiency: boolean;        // Prefer low-turnover / fee-efficient sleeves (legacy flag name)
   cashBuffer: number;           // Keep this % in cash (default: 5%)
   maxPositionSize: number;      // Max % in single position (default: 25%)
   rebalanceFrequency: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'threshold';

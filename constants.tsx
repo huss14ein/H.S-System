@@ -19,6 +19,10 @@ import { Cog6ToothIcon } from './components/icons/Cog6ToothIcon';
 import { PresentationChartLineIcon } from './components/icons/PresentationChartLineIcon';
 import { DocumentArrowUpIcon } from './components/icons/DocumentArrowUpIcon';
 import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
+import { BoltIcon } from './components/icons/BoltIcon';
+import { BookOpenIcon } from './components/icons/BookOpenIcon';
+import { ArrowTrendingDownIcon } from './components/icons/ArrowTrendingDownIcon';
+import { CubeIcon } from './components/icons/CubeIcon';
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
@@ -41,4 +45,8 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'System & APIs Health', icon: ServerStackIcon },
   { name: 'Notifications', icon: BellIcon },
   { name: 'Settings', icon: Cog6ToothIcon },
+  { name: 'Risk & Trading Hub', icon: BoltIcon },
+  { name: 'Logic & Engines', icon: CubeIcon },
+  { name: 'Financial Journal', icon: BookOpenIcon },
+  { name: 'Liquidation Planner', icon: ArrowTrendingDownIcon },
 ];

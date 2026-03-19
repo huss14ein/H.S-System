@@ -1,4 +1,4 @@
-import React, { createContext, useContext, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, ReactNode, useEffect, useState } from 'react';
 
 interface AiContextType {
   isAiAvailable: boolean;
@@ -7,12 +7,44 @@ interface AiContextType {
 export const AiContext = createContext<AiContextType | null>(null);
 
 export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    
-    const isAiAvailable = useMemo(() => {
-        // With the geminiService now falling back to the proxy, we can consider AI features
-        // to be always available from the client's perspective. The service will handle
-        // the actual API key logic.
-        return true;
+    const [isAiAvailable, setIsAiAvailable] = useState<boolean>(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const run = async () => {
+            if (typeof fetch === 'undefined') return;
+            const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+            try {
+                for (const endpoint of endpoints) {
+                    try {
+                        const res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ health: true }),
+                            signal: controller.signal,
+                        });
+                        if (!res.ok) continue;
+                        const json = await res.json();
+                        const anyProviderConfigured = Boolean(json?.anyProviderConfigured);
+                        if (!cancelled) setIsAiAvailable(anyProviderConfigured);
+                        return;
+                    } catch {
+                        // Try next endpoint (e.g. local proxy vs Netlify functions path).
+                    }
+                }
+                if (!cancelled) setIsAiAvailable(false);
+            } catch {
+                if (!cancelled) setIsAiAvailable(false);
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        };
+        run();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const value = {

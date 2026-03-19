@@ -14,7 +14,9 @@ interface StatementHistoryViewProps {
 }
 
 const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePage }) => {
-  const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions } = useStatementProcessing();
+  const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions, getStatementDownloadUrl } =
+    useStatementProcessing();
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const { formatCurrencyString } = useFormatCurrency();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'reviewing'>('all');
@@ -53,6 +55,20 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
       alert(`Reconciliation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsReconciling(false);
+    }
+  };
+
+  const handleDownloadOriginal = async (statementId: string) => {
+    setDownloadingId(statementId);
+    try {
+      const url = await getStatementDownloadUrl(statementId);
+      if (!url) {
+        alert('Original file is not available. Ensure Supabase Storage bucket "financial-statements" exists (see docs/supabase_storage_financial_statements.md).');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -217,7 +233,7 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                             <span>Transactions: {statement.transactions?.length || 0}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
                         onClick={() => handleExportStatement(statement.id)}
@@ -227,7 +243,19 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                         <ArrowDownTrayIcon className="h-4 w-4 inline mr-1" />
                         Export
                       </button>
-                      {statement.status === 'completed' && (statement.transactions?.length || 0) > 0 && (
+                      {statement.storagePath && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadOriginal(statement.id)}
+                          disabled={downloadingId === statement.id}
+                          className="px-3 py-1.5 text-sm font-medium text-indigo-800 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                          title="Download uploaded file from storage"
+                        >
+                          {downloadingId === statement.id ? 'Opening…' : 'Original file'}
+                        </button>
+                      )}
+                      {(statement.transactions?.length || 0) > 0 &&
+                        (statement.status === 'completed' || statement.status === 'reviewing') && (
                         <button
                           type="button"
                           onClick={() => handleReconcile(statement.id)}

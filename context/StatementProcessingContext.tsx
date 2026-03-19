@@ -3,6 +3,31 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { DataContext } from './DataContext';
 import { invokeAI } from '../services/geminiService';
+import type { Transaction, InvestmentTransaction } from '../types';
+
+function isStatementUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function randomUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** Private Supabase Storage bucket for original statement files (see docs/supabase_storage_financial_statements.md). */
+const STATEMENT_FILE_BUCKET = 'financial-statements';
+const MAX_STATEMENT_FILE_BYTES = 52_428_800; // 50 MiB
+
+function sanitizeStorageFileName(name: string): string {
+  const base = name.split(/[/\\]/).pop() || 'statement';
+  return base.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180);
+}
 
 export interface FinancialStatement {
   id: string;
@@ -25,6 +50,9 @@ export interface FinancialStatement {
   summary: StatementSummary;
   confidence: number;
   errors?: string[];
+  /** Supabase Storage (optional). */
+  storageBucket?: string;
+  storagePath?: string;
 }
 
 export interface ExtractedTransaction {
@@ -60,6 +88,14 @@ export interface StatementProcessingContextType {
   currentStatement: FinancialStatement | null;
   isProcessing: boolean;
   uploadStatement: (file: File, bankInfo?: BankInfo) => Promise<FinancialStatement>;
+  /** After real parse on Statement Upload: persist metadata + extracted rows (Supabase + state). */
+  commitParsedStatementFromUpload: (params: {
+    file: File;
+    bankInfo?: BankInfo;
+    accountId: string | null;
+    bankTransactions?: Transaction[];
+    investmentTransactions?: InvestmentTransaction[];
+  }) => Promise<FinancialStatement>;
   processStatement: (statementId: string) => Promise<void>;
   reviewStatement: (statementId: string) => void;
   approveStatement: (statementId: string) => Promise<void>;
@@ -67,6 +103,8 @@ export interface StatementProcessingContextType {
   deleteStatement: (statementId: string) => void;
   reconcileTransactions: (statementId: string) => Promise<ReconciliationResult>;
   exportTransactions: (statementId: string) => string;
+  /** Signed URL for original file (requires Storage bucket + policies). */
+  getStatementDownloadUrl: (statementId: string) => Promise<string | null>;
   getStatementById: (id: string) => FinancialStatement | undefined;
   getStatementsByAccount: (accountNumber: string) => FinancialStatement[];
   getProcessingStats: () => ProcessingStats;
@@ -138,43 +176,73 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
         try {
           const { data: dbStatements, error } = await supabaseClient
             .from('financial_statements')
-            .select('*')
+            .select('*, extracted_transactions(*)')
             .eq('user_id', user.id)
             .order('uploaded_at', { ascending: false });
 
           if (!error && dbStatements) {
-            const loaded = dbStatements.map((s: any) => ({
-              id: s.id,
-              fileName: s.file_name,
-              fileType: s.file_type as FinancialStatement['fileType'],
-              fileSize: s.file_size,
-              uploadedAt: new Date(s.uploaded_at),
-              processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
-              status: s.status as FinancialStatement['status'],
-              bankName: s.bank_name,
-              accountNumber: s.account_number,
-              accountType: s.account_type as FinancialStatement['accountType'],
-              statementPeriod: {
-                startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
-                endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date()
-              },
-              openingBalance: s.opening_balance ?? 0,
-              closingBalance: s.closing_balance ?? 0,
-              transactions: [], // Load separately if needed
-              summary: (s.summary as StatementSummary) || {
-                totalCredits: 0,
-                totalDebits: 0,
-                netChange: 0,
-                transactionCount: 0,
-                categories: {},
-                averageTransaction: 0,
-                largestTransaction: 0,
-                smallestTransaction: 0,
-                dailySpending: {}
-              },
-              confidence: s.confidence ?? 0,
-              errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : []
-            }));
+            const mapExtractedRow = (row: any): ExtractedTransaction => ({
+              id: row.id,
+              date: new Date(row.transaction_date),
+              description: row.description ?? '',
+              amount: Number(row.amount),
+              type: row.transaction_type as ExtractedTransaction['type'],
+              balance: row.balance != null ? Number(row.balance) : undefined,
+              category: row.category ?? undefined,
+              subcategory: row.subcategory ?? undefined,
+              tags: Array.isArray(row.tags) ? row.tags : [],
+              confidence: row.confidence ?? 0,
+              rawText: row.raw_text ?? '',
+              matchedTransaction: row.matched_transaction_id ?? undefined,
+              reconciliationStatus: (row.reconciliation_status || 'unmatched') as ExtractedTransaction['reconciliationStatus'],
+            });
+
+            const loaded: FinancialStatement[] = dbStatements.map((s: any) => {
+              const rawExtracted = s.extracted_transactions;
+              const extractedList: any[] = Array.isArray(rawExtracted)
+                ? rawExtracted
+                : rawExtracted
+                  ? [rawExtracted]
+                  : [];
+              const transactions = extractedList
+                .map(mapExtractedRow)
+                .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+              return {
+                id: s.id,
+                fileName: s.file_name,
+                fileType: s.file_type as FinancialStatement['fileType'],
+                fileSize: s.file_size,
+                uploadedAt: new Date(s.uploaded_at),
+                processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
+                status: s.status as FinancialStatement['status'],
+                bankName: s.bank_name,
+                accountNumber: s.account_number,
+                accountType: s.account_type as FinancialStatement['accountType'],
+                statementPeriod: {
+                  startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
+                  endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date(),
+                },
+                openingBalance: Number(s.opening_balance) || 0,
+                closingBalance: Number(s.closing_balance) || 0,
+                transactions,
+                summary: (s.summary as StatementSummary) || {
+                  totalCredits: 0,
+                  totalDebits: 0,
+                  netChange: 0,
+                  transactionCount: 0,
+                  categories: {},
+                  averageTransaction: 0,
+                  largestTransaction: 0,
+                  smallestTransaction: 0,
+                  dailySpending: {},
+                },
+                confidence: s.confidence ?? 0,
+                errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : [],
+                storageBucket: s.storage_bucket ?? undefined,
+                storagePath: s.storage_path ?? undefined,
+              };
+            });
             setStatements(loaded);
             return;
           }
@@ -223,6 +291,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
       const supabaseClient = supabase; // Type narrowing
       
       statements.forEach(async (statement) => {
+        if (!isStatementUuid(statement.id)) return;
         try {
           const { error } = await supabaseClient
             .from('financial_statements')
@@ -245,7 +314,9 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
               errors: statement.errors || [],
               uploaded_at: statement.uploadedAt.toISOString(),
               processed_at: statement.processedAt?.toISOString(),
-              updated_at: new Date().toISOString()
+              updated_at: new Date().toISOString(),
+              storage_bucket: statement.storageBucket ?? null,
+              storage_path: statement.storagePath ?? null,
             }, { onConflict: 'id' });
 
           if (error) {
@@ -267,7 +338,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
 
   const uploadStatement = async (file: File, bankInfo?: BankInfo): Promise<FinancialStatement> => {
     const statement: FinancialStatement = {
-      id: `statement-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: randomUuid(),
       fileName: file.name,
       fileType: getFileType(file.name),
       fileSize: file.size,
@@ -538,7 +609,23 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   };
 
   const deleteStatement = (statementId: string) => {
-    setStatements(prev => prev.filter(s => s.id !== statementId));
+    const stmt = statements.find((s) => s.id === statementId);
+    if (stmt?.storageBucket && stmt?.storagePath && supabase) {
+      void supabase.storage.from(stmt.storageBucket).remove([stmt.storagePath]).then(({ error }) => {
+        if (error) console.warn('Statement file delete:', error.message);
+      });
+    }
+    if (supabase && auth?.user?.id && isStatementUuid(statementId)) {
+      void supabase
+        .from('financial_statements')
+        .delete()
+        .eq('id', statementId)
+        .eq('user_id', auth.user.id)
+        .then(({ error }) => {
+          if (error) console.error('Failed to delete statement from database:', error);
+        });
+    }
+    setStatements((prev) => prev.filter((s) => s.id !== statementId));
     if (currentStatement?.id === statementId) {
       setCurrentStatement(null);
     }
@@ -815,6 +902,19 @@ Return ONLY valid JSON, no markdown or extra text.`;
     return 1 - (distance / maxLength);
   };
 
+  const getStatementDownloadUrl = async (statementId: string): Promise<string | null> => {
+    const stmt = statements.find((s) => s.id === statementId);
+    if (!stmt?.storageBucket || !stmt?.storagePath || !supabase) return null;
+    const { data, error } = await supabase.storage
+      .from(stmt.storageBucket)
+      .createSignedUrl(stmt.storagePath, 180);
+    if (error || !data?.signedUrl) {
+      console.warn('Signed URL failed:', error?.message);
+      return null;
+    }
+    return data.signedUrl;
+  };
+
   const exportTransactions = (statementId: string): string => {
     const statement = statements.find(s => s.id === statementId);
     if (!statement) return '';
@@ -857,14 +957,195 @@ Return ONLY valid JSON, no markdown or extra text.`;
   const getFileType = (fileName: string): 'pdf' | 'csv' | 'xlsx' | 'ofx' | 'qfx' => {
     const extension = fileName.split('.').pop()?.toLowerCase();
     switch (extension) {
-      case 'pdf': return 'pdf';
-      case 'csv': return 'csv';
+      case 'pdf':
+        return 'pdf';
+      case 'csv':
+        return 'csv';
+      case 'txt':
+        return 'csv';
       case 'xlsx':
-      case 'xls': return 'xlsx';
-      case 'ofx': return 'ofx';
-      case 'qfx': return 'qfx';
-      default: return 'pdf';
+      case 'xls':
+        return 'xlsx';
+      case 'ofx':
+        return 'ofx';
+      case 'qfx':
+        return 'qfx';
+      default:
+        return 'pdf';
     }
+  };
+
+  const commitParsedStatementFromUpload = async (params: {
+    file: File;
+    bankInfo?: BankInfo;
+    accountId: string | null;
+    bankTransactions?: Transaction[];
+    investmentTransactions?: InvestmentTransaction[];
+  }): Promise<FinancialStatement> => {
+    const { file, bankInfo, accountId, bankTransactions = [], investmentTransactions = [] } = params;
+    const id = randomUuid();
+
+    const extracts: ExtractedTransaction[] = [];
+
+    for (const tx of bankTransactions) {
+      const isIncome = tx.type === 'income';
+      const type: ExtractedTransaction['type'] = isIncome ? 'credit' : 'debit';
+      const amount = isIncome ? Math.abs(tx.amount) : -Math.abs(tx.amount);
+      extracts.push({
+        id: randomUuid(),
+        date: new Date(tx.date),
+        description: tx.description || '',
+        amount,
+        type,
+        tags: [],
+        confidence: 0.88,
+        rawText: tx.description || '',
+        reconciliationStatus: 'unmatched',
+        category: tx.category,
+        subcategory: tx.subcategory,
+      });
+    }
+
+    for (const tx of investmentTransactions) {
+      const total = Number(tx.total) || 0;
+      const signed =
+        tx.type === 'buy' || tx.type === 'withdrawal'
+          ? -Math.abs(total || Math.abs(tx.quantity * tx.price))
+          : Math.abs(total || Math.abs(tx.quantity * tx.price));
+      const type: ExtractedTransaction['type'] = signed < 0 ? 'debit' : 'credit';
+      extracts.push({
+        id: randomUuid(),
+        date: new Date(tx.date),
+        description: `${tx.type.toUpperCase()} ${tx.symbol || ''}`.trim(),
+        amount: signed,
+        type,
+        tags: [tx.symbol || 'trade'],
+        confidence: 0.9,
+        rawText: `${tx.type} ${tx.symbol} qty=${tx.quantity} @ ${tx.price}`,
+        reconciliationStatus: 'unmatched',
+        category: 'Investments',
+        subcategory: tx.type,
+      });
+    }
+
+    const summary = calculateStatementSummary(extracts);
+    const times = extracts.map((t) => t.date.getTime()).filter((n) => !Number.isNaN(n));
+    let statement: FinancialStatement = {
+      id,
+      fileName: file.name,
+      fileType: getFileType(file.name),
+      fileSize: file.size,
+      uploadedAt: new Date(),
+      status: extracts.length > 0 ? 'reviewing' : 'completed',
+      bankName: bankInfo?.bankName,
+      accountNumber: bankInfo?.accountNumber ?? accountId ?? undefined,
+      accountType: bankInfo?.accountType,
+      statementPeriod: {
+        startDate: times.length ? new Date(Math.min(...times)) : new Date(),
+        endDate: times.length ? new Date(Math.max(...times)) : new Date(),
+      },
+      openingBalance: 0,
+      closingBalance: 0,
+      transactions: extracts,
+      summary,
+      confidence: calculateConfidence(extracts),
+    };
+
+    setStatements((prev) => [...prev, statement]);
+    setCurrentStatement(statement);
+
+    if (supabase && auth?.user && isStatementUuid(id)) {
+      const user = auth.user;
+      const accountUuid = accountId && isStatementUuid(accountId) ? accountId : null;
+      try {
+        const { error: stErr } = await supabase.from('financial_statements').insert({
+          id,
+          user_id: user.id,
+          file_name: statement.fileName,
+          file_type: statement.fileType,
+          file_size: statement.fileSize,
+          bank_name: statement.bankName ?? null,
+          account_number: statement.accountNumber ?? null,
+          account_type: statement.accountType ?? null,
+          account_id: accountUuid,
+          statement_period_start: statement.statementPeriod.startDate.toISOString().split('T')[0],
+          statement_period_end: statement.statementPeriod.endDate.toISOString().split('T')[0],
+          opening_balance: statement.openingBalance,
+          closing_balance: statement.closingBalance,
+          status: statement.status,
+          confidence: statement.confidence,
+          summary: statement.summary,
+          errors: statement.errors || [],
+          uploaded_at: statement.uploadedAt.toISOString(),
+          processed_at: statement.processedAt?.toISOString() ?? null,
+          updated_at: new Date().toISOString(),
+        });
+        if (stErr) {
+          console.error('financial_statements insert failed:', stErr);
+        } else {
+          if (extracts.length > 0) {
+            const rows = extracts.map((e) => ({
+              id: e.id,
+              statement_id: id,
+              user_id: user.id,
+              transaction_date: e.date.toISOString().split('T')[0],
+              description: e.description,
+              amount: e.amount,
+              transaction_type: e.type,
+              balance: e.balance ?? null,
+              category: e.category ?? null,
+              subcategory: e.subcategory ?? null,
+              tags: e.tags,
+              confidence: e.confidence,
+              raw_text: e.rawText,
+              reconciliation_status: e.reconciliationStatus,
+            }));
+            const { error: exErr } = await supabase.from('extracted_transactions').insert(rows);
+            if (exErr) console.error('extracted_transactions insert failed:', exErr);
+          }
+
+          if (file.size > 0 && file.size <= MAX_STATEMENT_FILE_BYTES) {
+            const objectPath = `${user.id}/${id}/${sanitizeStorageFileName(file.name)}`;
+            const { error: upErr } = await supabase.storage.from(STATEMENT_FILE_BUCKET).upload(objectPath, file, {
+              upsert: true,
+              cacheControl: '3600',
+            });
+            if (upErr) {
+              console.warn('Statement file storage skipped (create bucket/policies if needed):', upErr.message);
+            } else {
+              const { error: upRowErr } = await supabase
+                .from('financial_statements')
+                .update({
+                  storage_bucket: STATEMENT_FILE_BUCKET,
+                  storage_path: objectPath,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', id)
+                .eq('user_id', user.id);
+              if (upRowErr) {
+                console.warn('Could not save storage_path on financial_statements:', upRowErr.message);
+              } else {
+                statement = {
+                  ...statement,
+                  storageBucket: STATEMENT_FILE_BUCKET,
+                  storagePath: objectPath,
+                };
+                setStatements((prev) =>
+                  prev.map((s) => (s.id === id ? { ...s, storageBucket: STATEMENT_FILE_BUCKET, storagePath: objectPath } : s)),
+                );
+                setCurrentStatement((cur) =>
+                  cur?.id === id ? { ...cur, storageBucket: STATEMENT_FILE_BUCKET, storagePath: objectPath } : cur,
+                );
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('commitParsedStatementFromUpload persistence error:', e);
+      }
+    }
+
+    return statement;
   };
 
   const value: StatementProcessingContextType = {
@@ -872,6 +1153,7 @@ Return ONLY valid JSON, no markdown or extra text.`;
     currentStatement,
     isProcessing,
     uploadStatement,
+    commitParsedStatementFromUpload,
     processStatement,
     reviewStatement,
     approveStatement,
@@ -879,6 +1161,7 @@ Return ONLY valid JSON, no markdown or extra text.`;
     deleteStatement,
     reconcileTransactions,
     exportTransactions,
+    getStatementDownloadUrl,
     getStatementById,
     getStatementsByAccount,
     getProcessingStats

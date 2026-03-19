@@ -1,9 +1,19 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { Page } from '../types';
+import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
+import {
+  reconcileCashAccountBalance,
+  detectStaleMarketData,
+  detectStaleFxRate,
+  collectTrackedSymbols,
+  getStaleQuoteSymbols,
+} from '../services/dataQuality';
+import { normalizedMonthlyExpense, cashRunwayMonths } from '../services/financeMetrics';
+import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -56,7 +66,7 @@ const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const { data } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
   const [pendingTransactionApprovalCount, setPendingTransactionApprovalCount] = useState(0);
@@ -126,7 +136,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
     // Goals near deadline
     (data.goals ?? []).forEach((g) => {
-      const targetDate = (g as any).targetDate ?? (g as any).target_date;
+      const targetDate = (g as any).targetDate ?? (g as any).target_date ?? (g as any).deadline;
       if (!targetDate) return;
       const d = new Date(targetDate);
       const daysLeft = Math.ceil((d.getTime() - now.getTime()) / 86400000);
@@ -142,6 +152,25 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           actionHint: 'Increase monthly allocation or adjust goal deadline.',
         });
       }
+    });
+
+    (data.goals ?? []).forEach((g: any) => {
+      const alloc = Number(g.savingsAllocationPercent) || 0;
+      if (alloc > 0) return;
+      const dl = g.deadline ? new Date(g.deadline) : null;
+      if (!dl || isNaN(dl.getTime()) || dl.getTime() <= now.getTime()) return;
+      const daysLeft = Math.ceil((dl.getTime() - now.getTime()) / 86400000);
+      if (daysLeft > 540) return;
+      push({
+        id: `goal-no-alloc-${g.id}`,
+        category: 'Goal',
+        message: `Goal "${g.name}" has 0% savings allocation but a future deadline.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Goals',
+        severity: 'info',
+        actionHint: 'Set allocation % on the Goals page so funding suggestions reflect your priorities.',
+      });
     });
 
     // Transaction approval notifications for admin (from shared budget transactions pending approval)
@@ -220,16 +249,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     const liquidCash = accountsForRunway
       .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
       .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
-    const monthlyExpensesByKey = new Map<string, number>();
-    transactionsForRunway.forEach((t: any) => {
-      if (t.type !== 'expense' || !t.date) return;
-      const d = new Date(t.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + Math.abs(Number(t.amount) || 0));
+    const avgMonthlyExpense = normalizedMonthlyExpense(transactionsForRunway as { date: string; type?: string; category?: string; amount?: number }[], {
+      monthsLookback: 6,
     });
-    const monthlyExpenseValues = Array.from(monthlyExpensesByKey.values());
-    const avgMonthlyExpense = monthlyExpenseValues.length > 0 ? monthlyExpenseValues.reduce((a, b) => a + b, 0) / monthlyExpenseValues.length : 0;
-    const runwayMonths = avgMonthlyExpense > 0 ? liquidCash / avgMonthlyExpense : 0;
+    const runwayMonths = cashRunwayMonths(liquidCash, avgMonthlyExpense);
     if (avgMonthlyExpense > 0 && runwayMonths > 0 && runwayMonths < 2) {
       push({
         id: 'cash-runway-low',
@@ -240,6 +263,102 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         pageLink: 'Accounts',
         severity: runwayMonths < 1 ? 'urgent' : 'warning',
         actionHint: 'Reduce discretionary expenses or increase income buffers.',
+      });
+    }
+
+    const salCov = salaryToExpenseCoverage(transactionsForRunway as Transaction[], 6);
+    if (salCov.ratio != null && salCov.ratio < 1 && salCov.ratio >= 0.2) {
+      push({
+        id: 'salary-vs-spend-heuristic',
+        category: 'System',
+        message: `Salary signal vs avg spend: ${salCov.ratio.toFixed(2)}× (under 1×). Review budget or income.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Analysis',
+        severity: 'info',
+        actionHint: 'Open Analysis for salary vs expense coverage and spend intelligence.',
+      });
+    }
+
+    const driftCashNames: string[] = [];
+    accountsForRunway
+      .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+      .forEach((acc: { id: string; type: string; balance?: number; name?: string }) => {
+        const r = reconcileCashAccountBalance(
+          { id: acc.id, type: acc.type as 'Checking' | 'Savings', balance: acc.balance ?? 0 },
+          transactionsForRunway as Transaction[]
+        );
+        if (r?.showWarning && acc.name) driftCashNames.push(String(acc.name));
+      });
+    if (driftCashNames.length > 0) {
+      push({
+        id: 'balance-reconciliation-drift',
+        category: 'System',
+        message: `Cash account balance may not match recorded transactions: ${driftCashNames.slice(0, 3).join(', ')}${driftCashNames.length > 3 ? '…' : ''}.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Accounts',
+        severity: 'warning',
+        actionHint: 'Open Accounts — compare “transaction net” to current balance; add missing history or an opening-balance adjustment.',
+      });
+    }
+
+    const hasMarketExposure =
+      ((data.investments ?? []).length > 0 ||
+        (data.watchlist ?? []).length > 0 ||
+        (data.commodityHoldings ?? []).length > 0);
+    if (hasMarketExposure) {
+      const staleM = detectStaleMarketData(lastUpdated, isLive);
+      if (staleM.isStale) {
+        push({
+          id: 'market-data-stale',
+          category: 'System',
+          message: staleM.message,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Investments',
+          severity: 'warning',
+          actionHint: 'Use the header refresh control to pull latest quotes (live mode) or open Investments.',
+        });
+      }
+      const tracked = collectTrackedSymbols(data as Parameters<typeof collectTrackedSymbols>[0]);
+      const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive);
+      if (isLive && Object.keys(symbolQuoteUpdatedAt).length > 0 && staleSyms.length > 0) {
+        push({
+          id: 'market-symbols-stale',
+          category: 'System',
+          message: `Some symbols need a fresh quote: ${staleSyms.slice(0, 6).join(', ')}${staleSyms.length > 6 ? '…' : ''}.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Watchlist',
+          severity: 'warning',
+          actionHint: 'Refresh prices in the header; failed symbols may need a different data provider.',
+        });
+      }
+    }
+
+    const fxFromPlan = (data.investmentPlan as { fxRateUpdatedAt?: string } | undefined)?.fxRateUpdatedAt;
+    let fxConfirmedAt: string | null = fxFromPlan ?? null;
+    if (!fxConfirmedAt) {
+      try {
+        if (auth?.user?.id && typeof window !== 'undefined') {
+          fxConfirmedAt = localStorage.getItem(`finova_fx_plan_confirmed_${auth.user.id}`);
+        }
+      } catch {
+        fxConfirmedAt = null;
+      }
+    }
+    const fxStale = detectStaleFxRate(fxConfirmedAt, 14);
+    if (fxStale.isStale && hasMarketExposure) {
+      push({
+        id: 'fx-rate-stale',
+        category: 'System',
+        message: fxStale.message,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        severity: 'info',
+        actionHint: 'Save your Monthly Plan in Investments to confirm you reviewed USD/SAR assumptions.',
       });
     }
 
@@ -279,7 +398,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     });
 
-    // Smart monthly digest
+    // Smart monthly digest (external expenses only)
+    const monthlyExpensesByKey = new Map<string, number>();
+    transactionsForRunway.forEach((t: any) => {
+      if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+      const d = new Date(t.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + Math.abs(Number(t.amount) || 0));
+    });
     const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
@@ -302,7 +428,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin]);
+  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

@@ -18,6 +18,7 @@ import { useAI } from '../context/AiContext';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { DocumentDuplicateIcon } from './icons/DocumentDuplicateIcon';
 import { CheckIcon } from './icons/CheckIcon';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 type ExpertParamKey = 'salary' | 'fixedExpenses' | 'currentSavings' | 'goal' | 'expenseBreakdown' | 'monthlyInvestment' | 'currentNetWorth' | 'debtList' | 'investmentAmountOrPct' | 'riskTolerance' | 'monthlyExpenses' | 'currentPortfolio' | 'currentExpenses';
 
@@ -81,7 +82,7 @@ const SalaryPlanningExperts: React.FC = () => {
         const threeMonthsAgo = new Date();
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
         const fixedExpenses = transactions.filter(
-            (t) => t.type === 'expense' && (t as any).transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsAgo
+            (t) => countsAsExpenseForCashflowKpi(t) && (t as any).transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsAgo
         );
         const total = fixedExpenses.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
         const monthsWithData = new Set(fixedExpenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
@@ -104,7 +105,7 @@ const SalaryPlanningExperts: React.FC = () => {
         const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number; category?: string; budgetCategory?: string }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = transactions.filter((t) => t.type === 'expense' && new Date(t.date) >= sixMonthsAgo);
+        const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
         const byCategory = new Map<string, number>();
         expenses.forEach((t) => {
             const cat = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
@@ -177,7 +178,7 @@ const SalaryPlanningExperts: React.FC = () => {
         const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = transactions.filter((t) => t.type === 'expense' && new Date(t.date) >= sixMonthsAgo);
+        const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
         const total = expenses.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
         const months = new Set(expenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
         const avg = months > 0 ? Math.round(total / months) : 0;

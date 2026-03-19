@@ -12,8 +12,11 @@ import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { unrealizedPnL } from '../services/portfolioMetrics';
+import type { Holding } from '../types';
 import type { Page } from '../types';
+import { approximatePortfolioMWRR, flowsFromInvestmentTransactions } from '../services/portfolioXirr';
 
 const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
@@ -22,21 +25,12 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    
-    // Loading state
-    if (loading || !data) {
-        return (
-            <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
-                <div className="text-center">
-                    <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading dividend tracker" />
-                    <p className="text-sm text-slate-600">Loading dividend data...</p>
-                </div>
-            </div>
-        );
-    }
 
-    const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers } = useMemo(() => {
-        const dividendTransactions = (data?.investmentTransactions ?? []).filter(t => t.type === 'dividend');
+    const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers, mwrrPct } = useMemo(() => {
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
+        const invTxPersonal = (data?.investmentTransactions ?? []).filter((t) => personalAccountIds.has(t.accountId ?? ''));
+        const dividendTransactions = invTxPersonal.filter((t) => t.type === 'dividend');
         const now = new Date();
 
         const dividendIncomeYTD = dividendTransactions
@@ -64,7 +58,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .slice(0, 10);
 
         const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        type HoldingRow = { currentValue?: number; dividendYield?: number; name?: string; symbol?: string };
+        type HoldingRow = { currentValue?: number; dividendYield?: number; name?: string; symbol?: string; avgCost?: number; quantity?: number };
         const allHoldings = portfolios.flatMap((p: { holdings?: HoldingRow[]; currency?: string }) => ((p.holdings ?? []) as HoldingRow[]).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' }))) as (HoldingRow & { portfolioCurrency?: string })[];
         const totalInvestmentValue = allHoldings.reduce((sum: number, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
 
@@ -73,19 +67,51 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const yieldVal = h.dividendYield ?? 0;
                 return yieldVal > 0 && Number.isFinite(yieldVal) && yieldVal <= 100; // Validate yield is reasonable
             })
-            .map(h => ({
-                name: h.name ?? h.symbol ?? '—',
-                projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate) * ((h.dividendYield ?? 0) / 100),
-            }));
+            .map((h) => {
+                const holding = h as unknown as Holding;
+                const uPnL = unrealizedPnL(holding);
+                const costBasis = Math.max(0, Number(holding.avgCost) || 0) * Math.max(0, Number(holding.quantity) || 0);
+                const cv = Number(h.currentValue) || 0;
+                const dy = Number(h.dividendYield) || 0;
+                const annualDivLocal = cv * (dy / 100);
+                const yieldOnCostPct = costBasis > 0.01 && annualDivLocal > 0 ? (annualDivLocal / costBasis) * 100 : null;
+                return {
+                    name: h.name ?? h.symbol ?? '—',
+                    projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate) * (dy / 100),
+                    unrealizedSAR: toSAR(uPnL, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate),
+                    forwardYieldPct: dy,
+                    yieldOnCostPct,
+                };
+            });
 
         const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum: number, h: { projected: number }) => sum + h.projected, 0);
         const averageYield = totalInvestmentValue > 0 ? (projectedAnnualIncome / totalInvestmentValue) * 100 : 0;
         const topPayers = holdingsWithProjectedDividends
             .sort((a: { projected: number }, b: { projected: number }) => b.projected - a.projected)
             .slice(0, 5)
-            .map((h) => ({ name: h.name ?? '', projected: h.projected }));
+            .map((h: { name?: string; projected: number; unrealizedSAR?: number; forwardYieldPct?: number; yieldOnCostPct?: number | null }) => ({
+                name: h.name ?? '',
+                projected: h.projected,
+                unrealizedSAR: h.unrealizedSAR,
+                forwardYieldPct: h.forwardYieldPct,
+                yieldOnCostPct: h.yieldOnCostPct,
+            }));
 
-        return { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers };
+        const flows = flowsFromInvestmentTransactions(
+            invTxPersonal as { date: string; type: string; total?: number }[]
+        );
+        const termVal = getAllInvestmentsValueInSAR(portfolios, exchangeRate);
+        const mwrrPct = approximatePortfolioMWRR(flows, termVal, new Date().toISOString().slice(0, 10));
+
+        return {
+            dividendIncomeYTD,
+            monthlyDividendsChartData,
+            recentDividendTransactions,
+            projectedAnnualIncome,
+            averageYield,
+            topPayers,
+            mwrrPct,
+        };
     }, [data, exchangeRate]);
 
     const handleGetAnalysis = useCallback(async () => {
@@ -101,6 +127,17 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             setIsLoading(false);
         }
     }, [dividendIncomeYTD, projectedAnnualIncome, topPayers]);
+
+    if (loading || !data) {
+        return (
+            <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading dividend tracker" />
+                    <p className="text-sm text-slate-600">Loading dividend data...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="page-container space-y-6 sm:space-y-8">
@@ -158,6 +195,16 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <p className="text-2xl font-bold text-dark tabular-nums">{averageYield.toFixed(2)}%</p>
                     <p className="text-sm text-slate-600 mt-1">Annual dividend percentage</p>
                 </div>
+            </div>
+
+            <div className="section-card border border-violet-100 bg-violet-50/40">
+                <p className="text-sm font-semibold text-slate-800">Approx. portfolio MWRR (money-weighted)</p>
+                <p className="text-2xl font-bold text-violet-800 tabular-nums mt-1">
+                    {mwrrPct != null && Number.isFinite(mwrrPct) ? `${mwrrPct.toFixed(2)}%` : '—'}
+                </p>
+                <p className="text-xs text-slate-500 mt-2">
+                    IRR on trade totals + terminal book value (account currency mix). Simplified heuristic.
+                </p>
             </div>
             
             {/* AI Advisor Section */}
@@ -339,8 +386,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <h3 className="section-title">Top 5 Dividend Payers</h3>
                     <p className="text-sm text-slate-500 mb-4">Based on projected annual income</p>
                     <div className="space-y-3">
-                        {topPayers.map((payer: { name: string; projected: number }, index: number) => (
-                            <div key={payer.name} className="list-row">
+                        {topPayers.map((payer: { name: string; projected: number; unrealizedSAR?: number; forwardYieldPct?: number; yieldOnCostPct?: number | null }, index: number) => (
+                            <div key={payer.name} className="list-row flex-wrap gap-2">
                                 <div className="flex items-center gap-3">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
                                         index === 0 ? 'bg-amber-100 text-amber-800' :
@@ -350,11 +397,26 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     }`}>
                                         {index + 1}
                                     </div>
-                                    <span className="font-bold text-slate-900">{payer.name}</span>
+                                    <div>
+                                        <span className="font-bold text-slate-900 block">{payer.name}</span>
+                                        <span className="text-xs text-slate-500">
+                                            Forward yield {Number(payer.forwardYieldPct ?? 0).toFixed(2)}%
+                                            {payer.yieldOnCostPct != null && Number.isFinite(payer.yieldOnCostPct) ? (
+                                                <> · <strong className="text-violet-700">YoC {payer.yieldOnCostPct.toFixed(2)}%</strong></>
+                                            ) : null}
+                                        </span>
+                                    </div>
                                 </div>
-                                <span className="font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-lg">
-                                    {formatCurrencyString(payer.projected)}/yr
-                                </span>
+                                <div className="flex flex-col items-end gap-0.5 text-sm">
+                                    <span className="font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-lg">
+                                        {formatCurrencyString(payer.projected)}/yr
+                                    </span>
+                                    {payer.unrealizedSAR != null && Number.isFinite(payer.unrealizedSAR) && Math.abs(payer.unrealizedSAR) >= 0.01 && (
+                                        <span className={`text-xs ${payer.unrealizedSAR >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            Unrealized {payer.unrealizedSAR >= 0 ? '+' : ''}{formatCurrencyString(payer.unrealizedSAR)}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>

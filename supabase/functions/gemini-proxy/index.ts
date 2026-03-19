@@ -22,8 +22,41 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { model, contents, config } = await req.json();
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    const { model, contents, config, health } = await req.json() as {
+      model?: string;
+      contents?: unknown;
+      config?: unknown;
+      health?: boolean;
+    };
+
+    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+    const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const grokApiKey = Deno.env.get("GROK_API_KEY");
+
+    if (health === true) {
+      const geminiConfigured = Boolean(geminiApiKey);
+      const anthropicConfigured = Boolean(anthropicApiKey);
+      const grokConfigured = Boolean(grokApiKey);
+      const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured;
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          anyProviderConfigured,
+          providers: {
+            gemini: { configured: geminiConfigured },
+            anthropic: { configured: anthropicConfigured },
+            grok: { configured: grokConfigured },
+          },
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
+
+    const apiKey = geminiApiKey;
 
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY not set in Supabase environment variables.");

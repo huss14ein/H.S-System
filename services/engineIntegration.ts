@@ -425,7 +425,7 @@ export function validateInvestmentAction(
     .reduce((sum, b) => sum + (b.amount ?? 0), 0);
   
   if (action.type === 'buy' && amount > context.cash.availableCash - upcomingBills - context.household.fixedMonthlyObligations) {
-    warnings.push('Purchase may leave insufficient funds for upcoming obligations');
+    warnings.push('Purchase may leave insufficient funds for near-term essential expenses');
   }
   
   return {
