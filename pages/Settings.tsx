@@ -37,6 +37,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
+    const [approvalLoading, setApprovalLoading] = useState<string | null>(null);
 
     useEffect(() => {
         setLocalSettings(data?.settings ?? {});
@@ -73,7 +76,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setApprovalLoading(userId);
         try {
             await supabase.rpc('approve_signup_user', { p_user_id: userId });
-            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+            setPendingUsers((prev: { id: string }[]) => prev.filter((u: { id: string }) => u.id !== userId));
         } catch (e) {
             console.error('Approve failed:', e);
         } finally {
@@ -86,7 +89,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setApprovalLoading(userId);
         try {
             await supabase.rpc('reject_signup_user', { p_user_id: userId });
-            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+            setPendingUsers((prev: { id: string }[]) => prev.filter((u: { id: string }) => u.id !== userId));
         } catch (e) {
             console.error('Reject failed:', e);
         } finally {
@@ -165,7 +168,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                         <p className="text-slate-500 text-sm">No pending signups.</p>
                     ) : (
                         <ul className="space-y-3">
-                            {pendingUsers.map((u) => (
+                            {pendingUsers.map((u: { id: string; name: string | null; email: string | null }) => (
                                 <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
                                     <div>
                                         <p className="font-medium text-slate-800">{u.name || '—'}</p>
