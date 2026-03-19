@@ -76,7 +76,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setApprovalLoading(userId);
         try {
             await supabase.rpc('approve_signup_user', { p_user_id: userId });
-            setPendingUsers((prev: { id: string }[]) => prev.filter((u: { id: string }) => u.id !== userId));
+            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
         } catch (e) {
             console.error('Approve failed:', e);
         } finally {
@@ -89,7 +89,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setApprovalLoading(userId);
         try {
             await supabase.rpc('reject_signup_user', { p_user_id: userId });
-            setPendingUsers((prev: { id: string }[]) => prev.filter((u: { id: string }) => u.id !== userId));
+            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
         } catch (e) {
             console.error('Reject failed:', e);
         } finally {
