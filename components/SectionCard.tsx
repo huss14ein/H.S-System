@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react';
 import InfoHint from './InfoHint';
+import { resolveSectionInfoHint, type SectionHintPreset } from '../content/sectionInfoHints';
 
 interface SectionCardProps {
   children: ReactNode;
@@ -7,8 +8,16 @@ interface SectionCardProps {
   title?: string;
   /** Optional icon before title */
   icon?: ReactNode;
-  /** Short help text (?) next to title — use for engines, metrics, or non-obvious UI */
+  /** Short help text (?) next to title — overrides registry when set */
   infoHint?: string;
+  /** Lookup in `content/sectionInfoHints.ts` (semantic key or normalized title) */
+  infoHintKey?: string;
+  /** Preset blurb when no title-specific copy exists */
+  hintPreset?: SectionHintPreset;
+  /** Hide the (!) hint entirely */
+  noHint?: boolean;
+  /** When true (default), titled sections without registry copy get the default one-liner */
+  autoHint?: boolean;
   /** Optional hint/tooltip or extra header content */
   headerAction?: ReactNode;
   /** If true, card has hover lift (for clickable cards) */
@@ -28,12 +37,24 @@ const SectionCard: React.FC<SectionCardProps> = ({
   title,
   icon,
   infoHint,
+  infoHintKey,
+  hintPreset,
+  noHint,
+  autoHint = true,
   headerAction,
   hover = false,
   onClick,
   className = '',
 }) => {
   const cardClass = hover || onClick ? 'section-card-hover' : 'section-card';
+  const resolvedHint = resolveSectionInfoHint({
+    title,
+    infoHint,
+    infoHintKey,
+    hintPreset,
+    noHint,
+    autoHint,
+  });
   const content = (
     <>
       {(title || headerAction) && (
@@ -43,7 +64,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
               {icon}
               <span className="inline-flex items-center gap-0.5">
                 {title}
-                {infoHint ? <InfoHint text={infoHint} /> : null}
+                {resolvedHint ? <InfoHint text={resolvedHint} /> : null}
               </span>
             </h2>
           )}

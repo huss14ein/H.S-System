@@ -450,7 +450,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
       <div className="space-y-6">
         <SectionCard
           title="How to use this page"
-          infoHint="Everything here recalculates when your Finova data changes. Net worth snapshots (local) also refresh when you return to this tab. Use the (!) buttons on each card for what the numbers mean and limits. Not financial advice."
         >
           <p className="text-sm text-gray-600 mb-3">
             Each section calls a service under <code className="text-xs bg-gray-100 px-1 rounded">services/</code> with your real data
@@ -473,7 +472,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Returns & benchmarks"
-          infoHint="Uses your last two saved net worth snapshots for simple return. Benchmark line uses a fixed 8% example unless you extend it. TWRR line is a small demo of linked sub-period returns. For full attribution, use Risk & Trading Hub."
         >
           <ul className="text-sm space-y-1 text-gray-700">
             <li>Simple return (last two snapshots): {portfolioReturnPct.toFixed(2)}%</li>
@@ -490,7 +488,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Strategy comparison"
-          infoHint="Ranks illustrative scenarios from your current net worth (not a forecast promise). Allocation models blend your plan core+upside weights with generic balanced/conservative examples."
         >
           <p className="text-xs text-gray-500 mb-2">compareStrategies / compareAllocationModels</p>
           <p className="text-sm mb-2">Scenarios (projected NW): {strategyRank.map((s) => `${s.label}: ${formatCurrencyString(s.projectedNetWorth)}`).join(' · ')}</p>
@@ -505,7 +502,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Cash & liquidity"
-          infoHint="Runway merges household stress + liquid cash vs expenses. Bucket demo uses a fixed SAR 5,000 surplus example; sweeps use inferred operating/reserve/investable buckets from your emergency fund and net worth."
         >
           <p className="text-xs text-gray-500 mb-2">cashAllocationEngine + liquidityRunwayEngine</p>
           <ul className="text-sm space-y-1 text-gray-700">
@@ -519,7 +515,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="FX"
-          infoHint="Currency mix is from checking/savings balances in your base currency today. The USD→SAR line is a fixed-rate illustration; live FX is in Currency settings and investment plan."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Portfolio by currency (balances as base): {fxAlloc.map((f) => `${f.currency} ${f.allocationPct.toFixed(0)}%`).join(', ') || '—'}</li>
@@ -529,7 +524,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Seasonality"
-          infoHint="Adjusts this month’s expense using built-in seasonal patterns (e.g. tuition months). Tune by editing seasonality in Forecast/Plan flows later; here it’s automatic from defaults + your core monthly expense estimate."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>This month adjusted expense: {formatCurrencyString(seasonAdj)}</li>
@@ -540,7 +534,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Retirement & sensitivity"
-          infoHint="Uses ~35% of net worth as retirement corpus placeholder, 3% inflation, 25 years, and your monthly plan budget as contribution. Sensitivity nudges expected return ±2% to show corpus range."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>
@@ -556,7 +549,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Insurance (baseline)"
-          infoHint="Placeholder coverage needs vs empty policies—add real policies in your records to use renewal alerts. For carrier pricing, use external tools."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             {insuranceGaps.gaps.map((g) => (
@@ -570,7 +562,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Probabilistic planning"
-          infoHint="Monte Carlo uses seeded simulation for stable refresh. Needs at least one goal; uses goal savings % and plan monthly budget slice. p10/p50/p90 are outcome percentiles, not guarantees."
         >
           {goalSim && firstGoal ? (
             <ul className="text-sm text-gray-700 space-y-1">
@@ -592,7 +583,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Planning assumptions"
-          infoHint="Demo inflation/return knobs to show validateAssumptionsEngine. Replace with your Forecast assumptions when wiring settings."
         >
           <p className="text-sm">{assumptionValidation.ok ? 'All demo assumptions in range.' : 'Validation issues:'}</p>
           {!assumptionValidation.ok && (
@@ -608,7 +598,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Behavioral & explainability"
-          infoHint="Plain-language buy/goal explanations from rule outputs. Cooldown and drawdown guards are samples—wire real last-trade dates in trading flows for production use."
         >
           <ul className="text-sm text-gray-700 space-y-2">
             <li>Buy policy: {behaviorBuy.allowed ? 'Allowed' : `Blocked (${behaviorBuy.flags.join(', ')})`}</li>
@@ -621,7 +610,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Order planning (demo ladder)"
-          infoHint="Example buy tranches at 0%, 5%, 10% below a notional $100 price. Record Trade uses related helpers for real symbols and sizes."
         >
           <ul className="text-sm text-gray-700">
             {buyTranches.map((t, i) => (
@@ -634,7 +622,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="UX guardrails"
-          infoHint="Microcopy and validation helpers for forms. Reuse fieldHintEngine and userInputGuard on new modals for consistent UX."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Badge: {badgeDemo.text} ({badgeDemo.severity})</li>
@@ -645,7 +632,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Corporate actions (demo)"
-          infoHint="Shows how a 2:1 split adjusts share count and average cost. Cash dividends leave quantity/cost unchanged in this simple model."
         >
           <p className="text-sm text-gray-700">
             2:1 split: 100 sh @ 40 → {splitDemo.quantity.toFixed(2)} sh @ {splitDemo.avgCost.toFixed(4)} cost/sh
@@ -654,7 +640,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Risk lane"
-          infoHint="Combines household cashflow stress, emergency months, and Wealth Ultra performance snapshots into Cautious / Balanced / Opportunity with a suggested risk profile."
         >
           <p className="text-sm text-gray-700">
             Lane: <strong>{riskLane.lane}</strong> → suggested profile {riskLane.suggestedProfile}
@@ -666,7 +651,9 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard title="Next best actions">
+        <SectionCard
+          title="Next best actions"
+        >
           <ul className="text-sm space-y-2">
             {nextActions.slice(0, 6).map((a) => (
               <li key={a.id} className="border-b border-gray-100 pb-2">
@@ -685,7 +672,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Shock drill & scenario timeline"
-          infoHint="Shock drill picks a template (e.g. market crash) and blends household budget + portfolio value deltas. Timeline is narrative from goals + horizon, not a second simulation."
         >
           {shock ? (
             <ul className="text-sm text-gray-700 space-y-1">
@@ -710,7 +696,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Engine integration (cross-engine)"
-          infoHint="buildUnifiedFinancialContext merges cash, risk, and household signals from your transactions, accounts, budgets, goals, and holdings—then runCrossEngineAnalysis emits alerts and recommendations."
         >
           {unified ? (
             <>
@@ -733,7 +718,6 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
         <SectionCard
           title="Lifestyle guardrails & provisioning"
-          infoHint="Gates discretionary spend when EF, runway, savings rate, or goal slippage fail thresholds. Provision line shows spreading a demo 6k cost over six months."
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Guardrail: {lifestyle.ok ? 'OK' : 'Flags: ' + lifestyle.flags.join(', ')}</li>

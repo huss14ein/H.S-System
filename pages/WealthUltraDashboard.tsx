@@ -15,6 +15,7 @@ import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import InfoHint from '../components/InfoHint';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -435,7 +436,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'hero',
         content: (
-          <SectionCard title="Wealth Ultra Engine" className="border-2 border-primary/30 bg-gradient-to-br from-white via-primary/5 to-slate-50 shadow-lg">
+          <SectionCard
+            title="Wealth Ultra Engine"
+            className="border-2 border-primary/30 bg-gradient-to-br from-white via-primary/5 to-slate-50 shadow-lg"
+          >
             <div className="space-y-4">
               <p className="text-slate-700 leading-relaxed max-w-3xl">Rule-based allocation, sleeve drift analysis, and institutional-grade order planning. Unified with your Investment Plan, execution flow, and live portfolio telemetry.</p>
               {positionCount > 0 && (
@@ -526,7 +530,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'alerts',
         content: (
-          <SectionCard title="Alerts & Recommendations" className="h-full border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Alerts & Recommendations"
+            className="h-full border-2 border-slate-200 bg-white shadow-md"
+          >
             <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
               <p className="text-xs text-slate-600 font-medium">Prioritized: act on critical first, then warnings; use info for context.</p>
               <span className="text-xs font-bold px-3 py-1.5 rounded-full border-2 border-slate-300 bg-slate-100 text-slate-700 whitespace-nowrap shadow-sm">
@@ -575,7 +582,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'engine-iq',
         content: (
-          <SectionCard title="Engine Intelligence & Decision Summary" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Engine Intelligence & Decision Summary"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-slate-500 font-bold mb-3">Engine IQ Score</p>
@@ -630,7 +640,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'sleeve-allocation',
         content: (
-          <SectionCard title="Sleeve Allocation & Drift Analysis" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Sleeve Allocation & Drift Analysis"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             <p className="text-xs text-slate-600 mb-6 font-medium">Current vs target allocation. Drift &gt;5% suggests rebalancing action.</p>
             <div className="space-y-4">
               {allocations.map(a => {
@@ -689,7 +702,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'orders',
         content: (
-          <SectionCard title="Generated Orders" className="border-2 border-primary/30 bg-gradient-to-br from-white to-primary/5 shadow-lg">
+          <SectionCard
+            title="Generated Orders"
+            className="border-2 border-primary/30 bg-gradient-to-br from-white to-primary/5 shadow-lg"
+          >
             <p className="text-xs text-slate-700 mb-5 font-medium">Suggested limit orders from the engine. Export to JSON or use as a checklist when placing trades.</p>
             {orders.length > 0 ? (
               <div className="space-y-5">
@@ -750,7 +766,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'next-move',
         content: (
-          <SectionCard title="Next Move — Monthly Deployment" className="h-full border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-white shadow-lg">
+          <SectionCard
+            title="Next Move — Monthly Deployment"
+            className="h-full border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-white shadow-lg"
+          >
             <div className="h-full flex flex-col justify-between gap-4">
               <p className="text-sm leading-relaxed text-slate-700 font-medium">{toSafeText(monthlyDeployment.reason, 'Review allocation before deploying.')}</p>
               <div className="space-y-3 pt-4 border-t border-slate-200">
@@ -776,7 +795,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'spec-risk',
         content: (
-          <SectionCard title="Speculative Sleeve Status" className="h-full min-h-[140px] border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
+          <SectionCard
+            title="Speculative Sleeve Status"
+            className="h-full min-h-[140px] border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg"
+          >
             <div className="min-h-[100px] flex flex-col justify-center">
               {specBreach ? (
                 <div className="w-full rounded-xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/50 px-4 py-4 shadow-sm">
@@ -811,7 +833,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'positions',
         content: (
-          <SectionCard title="All Positions" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="All Positions"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             <p className="text-xs text-slate-600 mb-4 font-medium">P&L % = (market value − cost) / cost. Sorted by return performance.</p>
             {positions.length > 0 ? (
               <div className="overflow-x-auto rounded-lg border-2 border-slate-200">
@@ -865,7 +890,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'gainers',
         content: (
-          <SectionCard title="Top Gainers" className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-white shadow-lg">
+          <SectionCard
+            title="Top Gainers"
+            className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-white shadow-lg"
+          >
             {top5Gainers.length > 0 ? (
               <ul className="space-y-3">
                 {top5Gainers.map((p, idx) => (
@@ -893,7 +921,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'losers',
         content: (
-          <SectionCard title="Top Losers" className="border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg">
+          <SectionCard
+            title="Top Losers"
+            className="border-2 border-rose-200 bg-gradient-to-br from-rose-50/50 to-white shadow-lg"
+          >
             {top5Losers.length > 0 ? (
               <ul className="space-y-3">
                 {top5Losers.map((p, idx) => (
@@ -921,7 +952,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'capital-efficiency',
         content: (
-          <SectionCard title="Capital Efficiency Ranking" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Capital Efficiency Ranking"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             <p className="text-xs text-slate-600 mb-4 font-medium">Higher score = better risk-adjusted return. Formula: Return % × Risk Weight. Weights: Med 1.25, High 1.5, Spec 2.0.</p>
             {capitalEfficiencyRanked.length > 0 ? (
               <div className="space-y-2">
@@ -968,7 +1002,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'exception-history',
         content: (
-          <SectionCard title="Exception History" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Exception History"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             {exceptionHistory.length > 0 ? (
               <div className="space-y-3">
                 {exceptionHistory.slice(0, 8).map((row, idx) => (
@@ -1004,7 +1041,10 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       {
         id: 'risk-distribution',
         content: (
-          <SectionCard title="Risk Distribution" className="border-2 border-slate-200 bg-white shadow-md">
+          <SectionCard
+            title="Risk Distribution"
+            className="border-2 border-slate-200 bg-white shadow-md"
+          >
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {(['Low', 'Med', 'High', 'Spec'] as WealthUltraRiskTier[]).map(tier => {
                 const stat = riskDistribution[tier] ?? { count: 0, value: 0 };
@@ -1076,8 +1116,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       description="Smart allocation, sleeve drift, and institutional-grade order planning. Unified with Investment Plan, execution flow, and live portfolio telemetry."
       action={
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-1">
             <span className="text-slate-500 text-xs font-medium">Scenario:</span>
+            <InfoHint text="Current uses live/simulated prices. Market −10% / −20% stress all holding prices uniformly to see allocation, drift, and orders under a simple drawdown—illustrative, not a full risk model." />
             <select
               value={scenarioId}
               onChange={(e) => setScenarioId(e.target.value)}

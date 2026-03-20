@@ -66,7 +66,9 @@ const LiquidationPlanner: React.FC<{ setActivePage?: (p: Page) => void }> = ({ s
         ) : undefined
       }
     >
-      <SectionCard title="Ranked positions (higher = review trim first)">
+      <SectionCard
+        title="Ranked positions (higher = review trim first)"
+      >
         {ranked.length === 0 ? (
           <p className="text-sm text-slate-500">No holdings to rank.</p>
         ) : (

@@ -279,7 +279,10 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
           </div>
         )}
       </SectionCard>
-      <SectionCard title="History" className="mt-6">
+      <SectionCard
+        title="History"
+        className="mt-6"
+      >
         {sorted.length === 0 ? (
           <p className="text-sm text-slate-500">No entries yet.</p>
         ) : (
