@@ -10,7 +10,9 @@ export function computeDisciplineScore(data: FinancialData | null | undefined): 
   if (!data) return { score: 0, label: 'At risk', reasons: ['No data available.'] };
 
   const plannedTrades = (data.plannedTrades ?? []) as PlannedTrade[];
-  const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+  const allTxs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+  const personalAccountIds = new Set(((data as any).personalAccounts ?? data.accounts ?? []).map((a: { id: string }) => a.id));
+  const txs = personalAccountIds.size > 0 ? allTxs.filter(t => personalAccountIds.has(t.accountId ?? '')) : allTxs;
 
   const executed = plannedTrades.filter(p => p.status === 'Executed');
 

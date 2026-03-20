@@ -33,8 +33,9 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
   if (!template) return null;
 
   const year = new Date().getFullYear();
-  const tx = data.transactions ?? [];
-  const accounts = data.accounts ?? [];
+  const d = data as any;
+  const tx = d?.personalTransactions ?? data.transactions ?? [];
+  const accounts = d?.personalAccounts ?? data.accounts ?? [];
   const goals = data.goals ?? [];
 
   const input = buildHouseholdEngineInputFromData(
@@ -56,12 +57,12 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
     (shockedHousehold.balanceProjection.projectedYearEndLiquid - shockedOpening) -
     (baseHousehold.balanceProjection.projectedYearEndLiquid - baseOpening);
 
-  const allHoldings = (data.investments ?? []).flatMap(p => p.holdings ?? []);
+  const allHoldings = ((data as any)?.personalInvestments ?? data.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
   const priceMap: Record<string, number> = {};
-  allHoldings.forEach(h => {
+  allHoldings.forEach((h: { symbol?: string; quantity?: number; currentValue?: number }) => {
     const sym = (h.symbol || '').toUpperCase();
     if (!sym) return;
-    priceMap[sym] = h.quantity > 0 ? h.currentValue / h.quantity : 0;
+    priceMap[sym] = (h.quantity ?? 0) > 0 ? (h.currentValue ?? 0) / (h.quantity ?? 1) : 0;
   });
   const baseWU = runWealthUltraEngine({ holdings: allHoldings, priceMap, config: undefined });
   const shockedPriceMap: Record<string, number> = {};

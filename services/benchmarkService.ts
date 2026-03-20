@@ -108,3 +108,29 @@ export function calculateBenchmarkComparison(
 export async function getBenchmarkPerformance(): Promise<BenchmarkData[]> {
   return fetchBenchmarkData();
 }
+
+/** Compare portfolio return to a single benchmark; returns outperformance. */
+export function compareToBenchmark(portfolioReturnPct: number, benchmarkReturnPct: number): { excess: number; outperforming: boolean } {
+  const excess = portfolioReturnPct - benchmarkReturnPct;
+  return { excess, outperforming: excess > 0 };
+}
+
+/** Excess return vs benchmark (same period). */
+export function excessReturn(portfolioReturnPct: number, benchmarkReturnPct: number): number {
+  return portfolioReturnPct - benchmarkReturnPct;
+}
+
+/** Tracking difference (volatility-adjusted can be added later). */
+export function trackingDifference(portfolioReturnPct: number, benchmarkReturnPct: number): number {
+  return portfolioReturnPct - benchmarkReturnPct;
+}
+
+/** Whether asset type fits benchmark (e.g. equity vs SPY). */
+export function benchmarkFitByAssetType(assetType: string, benchmarkSymbol: string): 'fit' | 'partial' | 'mismatch' {
+  const eq = ['Stock', 'ETF', 'Mutual Fund'].includes(assetType);
+  const spy = benchmarkSymbol.toUpperCase().includes('SPY') || benchmarkSymbol.toUpperCase().includes('SP500');
+  if (eq && spy) return 'fit';
+  if (assetType === 'Sukuk' && benchmarkSymbol.toUpperCase().includes('SUKUK')) return 'fit';
+  if (eq || spy) return 'partial';
+  return 'mismatch';
+}

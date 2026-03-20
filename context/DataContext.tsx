@@ -1,11 +1,14 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
+import { getPersonalWealthData } from '../utils/wealthScope';
+import { auditChangeLog } from '../services/auditLog';
+import { parseSplitsFromNote } from '../services/transactionSplitNote';
+import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
 
-// Default parameters live in app settings/config (here and wealth-ultra/config), not in the DB.
-// DB only stores user overrides; we merge with these defaults when reading.
+// Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
@@ -27,6 +30,33 @@ const initialData: FinancialData = {
     wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
     budgetRequests: [],
 };
+
+function mergeWealthUltraSystemConfigFromRow(
+    row: Record<string, unknown> | null | undefined,
+    base: WealthUltraSystemConfig,
+): WealthUltraSystemConfig {
+    if (!row) return base;
+    const n = (v: unknown, fallback: number) => {
+        const x = Number(v);
+        return Number.isFinite(x) ? x : fallback;
+    };
+    return {
+        fxRate: n(row.fx_rate ?? row.fxRate, base.fxRate),
+        cashReservePct: n(row.cash_reserve_pct ?? row.cashReservePct, base.cashReservePct),
+        maxPerTickerPct: n(row.max_per_ticker_pct ?? row.maxPerTickerPct, base.maxPerTickerPct),
+        riskWeightLow: n(row.risk_weight_low ?? row.riskWeightLow, base.riskWeightLow),
+        riskWeightMed: n(row.risk_weight_med ?? row.riskWeightMed, base.riskWeightMed),
+        riskWeightHigh: n(row.risk_weight_high ?? row.riskWeightHigh, base.riskWeightHigh),
+        riskWeightSpec: n(row.risk_weight_spec ?? row.riskWeightSpec, base.riskWeightSpec),
+        defaultTarget1Pct: n(row.default_target_1_pct ?? row.defaultTarget1Pct, base.defaultTarget1Pct),
+        defaultTarget2Pct: n(row.default_target_2_pct ?? row.defaultTarget2Pct, base.defaultTarget2Pct),
+        defaultTrailingPct: n(row.default_trailing_pct ?? row.defaultTrailingPct, base.defaultTrailingPct),
+    };
+}
+
+/** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
+const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
+const HOLDING_QUANTITY_EPSILON = 0.00001;
 
 interface DataContextType {
   data: FinancialData;
@@ -172,6 +202,7 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
             roundingRule: (bc.rounding_rule ?? bc.roundingRule ?? 'round') as 'round' | 'floor' | 'ceil',
             leftoverCashRule: (bc.leftover_cash_rule ?? bc.leftoverCashRule ?? 'reinvest_core') as 'reinvest_core' | 'hold',
         } : initialData.investmentPlan.brokerConstraints,
+        fxRateUpdatedAt: raw.fx_rate_updated_at ?? raw.fxRateUpdatedAt ?? undefined,
     };
 }
 
@@ -346,6 +377,9 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
     if (plan.sleeves != null && Array.isArray(plan.sleeves)) {
         row.sleeves = plan.sleeves;
     }
+    if (plan.fxRateUpdatedAt != null && plan.fxRateUpdatedAt !== '') {
+        row.fx_rate_updated_at = plan.fxRateUpdatedAt;
+    }
     return row;
 }
 
@@ -370,6 +404,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
+    const duplicateHoldingsReconcileInFlightRef = useRef(false);
+    const duplicateHoldingsLastSignatureRef = useRef<string>('');
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
 
@@ -432,14 +468,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { ...raw, type, amount, goalId: raw.goalId ?? raw.goal_id };
     };
 
-    const normalizeTransaction = (transaction: any): Transaction => ({
-        ...transaction,
-        accountId: transaction.accountId ?? transaction.account_id ?? '',
-        budgetCategory: transaction.budgetCategory ?? transaction.budget_category,
-        categoryId: transaction.categoryId ?? transaction.category_id,
-        rejectionReason: transaction.rejectionReason ?? transaction.rejection_reason,
-        recurringId: transaction.recurringId ?? transaction.recurring_id,
-    });
+    const normalizeTransaction = (transaction: any): Transaction => {
+        const rawNote = transaction.note != null ? String(transaction.note) : '';
+        const { cleanNote, splitLines } = parseSplitsFromNote(rawNote);
+        return {
+            ...transaction,
+            accountId: transaction.accountId ?? transaction.account_id ?? '',
+            budgetCategory: transaction.budgetCategory ?? transaction.budget_category,
+            categoryId: transaction.categoryId ?? transaction.category_id,
+            rejectionReason: transaction.rejectionReason ?? transaction.rejection_reason,
+            recurringId: transaction.recurringId ?? transaction.recurring_id,
+            note: cleanNote !== undefined ? cleanNote : transaction.note,
+            ...(splitLines?.length ? { splitLines } : {}),
+        };
+    };
 
     const normalizeRecurringTransaction = (raw: any, resolvedAccountId?: string): RecurringTransaction => ({
         id: raw.id,
@@ -481,11 +523,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const transactionPayloadVariants = (transaction: Omit<Transaction, 'id' | 'user_id'> | Transaction) => {
-        const recId = (transaction as { recurringId?: string; recurring_id?: string }).recurringId ?? (transaction as any).recurring_id;
-        const budgetCat = (transaction as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transaction as any).budget_category;
-        const accountId = (transaction as { accountId?: string; account_id?: string }).accountId ?? (transaction as any).account_id;
+        const { splitLines: _sl, ...txRest } = transaction as Transaction & { splitLines?: unknown };
+        const transactionClean = txRest as typeof transaction;
+        const recId = (transactionClean as { recurringId?: string; recurring_id?: string }).recurringId ?? (transactionClean as any).recurring_id;
+        const budgetCat = (transactionClean as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transactionClean as any).budget_category;
+        const accountId = (transactionClean as { accountId?: string; account_id?: string }).accountId ?? (transactionClean as any).account_id;
 
-        const payloadWithSnakeCase: Record<string, unknown> = { ...transaction };
+        const payloadWithSnakeCase: Record<string, unknown> = { ...transactionClean };
         delete payloadWithSnakeCase.accountId;
         delete payloadWithSnakeCase.budgetCategory;
         delete payloadWithSnakeCase.recurringId;
@@ -493,7 +537,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (budgetCat !== undefined) payloadWithSnakeCase.budget_category = budgetCat;
         if (accountId !== undefined) payloadWithSnakeCase.account_id = accountId;
 
-        const payloadWithCamelCase: Record<string, unknown> = { ...transaction };
+        const payloadWithCamelCase: Record<string, unknown> = { ...transactionClean };
         delete payloadWithCamelCase.account_id;
         delete payloadWithCamelCase.budget_category;
         delete payloadWithCamelCase.recurring_id;
@@ -501,8 +545,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
         if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
 
-        // Try camelCase first (most common), then snake_case as fallback
-        return [payloadWithCamelCase, payloadWithSnakeCase];
+        const variants: Record<string, unknown>[] = [payloadWithCamelCase, payloadWithSnakeCase];
+        const hasNote =
+            transactionClean.note != null && String(transactionClean.note).trim() !== '';
+        if (hasNote) {
+            const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
+            const { note: _n2, ...snakeNoNote } = { ...payloadWithSnakeCase };
+            variants.push(camelNoNote, snakeNoNote);
+        }
+        return variants;
     };
 
     const fetchData = async () => {
@@ -580,6 +631,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
 
+            const wuBase = getDefaultWealthUltraSystemConfig();
+            let wealthUltraConfig = wuBase;
+            if (supabase && auth.user) {
+                try {
+                    const { data: wuUser } = await supabase
+                        .from('wealth_ultra_config')
+                        .select('*')
+                        .eq('user_id', auth.user.id)
+                        .maybeSingle();
+                    if (wuUser) {
+                        wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(wuUser as Record<string, unknown>, wuBase);
+                    } else {
+                        const { data: wuGlobal } = await supabase
+                            .from('wealth_ultra_config')
+                            .select('*')
+                            .is('user_id', null)
+                            .limit(1)
+                            .maybeSingle();
+                        if (wuGlobal) {
+                            wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(wuGlobal as Record<string, unknown>, wuBase);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Optional wealth_ultra_config load skipped:', e);
+                }
+            }
+
             setData({
                 accounts: filterOwnedRows(normalizedAccounts),
                 assets: filterOwnedRows(assets.data as any[]),
@@ -610,8 +688,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 plannedTrades: filterOwnedRows(plannedTrades.data as any[]),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
-                // Default parameters from app settings/config only; we do not read wealth_ultra_config from DB
-                wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
+                wealthUltraConfig,
                 portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []),
                 statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
                 executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
@@ -954,12 +1031,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         let newTx: any = null;
         let error: any = null;
-        for (const payload of transactionPayloadVariants(transaction)) {
+        let savedWithoutNote = false;
+        const hadSplitNote =
+            typeof transaction.note === 'string' && transaction.note.includes('__FINOVA_SPLITS__');
+        const variants = transactionPayloadVariants(transaction);
+        for (let i = 0; i < variants.length; i++) {
+            const payload = variants[i];
             const result = await db.from('transactions').insert(withUser(payload)).select().single();
             newTx = result.data;
             error = result.error;
-            if (!error) break;
-            if (!isMissingColumnError(error)) break;
+            if (!error) {
+                savedWithoutNote = hadSplitNote && i >= 2;
+                break;
+            }
+            if (!isMissingColumnError(error) && String(error?.message || '').toLowerCase().indexOf('note') < 0) break;
+        }
+        if (savedWithoutNote) {
+            try {
+                alert(
+                    'Transaction saved, but split/memo was not stored: add column `note` on `transactions`. Run supabase/migrations/add_transactions_note.sql in Supabase SQL.'
+                );
+            } catch {}
         }
         if(error) {
             console.error("Error adding transaction:", error);
@@ -970,6 +1062,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const normalized = normalizeTransaction(newTx);
             setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
             await syncSharedBudgetTransactionMirror(normalized as any);
+            auditChangeLog({
+                action: 'create',
+                entity: 'transaction',
+                entityId: normalized.id,
+                summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)} · ${normalized.amount}`,
+                userId: auth.user.id,
+            });
         }
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => {
@@ -1007,27 +1106,59 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase || !auth?.user) return;
         const db = supabase;
         let error: any = null;
-        for (const payload of transactionPayloadVariants(transaction)) {
-            const result = await db.from('transactions').update(payload).match({ id: transaction.id, user_id: auth.user.id });
+        let savedWithoutNote = false;
+        const hadSplitNote =
+            typeof transaction.note === 'string' && transaction.note.includes('__FINOVA_SPLITS__');
+        const variants = transactionPayloadVariants(transaction);
+        for (let i = 0; i < variants.length; i++) {
+            const result = await db
+                .from('transactions')
+                .update(variants[i])
+                .match({ id: transaction.id, user_id: auth.user.id });
             error = result.error;
-            if (!error) break;
-            if (!isMissingColumnError(error)) break;
+            if (!error) {
+                savedWithoutNote = hadSplitNote && i >= 2;
+                break;
+            }
+            if (!isMissingColumnError(error) && String(error?.message || '').toLowerCase().indexOf('note') < 0) break;
+        }
+        if (savedWithoutNote) {
+            try {
+                alert(
+                    'Update saved without memo/splits: run supabase/migrations/add_transactions_note.sql to add the `note` column.'
+                );
+            } catch {}
         }
         if(error) console.error("Error updating transaction:", error);
         else {
             const normalized = normalizeTransaction(transaction as any);
             setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalized : t) }));
             await syncSharedBudgetTransactionMirror(normalized as any);
+            auditChangeLog({
+                action: 'update',
+                entity: 'transaction',
+                entityId: transaction.id,
+                summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)}`,
+                userId: auth.user.id,
+            });
         }
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
+        const prevTx = data?.transactions?.find((t) => t.id === transactionId);
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
         else {
             setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
             await removeSharedBudgetTransactionMirror(transactionId);
+            auditChangeLog({
+                action: 'delete',
+                entity: 'transaction',
+                entityId: transactionId,
+                summary: prevTx ? `Removed: ${String(prevTx.description ?? '').slice(0, 120)}` : 'Transaction removed',
+                userId: auth.user.id,
+            });
         }
     };
 
@@ -1361,6 +1492,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let accountIdForInsert: string;
         let portfolio: InvestmentPortfolio | undefined;
         let existingHolding: Holding | undefined;
+        let symbolHoldingsForTrade: Holding[] = [];
         let normalizedSymbol: string;
 
         let investmentAccount: Account | undefined;
@@ -1398,7 +1530,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             normalizedSymbol = (tradeData.symbol || '').trim().toUpperCase();
-            existingHolding = portfolio.holdings.find((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
+            symbolHoldingsForTrade = portfolio.holdings.filter((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
+            existingHolding = consolidateHoldingsBySymbol(symbolHoldingsForTrade) ?? undefined;
             if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
@@ -1407,6 +1540,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!accountIdForInsert) throw new Error("Account not found for this portfolio. Please refresh the page and try again.");
             const accountExists = (data?.accounts ?? []).some((a: Account) => a.id === accountIdForInsert);
             if (!accountExists) throw new Error("Selected account is not in the system (or portfolio points to a deleted account).");
+            if ((tradeData.type === 'buy' || tradeData.type === 'sell') && !(tradeData.quantity > 0)) {
+                throw new Error('Trade quantity must be greater than zero.');
+            }
         }
 
         // 2. Log the transaction to the database
@@ -1477,20 +1613,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         try {
             if (!portfolio) throw new Error('Portfolio not found');
+            if (symbolHoldingsForTrade.length > 1 && existingHolding) {
+                await updateHolding(existingHolding);
+                for (const duplicateHolding of symbolHoldingsForTrade.slice(1)) {
+                    await deleteHolding(duplicateHolding.id);
+                }
+            }
             
             if (tradeData.type === 'buy') {
-                const newHoldingData = {
-                    portfolioId: portfolio.id,
-                    symbol: tradeData.symbol,
-                    name: name || tradeData.symbol,
-                    quantity: tradeData.quantity,
-                    avgCost: tradeData.price,
-                    currentValue: tradeData.price * tradeData.quantity,
-                    assetClass: 'Stock' as const,
-                    zakahClass: 'Zakatable' as const,
-                    realizedPnL: 0,
-                };
-                await addHolding(newHoldingData);
+                const qAdd = tradeData.quantity;
+                const px = tradeData.price;
+                if (existingHolding && qAdd > 0) {
+                    const merged = applyBuyToHolding(existingHolding, qAdd, px);
+                    await updateHolding({
+                        ...existingHolding,
+                        name: name || existingHolding.name || tradeData.symbol,
+                        quantity: merged.quantity,
+                        avgCost: merged.avgCost,
+                        currentValue: merged.currentValue,
+                    });
+                } else {
+                    const newHoldingData = {
+                        portfolioId: portfolio.id,
+                        symbol: tradeData.symbol,
+                        name: name || tradeData.symbol,
+                        quantity: qAdd,
+                        avgCost: px,
+                        currentValue: px * qAdd,
+                        assetClass: 'Stock' as const,
+                        zakahClass: 'Zakatable' as const,
+                        realizedPnL: 0,
+                    };
+                    await addHolding(newHoldingData);
+                }
             } else { // 'sell'
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 const holdingForSell = existingHolding;
@@ -1498,7 +1653,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const realizedGain = (tradeData.price - holdingForSell.avgCost) * tradeData.quantity;
                 const newRealizedPnL = holdingForSell.realizedPnL + realizedGain;
 
-                if (newQuantity > 0.00001) { // Use a small epsilon for floating point comparison
+                if (newQuantity > HOLDING_QUANTITY_EPSILON) { // Use a small epsilon for floating point comparison
                     await updateHolding({ ...holdingForSell, quantity: newQuantity, realizedPnL: newRealizedPnL });
                 } else {
                     await deleteHolding(holdingForSell.id);
@@ -1714,12 +1869,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const overrides = investmentPlanOverridesToRow(plan);
         const planWithUser = { ...overrides, user_id: auth.user.id };
-        const { error } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
+        const planStamped: InvestmentPlanSettings = {
+            ...plan,
+            fxRateUpdatedAt: new Date().toISOString(),
+        };
+        const overridesStamped = investmentPlanOverridesToRow(planStamped);
+        const planWithUserStamped = { ...overridesStamped, user_id: auth.user.id };
+        const { error } = await supabase.from('investment_plan').upsert(planWithUserStamped, { onConflict: 'user_id' });
         if (error) {
-            console.error("Error saving investment plan:", error);
-            throw new Error(error.message || 'Failed to save plan');
+            console.warn("investment_plan upsert (with fx_rate_updated_at):", error.message);
+            const { error: err2 } = await supabase.from('investment_plan').upsert(planWithUser, { onConflict: 'user_id' });
+            if (err2) {
+                console.error("Error saving investment plan:", err2);
+                throw new Error(err2.message || 'Failed to save plan');
+            }
         }
-        setData(prev => ({ ...prev, investmentPlan: plan }));
+        setData(prev => ({ ...prev, investmentPlan: planStamped }));
+        try {
+            if (typeof window !== 'undefined' && auth.user.id) {
+                localStorage.setItem(`finova_fx_plan_confirmed_${auth.user.id}`, new Date().toISOString());
+            }
+        } catch {}
     };
 
     const addUniverseTicker = async (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => {
@@ -1821,16 +1991,70 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { SAR: v.SAR, USD: v.USD };
     }, [availableCashByAccountId]);
 
+    const dataWithPersonal = useMemo(() => {
+        const personal = getPersonalWealthData(data);
+        return { ...data, ...personal };
+    }, [data]);
+
+    const accountsForDeployable = useMemo((): Account[] => {
+        const d = dataWithPersonal as FinancialData & { personalAccounts?: Account[] };
+        return (d.personalAccounts ?? d.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[];
+    }, [dataWithPersonal]);
+
     const totalDeployableCash = useMemo(() => {
-        const bank = (data.accounts ?? []).filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
-        const platformCash = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
+        const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
             return s + cash.SAR + cash.USD;
         }, 0);
         return bank + platformCash;
-    }, [data?.accounts, getAvailableCashForAccount]);
+    }, [accountsForDeployable, getAvailableCashForAccount]);
 
-    const value = { data, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
+    useEffect(() => {
+        if (loading || !auth?.user || duplicateHoldingsReconcileInFlightRef.current) return;
+        const duplicateGroups: Holding[][] = [];
+        (data.investments ?? []).forEach((portfolio: InvestmentPortfolio) => {
+            const bySymbol = new Map<string, Holding[]>();
+            (portfolio.holdings ?? []).forEach((h: Holding) => {
+                const key = String(h.symbol ?? '').trim().toUpperCase();
+                if (!key) return;
+                const list = bySymbol.get(key) ?? [];
+                list.push(h);
+                bySymbol.set(key, list);
+            });
+            bySymbol.forEach((list) => {
+                if (list.length > 1) duplicateGroups.push(list);
+            });
+        });
+        if (!duplicateGroups.length) return;
+        const signature = duplicateGroups
+            .map((list) => list.map((h) => h.id).sort().join(','))
+            .sort()
+            .join('|');
+        if (!signature || signature === duplicateHoldingsLastSignatureRef.current) return;
+
+        duplicateHoldingsReconcileInFlightRef.current = true;
+        (async () => {
+            try {
+                for (const group of duplicateGroups) {
+                    const merged = consolidateHoldingsBySymbol(group);
+                    if (!merged) continue;
+                    await updateHolding(merged);
+                    for (const dup of group.slice(1)) {
+                        await deleteHolding(dup.id);
+                    }
+                }
+                duplicateHoldingsLastSignatureRef.current = signature;
+            } catch (error) {
+                console.warn('Duplicate holdings reconciliation skipped due to error:', error);
+            } finally {
+                duplicateHoldingsReconcileInFlightRef.current = false;
+            }
+        })();
+    }, [loading, auth?.user?.id, data.investments]);
+
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

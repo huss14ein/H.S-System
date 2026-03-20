@@ -29,9 +29,10 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   const [planError, setPlanError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
   const selectedPortfolio = useMemo(() => {
-    return (data?.investments ?? []).find(p => p.id === selectedPortfolioId) ?? (data?.investments ?? [])[0];
-  }, [selectedPortfolioId, data?.investments]);
+    return portfolios.find((p: { id: string }) => p.id === selectedPortfolioId) ?? portfolios[0];
+  }, [selectedPortfolioId, portfolios]);
 
   const handleGeneratePlan = useCallback(async () => {
     if (!selectedPortfolio) {
@@ -63,23 +64,23 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
 
   const mvoResult = useMemo(() => {
     if (!selectedPortfolio?.holdings?.length) return null;
-    const holdings = (selectedPortfolio.holdings ?? []).filter(h => Number(h.currentValue ?? 0) > 0);
+    const holdings = (selectedPortfolio.holdings ?? []).filter((h: { currentValue?: number }) => Number(h.currentValue ?? 0) > 0);
     if (holdings.length < 2) return null;
-    const total = holdings.reduce((s, h) => s + Number(h.currentValue ?? 0), 0);
+    const total = holdings.reduce((s: number, h: { currentValue?: number }) => s + Number(h.currentValue ?? 0), 0);
     if (total <= 0) return null;
     const expectedReturns = holdings.map(() => 0.07 / 12);
     const n = holdings.length;
     const cov = Array(n).fill(0).map(() => Array(n).fill(0));
     for (let i = 0; i < n; i++) cov[i][i] = 0.04 / 12;
     const res = meanVarianceOptimization({ expectedReturns, covarianceMatrix: cov, riskFreeRate: 0.04 / 12 });
-    const labels = holdings.map(h => h.symbol ?? '');
+    const labels = holdings.map((h: { symbol?: string }) => h.symbol ?? '');
     return { ...res, labels };
   }, [selectedPortfolio?.holdings]);
 
   const currentAllocation = useMemo(() => {
     if (!selectedPortfolio) return [];
     return (selectedPortfolio?.holdings ?? [])
-      .map((h) => {
+      .map((h: { quantity?: number; avgCost?: number; currentValue?: number; symbol?: string }) => {
         const quantity = Number(h.quantity || 0);
         const avgCost = Number(h.avgCost || 0);
         const marketValue = Number(h.currentValue || 0);
@@ -87,7 +88,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
         const effectiveValue = marketValue > 0 ? marketValue : fallbackValue;
         return { name: h.symbol ?? '', value: effectiveValue };
       })
-      .filter((row) => Number.isFinite(row.value) && row.value > 0);
+      .filter((row: { name: string; value: number }) => Number.isFinite(row.value) && row.value > 0);
   }, [selectedPortfolio]);
 
   // Loading state
@@ -102,7 +103,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     );
   }
 
-  if (!data?.investments?.length) {
+  if (!portfolios.length) {
     return (
       <div className="mt-6 space-y-4">
         <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 text-center">
@@ -157,7 +158,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             <div className="w-3 h-3 bg-slate-500 rounded-full animate-pulse"></div>
           </div>
           <p className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-2">Portfolios</p>
-          <p className="text-4xl font-black text-slate-900 tabular-nums">{(data?.investments ?? []).length}</p>
+          <p className="text-4xl font-black text-slate-900 tabular-nums">{portfolios.length}</p>
           <p className="text-sm text-slate-600 mt-2">Available portfolios</p>
         </div>
         <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-indigo-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
@@ -259,7 +260,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   onChange={(e) => setSelectedPortfolioId(e.target.value)}
                   className="w-full p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800 font-medium bg-white shadow-sm"
                 >
-                  {(data?.investments ?? []).map(p => (
+                  {portfolios.map((p: { id: string; name?: string }) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
@@ -309,7 +310,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   <div className="mt-3 pt-3 border-t border-slate-200">
                     <p className="text-xs font-medium text-slate-700 mb-1">MVO suggested weights (Efficient Frontier)</p>
                     <p className="text-xs text-slate-600">
-                      {mvoResult.labels.map((label, i) => `${label} ${(mvoResult!.optimalWeights[i] * 100).toFixed(0)}%`).join(', ')}
+                      {mvoResult.labels.map((label: string, i: number) => `${label} ${(mvoResult!.optimalWeights[i] * 100).toFixed(0)}%`).join(', ')}
                       {mvoResult.sharpeRatio != null && (
                         <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)}</span>
                       )}

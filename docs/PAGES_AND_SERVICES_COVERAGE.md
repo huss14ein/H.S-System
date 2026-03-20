@@ -85,7 +85,7 @@ This document lists every **page** and **service** in the app and what was audit
 - **Loading states:** Loading spinner + `aria-busy` / `aria-label` where missing (Accounts, Liabilities, InvestmentOverview, Commodities, Assets, Investments).
 - **Components:** **AIAdvisor** – `data?.assets` / `data?.accounts` / `data?.liabilities` / `data?.investments`. **Header** – `data?.accounts` for hasData; `data?.investmentTransactions` and `data?.investmentPlan` in investmentProgress useMemo.
 - **Services:** Confirmed exports match imports (householdBudgetEngine, goalFundingRouter, scenarioTimelineEngine, recoveryPlan, recoveryPlanPerformance, riskLaneEngine, liquidityRunwayEngine, disciplineScoreEngine, shockDrillEngine, etc.).
-- **Router:** All 26 `Page` values from `types.ts` are present in `App.tsx` (VALID_PAGES + renderPage switch); default falls back to Dashboard.
+- **Router:** All `Page` values from `types.ts` are present in `App.tsx` (`VALID_PAGES` + `renderPage` switch, including hash sync); default falls back to Dashboard.
 
 `npm run typecheck` passes after all changes.
 

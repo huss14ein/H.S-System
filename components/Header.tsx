@@ -16,6 +16,7 @@ import { CheckIcon } from './icons/CheckIcon';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
+import { usePrivacyMask } from '../context/PrivacyContext';
 
 interface HeaderProps {
   activePage: Page;
@@ -61,9 +62,10 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
+  const { playNotificationSound: soundEnabled } = usePrivacyMask();
 
   const prevNotificationCountRef = useRef(notificationCount);
-  const playNotificationSound = useRef(() => {
+  const playBeepRef = useRef(() => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = ctx.createOscillator();
@@ -77,24 +79,28 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.15);
     } catch (_) {}
-  }).current;
+  });
 
   useEffect(() => {
-    if (notificationCount > prevNotificationCountRef.current && prevNotificationCountRef.current >= 0) {
-      playNotificationSound();
+    if (
+      soundEnabled &&
+      notificationCount > prevNotificationCountRef.current &&
+      prevNotificationCountRef.current >= 0
+    ) {
+      playBeepRef.current();
     }
     prevNotificationCountRef.current = notificationCount;
-  }, [notificationCount, playNotificationSound]);
+  }, [notificationCount, soundEnabled]);
 
   const handleBellClick = () => {
-    if (notificationCount > 0) playNotificationSound();
+    if (soundEnabled && notificationCount > 0) playBeepRef.current();
     setActivePage('Notifications');
   };
 
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Statement Upload', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Investments', 'Market Events', 'Plan', 'Liabilities', 'Assets'] },
+    { name: 'Strategy', items: ['Investments', 'Risk & Trading Hub', 'Logic & Engines', 'Liquidation Planner', 'Market Events', 'Plan', 'Liabilities', 'Assets', 'Financial Journal'] },
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 

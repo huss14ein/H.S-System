@@ -1,4 +1,5 @@
 import type { FinancialData } from '../types';
+import { normalizedMonthlyExpense, cashRunwayMonths } from './financeMetrics';
 import { computeHouseholdStressFromData } from './householdBudgetStress';
 import { getPerformanceSnapshots } from './wealthUltraPerformance';
 
@@ -13,32 +14,18 @@ export function computeLiquidityRunwayFromData(data: FinancialData | null | unde
   if (!data) return null;
 
   const stress = computeHouseholdStressFromData(data);
-  const accounts = data.accounts ?? [];
-  const transactions = data.transactions ?? [];
+  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
+  const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
 
-  const now = new Date();
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-  const recentExpenses = transactions.filter(t => {
-    if (t.type !== 'expense') return false;
-    const d = new Date(t.date);
-    return d >= sixMonthsAgo && d <= now;
+  const avgMonthlyExpense = normalizedMonthlyExpense(transactions as { date: string; type?: string; category?: string; amount?: number }[], {
+    monthsLookback: 6,
   });
-  const byMonth = new Map<string, number>();
-  recentExpenses.forEach(t => {
-    const d = new Date(t.date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(t.amount));
-  });
-  const avgMonthlyExpense =
-    byMonth.size > 0
-      ? Array.from(byMonth.values()).reduce((a, b) => a + b, 0) / byMonth.size
-      : 0;
 
   const liquidCash = accounts
-    .filter(a => a.type === 'Checking' || a.type === 'Savings')
-    .reduce((sum, a) => sum + Math.max(0, a.balance ?? 0), 0);
+    .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+    .reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
 
-  const monthsOfRunway = avgMonthlyExpense > 0 ? liquidCash / avgMonthlyExpense : liquidCash > 0 ? 99 : 0;
+  const monthsOfRunway = cashRunwayMonths(liquidCash, avgMonthlyExpense);
 
   const snaps = getPerformanceSnapshots();
   let drawdownPct = 0;

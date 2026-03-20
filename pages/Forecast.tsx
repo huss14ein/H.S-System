@@ -14,6 +14,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page } from '../types';
+import { normalizedMonthlyExpense } from '../services/financeMetrics';
+import { stressTestScenario, compareStrategies, compareLumpSumVsDCA } from '../services/stressScenario';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -37,6 +39,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const { formatCurrencyString } = useFormatCurrency();
     const { data, loading } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const [stressJobLossM, setStressJobLossM] = useState(3);
+    const [stressMarketDrop, setStressMarketDrop] = useState(15);
+    const [stressMedical, setStressMedical] = useState(8000);
 
     const savingsAnalytics = useMemo(() => {
         const monthlyNet = new Map<string, number>();
@@ -47,7 +52,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             monthlyNet.set(d.toISOString().slice(0, 7), 0);
         }
 
-        (data?.transactions ?? []).forEach(t => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number }) => {
             const monthKey = t.date.slice(0, 7);
             if (!monthlyNet.has(monthKey)) return;
             monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + (Number(t.amount) ?? 0));
@@ -114,13 +119,14 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [savingsAnalytics.medianMonthlySavings]);
 
     const initialValues = useMemo(() => {
-        const assets = data?.assets ?? [];
-        const accounts = data?.accounts ?? [];
-        const liabilities = data?.liabilities ?? [];
-        const investments = data?.investments ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.filter(l => (l.amount ?? 0) < 0).reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) < 0).reduce((sum, acc) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivables = liabilities.filter(l => (l.amount ?? 0) > 0).reduce((sum, l) => sum + (l.amount ?? 0), 0);
+        const d = data as any;
+        const assets = d?.personalAssets ?? data?.assets ?? [];
+        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
+        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
+        const investments = d?.personalInvestments ?? data?.investments ?? [];
+        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalLiabilities = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const totalReceivables = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
         const netWorth = totalAssets - totalLiabilities + totalReceivables;
         const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
         return { netWorth, investmentValue };
@@ -250,6 +256,31 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         });
     }, [data?.goals, initialValues.netWorth]);
 
+    const stressInputs = useMemo(() => {
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const liquidCash = accounts
+            .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
+        const monthlyExpense = normalizedMonthlyExpense(txs as { date: string; type?: string; category?: string; amount?: number }[], { monthsLookback: 6 });
+        return { liquidCash, monthlyExpense };
+    }, [data]);
+
+    const stressResult = useMemo(
+        () =>
+            stressTestScenario({
+                jobLossMonths: stressJobLossM,
+                marketDropPct: stressMarketDrop,
+                medicalCost: stressMedical,
+                monthlyExpense: Math.max(500, stressInputs.monthlyExpense),
+                liquidCash: stressInputs.liquidCash,
+                goalMonthlyNeed: Math.max(200, monthlySavings * 0.3),
+            }),
+        [stressJobLossM, stressMarketDrop, stressMedical, stressInputs, monthlySavings]
+    );
+    const strategyCompare = useMemo(() => compareStrategies(), []);
+    const lumpDca = useMemo(() => compareLumpSumVsDCA(Math.max(10000, monthlySavings * 12)), [monthlySavings]);
+
     if (loading || !data) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
@@ -274,7 +305,11 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             </div>
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start">
-                <SectionCard title="Forecast Assumptions" className="lg:col-span-1 sticky top-24 space-y-4">
+                <SectionCard
+                    title="Forecast Assumptions"
+                    infoHint="Sliders and numbers drive a deterministic projection: savings compound monthly, investment growth is annual, and savings can grow each year. Compare presets and use Auto-fill from history when you want data-driven defaults."
+                    className="lg:col-span-1 sticky top-24 space-y-4"
+                >
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
                         {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
@@ -286,16 +321,20 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                 {preset}
                             </button>
                         ))}
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setMonthlySavings(savingsAnalytics.medianMonthlySavings);
-                                handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
-                            }}
-                            className="px-2.5 py-1 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
-                        >
-                            Auto-fill from history
-                        </button>
+                        <span className="inline-flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMonthlySavings(savingsAnalytics.medianMonthlySavings);
+                                    handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
+                                }}
+                                className="px-2.5 py-1 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                                title="Sets monthly savings to your 12-month median and savings growth to a suggested rate from history"
+                            >
+                                Auto-fill from history
+                            </button>
+                            <InfoHint text="Uses your last 12 months of transaction-derived savings: median monthly savings and a suggested annual savings growth rate. You can still edit fields after." />
+                        </span>
                     </div>
                     <div>
                         <label htmlFor="horizon" className="block text-sm font-medium text-gray-700 flex items-center">Forecast Horizon: {horizon} years <InfoHint text="Number of years to project net worth and savings growth." /></label>
@@ -314,10 +353,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Assume your monthly savings grow by this percent each year (e.g. raises)." /></label>
                         <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
-                    <button type="button" onClick={handleRunForecast} disabled={isLoading} className="w-full btn-primary flex items-center justify-center gap-2 font-semibold disabled:opacity-50">
-                        <SparklesIcon className="h-5 w-5" />
-                        {isLoading ? 'Calculating...' : 'Run Forecast'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={handleRunForecast} disabled={isLoading} className="flex-1 btn-primary flex items-center justify-center gap-2 font-semibold disabled:opacity-50">
+                            <SparklesIcon className="h-5 w-5" aria-hidden />
+                            {isLoading ? 'Calculating...' : 'Run Forecast'}
+                        </button>
+                        <InfoHint text="Recalculates projections from current assumptions, personal-scope net worth baseline, and savings analytics. Results are educational—not a guarantee." />
+                    </div>
                 </SectionCard>
 
                 <div className="lg:col-span-3 space-y-6">
@@ -348,7 +390,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
 
                     {Object.values(comparisonResults).some(Boolean) && !isLoading && (
-                        <SectionCard title={`Scenario Comparison (${horizon}-Year Horizon)`}>
+                        <SectionCard
+                            title={`Scenario Comparison (${horizon}-Year Horizon)`}
+                            infoHint="Run Conservative, Base, and Aggressive presets (adjust assumptions first) so each row fills in. Active preset is highlighted."
+                        >
                             <div className="overflow-x-auto">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -381,7 +426,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     
                     {goalProjections.length > 0 && !isLoading && (
                         <div className="bg-white p-6 rounded-lg shadow">
-                            <h3 className="text-lg font-semibold text-dark mb-4">Goal Projections</h3>
+                            <h3 className="text-lg font-semibold text-dark mb-4 flex items-center gap-2 flex-wrap">
+                                Goal Projections
+                                <InfoHint text="Rough check: compares forecasted net worth path to each goal’s target gap. Not a substitute for detailed goal funding on the Goals page." />
+                            </h3>
                             <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
                                 {goalProjections.map(proj => (
                                     <div key={proj.name} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
@@ -431,6 +479,47 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
                 </div>
             </div>
+
+            <SectionCard title="Stress test (illustrative)" className="mt-6">
+                <p className="text-xs text-slate-600 mb-4">
+                    Rough cash runway after job loss, a market hit on part of liquid wealth, and a one-off cost. Not advice—use with your real numbers.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <div>
+                        <label className="text-xs font-medium text-slate-600">Job loss (months, no income)</label>
+                        <input type="range" min={0} max={12} value={stressJobLossM} onChange={(e) => setStressJobLossM(Number(e.target.value))} className="w-full" />
+                        <p className="text-sm font-semibold">{stressJobLossM} mo</p>
+                    </div>
+                    <div>
+                        <label className="text-xs font-medium text-slate-600">Market drop (% on ~30% of cash)</label>
+                        <input type="range" min={0} max={40} value={stressMarketDrop} onChange={(e) => setStressMarketDrop(Number(e.target.value))} className="w-full" />
+                        <p className="text-sm font-semibold">{stressMarketDrop}%</p>
+                    </div>
+                    <div>
+                        <label className="text-xs font-medium text-slate-600">One-off cost (SAR)</label>
+                        <input type="number" min={0} step={500} value={stressMedical} onChange={(e) => setStressMedical(Number(e.target.value))} className="input-base mt-1" />
+                    </div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm space-y-2">
+                    <p className="font-semibold text-amber-900">{stressResult.headline}</p>
+                    <p className="text-slate-700">
+                        Liquid cash (Checking+Savings): <strong>{formatCurrencyString(stressInputs.liquidCash, { digits: 0 })}</strong> · Avg monthly spend (ext.):{' '}
+                        <strong>{formatCurrencyString(stressInputs.monthlyExpense, { digits: 0 })}</strong>
+                    </p>
+                </div>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
+                    <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="font-semibold text-slate-800 mb-1">Strategy lens</p>
+                        <p>{strategyCompare.aggressive}</p>
+                        <p className="mt-1">{strategyCompare.balanced}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="font-semibold text-slate-800 mb-1">Lump sum vs DCA</p>
+                        <p>{lumpDca.lumpNote}</p>
+                        <p className="mt-1">{lumpDca.dcaNote}</p>
+                    </div>
+                </div>
+            </SectionCard>
 
             {timeline && (
                 <SectionCard title="Scenario Timeline" className="mt-6">

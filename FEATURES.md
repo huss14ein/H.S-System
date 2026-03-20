@@ -215,4 +215,21 @@ This document reflects features and functionalities implemented in the codebase.
 
 ---
 
+## Roadmap & gaps
+
+- **`docs/GAP_MATRIX.md`** — Feature → existing files → missing work (full spec vs codebase).
+- **`docs/GAP_IMPLEMENTATION_TODOS.md`** — Phased checklist (P0–P10) to close gaps; wiring notes for types, DataContext, personal scope, notifications.
+
+### Recently added (data quality)
+
+- **`services/dataQuality/`** — Transaction validation + duplicate detection; cash-account balance vs transaction sum (`reconcileAccountBalance`); stale market + FX reminders; wired to Transactions, Statement import, Accounts, Notifications.
+- **`services/transactionFilters.ts`** — Transfers (`category: Transfer`) excluded from cashflow KPIs.
+- **`services/financeMetrics.ts`**, **`services/goalMetrics.ts`**, **`services/portfolioMetrics.ts`**, **`services/decisionEngine.ts`**, **`services/stressScenario.ts`**, **`services/liabilityMetrics.ts`**
+- **`services/auditLog.ts`** — Local activity log; Settings → Activity log.
+- **Wired in UI:** Forecast (stress test + strategy blurbs), Watchlist (idea rank), Settings (capital split + buy-score sample), Goals (target date at pace), Dividend Tracker (unrealized P&L on top payers).
+- **Per-symbol quote age:** `MarketDataContext.symbolQuoteUpdatedAt` + stale-symbol notifications (live mode) and **Live prices** status line (`N stale quotes`).
+- **FX confirmation in DB:** `investment_plan.fx_rate_updated_at` (run `supabase/migrations/add_investment_plan_fx_rate_updated_at.sql`); save still works without it; notifications prefer DB then localStorage.
+
+---
+
 *Last updated to match the codebase. For release history or version notes, consider adding a `CHANGELOG.md`.*

@@ -85,7 +85,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; currency: TradeCurrency; accountId?: string }[] = [];
-    (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
+    ((data as any)?.personalInvestments ?? data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
       (p.holdings ?? [])
         .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
         .forEach((h: Holding) => {
@@ -102,7 +102,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         });
     });
     return list;
-  }, [data?.investments]);
+  }, [data?.investments, (data as any)?.personalInvestments]);
   const allHoldings = useMemo(() => allHoldingsWithPortfolio.map(({ holding }) => holding), [allHoldingsWithPortfolio]);
   const priceMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -128,13 +128,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [simulatedPrices, allHoldings]);
 
   const deployableCashSAR = useMemo(() => {
-    const bankCash = (data?.accounts ?? [])
-      .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-      .reduce((s, a) => s + Math.max(0, Number(a.balance) || 0), 0);
+    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const bankCash = accounts
+      .filter((a: { type?: string; balance?: number }) => a.type === 'Checking' || a.type === 'Savings')
+      .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
 
-    const platformCashSAR = (data?.accounts ?? [])
-      .filter((a) => a.type === 'Investment')
-      .reduce((s, a) => {
+    const platformCashSAR = accounts
+      .filter((a: { type?: string; id: string }) => a.type === 'Investment')
+      .reduce((s: number, a: { id: string }) => {
         const cash = getAvailableCashForAccount(a.id);
         return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
       }, 0);
@@ -146,7 +147,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       return 0;
     }
     return total;
-  }, [data?.accounts, getAvailableCashForAccount, safeFxRate]);
+  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, safeFxRate]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,

@@ -22,20 +22,20 @@ const MarketSimulator: React.FC = () => {
             if (!dataContext || !marketContext || !dataContext.data) return;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
-            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated } = marketContext;
+            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
             
-            const allHoldings = (data?.investments ?? []).flatMap(p => p.holdings ?? []);
+            const allHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
             const allWatchlistItems = data?.watchlist ?? [];
             const allPlannedTrades = data?.plannedTrades ?? [];
-            const allCommodities = data?.commodityHoldings ?? [];
+            const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
             
             const uniqueSymbols = Array.from(new Set([
-                ...allHoldings.map(h => h.symbol).filter((s): s is string => s != null && s !== ''),
-                ...allWatchlistItems.map(w => w.symbol).filter((s): s is string => s != null && s !== ''),
-                ...allPlannedTrades.map(t => t.symbol).filter((s): s is string => s != null && s !== '')
+                ...(allHoldings as { symbol?: string }[]).map((h: { symbol?: string }) => h.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
+                ...allWatchlistItems.map((w: { symbol?: string }) => w.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
+                ...allPlannedTrades.map((t: { symbol?: string }) => t.symbol).filter((s: string | undefined): s is string => s != null && s !== '')
             ]));
 
-            const commoditySymbols = allCommodities.map(c => c.symbol).filter((s): s is string => s != null && s !== '');
+            const commoditySymbols = (allCommodities as { symbol?: string }[]).map((c: { symbol?: string }) => c.symbol).filter((s: string | undefined): s is string => s != null && s !== '');
 
             let newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             let liveStatus = false;
@@ -125,23 +125,24 @@ const MarketSimulator: React.FC = () => {
             
             setSimulatedPrices(newPrices);
             setIsLive(liveStatus);
+            touchQuoteTimestamps(Object.keys(newPrices));
 
-            allHoldings.forEach(holding => {
+            (allHoldings as { id?: string; symbol?: string; quantity?: number }[]).forEach((holding: { id?: string; symbol?: string; quantity?: number }) => {
                 const sym = holding.symbol;
                 if (holding.id && sym != null && newPrices[sym]) {
                     holdingUpdates.push({
                         id: holding.id,
-                        currentValue: newPrices[sym].price * holding.quantity
+                        currentValue: newPrices[sym].price * (holding.quantity ?? 0)
                     });
                 }
             });
 
-            allCommodities.forEach(commodity => {
+            (allCommodities as { id?: string; symbol?: string; quantity?: number }[]).forEach((commodity: { id?: string; symbol?: string; quantity?: number }) => {
                 const sym = commodity.symbol;
                 if (commodity.id && sym != null && newPrices[sym]) {
                     commodityUpdates.push({
                         id: commodity.id,
-                        currentValue: newPrices[sym].price * commodity.quantity
+                        currentValue: newPrices[sym].price * (commodity.quantity ?? 0)
                     });
                 }
             });

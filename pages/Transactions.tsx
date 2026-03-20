@@ -18,6 +18,13 @@ import { StatementIcons } from '../constants/statementIcons';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { inferIsAdmin } from '../utils/role';
+import {
+    validateTransactionRequiredFields,
+    findDuplicateTransactions,
+} from '../services/dataQuality';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import { validateSplitTotal } from '../services/transactionIntelligence';
+import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -27,8 +34,9 @@ const TransactionModal: React.FC<{
     transactionToEdit: Transaction | null;
     budgetCategories: string[],
     allCategories: string[],
-    accounts: Account[]
-}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts }) => {
+    accounts: Account[],
+    existingTransactions: Transaction[],
+}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts, existingTransactions }) => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -39,6 +47,12 @@ const TransactionModal: React.FC<{
     const [accountId, setAccountId] = useState('');
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
     const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
+    const [userNote, setUserNote] = useState('');
+    const [useSplitExpense, setUseSplitExpense] = useState(false);
+    const [splitRows, setSplitRows] = useState<{ category: string; amount: string }[]>([
+        { category: '', amount: '' },
+        { category: '', amount: '' },
+    ]);
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
     const [aiSuggestionNote, setAiSuggestionNote] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
 
@@ -78,6 +92,20 @@ const TransactionModal: React.FC<{
             setAccountId(transactionToEdit.accountId);
             setTransactionNature(transactionToEdit.transactionNature || 'Variable');
             setExpenseType(transactionToEdit.expenseType || 'Core');
+            setUserNote((transactionToEdit.note || '').trim());
+            const sl = transactionToEdit.splitLines;
+            if (sl && sl.length > 0) {
+                setUseSplitExpense(true);
+                setSplitRows(
+                    sl.map((x) => ({ category: x.category, amount: String(x.amount) })).concat({ category: '', amount: '' })
+                );
+            } else {
+                setUseSplitExpense(false);
+                setSplitRows([
+                    { category: budgetCategories[0] || 'Food and Groceries', amount: '' },
+                    { category: budgetCategories[1] || 'Transportation', amount: '' },
+                ]);
+            }
         } else {
             setDate(new Date().toISOString().split('T')[0]);
             setDescription('');
@@ -89,27 +117,101 @@ const TransactionModal: React.FC<{
             setAccountId(accounts[0]?.id || '');
             setTransactionNature('Variable');
             setExpenseType('Core');
+            setUserNote('');
+            setUseSplitExpense(false);
+            setSplitRows([
+                { category: budgetCategories[0] || 'Food and Groceries', amount: '' },
+                { category: budgetCategories[1] || 'Transportation', amount: '' },
+            ]);
         }
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
 
-    const buildTransactionData = (): Omit<Transaction, 'id'> => ({
-        date,
-        description,
-        amount: type === 'expense' ? -Math.abs(parseFloat(amount)) : Math.abs(parseFloat(amount)),
-        category,
-        subcategory: subcategory || undefined,
-        budgetCategory: type === 'expense' ? budgetCategory : undefined,
-        type,
-        accountId,
-        transactionNature: type === 'expense' ? transactionNature : undefined,
-        expenseType: type === 'expense' ? expenseType : undefined,
-    });
+    const buildTransactionData = (): Omit<Transaction, 'id'> | null => {
+        const absAmt = Math.abs(parseFloat(amount));
+        let noteOut: string | undefined = userNote.trim() || undefined;
+        if (type === 'income') {
+            noteOut = userNote.trim() || undefined;
+        } else if (type === 'expense' && useSplitExpense) {
+            const lines = splitRows
+                .map((r) => ({
+                    category: r.category.trim() || 'Uncategorized',
+                    amount: parseFloat(r.amount),
+                }))
+                .filter((r) => Number.isFinite(r.amount) && r.amount > 0);
+            if (lines.length < 2) {
+                window.alert('Split expense: add at least two lines with amounts.');
+                return null;
+            }
+            const v = validateSplitTotal(absAmt, lines);
+            if (!v.ok) {
+                window.alert(v.message);
+                return null;
+            }
+            noteOut = encodeNoteWithSplits(userNote, lines);
+        } else if (type === 'expense') {
+            noteOut = userNote.trim() || undefined;
+        }
+        return {
+            date,
+            description,
+            amount: type === 'expense' ? -absAmt : absAmt,
+            category,
+            subcategory: subcategory || undefined,
+            budgetCategory: type === 'expense' ? budgetCategory : undefined,
+            type,
+            accountId,
+            transactionNature: type === 'expense' ? transactionNature : undefined,
+            expenseType: type === 'expense' ? expenseType : undefined,
+            note: noteOut,
+        };
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const transactionData = buildTransactionData();
-        
+        if (!transactionData) return;
+
+        const validation = validateTransactionRequiredFields({
+            date: transactionData.date,
+            description: transactionData.description,
+            amount: transactionData.amount,
+            accountId: transactionData.accountId,
+            type: transactionData.type,
+            category: transactionData.category,
+        });
+        if (!validation.valid) {
+            window.alert(validation.errors.join('\n'));
+            return;
+        }
+
+        const dupOpts = {
+            excludeId: transactionToEdit?.id,
+            dateToleranceDays: 2,
+            requireSameAccount: true,
+        };
+        const dups = findDuplicateTransactions(
+            {
+                date: transactionData.date,
+                amount: transactionData.amount,
+                description: transactionData.description,
+                accountId: transactionData.accountId,
+                type: transactionData.type,
+            },
+            existingTransactions,
+            dupOpts
+        );
+        if (dups.length > 0) {
+            const sample = dups[0];
+            const sampleDate = new Date(sample.date).toLocaleDateString();
+            const msg =
+                `Possible duplicate transaction detected:\n` +
+                `• Existing: ${sampleDate} · ${sample.description.slice(0, 60)}${sample.description.length > 60 ? '…' : ''}\n` +
+                `• Same account, similar amount & description within ${dupOpts.dateToleranceDays} days.\n\n` +
+                `Save anyway?`;
+            if (!window.confirm(msg)) return;
+        }
+
         try {
             if (type === 'expense' && budgetCategory === 'Savings & Investments') {
                 await onSaveAndTrade(transactionData);
@@ -241,8 +343,97 @@ const TransactionModal: React.FC<{
                                 </select>
                             </div>
                         </div>
+                        <div className="border border-dashed border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50/80">
+                            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={useSplitExpense}
+                                    onChange={(e) => setUseSplitExpense(e.target.checked)}
+                                    className="rounded border-slate-300"
+                                />
+                                Split across budget categories (stored in memo)
+                            </label>
+                            {useSplitExpense && (
+                                <>
+                                    <p className="text-xs text-slate-500">
+                                        Line amounts must sum to the expense total. Shown in reports via memo; primary category above still applies for this row.
+                                    </p>
+                                    {splitRows.map((row, i) => (
+                                        <div key={i} className="flex gap-2 flex-wrap items-end">
+                                            <select
+                                                value={row.category}
+                                                onChange={(e) => {
+                                                    const next = [...splitRows];
+                                                    next[i] = { ...next[i], category: e.target.value };
+                                                    setSplitRows(next);
+                                                }}
+                                                className="flex-1 min-w-[140px] p-2 border rounded-md text-sm"
+                                            >
+                                                {budgetCategories.map((c) => (
+                                                    <option key={c} value={c}>
+                                                        {c}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <input
+                                                type="number"
+                                                min="0.01"
+                                                step="0.01"
+                                                placeholder="Amount"
+                                                value={row.amount}
+                                                onChange={(e) => {
+                                                    const next = [...splitRows];
+                                                    next[i] = { ...next[i], amount: e.target.value };
+                                                    setSplitRows(next);
+                                                }}
+                                                className="w-28 p-2 border rounded-md text-sm"
+                                            />
+                                            {splitRows.length > 2 && (
+                                                <button
+                                                    type="button"
+                                                    className="text-xs text-red-600 px-2"
+                                                    onClick={() => setSplitRows(splitRows.filter((_, j) => j !== i))}
+                                                >
+                                                    Remove
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        className="text-sm text-primary font-medium"
+                                        onClick={() => setSplitRows([...splitRows, { category: budgetCategories[0] || '', amount: '' }])}
+                                    >
+                                        + Add split line
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
                  )}
+                {(type === 'income' || (type === 'expense' && !useSplitExpense)) && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Memo (optional)</label>
+                        <textarea
+                            value={userNote}
+                            onChange={(e) => setUserNote(e.target.value)}
+                            rows={2}
+                            className="w-full p-2 border border-gray-300 rounded-md text-sm mt-1"
+                            placeholder="Private notes"
+                        />
+                    </div>
+                )}
+                {type === 'expense' && useSplitExpense && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Memo (optional, prepended to split record)</label>
+                        <textarea
+                            value={userNote}
+                            onChange={(e) => setUserNote(e.target.value)}
+                            rows={2}
+                            className="w-full p-2 border border-gray-300 rounded-md text-sm mt-1"
+                        />
+                    </div>
+                )}
                 <button type="submit" className={`w-full px-4 py-2 text-white rounded-lg transition-colors ${isInvestmentTransfer ? 'bg-secondary hover:bg-violet-700' : 'bg-primary hover:bg-secondary'}`}>
                     {isInvestmentTransfer ? 'Save & Record Trade' : 'Save Transaction'}
                 </button>
@@ -562,7 +753,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
-        return (data?.transactions ?? []).filter(t => {
+        const baseTransactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        return baseTransactions.filter((t: { date: string; accountId?: string; transactionNature?: string; expenseType?: string; budgetCategory?: string }) => {
             const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
@@ -572,18 +764,18 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
         });
-    }, [data?.transactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
+    }, [data?.transactions, (data as any)?.personalTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
-        const approvedTransactions = filteredTransactions.filter(t => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-        const monthlyExpenses = approvedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const approvedTransactions = filteredTransactions.filter((t: Transaction) => (t.status ?? 'Approved') === 'Approved');
+        const monthlyIncome = approvedTransactions.filter((t: Transaction) => countsAsIncomeForCashflowKpi(t)).reduce((sum: number, t: Transaction) => sum + t.amount, 0);
+        const monthlyExpenses = approvedTransactions.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t)).reduce((sum: number, t: Transaction) => sum + Math.abs(t.amount), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
         approvedTransactions
-            .filter(t => t.type === 'expense' && t.budgetCategory)
-            .forEach(t => {
+            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t) && t.budgetCategory)
+            .forEach((t: Transaction) => {
                 const currentSpend = spending.get(t.budgetCategory!) || 0;
                 spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
             });
@@ -593,7 +785,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
     }, [filteredTransactions]);
     
-    const allCategories = useMemo(() => Array.from(new Set((data?.transactions ?? []).map(t => t.category))), [data?.transactions]);
+    const allCategories = useMemo((): string[] => Array.from(new Set(((data as any)?.personalTransactions ?? data?.transactions ?? []).map((t: { category: string }) => t.category))), [data?.transactions, (data as any)?.personalTransactions]);
     const budgetCategories = useMemo(() => {
         const ownCategories = (data?.budgets ?? []).map(b => b.category);
         if (userRole === 'Admin') return ownCategories;
@@ -968,7 +1160,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     </div>
                 </div>
                 <ul className="divide-y divide-slate-100">
-                    {filteredTransactions.map(transaction => (
+                    {filteredTransactions.map((transaction: Transaction) => (
                         <li key={transaction.id} className="list-row">
                             <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-dark">{transaction.description}</p>
@@ -977,6 +1169,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     <span className="badge-neutral">{transaction.category}</span>
                                     {transaction.status && (
                                         <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
+                                    )}
+                                    {transaction.splitLines && transaction.splitLines.length > 0 && (
+                                        <span className="text-[10px] font-bold uppercase tracking-wide text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded">Split ×{transaction.splitLines.length}</span>
                                     )}
                                 </div>
                             </div>
@@ -1010,6 +1205,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategories={budgetCategories}
                 allCategories={allCategories}
                 accounts={data?.accounts ?? []}
+                existingTransactions={data?.transactions ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
             <RecurringModal

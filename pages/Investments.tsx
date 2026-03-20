@@ -44,6 +44,11 @@ import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getV
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
 import { ClockIcon } from '../components/icons/ClockIcon';
 import ExecutionHistoryView from './ExecutionHistoryView';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
+import { sellScore } from '../services/decisionEngine';
+import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import type { Transaction } from '../types';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -249,10 +254,14 @@ const RecordTradeModal: React.FC<{
     const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
     const [tif, setTif] = useState<TIF>('GTC');
     const [t1ConfirmChecked, setT1ConfirmChecked] = useState(false);
+    const [policyBuyOverrideAck, setPolicyBuyOverrideAck] = useState(false);
+    const [largeSellAck, setLargeSellAck] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const efRunway = useEmergencyFund(data ?? null);
+    const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
     const selectedPortfolio = useMemo(
@@ -281,6 +290,8 @@ const RecordTradeModal: React.FC<{
         setOrderType('LIMIT');
         setTif('GTC');
         setT1ConfirmChecked(false);
+        setPolicyBuyOverrideAck(false);
+        setLargeSellAck(false);
         setSubmitError(null);
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
@@ -292,6 +303,8 @@ const RecordTradeModal: React.FC<{
             setSubmitError(null);
             setIsSubmitting(false);
             setT1ConfirmChecked(false);
+            setPolicyBuyOverrideAck(false);
+            setLargeSellAck(false);
             setTradeCurrency(appCurrency);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
@@ -410,6 +423,67 @@ const RecordTradeModal: React.FC<{
         return { t1SettlementWarning: msg };
     }, [type, symbol, data?.investmentTransactions]);
 
+    const monthlyNetLast30d = useMemo(() => {
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const d0 = new Date();
+        d0.setDate(d0.getDate() - 30);
+        let net = 0;
+        txs.forEach((t) => {
+            if (new Date(t.date) < d0) return;
+            if (countsAsIncomeForCashflowKpi(t)) net += Number(t.amount) || 0;
+            if (countsAsExpenseForCashflowKpi(t)) net -= Math.abs(Number(t.amount) || 0);
+        });
+        return net;
+    }, [data, isOpen]);
+
+    const buyPolicyCheck = useMemo(() => {
+        if (type !== 'buy' || !portfolioId || isCashFlow) return { allowed: true as const };
+        const p = portfolios.find((x) => x.id === portfolioId);
+        if (!p) return { allowed: true as const };
+        const q = parseFloat(quantity);
+        const pr = parseFloat(price);
+        if (!Number.isFinite(q) || !Number.isFinite(pr) || q <= 0 || pr <= 0) return { allowed: true as const };
+        const notional = q * pr;
+        const totalSec = (p.holdings ?? []).reduce((s, h) => s + (Number(h.currentValue) || 0), 0);
+        const norm = symbol.toUpperCase().trim();
+        const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
+        const curSym = Number(h?.currentValue) || 0;
+        const afterSym = curSym + notional;
+        const denom = totalSec + notional;
+        const posPct = denom > 0 ? (afterSym / denom) * 100 : 0;
+        return evaluateBuyAgainstPolicy({
+            policy: tradingPolicy,
+            runwayMonths: efRunway.monthsCovered,
+            monthlyNetLast30d,
+            positionWeightAfterBuyPct: posPct,
+        });
+    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, efRunway.monthsCovered, monthlyNetLast30d, isCashFlow]);
+
+    const sellRuleScore = useMemo(() => {
+        if (type !== 'sell' || !portfolioId || isCashFlow) return null;
+        const p = portfolios.find((x) => x.id === portfolioId);
+        if (!p || !symbol.trim()) return null;
+        const norm = symbol.toUpperCase().trim();
+        const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
+        if (!h) return null;
+        const totalSec = (p.holdings ?? []).reduce((s, x) => s + (Number(x.currentValue) || 0), 0);
+        if (totalSec <= 0) return null;
+        const w = ((Number(h.currentValue) || 0) / totalSec) * 100;
+        const q = parseFloat(quantity);
+        const pr = parseFloat(price);
+        const notional = Number.isFinite(q) && Number.isFinite(pr) ? q * pr : 0;
+        return {
+            ...sellScore({ aboveTargetWeightPct: Math.max(0, w - 15), needCash: w > 20 }),
+            notional,
+        };
+    }, [type, portfolioId, symbol, portfolios, quantity, price, isCashFlow]);
+
+    const largeSellNeedsAck = Boolean(
+        type === 'sell' &&
+            sellRuleScore &&
+            sellRuleScore.notional >= tradingPolicy.requireAckLargeSellNotional
+    );
+
     const sorStub = useMemo(() => {
         if (isCashFlow || !symbol.trim()) return null;
         const q = parseFloat(quantity);
@@ -468,6 +542,14 @@ const RecordTradeModal: React.FC<{
             setSubmitError('Please confirm you have other settled cash (or understand T+1) before selling.');
             return;
         }
+        if (type === 'buy' && !buyPolicyCheck.allowed && !policyBuyOverrideAck) {
+            setSubmitError(buyPolicyCheck.reason ?? 'Buy blocked by your trading policy. Acknowledge override or adjust the trade.');
+            return;
+        }
+        if (largeSellNeedsAck && !largeSellAck) {
+            setSubmitError(`Large sell (≥ ${tradingPolicy.requireAckLargeSellNotional.toLocaleString()}): confirm below.`);
+            return;
+        }
         if (!isCashFlow && (type === 'buy' || type === 'sell') && orderType === 'MARKET') {
             const now = new Date();
             const hourET = (now.getUTCHours() - 5 + 24) % 24;
@@ -513,7 +595,11 @@ const RecordTradeModal: React.FC<{
 
     const hasNoAccounts = !investmentAccounts.length;
     const hasNoPortfolios = accountId ? portfoliosForAccount.length === 0 : true;
-    const submitDisabled = isCashFlow ? !accountId || !cashAmount || !!validationError || isSubmitting : (!!validationError || isSubmitting || hasNoPortfolios);
+    const buyPolicyBlocked = type === 'buy' && !isCashFlow && !buyPolicyCheck.allowed && !policyBuyOverrideAck;
+    const sellAckBlocked = type === 'sell' && largeSellNeedsAck && !largeSellAck;
+    const submitDisabled = isCashFlow
+        ? !accountId || !cashAmount || !!validationError || isSubmitting
+        : !!validationError || isSubmitting || hasNoPortfolios || buyPolicyBlocked || sellAckBlocked;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
@@ -539,6 +625,29 @@ const RecordTradeModal: React.FC<{
                  {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} {tradeCurrency}</span></div>}
                  {hasNoPortfolios && accountId && !isCashFlow && (
                     <div className="p-2 bg-amber-50 text-amber-800 text-sm rounded-md">No portfolio in this account. Create a portfolio first from the Investments page.</div>
+                 )}
+                 {type === 'buy' && !buyPolicyCheck.allowed && buyPolicyCheck.reason && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 text-sm rounded-lg space-y-2">
+                        <p className="font-medium">Trading policy</p>
+                        <p>{buyPolicyCheck.reason}</p>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs">
+                            <input type="checkbox" checked={policyBuyOverrideAck} onChange={(e) => setPolicyBuyOverrideAck(e.target.checked)} className="rounded border-rose-300" />
+                            I understand and want to record this buy anyway
+                        </label>
+                    </div>
+                 )}
+                 {type === 'sell' && sellRuleScore && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 text-sm rounded-lg">
+                        <span className="font-medium text-slate-800">Sell-score (rules): </span>
+                        <span className="font-bold text-violet-700">{sellRuleScore.score}</span>
+                        <span className="text-slate-600 text-xs ml-2">({sellRuleScore.reasons.join(', ')})</span>
+                    </div>
+                 )}
+                 {largeSellNeedsAck && (
+                    <label className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-sm cursor-pointer">
+                        <input type="checkbox" checked={largeSellAck} onChange={(e) => setLargeSellAck(e.target.checked)} />
+                        Confirm large sell (notional ≥ policy threshold)
+                    </label>
                  )}
                  {t1SettlementWarning && (
                     <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex flex-col gap-2">
@@ -1129,6 +1238,7 @@ export const PortfolioModal: React.FC<{
     const [selectedAccountId, setSelectedAccountId] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>();
     const [currency, setCurrency] = useState<TradeCurrency>('USD');
+    const [owner, setOwner] = useState('');
 
     useEffect(() => {
         if (isOpen) {
@@ -1136,20 +1246,22 @@ export const PortfolioModal: React.FC<{
             setSelectedAccountId(accountId || investmentAccounts[0]?.id || '');
             setGoalId(portfolioToEdit?.goalId);
             setCurrency((portfolioToEdit?.currency as TradeCurrency) || 'USD');
+            setOwner(portfolioToEdit?.owner ?? '');
         }
     }, [portfolioToEdit, isOpen, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
+            const ownerVal = owner.trim() || undefined;
             if (portfolioToEdit) {
-                await onSave({ ...portfolioToEdit, name, goalId, currency });
+                await onSave({ ...portfolioToEdit, name, goalId, currency, owner: ownerVal });
             } else {
                 if (!selectedAccountId) {
                     alert("Please select an account for the new portfolio.");
                     return;
                 }
-                await onSave({ name, accountId: selectedAccountId, goalId, currency });
+                await onSave({ name, accountId: selectedAccountId, goalId, currency, owner: ownerVal });
             }
             onClose();
         } catch (error) {
@@ -1201,6 +1313,11 @@ export const PortfolioModal: React.FC<{
                         {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
                     <p className="text-xs text-gray-500 mt-1 italic">Linking a portfolio will associate its total value with the selected goal.</p>
+                </div>
+                <div>
+                    <label htmlFor="portfolio-owner" className="block text-sm font-medium text-gray-700">Owner (optional)</label>
+                    <input type="text" id="portfolio-owner" value={owner} onChange={e => setOwner(e.target.value)} placeholder="e.g. Father, Spouse or leave blank for yours" className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary" />
+                    <p className="text-xs text-gray-500 mt-1">Leave blank for your own (counts in My net worth). Set for managed wealth (excluded).</p>
                 </div>
                 <button type="submit" disabled={!portfolioToEdit && investmentAccounts.length === 0} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">Save Portfolio</button>
             </form>
@@ -1515,7 +1632,12 @@ const PlatformCard: React.FC<{
                                 <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
                                     <div className="min-w-0 flex-1 overflow-hidden">
-                                        <h4 className="font-bold text-slate-800 text-base break-words" title={portfolio.name}>{portfolio.name}</h4>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <h4 className="font-bold text-slate-800 text-base break-words" title={portfolio.name}>{portfolio.name}</h4>
+                                            {portfolio.owner && (
+                                                <span className="inline-flex items-center text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5" title="Excluded from My net worth — managed">Managed: {portfolio.owner}</span>
+                                            )}
+                                        </div>
                                         <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 break-words" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>
@@ -2012,7 +2134,8 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: amount, suggestedBudgetSource: `Last ${historyAmounts.length} month(s) of buys` };
         }
 
-        const investedBase = (data?.investments ?? []).reduce((sum: number, portfolio: InvestmentPortfolio) => {
+        const portfoliosForBudget = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const investedBase = portfoliosForBudget.reduce((sum: number, portfolio: InvestmentPortfolio) => {
             const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
             const portfolioTotal = (portfolio.holdings || []).reduce((inner: number, h: Holding) => inner + (h.currentValue || 0), 0);
             return sum + convertAmount(portfolioTotal, portfolioCurrency, budgetCurrency as TradeCurrency);
@@ -2022,7 +2145,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
         }
         return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
-    }, [data?.investmentTransactions, data?.investments, exchangeRate, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, exchangeRate, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -2233,9 +2356,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
                 return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
             };
 
-            const investedBase = (data?.investments ?? []).reduce((sum, portfolio) => {
+            const portfoliosForPlan = (data as any)?.personalInvestments ?? data?.investments ?? [];
+            const investedBase = portfoliosForPlan.reduce((sum: number, portfolio: InvestmentPortfolio) => {
                 const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
-                const portfolioTotal = (portfolio.holdings || []).reduce((inner, h) => inner + (h.currentValue || 0), 0);
+                const portfolioTotal = (portfolio.holdings || []).reduce((inner: number, h: Holding) => inner + (h.currentValue || 0), 0);
                 return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
             }, 0);
 
@@ -2402,28 +2526,30 @@ Save anyway?`)) return;
 
     const tickerCurrencyMap = useMemo<Record<string, TradeCurrency>>(() => {
         const map: Record<string, TradeCurrency> = {};
-        (data.investments ?? []).forEach((portfolio) => {
+        const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        portfolios.forEach((portfolio: { currency?: string; holdings?: { symbol?: string }[] }) => {
             const portfolioCurrency = (portfolio.currency === 'SAR' || portfolio.currency === 'USD') ? portfolio.currency : 'USD';
-            (portfolio.holdings ?? []).forEach((holding) => {
+            (portfolio.holdings ?? []).forEach((holding: { symbol?: string }) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
-                if (symbol) map[symbol] = portfolioCurrency;
+                if (symbol) map[symbol] = portfolioCurrency as TradeCurrency;
             });
         });
         return map;
-    }, [data?.investments]);
+    }, [data?.investments, (data as any)?.personalInvestments]);
 
     const holdingPriceFallbackMap = useMemo<Record<string, number>>(() => {
         const map: Record<string, number> = {};
-        (data.investments ?? []).forEach((portfolio) => {
-            (portfolio.holdings ?? []).forEach((holding) => {
+        const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        portfolios.forEach((portfolio: { holdings?: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number }[] }) => {
+            (portfolio.holdings ?? []).forEach((holding: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number }) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
                 if (!symbol) return;
-                const inferred = holding.quantity > 0 ? (holding.currentValue / holding.quantity) : (holding.avgCost || 0);
+                const inferred = (holding.quantity ?? 0) > 0 ? ((holding.currentValue ?? 0) / (holding.quantity ?? 1)) : (holding.avgCost || 0);
                 if (inferred > 0 && !Number.isNaN(inferred)) map[symbol] = inferred;
             });
         });
         return map;
-    }, [data?.investments]);
+    }, [data?.investments, (data as any)?.personalInvestments]);
 
     const getTradeExecutionSuggestion = useCallback((trade: InvestmentPlanExecutionResult['trades'][number]) => {
         const symbol = (trade.ticker || '').trim().toUpperCase();
@@ -3311,12 +3437,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   const { exchangeRate } = useCurrency();
   const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage } = useMemo(() => {
-    if (!data || !data.investments) {
-        return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
-    }
+    if (!data) return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
+    const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+    const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+    const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
     const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
     let valueSAR = 0, valueUSD = 0;
-    (data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
+    portfolios.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
         (p.holdings || []).forEach((h: Holding) => {
             const sym = (h.symbol || '').trim().toUpperCase();
@@ -3330,28 +3457,29 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         });
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
-    const allCommodities = data?.commodityHoldings ?? [];
-    const totalCommoditiesValue = allCommodities.reduce((sum, ch) => sum + (simulatedPrices[ch.symbol] ? simulatedPrices[ch.symbol].price * ch.quantity : ch.currentValue), 0);
+    const totalCommoditiesValue = allCommodities.reduce((sum: number, ch: { symbol?: string; quantity?: number; currentValue?: number }) => sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].price * (ch.quantity ?? 0) : (ch.currentValue ?? 0)), 0);
     const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
 
-    // Capital flows: use deposit/withdrawal (not buy/sell) for invested/withdrawn
+    // Capital flows: use deposit/withdrawal for personal accounts only
+    const invTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'deposit');
+    const wdrTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'withdrawal');
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'deposit').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => t.type === 'withdrawal').forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    invTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
+    wdrTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
-    const commodityCost = allCommodities.reduce((sum, ch) => sum + ch.purchaseValue, 0);
+    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + (ch.purchaseValue ?? 0), 0);
     const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const allHoldings = (data?.investments ?? []).flatMap((p: InvestmentPortfolio) => p.holdings || []);
-    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum, item) => (simulatedPrices[item.symbol] ? sum + simulatedPrices[item.symbol].change * item.quantity : sum), 0);
+    const allHoldings = portfolios.flatMap((p: InvestmentPortfolio) => p.holdings || []);
+    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum: number, item: { symbol?: string; quantity?: number }) => (simulatedPrices[item.symbol!] ? sum + simulatedPrices[item.symbol!].change * (item.quantity ?? 0) : sum), 0);
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, simulatedPrices, exchangeRate]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;

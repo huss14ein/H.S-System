@@ -219,10 +219,31 @@ const handler: Handler = async (event: HandlerEvent) => {
     if (!event.body) {
       throw new Error("Request body is missing.");
     }
-    const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown };
+    const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown; health?: boolean; type?: string; mode?: string };
     const { model: requestedModel, contents, config } = body;
+    const healthMode = body?.health === true || body?.type === 'health' || body?.mode === 'health';
     const primaryApiKey = process.env.GEMINI_API_KEY;
     const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
+
+    if (healthMode) {
+      const geminiConfigured = Boolean(primaryApiKey || backupApiKey);
+      const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
+      const grokConfigured = Boolean(process.env.GROK_API_KEY);
+      const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured;
+      return {
+        statusCode: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ok: true,
+          anyProviderConfigured,
+          providers: {
+            gemini: { configured: geminiConfigured, primaryConfigured: Boolean(primaryApiKey), backupConfigured: Boolean(backupApiKey) },
+            anthropic: { configured: anthropicConfigured },
+            grok: { configured: grokConfigured },
+          },
+        }),
+      };
+    }
 
     if (!requestedModel || !contents) {
       throw new Error("Request body must include 'model' and 'contents'.");

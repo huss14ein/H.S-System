@@ -18,9 +18,18 @@ This project includes SQL scripts for sharing features. Run them in Supabase SQL
 
 - If `docs/household_budget_profiles.sql` is not applied, Plan household engine still works with localStorage-only persistence.
 
+- **Statement file storage:** `supabase/migrations/add_financial_statements_storage.sql` adds `storage_bucket` / `storage_path` on `financial_statements`. Create the private Storage bucket and policies per **`docs/supabase_storage_financial_statements.md`**.
+
+- **Wealth Ultra DB defaults:** If you use `full_schema_for_app.sql`, the app now **reads** `wealth_ultra_config` (user-specific row first, then `user_id` null global row) into `data.wealthUltraConfig` for Settings / Wealth Ultra flows.
+
 ## Optional columns (app-compatible)
 
-If you use budget destination routing or investment holdings with manual funds, ensure:
+Run **`supabase/migrations/add_optional_schema_extras.sql`** once (idempotent) — adds:
+
+- **budgets.destination_account_id** — optional routing / surplus account link.
+- **holdings.holding_type** — `'ticker'` | `'manual_fund'` (matches `Holding.holdingType` in the app).
+
+Or add manually:
 
 - **budgets.destination_account_id** (uuid, nullable): Optional account ID to route surplus/deficit for a budget. Add if missing:
   ```sql

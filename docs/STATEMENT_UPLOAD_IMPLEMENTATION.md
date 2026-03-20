@@ -1,91 +1,51 @@
-# Statement Upload Feature - Implementation Status
+# Statement Upload — implementation status
 
 ## Overview
-The Statement Upload feature allows users to upload bank statements, paste SMS transactions, and upload trading statements to automatically import transactions into the system.
 
-## Current Implementation Status
+Users upload bank statements, paste SMS transactions, or upload trading statements; parsed rows are reviewed and imported into **DataContext** (Supabase-backed transactions / trades). **Statement History** shows imports, CSV export, and reconciliation against existing ledger data.
 
-### ✅ Fully Implemented
+---
 
-1. **UI Components** (`pages/StatementUpload.tsx`)
-   - Three-tab interface (Bank Statements, SMS Transactions, Trading Statements)
-   - File upload with drag-and-drop support
-   - SMS text paste interface
-   - Review modal with transaction approval/rejection
-   - Integration with DataContext for saving transactions
+## Implemented
 
-2. **Parsing Service** (`services/statementParser.ts`)
-   - Real parsing for bank statements (PDF/CSV/Excel)
-   - SMS transaction parsing with pattern matching + AI
-   - Trading statement parsing for investment transactions
-   - AI-powered extraction using Gemini
+| Area | Details |
+|------|---------|
+| **UI** | `pages/StatementUpload.tsx` — tabs (bank / SMS / trading), drag-and-drop, review modal, duplicate hints (`findDuplicateTransactions`), import via `addTransaction` / `recordTrade`. |
+| **Parsing** | `services/statementParser.ts` — bank PDF/CSV/Excel, SMS, trading; optional Gemini. |
+| **Navigation** | Routes + **Statement History** in app shell. |
+| **Database** | Migration `supabase/migrations/add_financial_statements_table.sql` — `financial_statements`, `extracted_transactions`, RLS. **Apply in Supabase** if not already. |
+| **StatementProcessingContext** | Loads `financial_statements` + nested `extracted_transactions`; localStorage fallback if DB unavailable. **`commitParsedStatementFromUpload`** writes UUID statement + extracted rows after a successful parse (signed-in users). Metadata upsert skips non-UUID legacy IDs. |
+| **Statement History** | `pages/StatementHistoryView.tsx` — list, filters, delete (DB + state), CSV export, **reconcile** vs `data.transactions`. |
+| **Reconciliation** | `reconcileTransactions(statementId)` — date/amount/description matching + optional AI suggestions; works on statements that have extracted rows in context (including post-upload). |
+| **Original file in Storage** | After DB insert, the app uploads the file to bucket **`financial-statements`** (≤50 MiB) when Storage is configured. **Statement History** → **Original file** uses a signed URL. |
 
-3. **Navigation Integration**
-   - Added to App.tsx routing
-   - Added to Header navigation menu
-   - Added to Page type definition
+---
 
-### ⚠️ Partially Implemented
+## Optional / not shipped
 
-1. **StatementProcessingContext** (`context/StatementProcessingContext.tsx`)
-   - Currently uses localStorage only (no database persistence)
-   - Has mock processing functions (not using real parser)
-   - Not integrated with Supabase
+| Item | Status |
+|------|--------|
+| **File blob storage** | **Implemented** when you run `add_financial_statements_storage.sql` + create the bucket/policies (`docs/supabase_storage_financial_statements.md`). If Storage is missing, upload is skipped and imports still work. |
+| **Context “simulate processing” path** | `uploadStatement` / `processStatement` still contain demo delays + mock PDF rows for legacy/testing; **Statement Upload** uses the real parser + **`commitParsedStatementFromUpload`** only. |
 
-2. **Database Integration**
-   - Migration file created (`supabase/migrations/add_financial_statements_table.sql`)
-   - Tables defined but not yet integrated into StatementProcessingContext
-   - No CRUD operations in DataContext for statements
+---
 
-### ❌ Missing/Incomplete
+## Integration checklist
 
-1. **Database Persistence**
-   - Statements are only stored in localStorage
-   - No Supabase integration for statement storage
-   - Extracted transactions not saved to database
+- [x] UI component created  
+- [x] Parser service implemented  
+- [x] Navigation added  
+- [x] Transaction saving to DataContext  
+- [x] Database tables defined (run migration on your project)  
+- [x] StatementProcessingContext integrated with Supabase (metadata + extracted rows on commit)  
+- [x] Statement history view  
+- [x] Reconciliation with existing transactions (heuristic + AI assist)  
+- [x] File storage integration (optional) — **implemented** via Supabase Storage + migration `add_financial_statements_storage.sql` + setup doc `supabase_storage_financial_statements.md`.  
 
-2. **StatementProcessingContext Integration**
-   - Context has mock processing instead of using real parser
-   - StatementUpload bypasses context processing
-   - No reconciliation with existing transactions
+---
 
-3. **File Storage**
-   - Uploaded files are not stored (only metadata)
-   - No file storage service integration
+## Operator notes
 
-## Database Changes Required
-
-### Migration: `add_financial_statements_table.sql`
-
-**Tables to create:**
-1. `financial_statements` - Stores statement metadata
-2. `extracted_transactions` - Stores extracted transactions from statements
-
-**Key Features:**
-- RLS (Row Level Security) enabled
-- Links to accounts via `account_id`
-- Stores processing status, confidence, errors
-- Supports reconciliation with existing transactions
-
-**Run the migration:**
-```sql
--- Execute: supabase/migrations/add_financial_statements_table.sql
-```
-
-## Integration Checklist
-
-- [x] UI component created
-- [x] Parser service implemented
-- [x] Navigation added
-- [x] Transaction saving to DataContext
-- [ ] Database tables created
-- [ ] StatementProcessingContext integrated with Supabase
-- [ ] Statement history view
-- [ ] Reconciliation with existing transactions
-- [ ] File storage integration (optional)
-
-## Recommendations
-
-1. **Immediate**: Run the database migration to create tables
-2. **Next**: Integrate StatementProcessingContext with Supabase
-3. **Future**: Add statement history view and reconciliation features
+1. Run `add_financial_statements_table.sql` in Supabase SQL editor (or your migration pipeline).  
+2. Without Supabase auth/session, history still works via **localStorage**; DB sync applies when the user is signed in.  
+3. Trading imports map each line to `extracted_transactions` (debit/credit by trade type) for history and reconciliation.

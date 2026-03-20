@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import PendingApprovalPage from './pages/PendingApprovalPage';
 import { AuthContext, AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
@@ -18,6 +19,7 @@ import { StatementProcessingProvider } from './context/StatementProcessingContex
 import { AIProvider } from './context/TransactionAIContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
 import { MultiBankProvider } from './context/MultiBankContext';
+import { PrivacyProvider } from './context/PrivacyContext';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -57,13 +59,18 @@ const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
 
 // Wealth Ultra (allocation engine)
 const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
+const RiskTradingHub = lazy(() => import('./pages/RiskTradingHub'));
+const LogicEnginesHub = lazy(() => import('./pages/LogicEnginesHub'));
+const FinancialJournal = lazy(() => import('./pages/FinancialJournal'));
+const LiquidationPlanner = lazy(() => import('./pages/LiquidationPlanner'));
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
-  'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities'
+  'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities',
+  'Risk & Trading Hub', 'Logic & Engines', 'Financial Journal', 'Liquidation Planner',
 ];
 
 function getPageFromHash(): Page | null {
@@ -115,14 +122,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  React.useEffect(() => {
-    const onUnhandled = () => {
-      // Keep app resilient after browser wake/sleep transitions and stale async callbacks.
-      setActivePageState((prev) => prev ?? 'Dashboard');
-    };
-    window.addEventListener('unhandledrejection', onUnhandled);
-    return () => window.removeEventListener('unhandledrejection', onUnhandled);
-  }, []);
   const [pageAction, setPageAction] = useState<string | null>(null);
   const auth = useContext(AuthContext);
 
@@ -130,7 +129,7 @@ const App: React.FC = () => {
     return null; // Or a loading spinner
   }
 
-  const { isAuthenticated } = auth;
+  const { isAuthenticated, isApproved } = auth;
 
   const triggerPageAction = (page: Page, action: string) => {
     setActivePage(page);
@@ -177,6 +176,10 @@ const App: React.FC = () => {
       case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Risk & Trading Hub': return <RiskTradingHub setActivePage={setActivePage} />;
+      case 'Logic & Engines': return <LogicEnginesHub setActivePage={setActivePage} />;
+      case 'Financial Journal': return <FinancialJournal setActivePage={setActivePage} />;
+      case 'Liquidation Planner': return <LiquidationPlanner setActivePage={setActivePage} />;
       
       default: return <Dashboard setActivePage={setActivePage} />;
     }
@@ -203,6 +206,28 @@ const App: React.FC = () => {
     );
   }
 
+  if (isApproved === false) {
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <PendingApprovalPage />
+        </AuthProvider>
+      </ThemeProvider>
+    );
+  }
+
+  if (isApproved === null) {
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <div className="flex justify-center items-center min-h-screen bg-gray-50">
+            <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Checking access" />
+          </div>
+        </AuthProvider>
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider>
       <AuthProvider>
@@ -215,6 +240,7 @@ const App: React.FC = () => {
                     <AIProvider>
                       <ReconciliationProvider>
                         <MultiBankProvider>
+                          <PrivacyProvider>
                           <MarketSimulator />
                           <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
                           <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
@@ -223,6 +249,7 @@ const App: React.FC = () => {
                             </Suspense>
                           </AppErrorBoundary>
                           </Layout>
+                          </PrivacyProvider>
                         </MultiBankProvider>
                       </ReconciliationProvider>
                     </AIProvider>

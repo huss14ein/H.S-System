@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { Account, Page } from '../types';
+import { Account, Page, InvestmentPortfolio } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -25,9 +25,12 @@ import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
+import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
+import { reconcileCashAccountBalance, type CashAccountReconciliation } from '../services/dataQuality';
+import { usePrivacyMask } from '../context/PrivacyContext';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -112,8 +115,8 @@ const AccountModal: React.FC<{
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Useful for shared/family tracking (e.g. self, spouse)." /></label>
-                    <input type="text" placeholder="Owner (e.g., self, spouse)" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded from your net worth)." /></label>
+                    <input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
                 {type === 'Investment' && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
@@ -167,8 +170,10 @@ const AccountCardComponent: React.FC<{
     onDeleteAccount: (acc: Account) => void;
     linkedPortfoliosCount?: number;
     readOnly?: boolean;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false }) => {
+    cashReconciliation?: CashAccountReconciliation | null;
+}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, cashReconciliation }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const { maskBalance } = usePrivacyMask();
 
     const getAccountIcon = (type: Account['type']) => {
         switch (type) {
@@ -208,7 +213,7 @@ const AccountCardComponent: React.FC<{
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
                     return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{formatCurrencyString(account.balance)}</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{maskBalance(formatCurrencyString(account.balance))}</p>
                     ) : (
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
@@ -219,6 +224,19 @@ const AccountCardComponent: React.FC<{
                     </p>
                 )}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
+                {!readOnly && account.owner && <OwnerBadge owner={account.owner} className="mt-2" />}
+                {!readOnly && cashReconciliation?.showWarning && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900">
+                        <p className="font-semibold">Balance check</p>
+                        <p className="mt-0.5">
+                            Recorded transactions net to <strong>{formatCurrencyString(cashReconciliation.transactionNet)}</strong>
+                            {' '}vs balance <strong>{formatCurrencyString(cashReconciliation.storedBalance)}</strong>
+                            {cashReconciliation.txCount > 0 && (
+                                <> (drift {formatCurrencyString(cashReconciliation.drift)}). May mean opening balance or missing entries.</>
+                            )}
+                        </p>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -230,6 +248,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
+    const { maskBalance } = usePrivacyMask();
 
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
@@ -296,28 +315,38 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [auth?.user?.id, data?.accounts?.length]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const investments = data?.investments ?? [];
-        const cash = accounts.filter(a => ['Checking', 'Savings'].includes(a.type));
-        const credit = accounts.filter(a => a.type === 'Credit');
-        const investmentAccountsList = accounts.filter(a => a.type === 'Investment');
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
+        const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
+        const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
 
-        const totalCash = cash.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
-        const totalCredit = credit.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalCash = cash.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalCredit = credit.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
-        const investmentsWithUpdatedBalance = investmentAccountsList.map(acc => {
+        const investmentsWithUpdatedBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
             const portfolioValue = investments
-                .filter(p => p.accountId === acc.id)
-                .reduce((pSum, p) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
+                .filter((p: { accountId?: string }) => p.accountId === acc.id)
+                .reduce((pSum: number, p: InvestmentPortfolio) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
             return { ...acc, balance: portfolioValue };
         });
 
-        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
         return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
-    }, [data?.accounts, data?.investments, exchangeRate]);
+    }, [data?.accounts, data?.investments, (data as any)?.personalAccounts, (data as any)?.personalInvestments, exchangeRate]);
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
+
+    const cashReconciliationById = useMemo(() => {
+        const tx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const m = new Map<string, CashAccountReconciliation>();
+        orderedCashAccounts.forEach((acc) => {
+            const r = reconcileCashAccountBalance(acc, tx);
+            if (r) m.set(acc.id, r);
+        });
+        return m;
+    }, [orderedCashAccounts, data?.transactions, (data as any)?.personalTransactions]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
     const orderedInvestmentAccounts = useMemo(() => [...investmentAccounts].sort((a, b) => a.name.localeCompare(b.name)), [investmentAccounts]);
 
@@ -586,15 +615,15 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
-                 <Card title="Total Cash Balance" value={formatCurrencyString(totalCash)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
-                 <Card title="Total Credit Balance" value={formatCurrencyString(totalCredit)} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
-                 <Card title="Total Investment Value" value={formatCurrencyString(totalInvestments)} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of linked investment portfolios." />
+                 <Card title="Total Cash Balance" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
+                 <Card title="Total Credit Balance" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
+                 <Card title="Total Investment Value" value={maskBalance(formatCurrencyString(totalInvestments))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of linked investment portfolios." />
             </div>
 
             <div className="section-card border-l-4 border-emerald-500/50 mt-4">
                 <h3 className="section-title text-base">Emergency fund (liquid cash)</h3>
-                <p className="text-lg font-semibold text-dark tabular-nums">{formatCurrencyString(emergencyFund.emergencyCash)} = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses</p>
-                <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{formatCurrencyString(emergencyFund.shortfall)}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.'}</p>
+                <p className="text-lg font-semibold text-dark tabular-nums">{maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses</p>
+                <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{maskBalance(formatCurrencyString(emergencyFund.shortfall))}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.'}</p>
                 {setActivePage && <button type="button" onClick={() => setActivePage('Summary')} className="mt-2 text-sm text-primary font-medium hover:underline">View full breakdown on Summary →</button>}
             </div>
 
@@ -787,7 +816,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCashAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
+                        <AccountCardComponent
+                            key={acc.id}
+                            account={acc}
+                            onEditAccount={handleOpenAccountModal}
+                            onDeleteAccount={handleOpenDeleteModal}
+                            linkedPortfoliosCount={0}
+                            cashReconciliation={cashReconciliationById.get(acc.id) ?? null}
+                        />
                     ))}
                 </div>
             </section>
@@ -921,7 +957,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select destination account</option>
                             {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                    {acc.name} ({maskBalance(formatCurrencyString(acc.balance))})
                                 </option>
                             ))}
                         </select>

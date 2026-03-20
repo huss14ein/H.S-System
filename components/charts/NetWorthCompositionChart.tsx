@@ -20,24 +20,29 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         const fullHistoricalData = [];
         const now = new Date();
 
-        // 1. Calculate historical monthly net cash flow from transactions
+        // 1. Calculate historical monthly net cash flow from transactions (personal only)
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const monthlyNetFlows = new Map<string, number>();
-        (data?.transactions ?? []).forEach(t => {
+        transactions.forEach((t: { date: string; amount: number }) => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentFlow = monthlyNetFlows.get(monthKey) || 0;
             monthlyNetFlows.set(monthKey, currentFlow + t.amount);
         });
         
-        // 2. Get current asset & liability values
-        const currentInvestments = getAllInvestmentsValueInSAR(data?.investments ?? [], exchangeRate);
-        const currentCash = (data?.accounts ?? []).filter(a => ['Checking', 'Savings'].includes(a.type)).reduce((sum, acc) => sum + Math.max(0, acc.balance ?? 0), 0);
-        const currentProperty = (data?.assets ?? []).filter(a => a.type === 'Property').reduce((sum, asset) => sum + asset.value, 0);
-        const currentLiabilities = (data?.liabilities ?? []).reduce((sum, liab) => sum + (liab.amount ?? 0), 0) + (data?.accounts ?? []).filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        // 2. Get current asset & liability values (personal wealth only for "my" net worth)
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const currentInvestmentsVal = getAllInvestmentsValueInSAR(investments, exchangeRate);
+        const currentCash = accounts.filter((a: { type?: string; balance?: number }) => ['Checking', 'Savings'].includes(a.type ?? '')).reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
+        const currentProperty = assets.filter((a: { type?: string; value?: number }) => a.type === 'Property').reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+        const currentLiabilitiesVal = liabilities.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0) + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
         
         let cash = currentCash;
-        let investments = currentInvestments;
+        let invVal = currentInvestmentsVal;
         let property = currentProperty;
-        let liabilities = currentLiabilities;
+        let liabVal = currentLiabilitiesVal;
 
         const monthsToGoBack = 60; // 5 years
 
@@ -46,28 +51,25 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
             const monthKey = date.toISOString().slice(0, 7);
             
-            const netWorth = cash + investments + property + liabilities;
+            const netWorth = cash + invVal + property + liabVal;
             
             fullHistoricalData.push({
                 date: date.toISOString(),
                 name: date.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
                 "Net Worth": Math.round(netWorth),
                 "Cash": Math.round(cash),
-                "Investments": Math.round(investments),
+                "Investments": Math.round(invVal),
                 "Property": Math.round(property),
-                "Liabilities": Math.round(liabilities)
+                "Liabilities": Math.round(liabVal)
             });
 
             // 4. "Un-apply" changes for the previous month
-            // Use actual net flow for cash, making it accurate
             const netFlowThisMonth = monthlyNetFlows.get(monthKey) || 0;
             cash -= netFlowThisMonth;
-
-            // Use simulation for investments and property
-            investments /= (1 + (0.07 / 12)); // Assume 7% annual growth
-            property /= 1.003; // Assume slow appreciation
-            if (liabilities < -500000) { // Simple mortgage paydown simulation
-                 liabilities += 4500;
+            invVal /= (1 + (0.07 / 12));
+            property /= 1.003;
+            if (liabVal < -500000) {
+                 liabVal += 4500;
             }
         }
         

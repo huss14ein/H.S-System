@@ -37,14 +37,14 @@
 ## 8. Sleeve strategy – “!” and links to Watchlist + AI rebalance
 
 - **“!” tooltips:** Every field in **Monthly Core + Analyst-Upside Sleeve Strategy** (Investments → **Investment Plan** tab) already has an **InfoHint** (“!”) next to the label (Monthly Budget, Core/High-Upside %, Min Analyst Upside, Stale Days, Redirect Policy, Broker rules, etc.). **Location:** `pages/Investments.tsx` in the **`InvestmentPlan`** section, roughly **lines 991–1056**.
-- **Tighter link to Watchlist + AI Rebalance:** A **“Tied to”** line was added under the title: **Watchlist** (add tickers) · **AI Rebalancer** (run allocation) · **Trade Advices** (review trades). Clicking each switches the Investments sub-tab to that section. **Location:** same file, right after the “Monthly Core + Analyst-Upside Sleeve Strategy” header.
+- **Related links:** A **“Related:”** line under the hero includes **Portfolios** · **Watchlist** (tickers + **Trade advices (AI)** card on that tab) · **AI Rebalancer** · **Recovery Plan** (and **Wealth Ultra** when available). Each switches the Investments sub-tab. **Location:** `pages/Investments.tsx` — **Investment Plan** tab, after the dark hero section (~**lines 2781–2796**).
 
 ---
 
 ## 9. Investment pages – cross-links and navigation
 
-- **Tabs:** Under the main Investments content you already have tabs: Overview, Portfolios, Investment Plan, Execution History, Dividend Tracker, **AI Rebalancer**, **Watchlist**, **Trade Advices**. Switching tabs is the main navigation between these subpages.
-- **In-context link:** On the **Investment Plan** tab, the new **“Tied to: Watchlist · AI Rebalancer · Trade Advices”** line (see §8) gives one-click jumps to those subpages. No other cross-links were added; more could be added in Overview or other tabs if needed.
+- **Tabs:** Overview, Portfolios, Investment Plan, Recovery Plan, **Watchlist**, **AI Rebalancer**, Dividend Tracker, Execution History. **Trade advices (AI)** live on the **Watchlist** tab (`WatchlistView`), not a separate tab.
+- **In-context link:** On the **Investment Plan** tab, the **“Related:”** line (see §8) jumps to Portfolios, Watchlist, AI Rebalancer, and Recovery Plan.
 
 ---
 
@@ -55,47 +55,41 @@
 - **Quote:** `services/geminiService.ts` — `getFinnhubLivePrices` (quote), `getFinnhubCommodityPrices` (crypto → SAR), and commodity flow uses Finnhub first for BTC/ETH.
 - **News / economic calendar:** `getFinnhubCompanyNews`, `getFinnhubEconomicCalendar`, `buildFinnhubResearchBrief` used in research/context.
 
-**Not yet implemented (Finnhub free tier)**
+**Implemented in `services/finnhubService.ts` and UI**
 
-- Market status (e.g. US exchange open/closed).
-- Market holidays.
-- Company profile (symbol → name, sector, etc.).
-- Basic financials.
-- Insider transactions / sentiment.
-- EPS surprises.
-- Earnings calendar.
-- 52-week high/low (quote has `h`/`l` in some responses; not yet exposed in app).
+- Market status (US exchange session; normalized via `normalizeFinnhubMarketSession` — see `docs/AI_GROUNDING.md`).
+- Market holidays (System Health).
+- Company profile, basic financials / metrics, quote + **52-week** (metrics), earnings calendar, insider, news, economic calendar.
+- Watchlist: live prices, 52w context, research modal; **LivePricesStatus** shows US session when live + API key.
 
-Making Finnhub the **sole** market-data API would require replacing any other price/research sources with Finnhub equivalents and then adding the missing endpoints above in a dedicated service (e.g. `services/finnhubService.ts`) and wiring them into the UI.
+Stooq/simulated prices may still be used as fallbacks where configured; Finnhub is the primary live feed when `VITE_FINNHUB_API_KEY` is set.
 
 ---
 
 ## 12. Market research – deeper on Watchlist
 
 - **Current:** Watchlist uses news + economic calendar (e.g. Finnhub) and AI research. **File:** `pages/WatchlistView.tsx`; API/context in `services/geminiService.ts` (e.g. `buildFinnhubResearchBrief`, AI research).
-- **“Deeper”** would mean: more data (e.g. company profile, basic financials, earnings, 52w from Finnhub once added), more structured sections per symbol, and possibly sentiment/insider from Finnhub. That depends on implementing §10–11 and then extending the Watchlist UI.
+- **Deeper** optional next steps: richer per-symbol dashboards, more charting, or additional Finnhub endpoints not yet surfaced in the row UI.
 
 ---
 
 ## 13. Trade advise – smarter logic and UI
 
-- **Current:** **Investments → Trade Advices** tab; **`pages/TradeAdvicesView.tsx`**. Shows recent investment transactions and an **“Analyze Trades”** button that calls **`getAITradeAnalysis`** (`services/geminiService.ts`) for educational feedback.
-- **Possible improvements:** Richer prompts, more context (e.g. portfolio, watchlist, plan), structured tips (do’s/don’ts), and a clearer UI (cards, sections, symbols). No code changes done yet for “smarter logic” or UI.
+- **Current:** **Investments → Watchlist** sidebar **“Trade advices (AI)”**: preview of recent **personal** trades, **`getAITradeAnalysis`** with holdings / watchlist / plan / risk profile / as-of date; Markdown sections include **Do’s** and **Don’ts**. See `pages/WatchlistView.tsx` + `TradeAnalysisContext` in `services/geminiService.ts`.
 
 ---
 
 ## 14. Scenario planning – “!” on each field and reuse
 
-- **Scenario / plan fields** appear on **Plan** (`pages/Plan.tsx`) and **Forecast** (`pages/Forecast.tsx`) (and possibly in modals). Adding **InfoHint** “!” to every scenario/plan field and reusing the same copy across pages would require a pass over:
-  - **Plan:** event modal (name, amount, month, type), any scenario toggles, assumptions.
-  - **Forecast:** horizon, monthly savings, growth rate, etc.
-- Some **InfoHints** already exist (e.g. Forecast); a full pass to ensure **every** scenario/plan field has an “!” and shared wording was not done. Can be done as a follow-up.
+- **Plan** (`pages/Plan.tsx`): InfoHints on household intelligence, liquid cash, total debt, life-event modal fields, scenario controls (income shock, expense stress, events, year), and related labels where added in the scenario/plan pass.
+- **Forecast** (`pages/Forecast.tsx`): InfoHints on forecast assumptions, auto-fill, run forecast, scenario comparison, goal projections, etc.
+- Further polish: align exact wording across Plan vs Forecast for any duplicate concepts (optional).
 
 ---
 
 ## 15. Plan page – smarter logic and tracking
 
-- **Current:** **Plan** page (`pages/Plan.tsx`) shows monthly planned vs actual, events, and scenario-style data. “Smarter” could mean: better projections, goal linkage, or integration with Forecast/Investments. “Better tracked” could mean: history of plan changes, or clearer progress vs plan. No specific changes implemented for this item.
+- **Current:** **Plan** (`pages/Plan.tsx`) — executive summary (projected surplus, actual net, variance %, months over budget); **Progress vs plan** card (income / expenses excl. investment / monthly investment planned vs actual for YTD or full selected year); **Plan fed from** cross-links including **Forecast**; goals vs surplus analysis; household engine signals when applicable. History of plan version edits is not stored (optional future).
 
 ---
 
@@ -126,25 +120,17 @@ If “update not working”: check (1) `VITE_FINNHUB_API_KEY` for crypto, (2) AI
 
 ## 18. Ring notification – where it’s triggered
 
-- **There is no notification sound in the codebase.** The “ring” is the **bell icon** in the header and its **badge count**.
-- **Bell UI:** **`components/Header.tsx`** ~**lines 189–196**: button with `BellIcon`, `onClick={() => setActivePage('Notifications')}`, and badge showing `notificationCount` (with ping animation when `notificationCount > 0`).
-- **Count:** **`components/Header.tsx`** ~**lines 44–50**: `notificationCount` = triggered price alerts + pending transactions + pending planned trades + unread notifications from `data`.
-
-So “ring notification not working” can mean:  
-(1) **Badge/count wrong** — fixed by syncing notification list with `data` and snake_case handling for planned trades (§3 in previous work).  
-(2) **Actual sound** — not implemented; would require adding an audio trigger, e.g. in `Header` when `notificationCount` increases or when the user clicks the bell (optional sound). That would be new code in `Header.tsx` (and possibly a small audio asset or Web Audio beep).
+- **Bell + badge:** **`components/Header.tsx`** — `notificationCount` from **`useNotifications()`**; click opens **Notifications**.
+- **Optional sound:** Web Audio short beep when the count **increases** or when opening the bell with unread items — only if **Settings → Notification sound** is on (**`PrivacyContext`**, `localStorage` `finova_notification_sound_v1`, default **off**).
 
 ---
 
 ## 20. AI Services API (Gemini)
 
-Unclear from the request whether you want to:
-
-- **Fix errors** (e.g. timeouts, wrong schema, or proxy) — need exact error message or scenario.
-- **Document** where and how Gemini is used (which pages, which prompts, env vars).
-- **Change behavior** (e.g. different model, turn off for some features, or add a “Gemini status” in System Health).
-
-Current usage: **`services/geminiService.ts`** (and optionally Netlify proxy); used for AI summary, trade analysis, commodity prices, research, rebalance, etc. **System & APIs Health** page already has an “AI Services API (Gemini)” row. If you specify what’s wrong or what you want (e.g. “show last error” or “disable when key missing”), we can implement that.
+- **Documentation:** **`docs/AI_GROUNDING.md`** — feature → primary file table, env keys (`GEMINI_API_KEY`, `VITE_GEMINI_API_KEY`), Finnhub session note, privacy.
+- **Code:** **`services/geminiService.ts`** (+ Netlify proxy where used); surfaces include AI advisor, trade analysis, watchlist tips, rebalance, parsers, etc.
+- **System Health:** “AI Services API (Gemini)” health row exercises the proxy/model.
+- **If something fails:** capture the error from browser/network or System Health; typical causes are missing `GEMINI_API_KEY` on the host or proxy timeouts.
 
 ---
 
@@ -154,13 +140,13 @@ Current usage: **`services/geminiService.ts`** (and optionally Netlify proxy); u
 |---|------|--------|--------|
 | 5 | Window alignment | Done | Main content in `Layout.tsx`: `w-full` on main + inner div. Clarified it’s the main app content area, not a specific “add window”. |
 | 7 | Can’t add trade | Done (docs + UX) | Exact steps and error cases documented above. Modal already shows empty state when no accounts/portfolios; validation and API errors documented. |
-| 8 | Sleeve strategy “!” + Watchlist/AI link | Done | All allocation fields have InfoHints. “Tied to: Watchlist · AI Rebalancer · Trade Advices” links added on Investment Plan tab. |
-| 9 | Investment pages cross-links | Done | Tab bar + “Tied to” links on Investment Plan tab. No extra cross-links elsewhere yet. |
+| 8 | Sleeve strategy “!” + Watchlist/AI link | Done | All allocation fields have InfoHints. **Related:** Portfolios · Watchlist · AI Rebalancer · Recovery Plan on Investment Plan tab. |
+| 9 | Investment pages cross-links | Done | Tab bar; trade advices on **Watchlist** tab; **Related** links on Investment Plan. |
 | 10–11 | Finnhub sole API + full free options | Done | `services/finnhubService.ts`: market status, holidays, company profile, basic financials, quote + 52w, earnings calendar, insider, news, economic calendar. System Health shows market status and holidays. |
 | 12 | Market research deeper on Watchlist | Done | Per-symbol Research (book icon) opens modal with Finnhub: profile, quote and 52w, earnings, insider, news. |
 | 13 | Trade advise smarter + UI | Done | Richer AI prompt (tx list + instructions); card layout, empty states, styled analysis panel. |
-| 14 | Scenario planning “!” and reuse | Done | Plan: InfoHints on Income Shock, Expense Stress, Major Events, Year. Forecast: InfoHint on scenario presets. |
-| 15 | Plan page smarter + tracking | Done | Plan vs actual summary (projected vs actual net, percent vs plan) at top of plan. |
+| 14 | Scenario planning “!” and reuse | Done | Plan + Forecast InfoHint pass (assumptions, scenarios, household fields, etc.); see §14 above. |
+| 15 | Plan page smarter + tracking | Done | Executive summary + **Progress vs plan** (YTD/full-year income, expenses, investment) + Forecast links + goals vs surplus. |
 | 16 | Metals & Crypto update | Done (location doc’d) | Code locations listed above; Finnhub + AI flow in place. If still broken, debug with console/Supabase. |
 | 18 | Ring notification | Done | Web Audio beep when count increases and on bell click when count greater than 0. Header.tsx. |
-| 20 | AI Services API (Gemini) | Unclear | Need your goal: fix errors, document, or change behavior. |
+| 20 | AI Services API (Gemini) | Done (docs) | **`docs/AI_GROUNDING.md`** + System Health check; fix behavior when you have a concrete error. |

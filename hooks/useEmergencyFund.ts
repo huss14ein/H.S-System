@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import type { FinancialData, Account, Transaction, Budget } from '../types';
+import { getPersonalWealthData } from '../utils/wealthScope';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -22,6 +24,8 @@ export interface EmergencyFundMetrics {
     shortfall: number;
     /** Amount needed to reach target (shortfall = targetAmount - emergencyCash). */
     targetAmount: number;
+    /** 0–1+ coverage vs target months (e.g. 1 = fully funded). */
+    emergencyFundCoverage: number;
 }
 
 /**
@@ -39,12 +43,14 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         status: 'critical',
         shortfall: 0,
         targetAmount: 0,
+        emergencyFundCoverage: 0,
     };
 
-    if (!data?.accounts?.length) return defaultResult;
-
-    const accounts = data.accounts as Account[];
-    const transactions = (data.transactions ?? []) as Transaction[];
+    if (!data) return defaultResult;
+    const { personalAccounts, personalTransactions } = getPersonalWealthData(data);
+    if (!personalAccounts.length) return defaultResult;
+    const accounts = personalAccounts as Account[];
+    const transactions = personalTransactions as Transaction[];
     const budgets = (data.budgets ?? []) as Budget[];
 
     const emergencyCash = accounts
@@ -55,7 +61,7 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
 
     const coreExpenseTx = transactions.filter(
-        t => t.type === 'expense' && (t.expenseType === 'Core' || (t as Transaction & { budgetCategory?: string }).budgetCategory && CORE_BUDGET_CATEGORIES.includes((t as Transaction & { budgetCategory: string }).budgetCategory))
+        t => countsAsExpenseForCashflowKpi(t) && (t.expenseType === 'Core' || (t as Transaction & { budgetCategory?: string }).budgetCategory && CORE_BUDGET_CATEGORIES.includes((t as Transaction & { budgetCategory: string }).budgetCategory))
     );
     const byMonth = new Map<string, number>();
     coreExpenseTx.forEach(t => {
@@ -79,7 +85,7 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         if (essentialSum > 0) {
             monthlyCoreExpenses = essentialSum;
         } else {
-            const allExpenses = transactions.filter(t => t.type === 'expense' && new Date(t.date) >= sixMonthsAgo);
+            const allExpenses = transactions.filter(t => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
             const allByMonth = new Map<string, number>();
             allExpenses.forEach(t => {
                 const key = t.date.slice(0, 7);
@@ -101,6 +107,7 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
     else if (monthsCovered >= 3) status = 'adequate';
     else if (monthsCovered >= 1) status = 'low';
 
+    const emergencyFundCoverage = targetMonths > 0 ? monthsCovered / targetMonths : 0;
     return {
         emergencyCash,
         monthlyCoreExpenses,
@@ -109,7 +116,12 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         status,
         shortfall,
         targetAmount,
+        emergencyFundCoverage,
     };
+}
+
+export function emergencyFundCoverage(data: FinancialData | null | undefined): number {
+    return computeEmergencyFundMetrics(data).emergencyFundCoverage;
 }
 
 /**

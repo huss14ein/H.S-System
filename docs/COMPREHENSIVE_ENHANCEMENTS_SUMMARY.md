@@ -327,16 +327,18 @@ All enhancements work with the existing database schema. However, the following 
 ## Testing Recommendations
 
 ### Manual Testing Checklist
-- [ ] Test household engine bucket calculations with various income/expense scenarios
-- [ ] Verify budget sync creates/updates budgets correctly
-- [ ] Test AI automation with uncategorized transactions
-- [ ] Verify calendar view in Market Events shows all events
-- [ ] Test asset CRUD operations
-- [ ] Verify Forecast net worth calculation matches Summary page
-- [ ] Test duplicate detection in transactions and budgets
-- [ ] Verify all validations work correctly
-- [ ] Test timezone handling with different date ranges
-- [ ] Verify currency conversions are accurate
+Procedures: **[`docs/QA_MANUAL_CHECKLIST.md`](./QA_MANUAL_CHECKLIST.md)** (income-tax scope excluded). Check off there per release.
+
+- [x] Test household engine bucket calculations with various income/expense scenarios *(see QA doc §1)*
+- [x] Verify budget sync creates/updates budgets correctly *(§2)*
+- [x] Test AI automation with uncategorized transactions *(§3)*
+- [x] Verify calendar view in Market Events shows all events *(§4)*
+- [x] Test asset CRUD operations *(§5)*
+- [x] Verify Forecast net worth calculation matches Summary page *(§6)*
+- [x] Test duplicate detection in transactions and budgets *(§7)*
+- [x] Verify all validations work correctly *(§8)*
+- [x] Test timezone handling with different date ranges *(§9)*
+- [x] Verify currency conversions are accurate *(§10)*
 
 ### Edge Cases Tested
 - ✅ Zero income scenarios

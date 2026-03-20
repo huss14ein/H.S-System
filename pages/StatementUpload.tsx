@@ -10,6 +10,7 @@ import { StatementIcons } from '../constants/statementIcons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
+import { findDuplicateTransactions } from '../services/dataQuality';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -17,7 +18,7 @@ interface StatementUploadProps {
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const { data, loading, addTransaction, recordTrade } = useContext(DataContext)!;
-  const { uploadStatement } = useStatementProcessing();
+  const { commitParsedStatementFromUpload } = useStatementProcessing();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');
@@ -109,17 +110,22 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         
         setProcessingProgress(95);
         
-        // Save statement metadata to context for history tracking
+        // History + Supabase: metadata and extracted rows (when signed in + migration applied)
         try {
-          const statement = await uploadStatement(file, {
-            bankName: 'Auto-detected',
-            accountNumber: selectedAccount || 'Unknown',
-            accountType: activeTab === 'trading' ? 'investment' : 'checking'
+          const statement = await commitParsedStatementFromUpload({
+            file,
+            bankInfo: {
+              bankName: 'Auto-detected',
+              accountNumber: selectedAccount || 'Unknown',
+              accountType: activeTab === 'trading' ? 'investment' : 'checking',
+            },
+            accountId: selectedAccount || null,
+            bankTransactions: activeTab === 'trading' ? undefined : transactions,
+            investmentTransactions: activeTab === 'trading' ? investmentTransactions : undefined,
           });
           setCurrentStatementId(statement.id);
         } catch (error) {
-          console.warn('Failed to save statement metadata:', error);
-          // Continue anyway - transactions can still be imported
+          console.warn('Failed to save statement to history:', error);
         }
         
         setProcessingProgress(100);
@@ -161,19 +167,20 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingProgress(70);
       
       if (result.transactions.length > 0) {
-        // Save statement metadata for SMS
         try {
-          const statement = await uploadStatement(
-            new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
-            {
+          const statement = await commitParsedStatementFromUpload({
+            file: new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
+            bankInfo: {
               bankName: 'SMS Import',
               accountNumber: selectedAccount || 'Unknown',
-              accountType: 'checking'
-            }
-          );
+              accountType: 'checking',
+            },
+            accountId: selectedAccount || null,
+            bankTransactions: result.transactions,
+          });
           setCurrentStatementId(statement.id);
         } catch (error) {
-          console.warn('Failed to save SMS statement metadata:', error);
+          console.warn('Failed to save SMS statement to history:', error);
         }
         
         // Check for duplicates
@@ -199,29 +206,20 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     const existingInvestmentTransactions = data?.investmentTransactions || [];
     const duplicates = new Set<number>();
 
-    // Check regular transactions
+    // Check regular transactions (shared heuristic: services/dataQuality)
     transactions.forEach((tx, index) => {
-      const txDate = new Date(tx.date);
-      const txAmount = Math.abs(tx.amount);
-      const txDesc = tx.description.toLowerCase().trim();
-
-      const isDuplicate = existingTransactions.some(existing => {
-        const existingDate = new Date(existing.date);
-        const existingAmount = Math.abs(existing.amount);
-        const existingDesc = existing.description.toLowerCase().trim();
-
-        const dateDiff = Math.abs(txDate.getTime() - existingDate.getTime());
-        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
-        const amountMatch = Math.abs(txAmount - existingAmount) <= 0.01;
-        const descMatch = txDesc === existingDesc || 
-          (txDesc.includes(existingDesc.substring(0, 10)) || existingDesc.includes(txDesc.substring(0, 10)));
-
-        return daysDiff <= 3 && amountMatch && descMatch;
-      });
-
-      if (isDuplicate) {
-        duplicates.add(index);
-      }
+      const matches = findDuplicateTransactions(
+        {
+          date: tx.date,
+          amount: tx.amount,
+          description: tx.description,
+          accountId: tx.accountId || '',
+          type: tx.type,
+        },
+        existingTransactions,
+        { dateToleranceDays: 3, requireSameAccount: false }
+      );
+      if (matches.length > 0) duplicates.add(index);
     });
 
     // Check investment transactions

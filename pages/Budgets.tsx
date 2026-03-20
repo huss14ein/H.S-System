@@ -464,8 +464,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
 
     const householdBudgetEngine = useMemo(() => {
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const incomeByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
+        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
             const d = new Date(t.date);
             if (d.getFullYear() !== currentYear || t.type !== 'income') return;
             incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
@@ -474,8 +476,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         const suggested = incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length) : 0;
 
         const input = buildHouseholdEngineInputFromData(
-            (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
-            (data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
+            transactions as Array<{ date: string; type?: string; amount?: number }>,
+            accounts as Array<{ type?: string; balance?: number }>,
             (data?.goals ?? []) as any[],
             {
                 year: currentYear,
@@ -517,24 +519,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                }
         
         return result;
-    }, [data?.transactions, data?.accounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+    }, [data?.transactions, data?.accounts, (data as any)?.personalTransactions, (data as any)?.personalAccounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const suggestedMonthlySalary = useMemo(() => {
+        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const incomeByMonth = Array(12).fill(0);
-        (data?.transactions ?? []).forEach((t: { date: string; type?: string; amount?: number }) => {
+        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
             const d = new Date(t.date);
             if (d.getFullYear() !== currentYear || t.type !== 'income') return;
             incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
         });
         const withData = incomeByMonth.filter((v) => v > 0);
         return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [data?.transactions, currentYear]);
+    }, [data?.transactions, (data as any)?.personalTransactions, currentYear]);
 
     const recurringBillsWithBenchmarks = useMemo(() => {
-        const txs = (data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
         const patterns = detectRecurringBillPatterns(txs as any, 2);
         return patterns.map((p) => addBenchmarkComparison(p));
-    }, [data?.transactions]);
+    }, [data?.transactions, (data as any)?.personalTransactions]);
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
 
@@ -734,11 +737,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             previousRangeEnd.setHours(23, 59, 59, 999);
         }
 
-        (data?.transactions ?? [])
-            .filter((t) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
-            .forEach((t) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+            .filter((t: { type?: string; status?: string; budgetCategory?: string }) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
+            .forEach((t: { date: string; amount?: number; budgetCategory?: string }) => {
                 const txDate = new Date(t.date);
-                const amount = Math.abs(t.amount);
+                const amount = Math.abs(t.amount ?? 0);
                 if (txDate >= rangeStart && txDate <= rangeEnd) {
                     spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
                 }
@@ -842,7 +845,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
 
     // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -851,7 +854,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         const rangeStart = new Date(yr, mo - 1, 1);
         const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
         const spending = new Map<string, number>();
-        (data?.transactions ?? []).forEach((tx) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string }) => {
             const d = new Date(tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
@@ -881,7 +884,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
         });
         return rows.sort((a, b) => b.spent - a.spent);
-    }, [data?.budgets, data?.transactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions]);
+    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions]);
 
     const adminApprovedOverviewFiltered = useMemo(() => {
         let list = adminApprovedOverviewRaw;
@@ -1214,7 +1217,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = (data?.transactions ?? []).filter((t) => t.type === 'expense' && !!t.budgetCategory);
+        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string }) => t.type === 'expense' && !!t.budgetCategory);
         if (allTx.length === 0) {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
@@ -1224,13 +1227,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
         const byCategory = new Map<string, { total: number; months: Set<string> }>();
-        allTx.forEach((t) => {
+        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number }) => {
             const d = new Date(t.date);
             if (d < threeMonthsAgo || d > now) return;
             const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
-            entry.total += Math.abs(t.amount);
+            entry.total += Math.abs(t.amount ?? 0);
             entry.months.add(key);
             byCategory.set(cat, entry);
         });

@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Liability, Page } from '../types';
+import { Account, Liability, Page } from '../types';
+import { isPersonalWealth } from '../utils/wealthScope';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
@@ -14,6 +15,10 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import OwnerBadge from '../components/OwnerBadge';
+import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
+import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -29,6 +34,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<Liability['status']>('Active');
+    const [owner, setOwner] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -36,11 +42,13 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setType(liabilityToEdit.type);
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
+            setOwner(liabilityToEdit.owner ?? '');
         } else {
             setName('');
             setType('Personal Loan');
             setAmount('');
             setStatus('Active');
+            setOwner('');
         }
     }, [liabilityToEdit, isOpen]);
 
@@ -54,6 +62,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             amount: type === 'Receivable' ? value : -value,
             status,
             goalId: liabilityToEdit?.goalId,
+            owner: owner.trim() || undefined,
         };
         onSave(newLiability);
         onClose();
@@ -87,6 +96,10 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                         <InfoHint text={isReceivable ? "Amount they owe you (outstanding)." : "Outstanding balance; affects net worth and Zakat deductible liabilities."} />
                     </label>
                     <input type="number" step="any" min="0" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label>
+                    <input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base"/>
                 </div>
                 {liabilityToEdit && (
                     <div>
@@ -124,9 +137,10 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                     {getIcon(liability.type)}
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                        <p className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
                             {liability.type}
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                            <OwnerBadge owner={liability.owner} />
                         </p>
                     </div>
                 </div>
@@ -194,7 +208,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const liabilities = data?.liabilities ?? [];
         const creditCardDebts = accounts
             .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
-            .map(a => ({ id: a.id, name: a.name, type: 'Credit Card' as const, amount: a.balance ?? 0, status: 'Active' as const }));
+            .map((a: Account) => ({
+                id: a.id,
+                name: a.name,
+                type: 'Credit Card' as const,
+                amount: a.balance ?? 0,
+                status: 'Active' as const,
+                owner: a.owner?.trim() ? a.owner : undefined,
+            }));
         return [...liabilities, ...creditCardDebts];
     }, [data?.liabilities, data?.accounts]);
 
@@ -205,17 +226,95 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
 
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
-        const activeDebts = allDebts.filter(l => (l.status ?? 'Active') === 'Active');
-        const activeReceivables = allReceivables.filter(l => (l.status ?? 'Active') === 'Active');
-        const totalDebt = activeDebts.reduce((sum, liab) => sum + Math.abs(liab.amount ?? 0), 0);
-        const totalReceivable = activeReceivables.reduce((sum, liab) => sum + (liab.amount ?? 0), 0);
-        const assets = data?.assets ?? [];
-        const accounts = data?.accounts ?? [];
-        const totalAssets = assets.reduce((sum, asset) => sum + (asset.value ?? 0), 0) + accounts.filter(a => (a.balance ?? 0) > 0).reduce((sum, acc) => sum + (acc.balance ?? 0), 0);
+        const personalLiabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+        const allAccounts = data?.accounts ?? [];
+        /** Credit-card debt rows for "my" totals: only accounts with no owner (same rule as isPersonalWealth). */
+        const personalCreditCards = allAccounts
+            .filter((a: Account) => a.type === 'Credit' && (a.balance ?? 0) < 0 && isPersonalWealth(a))
+            .map((a: Account) => ({
+                id: a.id,
+                name: a.name,
+                type: 'Credit Card' as const,
+                amount: a.balance ?? 0,
+                status: 'Active' as const,
+                owner: a.owner?.trim() ? a.owner : undefined,
+            }));
+        const personalAll = [...personalLiabilities, ...personalCreditCards];
+        const personalDebts = personalAll.filter((l: { amount?: number }) => (l.amount ?? 0) < 0);
+        const personalReceivables = personalAll.filter((l: { amount?: number }) => (l.amount ?? 0) > 0);
+        const activeDebts = personalDebts.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
+        const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
+        const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
+        const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [allDebts, allReceivables, data?.assets, data?.accounts]);
+    }, [data]);
+
+    const { liquidityRatioVal, debtServicePct } = useMemo(() => {
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const liquid = accounts
+            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const liq = liquidityRatio(liquid, Math.max(1, totalDebt));
+        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const incomes = txs.filter(
+            (t: { date: string; type?: string; category?: string; amount?: number }) =>
+                countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+        );
+        const byM = new Map<string, number>();
+        incomes.forEach((t: { date: string; amount?: number }) => {
+            const d = new Date(t.date);
+            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
+        });
+        const avgMonthlyIncome =
+            byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
+        const annualDebtGuess = totalDebt * 0.12;
+        const dsr =
+            avgMonthlyIncome > 0 ? debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100 : null;
+        return { liquidityRatioVal: liq, debtServicePct: dsr };
+    }, [data, totalDebt]);
+
+    const debtPayoffOrder = useMemo(() => {
+        const active = allDebts.filter((l) => (l.status ?? 'Active') === 'Active');
+        if (active.length === 0) return [];
+        const items = active.map((l) => ({
+            id: l.id,
+            balance: Math.abs(l.amount ?? 0),
+            annualRatePct: 12,
+            monthlyPayment: Math.abs(l.amount ?? 0) * 0.02,
+        }));
+        return debtPayoffPlan(items, 'avalanche');
+    }, [allDebts]);
+
+    const debtStress = useMemo(() => {
+        const avgMonthlyIncome =
+            (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const txs = (avgMonthlyIncome as { date: string; type?: string; category?: string; amount?: number }[]).filter(
+            (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+        );
+        const byM = new Map<string, number>();
+        txs.forEach((t: { date: string; amount?: number }) => {
+            const d = new Date(t.date);
+            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
+        });
+        const grossMonthly = byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const liquid = accounts
+            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
+        const monthlyPaymentsEst = totalDebt * 0.02;
+        return debtStressScore(monthlyPaymentsEst, grossMonthly, liquid);
+    }, [data, totalDebt]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
@@ -275,12 +374,37 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Sum of unpaid money you owe." />
                 <Card title="Money Owed to You" value={formatCurrencyString(totalReceivable)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of unpaid amounts others owe you." />
                 <Card title="Net (Receivables − Debt)" value={formatCurrencyString(netPosition)} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Positive = you are owed more than you owe; negative = you owe more than you are owed." />
                 <Card title="Debt-to-Asset Ratio" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Debt as a percentage of your assets (excludes receivables)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
+                <Card title="Liquidity ratio" value={liquidityRatioVal.toFixed(2)} tooltip="Checking+Savings vs total debt (higher = more cash to cover debt)." indicatorColor={liquidityRatioVal >= 0.5 ? 'green' : liquidityRatioVal >= 0.2 ? 'yellow' : 'red'} valueColor={liquidityRatioVal >= 0.5 ? 'text-emerald-700' : liquidityRatioVal >= 0.2 ? 'text-amber-700' : 'text-red-700'} />
+                <Card title="Debt service (est.)" value={debtServicePct != null ? `${debtServicePct.toFixed(1)}%` : '—'} tooltip="Rough: ~12% of debt balance as annual payments vs your 6-mo avg income." indicatorColor={debtServicePct != null && debtServicePct > 40 ? 'red' : debtServicePct != null && debtServicePct > 25 ? 'yellow' : 'green'} valueColor={debtServicePct != null && debtServicePct > 40 ? 'text-red-700' : debtServicePct != null && debtServicePct > 25 ? 'text-amber-700' : 'text-slate-700'} />
             </div>
+
+            {allDebts.filter((l) => (l.status ?? 'Active') === 'Active').length > 0 && (
+                <SectionCard title="Debt intelligence" className="mt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <h4 className="font-semibold text-slate-800 mb-1">Payoff order (avalanche)</h4>
+                            <p className="text-xs text-slate-500 mb-2">Prioritize highest effective rate first.</p>
+                            <ol className="list-decimal list-inside text-sm text-slate-700 space-y-1">
+                                {debtPayoffOrder.map((id) => {
+                                    const liab = allDebts.find((l) => l.id === id);
+                                    return liab ? <li key={id}>{liab.name}</li> : null;
+                                })}
+                            </ol>
+                        </div>
+                        <div>
+                            <h4 className="font-semibold text-slate-800 mb-1">Debt stress</h4>
+                            <p className="text-xs text-slate-500 mb-2">Payment coverage and pressure.</p>
+                            <p className="text-lg font-bold text-slate-900">{debtStress.score} / 100</p>
+                            <p className="text-sm text-slate-600">{debtStress.label} · Payment-to-income: {(debtStress.paymentToIncomeRatio * 100).toFixed(1)}%</p>
+                        </div>
+                    </div>
+                </SectionCard>
+            )}
 
             <SectionCard title="What I Owe" className="mt-6">
                 <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
