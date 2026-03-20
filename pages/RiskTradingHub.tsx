@@ -160,14 +160,12 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SectionCard
           title="Emergency runway"
-          infoHint="Months of essential expenses covered by checking + savings (positive balances). From the same emergency fund logic as Goals and Dashboard."
         >
           <p className="text-2xl font-bold text-slate-900">{ef.monthsCovered.toFixed(1)} mo</p>
           <p className="text-sm text-slate-600">Coverage vs {ef.targetMonths} mo target</p>
         </SectionCard>
         <SectionCard
           title="Sample scores (rules)"
-          infoHint="buyScore / sellScore from decisionEngine using your runway and sample position/cash needs. Tune gates in Settings → trading policy."
         >
           <p className="text-sm">
             Buy-score: <strong className="text-primary">{buyS}</strong> / 100 · Sell sample:{' '}
@@ -176,7 +174,6 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
         </SectionCard>
         <SectionCard
           title="Trading policy (this device)"
-          infoHint="Stored in browser localStorage per device. Edit in Settings; Record Trade uses these rules for warnings."
         >
           <ul className="text-sm text-slate-700 space-y-1">
             <li>Min runway for buys: {policy.minRunwayMonthsToAllowBuys} mo</li>
@@ -192,7 +189,6 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
         </SectionCard>
         <SectionCard
           title="Approx. MWRR (cashflows)"
-          infoHint="Money-weighted style return from investment buy/sell flows and current holdings value. Simplified; not a certified performance report."
         >
           <p className="text-2xl font-bold">{mwrr != null ? `${mwrr.toFixed(2)}%` : '—'}</p>
           <p className="text-xs text-slate-500">Simplified IRR on deposits/withdrawals + terminal value. Not audited.</p>
@@ -201,7 +197,6 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
       <SectionCard
         title="Net worth attribution (Dashboard snapshots)"
         className="mt-4"
-        infoHint="Needs two local snapshots (newest vs previous in list). Explains NW change as personal cashflows vs residual (markets, debt, other). Create snapshots from Dashboard (admin) or below."
       >
         {attr ? (
           <>
@@ -224,7 +219,6 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
       <SectionCard
         title="Snapshots & history"
         className="mt-4"
-        infoHint="Snapshots are saved on this device. “Create snapshot now” stores today’s computed net worth. Use “Fill last 2 dates” to auto-select the two most recent snapshot days for compare."
       >
         <p className="text-sm text-slate-600 mb-3">Compare two snapshots, view net worth as of a date, or lock a month (no further edits to that month).</p>
         <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -307,7 +301,6 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
       <SectionCard
         title="Review cadence"
         className="mt-4"
-        infoHint="Auto-built from your data: e.g. daily flags stale market data and debt stress; weekly flags uncategorized spend; monthly nudges snapshot + budget categories. No manual refresh button needed."
       >
         <p className="text-sm text-slate-600 mb-4">Structured checklists for daily, weekly, monthly, quarterly, and annual reviews.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
