@@ -37,6 +37,7 @@ import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
@@ -46,9 +47,12 @@ import { ClockIcon } from '../components/icons/ClockIcon';
 import ExecutionHistoryView from './ExecutionHistoryView';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
+import { EXECUTE_PLAN_STORAGE_KEY } from '../content/plainLanguage';
 import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
+import { useSelfLearning } from '../context/SelfLearningContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -56,7 +60,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Safety & rules' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -80,7 +84,7 @@ class InvestmentTabErrorBoundary extends React.Component<
     render() {
         if (this.state.hasError) {
             return (
-                <SectionCard title="Section temporarily unavailable" className="border-amber-200 bg-amber-50/50">
+                <SectionCard title="Section temporarily unavailable" className="border-amber-200 bg-amber-50/50" collapsible collapsibleSummary="Error" defaultExpanded>
                     <p className="text-sm text-amber-900">This section failed to render after inactivity. We prevented a full-page crash.</p>
                     {this.state.errorMessage && <p className="text-xs text-amber-700 mt-2">{this.state.errorMessage}</p>}
                     <button
@@ -97,10 +101,13 @@ class InvestmentTabErrorBoundary extends React.Component<
     }
 }
 
+const RiskTradingHub = lazy(() => import('./RiskTradingHub'));
+
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+    { name: 'Safety & rules', icon: ShieldCheckIcon },
     { name: 'Recovery Plan', icon: ArrowsRightLeftIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
@@ -114,15 +121,16 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
-    
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0, planCurrency: 'SAR' as TradeCurrency };
 
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             if (fromCurrency === toCurrency) return amount;
-            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * exchangeRate;
-            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / exchangeRate;
+            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * sarPerUsd;
+            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / sarPerUsd;
             return amount;
         };
 
@@ -154,7 +162,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
             specPct,
             planCurrency,
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     if (!data?.investmentPlan) return null;
 
@@ -237,6 +245,7 @@ const RecordTradeModal: React.FC<{
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const { currency: appCurrency } = useCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
@@ -328,9 +337,17 @@ const RecordTradeModal: React.FC<{
                 }
             } else {
                 resetForm();
+                const learnedAccount = getLearnedDefault('record-trade', 'accountId') as string | undefined;
+                const learnedPortfolio = getLearnedDefault('record-trade', 'portfolioId') as string | undefined;
+                const learnedType = getLearnedDefault('record-trade', 'type') as 'buy' | 'sell' | 'deposit' | 'withdrawal' | undefined;
+                const learnedCurrency = getLearnedDefault('record-trade', 'tradeCurrency') as TradeCurrency | undefined;
+                if (learnedAccount && investmentAccounts.some((a) => a.id === learnedAccount)) setAccountId(learnedAccount);
+                if (learnedType && ['buy', 'sell', 'deposit', 'withdrawal'].includes(learnedType)) setType(learnedType);
+                if (learnedCurrency && (learnedCurrency === 'SAR' || learnedCurrency === 'USD')) setTradeCurrency(learnedCurrency);
+                if (learnedPortfolio && portfolios.some((p) => p.id === learnedPortfolio)) setPortfolioId(learnedPortfolio);
             }
         }
-    }, [isOpen, initialData, investmentAccounts, appCurrency]);
+    }, [isOpen, initialData, investmentAccounts, portfolios, appCurrency, getLearnedDefault]);
 
     useEffect(() => {
         if (initialData?.portfolioId && portfoliosForAccount.some((p) => p.id === initialData.portfolioId)) {
@@ -338,11 +355,13 @@ const RecordTradeModal: React.FC<{
             return;
         }
         if (portfoliosForAccount.length > 0) {
-            setPortfolioId(portfoliosForAccount[0].id);
+            const learned = getLearnedDefault('record-trade', 'portfolioId') as string | undefined;
+            const validLearned = learned && portfoliosForAccount.some((p) => p.id === learned);
+            setPortfolioId(validLearned ? learned : portfoliosForAccount[0].id);
         } else {
             setPortfolioId('');
         }
-    }, [portfoliosForAccount, initialData?.portfolioId]);
+    }, [portfoliosForAccount, initialData?.portfolioId, getLearnedDefault]);
 
     useEffect(() => {
         if (portfolioId && portfolios.length > 0) {
@@ -573,6 +592,9 @@ const RecordTradeModal: React.FC<{
                     total: parseFloat(cashAmount) || 0,
                     currency: tradeCurrency,
                 }, undefined);
+                trackFormDefault('record-trade', 'accountId', accountId);
+                trackFormDefault('record-trade', 'type', type);
+                trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
             } else {
                 await onSave({
                     accountId, portfolioId, type,
@@ -584,6 +606,10 @@ const RecordTradeModal: React.FC<{
                     currency: tradeCurrency,
                     ...(goalId && { goalId }),
                 }, executedPlanId);
+                trackFormDefault('record-trade', 'accountId', accountId);
+                trackFormDefault('record-trade', 'portfolioId', portfolioId);
+                trackFormDefault('record-trade', 'type', type);
+                trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
             }
             onClose();
         } catch (error) {
@@ -701,7 +727,7 @@ const RecordTradeModal: React.FC<{
                                     <option value="LIMIT">Limit</option>
                                     <option value="MARKET">Market</option>
                                 </select>
-                                <InfoHint text="Market orders are only valid 9:30 AM–4:00 PM ET. Limit can be recorded any time." />
+                                <InfoHint text="Market orders are only valid 9:30 AM–4:00 PM ET. Limit can be recorded any time." hintId="record-trade-market-order" hintPage="Investments" />
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Time-in-Force</span>
@@ -710,7 +736,7 @@ const RecordTradeModal: React.FC<{
                                     <option value="GTC">GTC</option>
                                     <option value="IOC">IOC</option>
                                 </select>
-                                <InfoHint text={getTIFLabel(tif)} />
+                                <InfoHint text={getTIFLabel(tif)} hintId="record-trade-tif" hintPage="Investments" />
                             </div>
                         </>
                     )}
@@ -789,8 +815,10 @@ const RecordTradeModal: React.FC<{
 
 // #region Portfolio View Components
 const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
@@ -901,8 +929,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
-    const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
-    const toUSD = (valueSar: number) => valueSar / exchangeRate;
+    const toSAR = (valueUsd: number) => valueUsd * sarPerUsd;
+    const toUSD = (valueSar: number) => valueSar / sarPerUsd;
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
@@ -910,8 +938,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const convertBetweenCurrencies = (value: number, from: TradeCurrency, to: TradeCurrency) => {
         if (!Number.isFinite(value)) return 0;
         if (from === to) return value;
-        if (from === 'USD' && to === 'SAR') return value * exchangeRate;
-        if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+        if (from === 'USD' && to === 'SAR') return value * sarPerUsd;
+        if (from === 'SAR' && to === 'USD') return value / sarPerUsd;
         return value;
     };
 
@@ -1369,6 +1397,7 @@ const PlatformCard: React.FC<{
     portfolios: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
     goals: Goal[];
+    sarPerUsd: number;
     availableCashByCurrency?: { SAR: number; USD: number };
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
@@ -1378,9 +1407,8 @@ const PlatformCard: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, goals, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
     const platformCurrency = useMemo(() => {
@@ -1391,7 +1419,7 @@ const PlatformCard: React.FC<{
 
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
-        const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const rate = sarPerUsd;
 
         // Treat simulated prices as SAR; convert to platform currency only for display.
         let valueSarFromSim = 0;
@@ -1493,7 +1521,7 @@ const PlatformCard: React.FC<{
             roi,
             totalAvailable,
         };
-    }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate, availableCashByCurrency]);
+    }, [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
         const priceInfo = simulatedPrices[h.symbol];
@@ -1769,6 +1797,7 @@ const PlatformView: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
@@ -1787,11 +1816,10 @@ const PlatformView: React.FC<{
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
     const aggregateValue = useMemo(() => {
-        const safeFx = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
         const toSar = (amount: number, currency?: string) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             const c = (currency === 'USD' || currency === 'SAR') ? currency : 'USD';
-            return c === 'USD' ? amount * safeFx : amount;
+            return c === 'USD' ? amount * sarPerUsd : amount;
         };
 
         return platformsData.reduce((sum, p) => {
@@ -1813,7 +1841,7 @@ const PlatformView: React.FC<{
             }, 0);
             return sum + platformTotalSar;
         }, 0);
-    }, [platformsData, props.simulatedPrices, exchangeRate]);
+    }, [platformsData, props.simulatedPrices, sarPerUsd]);
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = totalPortfolios > 0;
 
@@ -1861,7 +1889,7 @@ const PlatformView: React.FC<{
                     <div className="mt-5 pt-5 border-t border-slate-200">
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
-                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio value (holdings)</span>
                                 <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -1917,6 +1945,7 @@ const PlatformView: React.FC<{
                         portfolios={p.portfolios}
                         transactions={p.transactions}
                         goals={data?.goals ?? []}
+                        sarPerUsd={sarPerUsd}
                         availableCashByCurrency={p.availableCashByCurrency}
                         onEditPlatform={props.onEditPlatform}
                         onDeletePlatform={props.onDeletePlatform}
@@ -1961,6 +1990,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { simulatedPrices } = useMarketData();
 
     const planFromData = data?.investmentPlan;
@@ -2107,12 +2137,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
-        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
         const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             if (fromCurrency === toCurrency) return amount;
-            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
         };
 
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
@@ -2145,7 +2174,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
         }
         return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
-    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, exchangeRate, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -2349,11 +2378,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setSaveError(null);
         try {
             const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
-            const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
             const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
                 if (!Number.isFinite(amount) || amount <= 0) return 0;
                 if (fromCurrency === toCurrency) return amount;
-                return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+                return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
             };
 
             const portfoliosForPlan = (data as any)?.personalInvestments ?? data?.investments ?? [];
@@ -2591,7 +2619,7 @@ Save anyway?`)) return;
         const mapBySymbol = new Map((data?.portfolioUniverse ?? []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
         const candidates: AddOnCandidate[] = [];
 
-        const fx = exchangeRate > 0 ? exchangeRate : 3.75;
+        const fx = sarPerUsd;
         const convertPlanToTrade = (amount: number, tradeCurrency: TradeCurrency): number => {
             const pair = `${planCurrency}-${tradeCurrency}`;
             if (pair === 'SAR-USD') return amount / fx;
@@ -2689,7 +2717,7 @@ Save anyway?`)) return;
             .slice(0, 6);
 
         return allocated;
-    }, [data?.investments, data?.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
+    }, [data?.investments, data?.portfolioUniverse, sarPerUsd, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
@@ -2700,7 +2728,7 @@ Save anyway?`)) return;
                 forceRuleBased,
                 planCurrency: plan.budgetCurrency,
                 tickerCurrencyMap,
-                fxRate: exchangeRate,
+                fxRate: sarPerUsd,
             });
             setExecutionResult(result);
             setExecutionError(null);
@@ -2722,7 +2750,7 @@ Save anyway?`)) return;
                         forceRuleBased: true,
                         planCurrency: plan.budgetCurrency,
                         tickerCurrencyMap,
-                        fxRate: exchangeRate,
+                        fxRate: sarPerUsd,
                     });
                     setExecutionResult(fallbackResult);
                     setExecutionError(null);
@@ -2827,7 +2855,7 @@ Save anyway?`)) return;
             </div>
 
             {/* Plan health — smart readiness summary with gauge and next step */}
-            <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100">
+            <SectionCard title="Plan health" className="bg-gradient-to-r from-emerald-50/60 to-slate-50/80 border-emerald-100" collapsible collapsibleSummary="Readiness score" defaultExpanded>
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 lg:gap-6">
                     <div className="flex items-start gap-4">
                         <div className="relative shrink-0 w-14 h-14 rounded-full bg-white border-2 border-emerald-200 flex items-center justify-center">
@@ -2906,7 +2934,7 @@ Save anyway?`)) return;
                         )}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 flex items-center gap-1.5">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. Suggested value is derived from your recent buys or portfolio size." /></label>
+                                <label className="block text-sm font-medium text-slate-700 flex items-center gap-1.5">Monthly Budget <InfoHint text="Amount you allocate to invest each month; split between Core and High-Upside by the percentages below. Suggested value is derived from your recent buys or portfolio size." hintId="plan-monthly-budget" hintPage="Investments" /></label>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
                                     <input type="number" value={plan.monthlyBudget} onChange={e => handlePlanChange('monthlyBudget', parseFloat(e.target.value) || 0)} className="flex-1 min-w-0 p-2.5 border border-slate-200 rounded-lg" />
                                     {suggestedMonthlyBudget > 0 && (
@@ -2915,21 +2943,21 @@ Save anyway?`)) return;
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from app defaults." /></label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Budget Currency <InfoHint text="Currency for plan amounts (e.g. SAR); read from app defaults." hintId="plan-budget-currency" hintPage="Investments" /></label>
                                 <input type="text" value={plan.budgetCurrency} disabled className="mt-1 w-full p-2 border rounded-md bg-gray-100" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">Core Allocation (%) <InfoHint text="Share of monthly budget for stable Core assets (e.g. index funds); the rest goes to High-Upside." /></label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">Core Allocation (%) <InfoHint text="Share of monthly budget for stable Core assets (e.g. index funds); the rest goes to High-Upside." hintId="plan-core-allocation" hintPage="Investments" /></label>
                                 <input type="number" step="0.01" value={Number(((plan.coreAllocation ?? 0) * 100).toFixed(2))} onChange={e => handleCoreAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." /></label>
+                                <label className="block text-sm font-medium text-gray-700 flex items-center">High-Upside Allocation (%) <InfoHint text="Share for analyst-upside assets; only tickers meeting analyst targets get this allocation." hintId="plan-high-upside-allocation" hintPage="Investments" /></label>
                                 <input type="number" step="0.01" value={Number(((plan.upsideAllocation ?? 0) * 100).toFixed(2))} onChange={e => handleUpsideAllocationPercentChange(e.target.value)} className="mt-1 w-full p-2 border rounded-md" />
                             </div>
                         </div>
 
                         <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Live execution split <InfoHint text="Updates as you change budget or allocation. Core and High-Upside amounts drive how much goes to each sleeve when you run Execute." /></p>
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Live execution split <InfoHint text="Updates as you change budget or allocation. Core and High-Upside amounts drive how much goes to each sleeve when you run Execute." hintId="plan-execution-split" hintPage="Investments" /></p>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
                                 <span className="tabular-nums">Core {planHealth.corePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
                                 <span className="tabular-nums">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
@@ -2946,7 +2974,7 @@ Save anyway?`)) return;
                                     <p className="text-xs text-slate-500 mb-3">Values are auto-filled from defaults or AI (not manually entered). Use &quot;Auto-fill with AI&quot; to refresh from your universe.</p>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="md:col-span-2">
-                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Analyst Upside (%) <InfoHint text="Minimum price upside from analyst targets to be eligible for High-Upside sleeve." /></label>
+                                            <label className="block text-sm font-medium text-gray-700 flex items-center">Minimum Analyst Upside (%) <InfoHint text="Minimum price upside from analyst targets to be eligible for High-Upside sleeve." hintId="plan-min-analyst-upside" hintPage="Investments" /></label>
                                             <div className="mt-1 w-full p-2 border rounded-md bg-slate-50 text-slate-800 tabular-nums">{plan.minimumUpsidePercentage}</div>
                                         </div>
                                         <div>
@@ -2981,7 +3009,7 @@ Save anyway?`)) return;
                                 <div className="mt-6 pt-4 border-t border-gray-100">
                                     <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1">
                                         Broker & execution
-                                        <InfoHint text="These settings match your broker so Execute & View Results produces realistic orders. Minimum order size: trades below this are redirected to Core. Rounding and fractional shares affect how amounts are converted to share quantities. Leftover cash can be re-invested in Core or held." />
+                                        <InfoHint text="These settings match your broker so Execute & View Results produces realistic orders. Minimum order size: trades below this are redirected to Core. Rounding and fractional shares affect how amounts are converted to share quantities. Leftover cash can be re-invested in Core or held." hintId="plan-broker-constraints" hintPage="Investments" />
                                     </h3>
                                     {minOrderWarning && (
                                         <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">{minOrderWarning}</div>
@@ -3173,7 +3201,7 @@ Save anyway?`)) return;
                             <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
                                 <span>Portfolio Universe & Weights</span>
                                 <span className="inline-flex items-center flex-shrink-0">
-                                    <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." />
+                                    <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." hintId="plan-universe-tickers" hintPage="Investments" />
                                 </span>
                             </h2>
                             <p className="text-sm text-gray-500 mt-1">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
@@ -3220,13 +3248,13 @@ Save anyway?`)) return;
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Ticker</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Name</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." /></span>
+                                        <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." hintId="plan-universe-status" hintPage="Investments" /></span>
                                     </th>
                                     <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve's budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." /></span>
+                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve's budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." hintId="plan-monthly-wt" hintPage="Investments" /></span>
                                     </th>
                                     <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Max Pos Wt <InfoHint text="Cap on a single ticker's share of the sleeve (e.g. 0.25 = max 25%)." /></span>
+                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Max Pos Wt <InfoHint text="Cap on a single ticker's share of the sleeve (e.g. 0.25 = max 25%)." hintId="plan-max-pos-wt" hintPage="Investments" /></span>
                                     </th>
                                     <th className="px-3 py-2 text-right font-medium text-gray-500 align-middle">Actions</th>
                                 </tr></thead>
@@ -3408,12 +3436,17 @@ interface InvestmentsProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction: _triggerPageAction }) => {
+const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-  const [activeTab, setActiveTab] = useState<InvestmentSubPage>('Overview');
+  const { trackAction } = useSelfLearning();
+  const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
+  const setActiveTab = useCallback((tab: InvestmentSubPage) => {
+    trackAction(`tab-${tab.replace(/\s+/g, '-')}`, 'Investments');
+    setActiveTabState(tab);
+  }, [trackAction]);
   
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }) | null>(null);
@@ -3441,7 +3474,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
     const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
     const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
-    const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+    const rate = resolveSarPerUsd(data, exchangeRate);
     let valueSAR = 0, valueUSD = 0;
     portfolios.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
@@ -3479,7 +3512,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -3487,7 +3520,38 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
   useEffect(() => {
     if (pageAction?.startsWith('open-trade-modal')) {
-        if (pageAction.includes(':with-amount:')) {
+        if (pageAction === 'open-trade-modal:from-plan') {
+            try {
+                const raw = sessionStorage.getItem(EXECUTE_PLAN_STORAGE_KEY);
+                if (raw) {
+                    const plan = JSON.parse(raw);
+                    sessionStorage.removeItem(EXECUTE_PLAN_STORAGE_KEY);
+                    const inv = data?.investments ?? [];
+                    const accounts = (data?.accounts ?? []).filter((a: Account) => a.type === 'Investment');
+                    const normalizedSymbol = (plan.symbol || '').trim().toUpperCase();
+                    const targetPortfolio = inv.find((p: InvestmentPortfolio) =>
+                        (p.holdings || []).some((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                    ) || inv.find((p: InvestmentPortfolio) => ((p.currency as TradeCurrency) || 'USD') === (plan.tradeCurrency || 'USD')) || inv[0];
+                    setTradeInitialData({
+                        symbol: plan.symbol,
+                        name: plan.name,
+                        tradeType: plan.tradeType || 'buy',
+                        amount: plan.amount,
+                        quantity: plan.quantity,
+                        price: plan.price,
+                        executedPlanId: plan.executedPlanId,
+                        reason: plan.reason,
+                        accountId: targetPortfolio?.accountId ?? accounts[0]?.id,
+                        portfolioId: targetPortfolio?.id,
+                        tradeCurrency: (targetPortfolio?.currency as TradeCurrency) || 'USD',
+                    });
+                } else {
+                    setTradeInitialData(null);
+                }
+            } catch {
+                setTradeInitialData(null);
+            }
+        } else if (pageAction.includes(':with-amount:')) {
             const amount = pageAction.split(':with-amount:')[1];
             setTradeInitialData({ amount: parseFloat(amount) });
         } else {
@@ -3500,12 +3564,20 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         setActiveTab('Investment Plan');
         clearPageAction?.();
     }
-  }, [pageAction, clearPageAction]);
+    if (pageAction === 'openRiskTradingHub') {
+        setActiveTab('Safety & rules');
+        clearPageAction?.();
+    }
+  }, [pageAction, clearPageAction, data?.investments, setActiveTab]);
 
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }), portfolio: InvestmentPortfolio) => { setSelectedHolding(holding); setSelectedPortfolio(portfolio); setIsHoldingModalOpen(true); };
-  const handleOpenHoldingEditModal = (holding: Holding) => { setHoldingToEdit(holding); setIsHoldingEditModalOpen(true); };
+  const handleOpenHoldingEditModal = (holding: Holding) => {
+    trackAction('edit-holding', 'Investments');
+    setHoldingToEdit(holding);
+    setIsHoldingEditModalOpen(true);
+  };
     const handleSaveHolding = async (holding: Holding) => { 
         try {
             await updateHolding(holding); 
@@ -3514,7 +3586,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         }
     };
   
-  const handleOpenPlatformModal = (platform: Account | null = null) => { setPlatformToEdit(platform); setIsPlatformModalOpen(true); };
+  const handleOpenPlatformModal = (platform: Account | null = null) => {
+    if (!platform) trackAction('add-platform', 'Investments');
+    setPlatformToEdit(platform);
+    setIsPlatformModalOpen(true);
+  };
   
   const handleSavePlatform = async (platform: Account) => {
       try {
@@ -3542,6 +3618,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   };
   
   const handleOpenPortfolioModal = (portfolio: InvestmentPortfolio | null, accountId: string | null) => {
+      if (!portfolio) trackAction('add-portfolio', 'Investments');
       setPortfolioToEdit(portfolio);
       setCurrentAccountId(accountId);
       setIsPortfolioModalOpen(true);
@@ -3588,6 +3665,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
                     onOpenRecordTrade={(trade) => {
+                        trackAction('record-trade-from-plan', 'Investments');
                         const normalizedSymbol = trade.ticker.trim().toUpperCase();
                         const inv = data?.investments ?? [];
                         const targetPortfolio = inv.find((portfolio) =>
@@ -3609,7 +3687,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     }}
                 />
             );
-      case 'Dividend Tracker': return <DividendTrackerView />;
+      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
+      case 'Safety & rules': return <RiskTradingHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;

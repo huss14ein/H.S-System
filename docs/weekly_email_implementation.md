@@ -7,7 +7,7 @@
 
 So today:
 - **How will the email be sent weekly?** → It isn’t sent yet. You need to add a scheduled job (see below) that runs weekly and calls an email-sending function.
-- **How will the template look?** → There is no template in the repo yet. Below is a suggested template and data shape you can use when you implement the sender.
+- **How will the template look?** → The HTML template exists at `docs/weekly_email_template.html`. Use it as the email body when implementing the sender (see template section below).
 
 ---
 

@@ -9,13 +9,15 @@ import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page } from '../types';
 import { normalizedMonthlyExpense } from '../services/financeMetrics';
-import { stressTestScenario, compareStrategies, compareLumpSumVsDCA } from '../services/stressScenario';
+import { stressTestScenario, compareStrategies } from '../services/stressScenario';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -93,7 +95,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             consistencyScore,
             incomeGrowthSuggestion,
         };
-    }, [data?.transactions]);
+    }, [data]);
 
     const [horizon, setHorizon] = useState(10);
     const [monthlySavings, setMonthlySavings] = useState(savingsAnalytics.medianMonthlySavings);
@@ -120,15 +122,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const initialValues = useMemo(() => {
         const d = data as any;
-        const assets = d?.personalAssets ?? data?.assets ?? [];
-        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
         const investments = d?.personalInvestments ?? data?.investments ?? [];
-        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivables = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
-        const netWorth = totalAssets - totalLiabilities + totalReceivables;
-        const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const netWorth = computePersonalNetWorthSAR(data, fx);
+        const investmentValue = getAllInvestmentsValueInSAR(investments, fx);
         return { netWorth, investmentValue };
     }, [data, exchangeRate]);
 
@@ -243,15 +240,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             }));
 
             setIsLoading(false);
-        }, 500);
+        }, 0);
     }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data?.goals, scenarioPreset, savingsAnalytics.monthlyStdDev, savingsAnalytics.averageMonthlySavings]);
 
     const goalReferenceLines = useMemo(() => {
-        return (data?.goals ?? []).map(goal => {
+        return (data?.goals ?? []).map((goal, idx) => {
             const yValue = initialValues.netWorth - (goal.currentAmount ?? 0) + (goal.targetAmount ?? 0);
             return {
                 y: yValue,
-                label: goal.name ?? '—'
+                label: goal.name ?? '—',
+                key: goal.id ?? `goal-ref-${idx}-${goal.name ?? ''}`,
             };
         });
     }, [data?.goals, initialValues.netWorth]);
@@ -279,7 +277,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         [stressJobLossM, stressMarketDrop, stressMedical, stressInputs, monthlySavings]
     );
     const strategyCompare = useMemo(() => compareStrategies(), []);
-    const lumpDca = useMemo(() => compareLumpSumVsDCA(Math.max(10000, monthlySavings * 12)), [monthlySavings]);
+    const lumpDca = useMemo(() => {
+        const lump = Math.max(10000, monthlySavings * 12);
+        return {
+            lumpNote: `Full ${formatCurrencyString(lump, { digits: 0 })} now: full market exposure immediately.`,
+            dcaNote: `Spread over 12 mo: ~${formatCurrencyString(lump / 12, { digits: 0 })}/mo; reduces timing risk.`,
+        };
+    }, [monthlySavings, formatCurrencyString]);
 
     if (loading || !data) {
         return (
@@ -292,23 +296,36 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     return (
         <PageLayout
             title="Financial Forecast"
-            description="Project your financial future based on your current savings habits and market assumptions."
+            description="Deterministic long-horizon view from today’s balances, savings rate, and return assumptions—use alongside Goals and your real plan."
         >
-            <div className="alert-info mb-6">
-                <h2 className="text-base font-semibold text-blue-900 mb-2">How Scenario Planning Works</h2>
-                <ul className="text-sm text-blue-800 space-y-1 list-disc pl-5">
-                    <li>The model compounds monthly savings into investment value using your annual growth assumption.</li>
-                    <li>At the start of each year, monthly savings increase by your “Annual Savings Increase (%)”.</li>
-                    <li>Goal projection marks are estimated by comparing forecasted net worth against each goal target gap.</li>
+            <div className="space-y-6 lg:space-y-8">
+            <CollapsibleSection title="Forecast methodology" summary="How projections are calculated" className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm">
+                <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
+                    <li>
+                        <strong className="text-slate-900">Investment path:</strong> each month adds your savings contribution to the investment balance, then applies compound return using your annual investment growth % as a monthly rate.
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Savings growth:</strong> the monthly contribution grows each month using your “Annual Savings Increase %” as a smooth monthly rate (not a single step once per year).
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Net worth:</strong> starts from your current snapshot (personal scope); incremental changes follow the same savings + return path as the investment line. Other assets and liabilities are not re-projected month-by-month—they stay implied in the opening snapshot only.
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Goals &amp; band:</strong> goal lines are a rough threshold check; the confidence band is a heuristic from savings volatility and horizon, not a statistical forecast.
+                    </li>
                 </ul>
-                <p className="text-xs text-blue-700 mt-3">Assumptions are deterministic and educational (not financial advice). Use multiple runs (conservative/base/aggressive) to compare outcomes.</p>
-            </div>
+                <p className="text-xs text-slate-500 mt-4 border-t border-slate-200/80 pt-3">
+                    Educational only—not financial advice. Run Conservative / Base / Aggressive to compare sensitivity to assumptions.
+                </p>
+            </CollapsibleSection>
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start gap-6 lg:gap-8">
                 <SectionCard
                     title="Forecast Assumptions"
-                    infoHint="Sliders and numbers drive a deterministic projection: savings compound monthly, investment growth is annual, and savings can grow each year. Compare presets and use Auto-fill from history when you want data-driven defaults."
                     className="lg:col-span-1 sticky top-24 space-y-4"
+                    collapsible
+                    collapsibleSummary="Presets, horizon, run"
+                    defaultExpanded
                 >
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
@@ -350,7 +367,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
                     <div>
-                        <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Assume your monthly savings grow by this percent each year (e.g. raises)." /></label>
+                        <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Annual rate applied smoothly each month (compound), not one jump per calendar year—see Forecast methodology." /></label>
                         <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
                     </div>
                     <div className="flex items-center gap-2">
@@ -363,140 +380,160 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </SectionCard>
 
                 <div className="lg:col-span-3 space-y-6">
-                    {isLoading && <div className="text-center p-10 bg-white rounded-lg shadow"><LoadingSpinner message="Generating your financial forecast..." /></div>}
+                    {isLoading && (
+                        <div className="rounded-xl border border-slate-200 bg-white p-12 shadow-sm">
+                            <LoadingSpinner message="Running projection…" />
+                        </div>
+                    )}
 
                     {summary && !isLoading && (
                         <>
-                        <p className="text-sm text-gray-600">Scenario preset used: <span className="font-semibold text-dark">{scenarioPreset}</span></p>
-                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
-                            <Card title={`Projected Net Worth in ${horizon} Years`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} tooltip="Estimated total net worth at the end of the forecast period." />
-                            <Card title={`Projected Investments in ${horizon} Years`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} tooltip="Estimated investment portfolio value at the end of the forecast period." />
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Last run</p>
+                            <p className="text-sm text-slate-600 mb-4">
+                                Preset: <span className="font-semibold text-slate-900">{scenarioPreset}</span>
+                                <span className="text-slate-400 mx-2">·</span>
+                                Horizon: <span className="font-semibold text-slate-900">{horizon} years</span>
+                            </p>
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <Card title={`Net worth (year ${horizon})`} value={summary.projectedNetWorth ? formatCurrencyString(summary.projectedNetWorth, { digits: 0 }) : 'N/A'} tooltip="Projected total net worth at horizon from this model (see methodology for limits)." />
+                                <Card title={`Investments (year ${horizon})`} value={summary.projectedInvestments ? formatCurrencyString(summary.projectedInvestments, { digits: 0 }) : 'N/A'} tooltip="Projected investment balance after monthly contributions and compound return." />
+                            </div>
                         </div>
                         {confidenceBand && (
-                            <SectionCard title="Forecast confidence band" className="mt-4">
+                            <SectionCard title="Uncertainty band (heuristic)" collapsible collapsibleSummary="Low / base / high" defaultExpanded>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-slate-500">Low case</p><p className="font-semibold text-slate-800">{formatCurrencyString(confidenceBand.low, { digits: 0 })}</p></div>
-                                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-slate-500">Base case</p><p className="font-semibold text-slate-800">{formatCurrencyString(summary.projectedNetWorth, { digits: 0 })}</p></div>
-                                    <div className="rounded-lg border bg-slate-50 p-3"><p className="text-slate-500">High case</p><p className="font-semibold text-slate-800">{formatCurrencyString(confidenceBand.high, { digits: 0 })}</p></div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3"><p className="text-xs text-slate-500 uppercase tracking-wide">Low</p><p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(confidenceBand.low, { digits: 0 })}</p></div>
+                                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-3"><p className="text-xs text-primary/80 uppercase tracking-wide">Base</p><p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(summary.projectedNetWorth, { digits: 0 })}</p></div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3"><p className="text-xs text-slate-500 uppercase tracking-wide">High</p><p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(confidenceBand.high, { digits: 0 })}</p></div>
                                 </div>
-                                <p className="text-xs text-slate-500 mt-2">Band is automatically scaled by savings volatility and horizon to highlight uncertainty.</p>
+                                <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+                                    Spread scales with your 12‑month savings volatility and horizon—it illustrates sensitivity, not a statistical confidence interval.
+                                </p>
                             </SectionCard>
                         )}
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
-                            <p><strong>Data quality:</strong> Savings consistency score {savingsAnalytics.consistencyScore.toFixed(0)} / 100 · 12M savings volatility {formatCurrencyString(savingsAnalytics.monthlyStdDev, { digits: 0 })}.</p>
-                        </div>
                         </>
                     )}
 
-
-                    {Object.values(comparisonResults).some(Boolean) && !isLoading && (
-                        <SectionCard
-                            title={`Scenario Comparison (${horizon}-Year Horizon)`}
-                            infoHint="Run Conservative, Base, and Aggressive presets (adjust assumptions first) so each row fills in. Active preset is highlighted."
-                        >
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full text-sm">
-                                    <thead>
-                                        <tr className="text-left text-gray-600 border-b">
-                                            <th className="py-2 pr-4 font-semibold">Preset</th>
-                                            <th className="py-2 pr-4 font-semibold">Projected Net Worth</th>
-                                            <th className="py-2 pr-4 font-semibold">Projected Investments</th>
-                                            <th className="py-2 pr-4 font-semibold">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => {
-                                            const row = comparisonResults[preset];
-                                            const isActive = preset === scenarioPreset;
-                                            return (
-                                                <tr key={preset} className={`border-b last:border-b-0 ${isActive ? 'bg-blue-50/50' : ''}`}>
-                                                    <td className="py-2 pr-4 font-medium text-dark">{preset}</td>
-                                                    <td className="py-2 pr-4">{row ? formatCurrencyString(row.projectedNetWorth, { digits: 0 }) : '—'}</td>
-                                                    <td className="py-2 pr-4">{row ? formatCurrencyString(row.projectedInvestments, { digits: 0 }) : '—'}</td>
-                                                    <td className="py-2 pr-4">{row ? (isActive ? 'Current run' : 'Completed') : 'Run pending'}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                            <p className="text-xs text-gray-500 mt-3">Tip: Run all three presets to compare conservative, base, and aggressive outcomes side-by-side.</p>
-                        </SectionCard>
-                    )}
-                    
-                    {goalProjections.length > 0 && !isLoading && (
-                        <div className="bg-white p-6 rounded-lg shadow">
-                            <h3 className="text-lg font-semibold text-dark mb-4 flex items-center gap-2 flex-wrap">
-                                Goal Projections
-                                <InfoHint text="Rough check: compares forecasted net worth path to each goal’s target gap. Not a substitute for detailed goal funding on the Goals page." />
-                            </h3>
-                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2">
-                                {goalProjections.map(proj => (
-                                    <div key={proj.name} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg border">
-                                        <FlagIcon className={`h-6 w-6 flex-shrink-0 ${proj.met ? 'text-green-500' : 'text-gray-400'}`} />
-                                        <div>
-                                            <p className="font-semibold text-dark">{proj.name}</p>
-                                            {proj.met ? (
-                                                <p className="text-sm text-green-700">Projected to be met in <span className="font-bold">{proj.years} years</span> and <span className="font-bold">{proj.months} months</span>.</p>
-                                            ) : (
-                                                <p className="text-sm text-gray-500">Not met within {horizon} years at current rate.</p>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
                     {forecastData.length > 0 && !isLoading ? (
-                        <div className="section-card flex flex-col h-[500px] sm:h-[600px]">
-                            <h3 className="section-title mb-4">Financial Projections</h3>
-                            <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                        <SectionCard title="Projection chart" className="flex flex-col" collapsible collapsibleSummary="Net worth & investments" defaultExpanded>
+                            <div className="h-[420px] sm:h-[520px] w-full rounded-xl overflow-hidden border border-slate-100 bg-slate-50/30">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <ComposedChart data={forecastData} margin={{ ...CHART_MARGIN, right: 24, left: 20, bottom: 5 }}>
                                         <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
-                                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={56} />
+                                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={11} tickLine={false} interval="preserveStartEnd" />
+                                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={11} tickLine={false} width={56} />
                                         <Tooltip
                                             formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })}
                                             contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
                                         />
                                         <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                                         <defs>
-                                            <linearGradient id="colorInvest" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={CHART_COLORS.secondary} stopOpacity={0.4}/><stop offset="95%" stopColor={CHART_COLORS.secondary} stopOpacity={0.1}/></linearGradient>
+                                            <linearGradient id="fcInvestFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={CHART_COLORS.secondary} stopOpacity={0.35}/><stop offset="95%" stopColor={CHART_COLORS.secondary} stopOpacity={0.08}/></linearGradient>
                                         </defs>
-                                        {goalReferenceLines.map(line => (
-                                             <ReferenceLine key={line.label} y={line.y} stroke={CHART_COLORS.negative} strokeDasharray="4 4" label={{ value: line.label, position: 'right', fill: CHART_COLORS.axis, fontSize: 11 }} />
+                                        {goalReferenceLines.map((line) => (
+                                             <ReferenceLine key={line.key} y={line.y} stroke={CHART_COLORS.negative} strokeDasharray="4 4" label={{ value: line.label, position: 'right', fill: CHART_COLORS.axis, fontSize: 10 }} />
                                         ))}
-                                        <Area type="monotone" dataKey="Investment Value" stackId="1" stroke={CHART_COLORS.secondary} fill="url(#colorInvest)" name="Total Investments" />
-                                        <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={3} name="Net Worth" dot={false} />
+                                        <Area type="monotone" dataKey="Investment Value" stroke={CHART_COLORS.secondary} fill="url(#fcInvestFill)" name="Investments" />
+                                        <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={2.5} name="Net worth" dot={false} />
                                     </ComposedChart>
                                 </ResponsiveContainer>
                             </div>
-                        </div>
+                        </SectionCard>
                     ) : (
-                         !isLoading && <div className="section-card text-center py-12"><p className="text-slate-500 text-sm">Configure assumptions, run a base case, then adjust growth/savings to compare conservative vs aggressive scenarios.</p></div>
+                         !isLoading && !summary && (
+                            <SectionCard title="Results" className="border-dashed border-slate-300 bg-slate-50/50" collapsible collapsibleSummary="Run forecast first">
+                                <p className="text-sm text-slate-600 text-center py-6">Set assumptions on the left, then run the forecast to see projections, the chart, and scenario comparison.</p>
+                            </SectionCard>
+                         )
+                    )}
+
+                    {Object.values(comparisonResults).some(Boolean) && !isLoading && (
+                        <SectionCard title={`Scenario comparison (${horizon}‑year)`} collapsible collapsibleSummary="Conservative / Base / Aggressive" defaultExpanded>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200">
+                                <table className="min-w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left bg-slate-100 text-slate-700 border-b border-slate-200">
+                                            <th className="py-3 px-4 font-semibold">Preset</th>
+                                            <th className="py-3 px-4 font-semibold">Net worth</th>
+                                            <th className="py-3 px-4 font-semibold">Investments</th>
+                                            <th className="py-3 px-4 font-semibold">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 bg-white">
+                                        {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => {
+                                            const row = comparisonResults[preset];
+                                            const isActive = preset === scenarioPreset;
+                                            return (
+                                                <tr key={preset} className={isActive ? 'bg-primary/5' : ''}>
+                                                    <td className="py-3 px-4 font-medium text-slate-900">{preset}</td>
+                                                    <td className="py-3 px-4 tabular-nums text-slate-800">{row ? formatCurrencyString(row.projectedNetWorth, { digits: 0 }) : '—'}</td>
+                                                    <td className="py-3 px-4 tabular-nums text-slate-800">{row ? formatCurrencyString(row.projectedInvestments, { digits: 0 }) : '—'}</td>
+                                                    <td className="py-3 px-4 text-slate-600">{row ? (isActive ? 'Current run' : 'Saved') : 'Run pending'}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3">Run each preset (Conservative, Base, Aggressive) once to fill the table and compare side‑by‑side.</p>
+                        </SectionCard>
+                    )}
+
+                    {goalProjections.length > 0 && !isLoading && (
+                        <SectionCard title="Goal outlook" collapsible collapsibleSummary="Goal thresholds" defaultExpanded>
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {goalProjections.map(proj => (
+                                    <div key={proj.name} className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50/80">
+                                        <FlagIcon className={`h-6 w-6 flex-shrink-0 mt-0.5 ${proj.met ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                        <div>
+                                            <p className="font-semibold text-slate-900">{proj.name}</p>
+                                            {proj.met ? (
+                                                <p className="text-sm text-emerald-800 mt-1">Crosses simple threshold in <span className="font-semibold">{proj.years}y {proj.months}mo</span> (illustrative).</p>
+                                            ) : (
+                                                <p className="text-sm text-slate-600 mt-1">Not reached within {horizon} years at this run’s assumptions.</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </SectionCard>
+                    )}
+
+                    {summary && !isLoading && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs text-slate-600 leading-relaxed">
+                            <strong className="text-slate-800">Inputs quality:</strong> savings consistency {savingsAnalytics.consistencyScore.toFixed(0)} / 100 · 12‑month savings volatility {formatCurrencyString(savingsAnalytics.monthlyStdDev, { digits: 0 })}.
+                        </div>
                     )}
                 </div>
             </div>
 
-            <SectionCard title="Stress test (illustrative)" className="mt-6">
+            <CollapsibleSection title="Stress test (illustrative)" summary="Job loss, market drop, one-off cost scenarios">
                 <p className="text-xs text-slate-600 mb-4">
                     Rough cash runway after job loss, a market hit on part of liquid wealth, and a one-off cost. Not advice—use with your real numbers.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                     <div>
-                        <label className="text-xs font-medium text-slate-600">Job loss (months, no income)</label>
+                        <label className="text-xs font-medium text-slate-600 flex items-center gap-0.5 flex-wrap">
+                            Job loss (months, no income)
+                            <InfoHint text="Simulates zero income for N months while spending continues at the estimated monthly expense. See headline for implied runway." />
+                        </label>
                         <input type="range" min={0} max={12} value={stressJobLossM} onChange={(e) => setStressJobLossM(Number(e.target.value))} className="w-full" />
                         <p className="text-sm font-semibold">{stressJobLossM} mo</p>
                     </div>
                     <div>
-                        <label className="text-xs font-medium text-slate-600">Market drop (% on ~30% of cash)</label>
+                        <label className="text-xs font-medium text-slate-600 flex items-center gap-0.5 flex-wrap">
+                            Market drop (% on ~30% of cash)
+                            <InfoHint text="Illustrative shock: a slice of liquid cash is treated as at risk of a drawdown. Not a full portfolio model—just a simple stress on part of liquidity." />
+                        </label>
                         <input type="range" min={0} max={40} value={stressMarketDrop} onChange={(e) => setStressMarketDrop(Number(e.target.value))} className="w-full" />
                         <p className="text-sm font-semibold">{stressMarketDrop}%</p>
                     </div>
                     <div>
-                        <label className="text-xs font-medium text-slate-600">One-off cost (SAR)</label>
+                        <label className="text-xs font-medium text-slate-600 flex items-center gap-0.5 flex-wrap">
+                            One-off cost (SAR)
+                            <InfoHint text="Adds a single large expense (e.g. medical or repair) on top of ongoing spending to test liquidity after shocks." />
+                        </label>
                         <input type="number" min={0} step={500} value={stressMedical} onChange={(e) => setStressMedical(Number(e.target.value))} className="input-base mt-1" />
                     </div>
                 </div>
@@ -509,21 +546,27 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
                     <div className="rounded-lg border border-slate-200 p-3">
-                        <p className="font-semibold text-slate-800 mb-1">Strategy lens</p>
+                        <p className="font-semibold text-slate-800 mb-1 flex items-center gap-0.5">
+                            Strategy lens
+                            <InfoHint text="Generic comparison of aggressive vs balanced investing styles from the engine—context for learning, not a recommendation for your portfolio." />
+                        </p>
                         <p>{strategyCompare.aggressive}</p>
                         <p className="mt-1">{strategyCompare.balanced}</p>
                     </div>
                     <div className="rounded-lg border border-slate-200 p-3">
-                        <p className="font-semibold text-slate-800 mb-1">Lump sum vs DCA</p>
+                        <p className="font-semibold text-slate-800 mb-1 flex items-center gap-0.5">
+                            Lump sum vs DCA
+                            <InfoHint text="Illustrative note on deploying a lump of savings at once vs over time, using a scale tied to your monthly savings. Educational only." />
+                        </p>
                         <p>{lumpDca.lumpNote}</p>
                         <p className="mt-1">{lumpDca.dcaNote}</p>
                     </div>
                 </div>
-            </SectionCard>
+            </CollapsibleSection>
 
             {timeline && (
-                <SectionCard title="Scenario Timeline" className="mt-6">
-                    <p className="text-xs text-gray-600 mb-3">
+                <SectionCard title="Scenario timeline" collapsible collapsibleSummary="Narrative years" defaultExpanded>
+                    <p className="text-xs text-slate-600 mb-3">
                         Narrative view of your baseline forecast over the next {timeline.horizonYears} year(s).
                     </p>
                     <ol className="space-y-2 text-sm text-slate-700 list-decimal pl-5">
@@ -535,6 +578,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </ol>
                 </SectionCard>
             )}
+            </div>
         </PageLayout>
     );
 };

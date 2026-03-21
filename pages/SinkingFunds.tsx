@@ -1,59 +1,45 @@
 import React, { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { detectRecurringBillPatterns } from '../services/hybridBudgetCategorization';
+import { getPersonalTransactions } from '../utils/wealthScope';
 
 const SinkingFunds: React.FC = () => {
     const { data, loading } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
 
     const suggestedFunds = useMemo(() => {
-        const recurringExpenses = new Map<string, { amount: number; dates: Date[] }>();
-        const twoYearsAgo = new Date();
-        twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+        const txs = getPersonalTransactions(data).filter(t => countsAsExpenseForCashflowKpi(t));
+        const patterns = detectRecurringBillPatterns(txs, 2);
+        const MIN_AMOUNT = 2000;
+        const funds: Array<{ name: string; target: number; nextDueDate: Date; recurrence: string; saved: number }> = [];
 
-        // 1. Find large, fixed, recurring expenses from the last 2 years (personal accounts only)
-        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; transactionNature?: string; amount?: number; date: string }) =>
-                t.type === 'expense' &&
-                t.transactionNature === 'Fixed' &&
-                Math.abs(Number(t.amount) || 0) > 2000 && // Significant amount
-                new Date(t.date) > twoYearsAgo
-            )
-            .forEach((t: { description?: string; amount?: number; date: string }) => {
-                const existing = recurringExpenses.get(t.description ?? '') || { amount: Math.abs(Number(t.amount) || 0), dates: [] };
-                existing.dates.push(new Date(t.date));
-                recurringExpenses.set(t.description ?? '', existing);
+        for (const p of patterns) {
+            if (p.typicalAmount < MIN_AMOUNT) continue;
+            const monthDiff = p.avgIntervalDays != null && p.avgIntervalDays > 0
+                ? Math.max(1, Math.round(p.avgIntervalDays / 30))
+                : p.frequency === 'annual' ? 12 : p.frequency === 'quarterly' ? 3 : p.frequency === 'monthly' ? 1 : 0;
+            if (monthDiff < 2) continue;
+
+            const nextDueDate = new Date(p.nextExpectedDate);
+            const now = new Date();
+            const monthsUntilDue = Math.max(0, (nextDueDate.getFullYear() - now.getFullYear()) * 12 + nextDueDate.getMonth() - now.getMonth());
+            const savedMonths = monthDiff - monthsUntilDue;
+            const saved = Math.max(0, (savedMonths / monthDiff) * p.typicalAmount);
+
+            const recurrenceLabel = monthDiff === 12 ? 'Annual' : monthDiff === 6 ? 'Semi-annual' : monthDiff === 3 ? 'Quarterly' : monthDiff === 1 ? 'Monthly' : `${monthDiff} months`;
+
+            funds.push({
+                name: p.merchant,
+                target: p.typicalAmount,
+                nextDueDate,
+                recurrence: recurrenceLabel,
+                saved,
             });
-
-        const funds = [];
-        for (const [name, { amount, dates }] of recurringExpenses.entries()) {
-            if (dates.length > 1) { // It's recurring
-                dates.sort((a, b) => b.getTime() - a.getTime());
-                const lastDate = dates[0];
-                const previousDate = dates[1];
-                const monthDiff = (lastDate.getFullYear() - previousDate.getFullYear()) * 12 + lastDate.getMonth() - previousDate.getMonth();
-
-                if (monthDiff > 1 && monthDiff <= 12) { // It's not monthly
-                    const nextDueDate = new Date(lastDate);
-                    nextDueDate.setMonth(nextDueDate.getMonth() + monthDiff);
-                    const now = new Date();
-                    const monthsUntilDue = Math.max(1, (nextDueDate.getFullYear() - now.getFullYear()) * 12 + nextDueDate.getMonth() - now.getMonth());
-                    
-                    const savedMonths = monthDiff - monthsUntilDue;
-                    const savedAmount = (savedMonths / monthDiff) * amount;
-
-                    funds.push({
-                        name,
-                        target: amount,
-                        nextDueDate,
-                        recurrence: monthDiff === 12 ? 'Annual' : `${monthDiff} months`,
-                        saved: savedAmount > 0 ? savedAmount : 0,
-                    });
-                }
-            }
         }
-        return funds.sort((a,b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
-    }, [data?.transactions, (data as any)?.personalTransactions]);
+        return funds.sort((a, b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
+    }, [data?.transactions, data]);
 
     if (loading || !data) {
         return (

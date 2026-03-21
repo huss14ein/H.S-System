@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useContext, useEffect } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { Account, Page, InvestmentPortfolio } from '../types';
+import { Account, Page } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -17,6 +17,7 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
+import { ClockIcon } from '../components/icons/ClockIcon';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import { XMarkIcon } from '../components/icons/XMarkIcon';
@@ -28,11 +29,22 @@ import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
 import { useCurrency } from '../context/CurrencyContext';
-import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
+import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { reconcileCashAccountBalance, type CashAccountReconciliation } from '../services/dataQuality';
 import { usePrivacyMask } from '../context/PrivacyContext';
+import { isInternalTransferTransaction } from '../services/transactionFilters';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
+
+/** A past transfer from transactions (expense + income legs paired). */
+interface TransferHistoryItem {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    date: string;
+    description?: string;
+}
 
 /** A scheduled (recurring) transfer represented as a pair of expense + income recurring entries. */
 interface ScheduledTransferPair {
@@ -48,14 +60,16 @@ interface ScheduledTransferPair {
 const AccountModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (account: Omit<Account, 'id' | 'balance'> | Account) => void;
+    onSave: (account: Omit<Account, 'id'> | Account) => void;
     accountToEdit: Account | null;
     allAccounts?: Account[];
 }> = ({ isOpen, onClose, onSave, accountToEdit, allAccounts = [] }) => {
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Account['type']>('Checking');
     const [owner, setOwner] = useState('');
     const [linkedAccountIds, setLinkedAccountIds] = useState<string[]>([]);
+    const [balanceStr, setBalanceStr] = useState('');
 
     useEffect(() => {
         if (accountToEdit) {
@@ -63,29 +77,45 @@ const AccountModal: React.FC<{
             setType(accountToEdit.type);
             setOwner(accountToEdit.owner || '');
             setLinkedAccountIds(accountToEdit.linkedAccountIds || []);
+            setBalanceStr(
+                accountToEdit.type === 'Investment'
+                    ? ''
+                    : String(accountToEdit.balance ?? '')
+            );
         } else {
+            const learnedType = getLearnedDefault('account-add', 'type') as Account['type'] | undefined;
+            const validTypes: Account['type'][] = ['Checking', 'Savings', 'Credit', 'Investment'];
             setName('');
-            setType('Checking');
+            setType(learnedType && validTypes.includes(learnedType) ? learnedType : 'Checking');
             setOwner('');
             setLinkedAccountIds([]);
+            setBalanceStr('');
         }
-    }, [accountToEdit, isOpen]);
+    }, [accountToEdit, isOpen, getLearnedDefault]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const parsedBalance =
+            type === 'Investment' ? Number(accountToEdit?.balance) || 0 : Number(balanceStr.replace(/,/g, '')) || 0;
         const accountData: any = {
             name,
             type,
             owner: owner || undefined,
             // Always send linkedAccountIds for Investment so backend can persist (including clearing when empty)
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
+            ...(type !== 'Investment' ? { balance: parsedBalance } : {}),
         };
 
         try {
             if (accountToEdit) {
-                await onSave({ ...accountToEdit, ...accountData });
+                await onSave({ ...accountToEdit, ...accountData, balance: type === 'Investment' ? accountToEdit.balance : parsedBalance });
             } else {
-                await onSave(accountData);
+                await onSave(
+                    type === 'Investment'
+                        ? { ...accountData, balance: 0 }
+                        : accountData
+                );
+                trackFormDefault('account-add', 'type', type);
             }
             onClose();
         } catch {
@@ -102,11 +132,11 @@ const AccountModal: React.FC<{
         <Modal isOpen={isOpen} onClose={onClose} title={accountToEdit ? 'Edit Account' : 'Add New Account'}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account Name <InfoHint text="A clear name (e.g. Main Checking, Savings) for tracking balances and transactions." /></label>
-                    <input type="text" placeholder="Account Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Account Name <InfoHint text="Give it a name you'll recognize, e.g. Main Bank, Emergency Savings." hintId="account-name" hintPage="Accounts" /></label>
+                    <input type="text" placeholder="e.g. Main Bank, Emergency Savings" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Checking/Savings for cash; Credit for cards; Investment for brokerage (linked to portfolios)." /></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Checking = everyday spending. Savings = money set aside. Credit = card you pay later. Investment = stocks/funds platform." hintId="account-type" hintPage="Accounts" /></label>
                     <select value={type} onChange={e => setType(e.target.value as Account['type'])} required className="select-base" disabled={!!accountToEdit}>
                         <option value="Checking">Checking</option>
                         <option value="Savings">Savings</option>
@@ -118,6 +148,28 @@ const AccountModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded from your net worth)." /></label>
                     <input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
+                {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            {accountToEdit ? 'Current balance (SAR)' : 'Starting balance (SAR)'}
+                            <InfoHint
+                                text={
+                                    accountToEdit
+                                        ? 'Manual adjustment or opening position. For Checking/Savings, new income and expenses linked to this account now update this balance automatically—set this once to match your bank if you already had history before auto-sync.'
+                                        : 'Optional. For cash accounts, you can start at 0 and let transactions move the balance, or enter today’s bank balance if you’re about to import past activity.'
+                                }
+                            />
+                        </label>
+                        <input
+                            type="number"
+                            step="any"
+                            value={balanceStr}
+                            onChange={(e) => setBalanceStr(e.target.value)}
+                            placeholder="0"
+                            className="input-base"
+                        />
+                    </div>
+                )}
                 {type === 'Investment' && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
@@ -171,7 +223,8 @@ const AccountCardComponent: React.FC<{
     linkedPortfoliosCount?: number;
     readOnly?: boolean;
     cashReconciliation?: CashAccountReconciliation | null;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, cashReconciliation }) => {
+    balanceMetricLabel?: string;
+}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, cashReconciliation, balanceMetricLabel = 'Current Balance' }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { maskBalance } = usePrivacyMask();
 
@@ -208,7 +261,7 @@ const AccountCardComponent: React.FC<{
                 )}
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100 min-w-0 overflow-hidden">
-                <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">Current Balance</p>
+                <p className="metric-label text-xs font-medium text-slate-500 uppercase tracking-wide">{balanceMetricLabel}</p>
                 {(() => {
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
@@ -243,7 +296,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
+    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -275,6 +328,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferFilterTo, setTransferFilterTo] = useState<string>('all');
     const [transferFilterStatus, setTransferFilterStatus] = useState<'all' | 'active' | 'paused'>('all');
     const [scheduledTransfersFiltersOpen, setScheduledTransfersFiltersOpen] = useState(true);
+    const [transferSubview, setTransferSubview] = useState<'scheduled' | 'history'>('scheduled');
+    const [transferHistoryFilterFrom, setTransferHistoryFilterFrom] = useState<string>('all');
+    const [transferHistoryFilterTo, setTransferHistoryFilterTo] = useState<string>('all');
     const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
     const [rescheduleDay, setRescheduleDay] = useState('1');
     const [rescheduleAmount, setRescheduleAmount] = useState('');
@@ -314,9 +370,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         loadSharingState();
     }, [auth?.user?.id, data?.accounts?.length]);
 
-    const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestments } = useMemo(() => {
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+
+    const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestmentTradableCash } = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
         const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
         const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
@@ -324,17 +381,28 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const totalCash = cash.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
         const totalCredit = credit.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
-        const investmentsWithUpdatedBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
-            const portfolioValue = investments
-                .filter((p: { accountId?: string }) => p.accountId === acc.id)
-                .reduce((pSum: number, p: InvestmentPortfolio) => pSum + getPortfolioHoldingsValueInSAR(p, exchangeRate), 0);
-            return { ...acc, balance: portfolioValue };
+        /** Tradable cash per investment platform (investment transaction ledger), not holdings market value. */
+        const investmentsWithTradableBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
+            const bucket = getAvailableCashForAccount(acc.id);
+            const tradableSar = tradableCashBucketToSAR(bucket, sarPerUsd);
+            return { ...acc, balance: tradableSar };
         });
 
-        const totalInvestments = investmentsWithUpdatedBalance.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalInvestmentTradableCash = investmentsWithTradableBalance.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
 
-        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithUpdatedBalance, totalCash, totalCredit, totalInvestments };
-    }, [data?.accounts, data?.investments, (data as any)?.personalAccounts, (data as any)?.personalInvestments, exchangeRate]);
+        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithTradableBalance, totalCash, totalCredit, totalInvestmentTradableCash };
+    }, [data?.accounts, (data as any)?.personalAccounts, sarPerUsd, getAvailableCashForAccount]);
+
+    const spendableBalanceSar = useCallback(
+        (acc: Account | undefined): number => {
+            if (!acc) return 0;
+            if (acc.type === 'Investment') {
+                return tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
+            }
+            return Math.max(0, acc.balance ?? 0);
+        },
+        [sarPerUsd, getAvailableCashForAccount],
+    );
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
 
@@ -389,14 +457,55 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         });
     }, [scheduledTransferPairs, transferFilterFrom, transferFilterTo, transferFilterStatus]);
 
+    const transferHistory = useMemo((): TransferHistoryItem[] => {
+        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const transfers = txs.filter((t: { category?: string }) => isInternalTransferTransaction(t));
+        const expenses = transfers.filter((t: { type?: string }) => t.type === 'expense');
+        let incomesLeft = transfers.filter((t: { type?: string }) => t.type === 'income');
+        const pairs: TransferHistoryItem[] = [];
+        for (const exp of expenses) {
+            const absAmt = Math.abs(Number(exp.amount ?? 0));
+            if (absAmt <= 0 || !Number.isFinite(absAmt)) continue;
+            const expDate = (exp as { date?: string }).date ?? '';
+            const fromId = exp.accountId ?? (exp as any).account_id ?? '';
+            const incIdx = incomesLeft.findIndex(
+                (i: { date?: string; amount?: number; accountId?: string }) =>
+                    (i.date ?? '') === expDate &&
+                    Math.abs(Number(i.amount ?? 0)) === absAmt &&
+                    (i.accountId ?? (i as any).account_id ?? '') !== fromId
+            );
+            if (incIdx === -1) continue;
+            const inc = incomesLeft[incIdx];
+            incomesLeft = incomesLeft.slice(0, incIdx).concat(incomesLeft.slice(incIdx + 1));
+            const toId = inc.accountId ?? (inc as any).account_id ?? '';
+            if (!fromId || !toId) continue;
+            pairs.push({
+                fromAccountId: fromId,
+                toAccountId: toId,
+                amount: absAmt,
+                date: expDate,
+                description: (exp.description ?? '').replace(/^Transfer to .+?:\s*/i, '').trim() || undefined,
+            });
+        }
+        return pairs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [data?.transactions, (data as any)?.personalTransactions]);
+
+    const filteredTransferHistory = useMemo(() => {
+        return transferHistory.filter((p) => {
+            if (transferHistoryFilterFrom !== 'all' && p.fromAccountId !== transferHistoryFilterFrom) return false;
+            if (transferHistoryFilterTo !== 'all' && p.toAccountId !== transferHistoryFilterTo) return false;
+            return true;
+        });
+    }, [transferHistory, transferHistoryFilterFrom, transferHistoryFilterTo]);
+
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
 
-    const handleSaveAccount = async (account: Omit<Account, 'id' | 'balance'> | Account) => {
+    const handleSaveAccount = async (account: Omit<Account, 'id'> | Account) => {
         try {
             if ('id' in account && account.id) {
                 await updatePlatform(account as Account);
             } else {
-                await addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'>);
+                await addPlatform(account as Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number });
             }
         } catch {
             // Error already alerted in DataContext
@@ -452,8 +561,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert('Selected accounts not found.');
             return;
         }
-        if ((fromAccount.balance ?? 0) < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(fromAccount.balance)}`);
+        const availableFrom = spendableBalanceSar(fromAccount);
+        if (availableFrom < amount) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFrom)}`);
             return;
         }
         if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
@@ -607,7 +717,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     return (
         <PageLayout
             title="Accounts"
-            description="Track checking, savings, credit, and investment accounts."
+            description="Add your bank accounts, savings, and investment platforms. Investment platforms show cash available for trading (from your investment activity), not total portfolio market value."
             action={
                 <div className="flex flex-wrap items-center gap-2">
                     <AddButton onClick={() => handleOpenAccountModal()}>Add New Account</AddButton>
@@ -617,7 +727,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                  <Card title="Total Cash Balance" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
                  <Card title="Total Credit Balance" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
-                 <Card title="Total Investment Value" value={maskBalance(formatCurrencyString(totalInvestments))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Total value of linked investment portfolios." />
+                 <Card title="Tradable cash (platforms)" value={maskBalance(formatCurrencyString(totalInvestmentTradableCash))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms (from deposits, sells, dividends minus buys & withdrawals)—not portfolio market value." />
             </div>
 
             <div className="section-card border-l-4 border-emerald-500/50 mt-4">
@@ -682,8 +792,34 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         </button>
                     </div>
                 </div>
-                <p className="text-sm text-slate-600 mt-1 mb-4">One-time transfers or recurring auto transfers between Checking, Savings, and Investment accounts. Use &quot;Transfer now&quot; for a single move; &quot;Schedule auto transfer&quot; to repeat monthly on a set day.</p>
+                <p className="text-sm text-slate-600 mt-1 mb-2">One-time transfers or recurring auto transfers between Checking, Savings, and Investment accounts. Use &quot;Transfer now&quot; for a single move; &quot;Schedule auto transfer&quot; to repeat monthly on a set day.</p>
 
+                {/* Tabs: Scheduled | History */}
+                <div className="flex gap-1 mb-4 border-b border-slate-200">
+                    <button
+                        type="button"
+                        onClick={() => setTransferSubview('scheduled')}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${transferSubview === 'scheduled' ? 'bg-slate-100 text-slate-800 border-b-2 border-primary -mb-px' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}
+                    >
+                        <span className="flex items-center gap-2">
+                            <CalendarDaysIcon className="h-4 w-4" />
+                            Scheduled ({scheduledTransferPairs.length})
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setTransferSubview('history')}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${transferSubview === 'history' ? 'bg-slate-100 text-slate-800 border-b-2 border-primary -mb-px' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}
+                    >
+                        <span className="flex items-center gap-2">
+                            <ClockIcon className="h-4 w-4" />
+                            History ({transferHistory.length})
+                        </span>
+                    </button>
+                </div>
+
+                {transferSubview === 'scheduled' && (
+                <>
                 {/* Summary and filter toggle */}
                 {scheduledTransferPairs.length > 0 && (
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -800,6 +936,67 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         })}
                     </div>
                 )}
+                </>
+                )}
+
+                {transferSubview === 'history' && (
+                <>
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-slate-600 whitespace-nowrap">From</label>
+                        <select value={transferHistoryFilterFrom} onChange={(e) => setTransferHistoryFilterFrom(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                            <option value="all">All accounts</option>
+                            {(data?.accounts ?? []).filter((a: { type?: string }) => a.type !== 'Credit').map((acc: { id: string; name: string }) => (
+                                <option key={acc.id} value={acc.id}>{acc.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-slate-600 whitespace-nowrap">To</label>
+                        <select value={transferHistoryFilterTo} onChange={(e) => setTransferHistoryFilterTo(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
+                            <option value="all">All accounts</option>
+                            {(data?.accounts ?? []).filter((a: { type?: string }) => a.type !== 'Credit').map((acc: { id: string; name: string }) => (
+                                <option key={acc.id} value={acc.id}>{acc.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all') && (
+                        <button type="button" onClick={() => { setTransferHistoryFilterFrom('all'); setTransferHistoryFilterTo('all'); }} className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1">
+                            <XMarkIcon className="h-4 w-4" /> Clear filters
+                        </button>
+                    )}
+                </div>
+                {filteredTransferHistory.length === 0 ? (
+                    <div className="text-center py-10 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+                        <ClockIcon className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                        <p className="text-slate-600 font-medium">
+                            {transferHistory.length === 0 ? 'No transfer history yet' : 'No transfers match the filters'}
+                        </p>
+                        <p className="text-sm text-slate-500 mt-1">
+                            {transferHistory.length === 0 ? 'Transfers you make with &quot;Transfer now&quot; will appear here.' : 'Try changing or clearing the filters above.'}
+                        </p>
+                    </div>
+                ) : (
+                    <div className="space-y-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
+                        {filteredTransferHistory.map((item, idx) => {
+                            const fromAcc = (data?.accounts ?? []).find((a: { id: string }) => a.id === item.fromAccountId);
+                            const toAcc = (data?.accounts ?? []).find((a: { id: string }) => a.id === item.toAccountId);
+                            return (
+                                <div key={`${item.date}-${item.fromAccountId}-${item.toAccountId}-${item.amount}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white hover:bg-slate-50 border-b border-slate-100 last:border-0">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <span className="font-medium text-slate-800 truncate">{fromAcc?.name ?? item.fromAccountId}</span>
+                                        <ArrowsRightLeftIcon className="h-4 w-4 text-slate-400 shrink-0" />
+                                        <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? item.toAccountId}</span>
+                                    </div>
+                                    <span className="font-semibold text-slate-900 tabular-nums shrink-0">{formatCurrencyString(item.amount)}</span>
+                                    <span className="text-sm text-slate-500 shrink-0">{new Date(item.date).toLocaleDateString()}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                </>
+                )}
             </section>
 
             {setActivePage && (
@@ -840,10 +1037,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             <section>
                 <h2 className="section-title text-xl mb-4">Investment Platforms</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedInvestmentAccounts.map((acc) => {
+                            {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} />
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Cash for trading" />
                         );
                     })}
                 </div>
@@ -931,7 +1128,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select source account</option>
                             {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(acc.balance)})
+                                    {acc.name} ({formatCurrencyString(spendableBalanceSar(acc))})
                                 </option>
                             ))}
                         </select>
@@ -939,7 +1136,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             const acc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
                             return acc && (
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Available balance: {formatCurrencyString(acc.balance)}
+                                    Available{acc.type === 'Investment' ? ' for trading' : ' balance'}: {formatCurrencyString(spendableBalanceSar(acc))}
                                 </p>
                             );
                         })()}
@@ -957,7 +1154,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select destination account</option>
                             {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({maskBalance(formatCurrencyString(acc.balance))})
+                                    {acc.name} ({maskBalance(formatCurrencyString(spendableBalanceSar(acc)))})
                                 </option>
                             ))}
                         </select>

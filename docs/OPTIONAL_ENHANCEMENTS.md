@@ -81,3 +81,13 @@ This document describes optional improvements that have been added **without cha
 | Engines    | Doc only (APIs already support guardrails) | None |
 
 All changes are additive or documentation-only so that existing functions and pages continue to behave as before.
+
+---
+
+## 7. Product backlog (completed)
+
+| Item | What was done |
+|------|----------------|
+| Execution log validation | `validateExecutionLog` in `services/dataQuality/validation.ts`; wired in `saveExecutionLog` (DataContext). |
+| Collapsible sections | Budgets (requests, household, admin, shared), Forecast (assumptions, chart, scenarios, goals, timeline), Investments (plan health, error boundary), Wealth Ultra (all dashboard `SectionCard`s). Assets / Notifications / Statement History already had collapsible where applicable. |
+| Self-learning (Summary) | `trackAction('generate-financial-persona', 'Summary')` on AI persona generation. Other pages: `Layout` + `useTrackPageVisit(activePage)` already records visits for all main routes. |

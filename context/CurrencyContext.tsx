@@ -5,7 +5,8 @@ type Currency = 'SAR' | 'USD';
 interface CurrencyContextType {
   currency: Currency;
   setCurrency: (currency: Currency) => void;
-  exchangeRate: number; // SAR to USD
+  /** SAR per 1 USD — multiply USD amounts to convert to SAR (same as `toSAR` / `resolveSarPerUsd`). */
+  exchangeRate: number;
 }
 
 export const CurrencyContext = createContext<CurrencyContextType | null>(null);

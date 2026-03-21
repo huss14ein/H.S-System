@@ -29,6 +29,8 @@ import {
   type RecoveryTimelineProjection,
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
+import { useSelfLearning } from '../context/SelfLearningContext';
+import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -78,7 +80,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const ctx = useContext(DataContext)!;
   const { data, loading, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
-  const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+  const { trackAction } = useSelfLearning();
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
@@ -135,10 +138,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
     const platformCashSAR = accounts
       .filter((a: { type?: string; id: string }) => a.type === 'Investment')
-      .reduce((s: number, a: { id: string }) => {
-        const cash = getAvailableCashForAccount(a.id);
-        return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
-      }, 0);
+      .reduce(
+        (s: number, a: { id: string }) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd),
+        0,
+      );
 
     const total = bankCash + platformCashSAR;
     // Validate result
@@ -147,7 +150,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       return 0;
     }
     return total;
-  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, safeFxRate]);
+  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, sarPerUsd]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
@@ -204,7 +207,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR;
+      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
       const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInHoldingCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
       const mergedConfig: RecoveryPositionConfig = ai
@@ -235,7 +238,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
       return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
-  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, safeFxRate, aiRecoveryBySymbol]);
+  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
@@ -253,6 +256,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   // Track recovery plan when generated
   const handleGenerateRecoveryPlan = useCallback((holding: Holding, plan: any, positionConfig: RecoveryPositionConfig) => {
+    trackAction('save-recovery-execution', 'Recovery Plan');
     try {
       const executionId = `recovery-${holding.id}-${Date.now()}`;
       saveRecoveryExecution({
@@ -280,7 +284,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       console.warn('Failed to save recovery execution:', error);
       setStatsError(error instanceof Error ? error.message : 'Failed to save recovery execution.');
     }
-  }, []);
+  }, [trackAction]);
 
   // Selected holding & plan, derived after initial selection
   const selected = selectedHoldingId
@@ -351,27 +355,28 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
   const selectedCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR)
+    ? (selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR)
     : deployableCashSAR;
   const alternateCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR : deployableCashSAR / safeFxRate)
-    : deployableCashSAR / safeFxRate;
+    ? (selected.currency === 'USD' ? deployableCashSAR : deployableCashSAR / sarPerUsd)
+    : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
 
   const selectedRecoveryBrief = useMemo(() => {
     if (!selected || !selectedPlan) return null;
     const secondaryCurrency: TradeCurrency = selected.currency === 'USD' ? 'SAR' : 'USD';
-    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
-    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
+    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
+    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
     const triggerGap = Math.abs(selectedPlan.plPct) - Math.abs(selected.positionConfig.lossTriggerPct);
     const triggerStatus = triggerGap >= 0 ? 'trigger met' : 'monitor only';
     const aiNote = selected.aiNotes ? ` AI note: ${selected.aiNotes}` : '';
     return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder?.length ?? 0} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
-  }, [selected, selectedPlan, safeFxRate, formatCurrencyString]);
+  }, [selected, selectedPlan, sarPerUsd, formatCurrencyString]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
+    trackAction('ai-suggest-recovery', 'Recovery Plan');
     const sym = (selected.holding.symbol || '').toUpperCase();
     if (!sym) return;
     setIsAiRecoveryLoading(true);
@@ -382,7 +387,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         sleeveType: selected.positionConfig.sleeveType,
         riskTier: selected.positionConfig.riskTier,
         plPct: selected.plan.plPct,
-        deployableCash: selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR,
+        deployableCash: selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
       });
@@ -392,18 +397,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, deployableCashSAR, safeFxRate]);
+  }, [selected, deployableCashSAR, sarPerUsd, trackAction]);
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
     if (qualifiedPositions.length === 0) return;
+    trackAction('ai-apply-all-recovery', 'Recovery Plan');
     setIsBulkAiRecoveryLoading(true);
     setAiRecoveryError(null);
     try {
       const updates = await Promise.all(
         qualifiedPositions.slice(0, 12).map(async (position) => {
           const sym = (position.holding.symbol || '').toUpperCase();
-          const deployableCash = position.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR;
+          const deployableCash = position.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
           const suggestion = await suggestRecoveryParameters({
             symbol: sym,
             sleeveType: position.positionConfig.sleeveType,
@@ -422,7 +428,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [qualifiedPositions, deployableCashSAR, safeFxRate]);
+  }, [qualifiedPositions, deployableCashSAR, sarPerUsd, trackAction]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;
@@ -457,6 +463,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       alert('Please select a position first.');
       return;
     }
+    trackAction('generate-draft-orders', 'Recovery Plan');
     if (!selectedPlan.qualified) {
       alert('This position does not qualify for recovery. Loss must exceed the trigger threshold.');
       return;
@@ -594,7 +601,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
       {/* Enhanced Performance Statistics */}
       {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
-        <SectionCard title="Recovery Plan Performance Statistics">
+        <SectionCard title="Recovery Plan Performance Statistics" collapsible collapsibleSummary="Stats and metrics" defaultExpanded>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
@@ -711,7 +718,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </div>
 
       {/* Enhanced Losing positions table */}
-      <SectionCard title="Positions in loss" className="overflow-hidden">
+      <SectionCard title="Positions in loss" className="overflow-hidden" collapsible collapsibleSummary="Holdings to review" defaultExpanded>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-gradient-to-r from-slate-50 to-slate-100">
@@ -800,7 +807,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </SectionCard>
 
       {selected && selectedPlan && (
-        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5">
+        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5" collapsible collapsibleSummary="Ladder, targets" defaultExpanded>
           {(() => {
             const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
             if (symbolHistory.length > 0) {
@@ -1321,7 +1328,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       )}
 
       {draftOrders && draftOrders.length > 0 && (
-        <SectionCard title="Draft orders (export to broker)" className="space-y-3">
+        <SectionCard title="Draft orders (export to broker)" className="space-y-3" collapsible collapsibleSummary="Limit orders">
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
             <div className="flex gap-2">

@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Risk & Trading Hub' | 'Logic & Engines' | 'Financial Journal' | 'Liquidation Planner';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools';
 
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
@@ -585,6 +585,8 @@ export interface WealthUltraConfig {
   coreTickers?: string[];
   upsideTickers?: string[];
   specTickers?: string[];
+  /** From Settings: rebalancing alert when sleeve drifts from target by more than this %. Default 5. */
+  driftAlertPct?: number;
 }
 
 export interface WealthUltraPosition {

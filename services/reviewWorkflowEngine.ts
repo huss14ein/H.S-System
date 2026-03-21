@@ -80,7 +80,7 @@ export function monthlyCloseProcess(args: {
 export function quarterlyStrategyReview(): ReviewItem[] {
   return [
     { id: 'rebalance', title: 'Rebalance policy review', severity: 'info', description: 'Check drift vs targets and update rebalance tolerance.' },
-    { id: 'thesis', title: 'Thesis review for key holdings', severity: 'warning', description: 'Confirm catalysts still valid and invalidate if needed.' },
+    { id: 'thesis', title: 'Review your investment ideas', severity: 'warning', description: 'Check your notes for key holdings—confirm your reasons still hold.' },
     { id: 'attribution', title: 'Performance attribution', severity: 'info', description: 'Review residual vs cashflow effects and concentration impacts.' },
   ];
 }

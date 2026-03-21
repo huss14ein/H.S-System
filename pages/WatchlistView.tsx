@@ -22,10 +22,11 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { XMarkIcon } from '../components/icons';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 
 interface WatchlistBucket {
@@ -517,7 +518,9 @@ type WatchlistViewProps = {
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage }) => {
     const { data, loading, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable } = useAI();
@@ -741,7 +744,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             tradeActivitySummary,
             asOfDate: new Date().toISOString().slice(0, 10),
         };
-    }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, data?.settings, exchangeRate, tradeActivitySummary]);
+    }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, data?.settings, sarPerUsd, tradeActivitySummary]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);
@@ -819,6 +822,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     };
 
     const handleAddWatchlistItemWithBucket = (item: WatchlistItem) => {
+        trackAction('add-watchlist', 'Watchlist');
         addWatchlistItem(item);
         handleAddToActiveBucket(item.symbol);
     };
@@ -836,8 +840,8 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                 const convertCurrency = (value: number, from: 'USD' | 'SAR', to: 'USD' | 'SAR') => {
                     if (!Number.isFinite(value)) return 0;
                     if (from === to) return value;
-                    if (from === 'USD' && to === 'SAR') return value * exchangeRate;
-                    if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+                    if (from === 'USD' && to === 'SAR') return value * sarPerUsd;
+                    if (from === 'SAR' && to === 'USD') return value / sarPerUsd;
                     return value;
                 };
                 const displayPrice = convertCurrency(priceInfo.price, priceCurrency, displayCurrency);
@@ -982,7 +986,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                   fundamentals={fundamentalsBySymbol[symKey] ?? undefined}
                                   fundamentalsLoading={fundamentalsLoading && !fundamentalsBySymbol[symKey]}
                                   preferredCurrency={activeBucket?.currency}
-                                  exchangeRate={exchangeRate}
+                                  exchangeRate={sarPerUsd}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
                                />

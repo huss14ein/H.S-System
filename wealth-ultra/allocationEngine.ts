@@ -36,8 +36,9 @@ export function getTotalPortfolioValue(positions: WealthUltraPosition[]): number
   return positions.reduce((sum, p) => sum + p.marketValue, 0);
 }
 
-export function isDriftAlert(driftPct: number): boolean {
-  return Math.abs(driftPct) > DRIFT_ALERT_THRESHOLD_PCT;
+export function isDriftAlert(driftPct: number, thresholdPct?: number): boolean {
+  const t = Number.isFinite(thresholdPct) && thresholdPct != null ? thresholdPct : DRIFT_ALERT_THRESHOLD_PCT;
+  return Math.abs(driftPct) > t;
 }
 
 export const DRIFT_ALERT_PCT = DRIFT_ALERT_THRESHOLD_PCT;

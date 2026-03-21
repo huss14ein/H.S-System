@@ -108,10 +108,11 @@ export function generateNextBestActions(input: NextBestActionInput): NextBestAct
       id: 'snapshot-attribution',
       category: 'review',
       title: 'Add net worth snapshots',
-      description: 'Add at least two snapshots (e.g. month-end) to see flows vs residual attribution in Risk hub.',
+      description: 'Add at least two snapshots (e.g. month-end) to see why your net worth changed.',
       priorityScore: 25,
-      link: 'Risk & Trading Hub',
-      linkLabel: 'Risk & Trading Hub',
+      link: 'Engines & Tools',
+      linkLabel: 'Safety & rules',
+      data: { action: 'openRiskTradingHub' },
     });
   }
 

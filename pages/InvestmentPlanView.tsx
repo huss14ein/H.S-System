@@ -13,13 +13,25 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import { generateNextBestActions } from '../services/nextBestActionEngine';
+import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
+import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { getPersonalTransactions } from '../utils/wealthScope';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
+import PageIntro from '../components/PageIntro';
+import EmptyState from '../components/EmptyState';
+import InfoHint from '../components/InfoHint';
+import { toast } from '../context/ToastContext';
+import { PAGE_INTROS, EMPTY_STATE_MESSAGES, EXECUTE_PLAN_STORAGE_KEY } from '../content/plainLanguage';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ChartBarIcon } from '../components/icons/ChartBarIcon';
 import { ClockIcon, TargetIcon } from '../components/icons';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 
 const PlanTradeModal: React.FC<{
@@ -27,7 +39,10 @@ const PlanTradeModal: React.FC<{
     onClose: () => void;
     onSave: (plan: Omit<PlannedTrade, 'id'|'user_id'> | PlannedTrade) => void;
     planToEdit: PlannedTrade | null;
-}> = ({ isOpen, onClose, onSave, planToEdit }) => {
+    universe?: { ticker?: string; name?: string }[];
+    simulatedPrices?: Record<string, { price?: number }>;
+    monthlyBudget?: number;
+}> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget }) => {
     const [symbol, setSymbol] = useState('');
     const [name, setName] = useState('');
     const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -65,29 +80,29 @@ const PlanTradeModal: React.FC<{
         
         // Validations
         if (!symbol || symbol.trim() === '') {
-            alert('Symbol is required.');
+            toast('Symbol is required.', 'error');
             return;
         }
         
         if (!quantity && !amount) {
-            alert("Please specify either a quantity of shares or a total amount in SAR for the trade.");
+            toast('Specify either number of shares or total amount for the trade.', 'error');
             return;
         }
         
         if (quantity && (parseFloat(quantity) <= 0 || !Number.isFinite(parseFloat(quantity)))) {
-            alert('Quantity must be a positive number.');
+            toast('Quantity must be a positive number.', 'error');
             return;
         }
         
         if (amount && (parseFloat(amount) <= 0 || !Number.isFinite(parseFloat(amount)))) {
-            alert('Amount must be a positive number.');
+            toast('Amount must be a positive number.', 'error');
             return;
         }
         
         if (conditionType === 'price') {
             const price = parseFloat(targetValue);
             if (!Number.isFinite(price) || price <= 0) {
-                alert('Target price must be a positive number.');
+                toast('Target price must be a positive number.', 'error');
                 return;
             }
             if (price > 1000000) {
@@ -98,7 +113,7 @@ const PlanTradeModal: React.FC<{
         } else {
             const targetDate = new Date(targetValue);
             if (isNaN(targetDate.getTime())) {
-                alert('Invalid target date.');
+                toast('Invalid target date.', 'error');
                 return;
             }
             const today = new Date();
@@ -120,10 +135,12 @@ const PlanTradeModal: React.FC<{
                 const impliedPrice = amt / qty;
                 if (conditionType === 'price') {
                     const targetPrice = parseFloat(targetValue);
-                    const diff = Math.abs(impliedPrice - targetPrice) / targetPrice;
-                    if (diff > 0.1) { // More than 10% difference
-                        if (!confirm(`Quantity and amount imply a price of ${impliedPrice.toFixed(2)}, which differs from target price ${targetPrice.toFixed(2)}. Continue anyway?`)) {
-                            return;
+                    if (targetPrice > 0) {
+                        const diff = Math.abs(impliedPrice - targetPrice) / targetPrice;
+                        if (diff > 0.1) {
+                            if (!confirm(`Quantity and amount imply a price of ${impliedPrice.toFixed(2)}, which differs from target price ${targetPrice.toFixed(2)}. Continue anyway?`)) {
+                                return;
+                            }
                         }
                     }
                 }
@@ -148,11 +165,40 @@ const PlanTradeModal: React.FC<{
         } else {
             onSave(planData);
         }
+        toast(planToEdit ? 'Plan updated.' : 'Plan created.', 'success');
         onClose();
     };
 
+    // Auto-fill name from universe when symbol changes (only if name is empty).
+    // Omit name from deps so clearing the field does not re-trigger fill.
+    useEffect(() => {
+        if (!symbol.trim() || planToEdit || name) return;
+        const sym = symbol.trim().toUpperCase();
+        const match = universe.find((t: any) => String(t.ticker || '').toUpperCase() === sym);
+        if (match?.name) setName(match.name);
+    }, [symbol, planToEdit, universe]);
+
+    // Suggest target price from current price when creating new plan.
+    // Omit targetValue from deps so clearing the field does not re-trigger fill.
+    useEffect(() => {
+        if (!isOpen || planToEdit || conditionType !== 'price' || targetValue) return;
+        const sym = symbol.trim().toUpperCase();
+        const price = simulatedPrices[sym]?.price;
+        if (price && Number.isFinite(price)) setTargetValue(String(price));
+    }, [isOpen, planToEdit, symbol, conditionType, simulatedPrices]);
+
+    // Suggest amount from monthly budget when creating a buy plan (10% of budget).
+    // Omit amount/quantity from deps so clearing the field does not re-trigger fill.
+    useEffect(() => {
+        if (!isOpen || planToEdit || tradeType !== 'buy' || amount || quantity) return;
+        if (monthlyBudget && monthlyBudget > 0) {
+            const suggested = Math.round(monthlyBudget * 0.1);
+            if (suggested >= 100) setAmount(String(suggested));
+        }
+    }, [isOpen, planToEdit, tradeType, monthlyBudget]);
+
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={planToEdit ? 'Edit Investment Plan' : 'Create Investment Plan'}>
+        <Modal isOpen={isOpen} onClose={onClose} title={planToEdit ? 'Edit plan' : 'Create plan'}>
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -195,7 +241,9 @@ const PlanTradeModal: React.FC<{
                         </select>
                     </div>
                     <div>
-                        <label htmlFor="priority" className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
+                        <label htmlFor="priority" className="block text-sm font-semibold text-gray-700 mb-2">
+                            Priority <InfoHint text="High = act first when triggered. Medium = normal. Low = optional, can wait." hintId="plan-trade-priority" hintPage="Investment Plan" />
+                        </label>
                         <select 
                             id="priority"
                             value={priority} 
@@ -210,7 +258,10 @@ const PlanTradeModal: React.FC<{
                 </div>
                 
                 <fieldset className="border border-gray-200 rounded-lg p-4">
-                    <legend className="text-sm font-semibold text-gray-700 px-2">Trigger Condition</legend>
+                    <legend className="text-sm font-semibold text-gray-700 px-2 inline-flex items-center gap-1">
+                        Trigger condition
+                        <InfoHint text="When should this plan run? Price target = when the stock hits a price. Date target = on a specific date." hintId="plan-condition-type" hintPage="Investment Plan" />
+                    </legend>
                     <div className="flex items-center space-x-6 mb-4">
                         <label className="flex items-center cursor-pointer">
                             <input 
@@ -235,7 +286,9 @@ const PlanTradeModal: React.FC<{
                     </div>
                     <div>
                         <label htmlFor="target-value" className="block text-sm font-semibold text-gray-700 mb-2">
-                            {conditionType === 'date' ? 'Target Date' : 'Target Price (SAR)'}
+                            {conditionType === 'date' ? 'Target Date' : (
+                                <>Target Price <InfoHint text="Enter in the stock's traded currency (USD for US shares, SAR for Tadawul)." hintId="plan-target-price" hintPage="Investment Plan" /></>
+                            )}
                         </label>
                         <input 
                             id="target-value"
@@ -253,7 +306,9 @@ const PlanTradeModal: React.FC<{
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label htmlFor="quantity" className="block text-sm font-semibold text-gray-700 mb-2">Quantity (shares)</label>
+                        <label htmlFor="quantity" className="block text-sm font-semibold text-gray-700 mb-2">
+                            Quantity (shares) <InfoHint text="Number of shares to buy or sell. Or use Amount below for a total (in plan currency, usually SAR)." hintId="plan-quantity" hintPage="Investment Plan" />
+                        </label>
                         <input 
                             id="quantity"
                             type="number" 
@@ -266,7 +321,9 @@ const PlanTradeModal: React.FC<{
                         />
                     </div>
                     <div>
-                        <label htmlFor="amount" className="block text-sm font-semibold text-gray-700 mb-2">Amount (SAR)</label>
+                        <label htmlFor="amount" className="block text-sm font-semibold text-gray-700 mb-2">
+                            Amount <InfoHint text="Total money for this trade (in plan currency, usually SAR). If you have a monthly budget set, we suggest 10% as a starting point." hintId="plan-amount" hintPage="Investment Plan" />
+                        </label>
                         <input 
                             id="amount"
                             type="number" 
@@ -314,13 +371,35 @@ const PlanTradeModal: React.FC<{
 
 /** Control tower: cross-engine constraints, alerts, and prioritized actions for Investment Plan. */
 const InvestmentPlanControlTower: React.FC = () => {
+  const { data } = useContext(DataContext)!;
   const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration();
-  if (!ready || !analysis) return null;
-  const hasAlerts = analysis.alerts.length > 0;
+  const emergencyFund = useEmergencyFund(data ?? null);
+  const nextBestActions = useMemo(() => {
+    const txs = getPersonalTransactions(data);
+    const salaryCov = salaryToExpenseCoverage(txs as import('../types').Transaction[], 6);
+    const goalAlerts = (data?.goals ?? []).map((g: { id: string; name: string; savingsAllocationPercent?: number }) => ({
+      goalId: g.id,
+      name: g.name,
+      allocPct: Number(g.savingsAllocationPercent) || 0,
+    }));
+    return generateNextBestActions({
+      emergencyFundMonths: emergencyFund.monthsCovered,
+      runwayMonths: emergencyFund.monthsCovered,
+      goalAlerts,
+      salaryCoverageRatio: salaryCov?.ratio ?? undefined,
+      nwSnapshotCount: listNetWorthSnapshots().length,
+    });
+  }, [data, emergencyFund.monthsCovered]);
+
+  const hasAlerts = (analysis?.alerts?.length ?? 0) > 0;
   const hasActions = actionQueue.length > 0;
-  if (!hasAlerts && !hasActions && !cash && !household?.cashflowStressSignals?.length) return null;
+  const hasNextBest = nextBestActions.length > 0;
+  const hasStress = (household?.cashflowStressSignals?.length ?? 0) > 0;
+  if (!ready && !hasNextBest) return null;
+  if (!hasAlerts && !hasActions && !cash && !hasStress && !hasNextBest) return null;
+
   return (
-    <SectionCard title="Control tower (Household, Budget & Wealth Ultra constraints)">
+    <SectionCard title="Your financial health check" collapsible collapsibleSummary="Cash, stress, runway" defaultExpanded>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {cash && (
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
@@ -341,7 +420,7 @@ const InvestmentPlanControlTower: React.FC = () => {
           </div>
         )}
       </div>
-      {hasAlerts && (
+      {hasAlerts && analysis && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
           <p className="text-xs font-semibold text-amber-800 mb-2">Alerts</p>
           <ul className="space-y-1 text-sm text-amber-900">
@@ -364,13 +443,28 @@ const InvestmentPlanControlTower: React.FC = () => {
           </ul>
         </div>
       )}
-      <p className="mt-3 text-xs text-slate-500">Planned trades are validated against cash and risk constraints. Use Wealth Ultra for sleeve-aware allocation.</p>
+      {hasNextBest && (
+        <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+          <p className="text-xs font-semibold text-indigo-800 mb-2">Suggested actions</p>
+          <ul className="space-y-1 text-sm text-indigo-900">
+            {nextBestActions.slice(0, 3).map((a) => (
+              <li key={a.id}>{a.title}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-slate-500">Your plans are checked against cash and risk limits. For full allocation, use Wealth Ultra.</p>
     </SectionCard>
   );
 };
 
-const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => void; setActivePage?: (page: Page) => void }> = ({ onExecutePlan, setActivePage: _setActivePage }) => {
+const InvestmentPlanView: React.FC<{
+    onExecutePlan: (plan?: PlannedTrade) => void;
+    setActivePage?: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction }) => {
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
+    const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
     
@@ -407,6 +501,34 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
             updatePlannedTrade(planData);
         } else {
             addPlannedTrade(planData);
+        }
+    };
+
+    const handleOpenPlanModal = (plan: PlannedTrade | null) => {
+        if (!plan) trackAction('add-plan', 'Investment Plan');
+        setPlanToEdit(plan);
+        setIsModalOpen(true);
+    };
+
+    const handleExecutePlan = (plan: PlannedTrade) => {
+        if (!triggerPageAction) {
+            onExecutePlan(plan);
+            return;
+        }
+        try {
+            sessionStorage.setItem(EXECUTE_PLAN_STORAGE_KEY, JSON.stringify({
+                symbol: plan.symbol,
+                name: plan.name,
+                tradeType: plan.tradeType,
+                amount: plan.amount,
+                quantity: plan.quantity,
+                price: plan.conditionType === 'price' ? plan.targetValue : undefined,
+                executedPlanId: plan.id,
+                reason: 'From Investment Plan',
+            }));
+            triggerPageAction('Investments', 'open-trade-modal:from-plan');
+        } catch {
+            toast('Could not open Record Trade. Go to Investments to record manually.', 'error');
         }
     };
     
@@ -511,12 +633,14 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
 
 
     const handleAddToUniverse = async (plan: PlannedTrade) => {
+        trackAction('add-to-universe', 'Investment Plan');
         try {
             const universe = data?.portfolioUniverse ?? [];
             const exists = universe.some((t: { ticker?: string }) => (t.ticker ?? '').toUpperCase() === (plan.symbol ?? '').toUpperCase());
             if (exists) {
                 setAlignmentFilter('All');
                 setSymbolFocus(plan.symbol);
+                toast(`${plan.symbol} is already in your universe.`, 'info');
                 return;
             }
 
@@ -528,23 +652,27 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
             });
             setAlignmentFilter('All');
             setSymbolFocus(plan.symbol);
+            toast(`${plan.symbol} added to universe. AI can now track it.`, 'success');
         } catch (error) {
-            alert(`Failed to add ticker to universe: ${error instanceof Error ? error.message : String(error)}`);
+            toast(`Could not add to universe: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
 
     const handleAlignWithAi = async (plan: PlannedTrade, suggestedTradeType: 'buy' | 'sell') => {
+        trackAction('align-with-ai', 'Investment Plan');
         if (plan.tradeType === suggestedTradeType) return;
         try {
             await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
             setSymbolFocus(plan.symbol);
+            toast('Plan aligned with AI recommendation.', 'success');
         } catch (error) {
-            alert(`Failed to update plan: ${error instanceof Error ? error.message : String(error)}`);
+            toast(`Could not update plan: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
     const handleAlignAllConflicts = async () => {
+        trackAction('align-all-conflicts', 'Investment Plan');
         const conflicts = planAlignment.rows.filter(r => r.aligned === false);
         if (conflicts.length === 0) return;
         
@@ -552,11 +680,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
             for (const { plan, suggestedTradeType } of conflicts) {
                 await updatePlannedTrade({ ...plan, tradeType: suggestedTradeType });
             }
-            if (conflicts.length > 0) {
-                setAlignmentFilter('Aligned');
-            }
+            setAlignmentFilter('Aligned');
+            toast(`Aligned ${conflicts.length} plan${conflicts.length > 1 ? 's' : ''} with AI.`, 'success');
         } catch (error) {
-            alert(`Failed to align some plans: ${error instanceof Error ? error.message : String(error)}`);
+            toast(`Could not align some plans: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
@@ -564,8 +691,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
         const nextConflict = planAlignment.filteredRows.find(r => r.aligned === false) || planAlignment.rows.find(r => r.aligned === false);
         if (!nextConflict) return;
         setSymbolFocus(nextConflict.plan.symbol);
-        setPlanToEdit(nextConflict.plan);
-        setIsModalOpen(true);
+        handleOpenPlanModal(nextConflict.plan);
     };
 
 
@@ -573,27 +699,27 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
     const strategyGuides = [
         {
             key: 'core',
-            title: 'Core Accumulation',
-            when: 'Best for diversified, high-conviction symbols with stable fundamentals.',
-            benefit: 'Builds long-term compounding with disciplined entries.',
-            risk: 'Over-concentration if you skip weight limits.',
-            playbook: 'Use Buy plans, medium/high priority, and monthly weights near your target allocation.'
+            title: 'Build over time',
+            when: 'For stocks you trust and want to hold long-term.',
+            benefit: 'Buy in stages instead of all at once—reduces timing risk.',
+            risk: 'Putting too much in one stock.',
+            playbook: 'Create Buy plans at target prices. Use High or Medium priority.'
         },
         {
             key: 'tactical',
-            title: 'Tactical Rebalance',
-            when: 'Use when AI signals drift from target allocation or conviction changes.',
-            benefit: 'Reduces portfolio drift and improves risk consistency.',
-            risk: 'Frequent changes can increase churn and trading costs.',
-            playbook: 'Review Plan vs AI alignment, resolve conflicts first, then execute triggered plans.'
+            title: 'Stay on track',
+            when: 'When your mix has drifted from what you want.',
+            benefit: 'Keeps your portfolio balanced without guesswork.',
+            risk: 'Trading too often can add costs.',
+            playbook: 'Check Plan vs AI alignment. Fix conflicts, then execute when ready.'
         },
         {
             key: 'defensive',
-            title: 'Defensive De-risk',
-            when: 'Apply to quarantine or high-volatility names and macro stress phases.',
-            benefit: 'Protects downside and frees capacity for stronger names.',
-            risk: 'Can cap upside if you exit too early.',
-            playbook: 'Prefer Sell plans on quarantine names and keep explicit notes for re-entry conditions.'
+            title: 'Reduce risk',
+            when: 'For stocks you want to trim or exit.',
+            benefit: 'Locks in gains or limits losses before things get worse.',
+            risk: 'Selling too early can miss a rebound.',
+            playbook: 'Create Sell plans for stocks in quarantine. Add notes for when to reconsider.'
         },
     ] as const;
 
@@ -615,6 +741,8 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
     }, [data?.portfolioUniverse, data?.plannedTrades]);
 
     const handleCreatePlanFromAi = async (candidate: { symbol: string; name: string; status: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
+        trackAction('create-plan-from-ai', 'Investment Plan');
+        trackSuggestionFeedback(`ai-candidate-${candidate.symbol}`, 'Investment Plan', true);
         try {
             const plannedTrades = data?.plannedTrades ?? [];
             const existing = plannedTrades.some(plan => (plan.symbol ?? '').toUpperCase() === candidate.symbol.toUpperCase());
@@ -625,7 +753,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
 
             const priceAnchor = simulatedPrices[candidate.symbol]?.price || 1;
             if (priceAnchor <= 0) {
-                alert(`Cannot create plan: No valid price data for ${candidate.symbol}`);
+                toast(`No price data for ${candidate.symbol}. Add it to your universe first.`, 'error');
                 return;
             }
 
@@ -642,8 +770,9 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                 status: 'Planned',
             });
             setSymbolFocus(candidate.symbol);
+            toast(`Plan created for ${candidate.symbol}.`, 'success');
         } catch (error) {
-            alert(`Failed to create plan: ${error instanceof Error ? error.message : String(error)}`);
+            toast(`Could not create plan: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
     };
 
@@ -672,6 +801,11 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
             description="Proactively plan your trades based on price or date targets with AI-powered alignment. Integrated with Household, Budget, and Wealth Ultra engines for shared cash and risk constraints."
         >
             <div className="max-w-7xl mx-auto space-y-8">
+                <PageIntro
+                    title={PAGE_INTROS['Investment Plan']?.title ?? 'Plan your trades ahead of time'}
+                    description={PAGE_INTROS['Investment Plan']?.description ?? 'Set buy or sell plans that trigger when a price or date is reached. The system suggests ideas and checks them against AI recommendations.'}
+                    tip="New here? Create a plan from an AI candidate below, or click Create Plan to add your own. When conditions are met, use the rocket icon to record the trade."
+                />
                 <InvestmentPlanControlTower />
                 {/* Enhanced Header Section */}
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
@@ -698,13 +832,59 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                         </div>
                     </div>
                     <button 
-                        onClick={() => { setPlanToEdit(null); setIsModalOpen(true); }} 
+                        onClick={() => handleOpenPlanModal(null)} 
                         className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-2xl hover:from-primary/90 hover:to-secondary/90 transition-all duration-200 font-bold text-lg shadow-xl hover:shadow-2xl transform hover:scale-105"
                     >
                         <PlusIcon className="h-6 w-6"/>
                         <span>Create Plan</span>
                     </button>
                 </div>
+
+                {/* What to do next — dynamic guidance */}
+                {(() => {
+                    const plans = data?.plannedTrades ?? [];
+                    const triggered = plans.filter(isTriggered);
+                    const conflicts = planAlignment.conflictCount;
+                    const untracked = planAlignment.untrackedCount;
+                    if (plans.length === 0) {
+                        return (
+                            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-6">
+                                <p className="font-semibold text-indigo-900">Your next step</p>
+                                <p className="mt-1 text-indigo-800">Create your first plan, or add one from the AI candidates below. Both options pre-fill details for you.</p>
+                            </div>
+                        );
+                    }
+                    if (conflicts > 0) {
+                        return (
+                            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50 p-6">
+                                <p className="font-semibold text-amber-900">Resolve conflicts</p>
+                                <p className="mt-1 text-amber-800">{conflicts} plan{conflicts > 1 ? 's' : ''} differ from AI recommendations. Use &quot;Align with AI&quot; or &quot;Align All Conflicts&quot; to sync.</p>
+                            </div>
+                        );
+                    }
+                    if (triggered.length > 0) {
+                        return (
+                            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 p-6">
+                                <p className="font-semibold text-emerald-900">Ready to act</p>
+                                <p className="mt-1 text-emerald-800">{triggered.length} plan{triggered.length > 1 ? 's' : ''} met their conditions. Use the rocket icon to record each trade in Investments.</p>
+                            </div>
+                        );
+                    }
+                    if (untracked > 0) {
+                        return (
+                            <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-gray-50 p-6">
+                                <p className="font-semibold text-slate-900">Map untracked symbols</p>
+                                <p className="mt-1 text-slate-700">{untracked} plan{untracked > 1 ? 's' : ''} use symbols not in your universe. Add them for AI alignment.</p>
+                            </div>
+                        );
+                    }
+                    return (
+                        <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 p-6">
+                            <p className="font-semibold text-emerald-900">All aligned</p>
+                            <p className="mt-1 text-emerald-800">Your plans match AI recommendations. When conditions are met, use the rocket icon to record trades.</p>
+                        </div>
+                    );
+                })()}
 
                 {/* Enhanced Household Stress Indicator */}
                 {householdStress && (
@@ -757,68 +937,52 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                     </div>
                 )}
 
-                {/* Enhanced How It Works Guide */}
-                <SectionCard title="How Investment Planning Works" className="overflow-hidden">
+                {/* How It Works — plain language for non-financial users */}
+                <CollapsibleSection title="How it works" summary="Plan now, act when ready" className="overflow-hidden">
                     <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl p-8 border border-blue-100">
                         <div className="flex items-center gap-4 mb-6">
                             <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
                                 <LightBulbIcon className="h-7 w-7 text-white" />
                             </div>
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-900">Strategic Planning with AI Alignment</h3>
-                                <p className="text-slate-600 mt-1">Build intelligent trade plans that align with AI insights</p>
+                                <h3 className="text-2xl font-bold text-slate-900">Plan now, act when ready</h3>
+                                <p className="text-slate-600 mt-1">Set your conditions. The system tells you when it&apos;s time to buy or sell.</p>
                             </div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                             <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 border border-red-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                                    <h4 className="font-bold text-slate-900 text-lg">High Priority</h4>
+                                    <h4 className="font-bold text-slate-900 text-lg">High</h4>
                                 </div>
-                                <p className="text-slate-600 leading-relaxed">Core actions you want executed first when conditions are met</p>
-                                <div className="mt-4 pt-4 border-t border-red-100">
-                                    <p className="text-xs font-semibold text-red-700">Best for: Market dips, earnings events, major news</p>
-                                </div>
+                                <p className="text-slate-600 leading-relaxed">Act first when the condition is met. Use for ideas you don&apos;t want to miss.</p>
                             </div>
                             <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 border border-amber-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="w-3 h-3 bg-amber-500 rounded-full animate-pulse"></div>
-                                    <h4 className="font-bold text-slate-900 text-lg">Medium Priority</h4>
+                                    <h4 className="font-bold text-slate-900 text-lg">Medium</h4>
                                 </div>
-                                <p className="text-slate-600 leading-relaxed">Normal opportunities that can wait for better confirmation</p>
-                                <div className="mt-4 pt-4 border-t border-amber-100">
-                                    <p className="text-xs font-semibold text-amber-700">Best for: Technical signals, gradual trends</p>
-                                </div>
+                                <p className="text-slate-600 leading-relaxed">Normal pace. Execute when conditions are met and you&apos;re ready.</p>
                             </div>
                             <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 border border-blue-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                                    <h4 className="font-bold text-slate-900 text-lg">Low Priority</h4>
+                                    <h4 className="font-bold text-slate-900 text-lg">Low</h4>
                                 </div>
-                                <p className="text-slate-600 leading-relaxed">Optional ideas you can defer during volatile periods</p>
-                                <div className="mt-4 pt-4 border-t border-blue-100">
-                                    <p className="text-xs font-semibold text-blue-700">Best for: Long-term ideas, speculative plays</p>
-                                </div>
+                                <p className="text-slate-600 leading-relaxed">Can wait. Good for ideas you might skip if things get busy.</p>
                             </div>
                         </div>
                         <div className="mt-8 p-6 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-2xl border border-indigo-200">
-                            <div className="flex items-start gap-4">
-                                <div className="w-10 h-10 bg-indigo-500 rounded-full flex items-center justify-center flex-shrink-0">
-                                    <span className="text-white font-bold text-sm">💡</span>
-                                </div>
-                                <div>
-                                    <p className="text-slate-800 font-semibold mb-2">Workflow suggestion:</p>
-                                    <p className="text-slate-700 leading-relaxed">
-                                        Build your target ideas here first, then run AI rebalance and compare its suggestions against your planned trades before executing. Use "Align with AI" for quick direction sync while preserving your conditions and priorities.
-                                    </p>
-                                </div>
-                            </div>
+                            <p className="text-slate-800 font-semibold mb-2">Simple workflow:</p>
+                            <p className="text-slate-700 leading-relaxed">
+                                Create plans (or add from AI suggestions). Check alignment—if a plan conflicts with AI, use &quot;Align with AI&quot; to sync. When a plan shows &quot;Triggered&quot;, click the rocket to record the trade in Investments.
+                            </p>
                         </div>
                     </div>
-                </SectionCard>
+                </CollapsibleSection>
 
                 {/* Enhanced Strategy Guides */}
-                <SectionCard title="Strategy Guides" className="overflow-hidden">
+                <CollapsibleSection title="Strategy Guides" summary="Core, Tactical, Defensive playbooks" className="overflow-hidden">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         {strategyGuides.map((guide) => (
                             <div key={guide.key} className="bg-gradient-to-br from-white to-slate-50 border-2 border-slate-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 overflow-hidden group">
@@ -867,10 +1031,10 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                             </div>
                         ))}
                     </div>
-                </SectionCard>
+                </CollapsibleSection>
 
                 {/* Enhanced AI Candidates Section */}
-                <SectionCard title="AI Rebalance Candidates" className="min-h-[500px] overflow-hidden">
+                <SectionCard title="AI Rebalance Candidates" className="min-h-[500px] overflow-hidden" collapsible collapsibleSummary="Symbols from AI" defaultExpanded>
                     <div className="flex items-center justify-between mb-8">
                         <div className="flex items-center gap-4">
                             <div className="w-14 h-14 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -927,19 +1091,17 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                             </div>
                         ))}
                         {aiPlanCandidates.length === 0 && (
-                            <div className="text-center py-16">
-                                <div className="w-20 h-20 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full mx-auto mb-6 flex items-center justify-center">
-                                    <SparklesIcon className="h-10 w-10 text-gray-400" />
-                                </div>
-                                <p className="text-xl font-semibold text-slate-600 mb-2">No additional AI candidates to map right now</p>
-                                <p className="text-slate-500">Existing plans already cover actionable symbols</p>
-                            </div>
+                            <EmptyState
+                                icon={<SparklesIcon className="w-12 h-12" />}
+                                title={EMPTY_STATE_MESSAGES.noAiCandidates.title}
+                                description={EMPTY_STATE_MESSAGES.noAiCandidates.description}
+                            />
                         )}
                     </div>
                 </SectionCard>
 
                 {/* Enhanced Plan vs AI Alignment */}
-                <SectionCard title="Plan vs AI Alignment" className="min-h-[600px] overflow-hidden">
+                <SectionCard title="Plan vs AI Alignment" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Aligned vs conflicts" defaultExpanded>
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
                         <div className="flex items-center gap-4">
                             <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -1060,7 +1222,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                                     </button>
                                     <button 
                                         type="button" 
-                                        onClick={() => { setPlanToEdit(plan); setIsModalOpen(true); }} 
+                                        onClick={() => handleOpenPlanModal(plan)} 
                                         className="px-4 py-2 text-xs font-bold border-2 border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary transition-all duration-200 shadow-sm hover:shadow-md"
                                     >
                                         Edit
@@ -1069,6 +1231,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                                         <button 
                                             type="button" 
                                             onClick={() => handleAlignWithAi(plan, suggestedTradeType)} 
+                                            title="Change this plan to match the AI recommendation"
                                             className="px-4 py-2 text-xs font-bold border-2 border-emerald-300 text-emerald-700 rounded-lg hover:border-emerald-500 transition-all duration-200 shadow-sm hover:shadow-md"
                                         >
                                             Align with AI
@@ -1078,6 +1241,7 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                                         <button 
                                             type="button" 
                                             onClick={() => handleAddToUniverse(plan)} 
+                                            title="Add this symbol to your portfolio so AI can track and recommend it"
                                             className="px-4 py-2 text-xs font-bold border-2 border-indigo-300 text-indigo-700 rounded-lg hover:border-indigo-500 transition-all duration-200 shadow-sm hover:shadow-md"
                                         >
                                             Add to Universe
@@ -1087,25 +1251,24 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                             </div>
                         ))}
                         {planAlignment.filteredRows.length === 0 && (
-                            <div className="text-center py-16">
-                                <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full mx-auto mb-6 flex items-center justify-center">
-                                    <ChartBarIcon className="h-10 w-10 text-slate-400" />
-                                </div>
-                                <p className="text-xl font-semibold text-slate-600 mb-2">No trades match the selected filter</p>
-                                <p className="text-slate-500">Try adjusting the filter or creating new plans</p>
-                            </div>
+                            <EmptyState
+                                icon={<ChartBarIcon className="w-12 h-12" />}
+                                title={(data?.plannedTrades ?? []).length === 0 ? 'No plans yet' : 'No plans match the filter'}
+                                description={(data?.plannedTrades ?? []).length === 0 ? 'Create plans above to see how they align with AI recommendations.' : 'Try a different filter or create new plans.'}
+                                action={(data?.plannedTrades ?? []).length === 0 ? { label: 'Create plan', onClick: () => handleOpenPlanModal(null) } : undefined}
+                            />
                         )}
                     </div>
                 </SectionCard>
 
-                {/* Enhanced Statistics Cards */}
+                {/* Statistics Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group">
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Plans you've set up">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
-                                <p className="text-sm font-bold text-blue-800 uppercase tracking-wide mb-2">Planned Trades</p>
+                                <p className="text-sm font-bold text-blue-800 uppercase tracking-wide mb-2">Planned</p>
                                 <p className="text-4xl font-bold text-blue-900 mb-1">{(data?.plannedTrades ?? []).length}</p>
-                                <p className="text-sm text-blue-700 font-medium">Total strategic plans</p>
+                                <p className="text-sm text-blue-700 font-medium">Plans you&apos;ve set up</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
                                 <ClipboardDocumentListIcon className="h-8 w-8 text-white" />
@@ -1119,12 +1282,12 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                         </div>
                     </div>
                     
-                    <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group">
+                    <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Conditions met—ready to record">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-amber-800 uppercase tracking-wide mb-2">Triggered</p>
                                 <p className="text-4xl font-bold text-amber-900 mb-1">{(data?.plannedTrades ?? []).filter(isTriggered).length}</p>
-                                <p className="text-sm text-amber-700 font-medium">Ready to execute</p>
+                                <p className="text-sm text-amber-700 font-medium">Conditions met—ready to record</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
                                 <ClockIcon className="h-8 w-8 text-white" />
@@ -1138,12 +1301,12 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                         </div>
                     </div>
                     
-                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group">
+                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Already recorded in Investments">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-emerald-800 uppercase tracking-wide mb-2">Executed</p>
                                 <p className="text-4xl font-bold text-emerald-900 mb-1">{(data?.plannedTrades ?? []).filter(p => p.status === 'Executed').length}</p>
-                                <p className="text-sm text-emerald-700 font-medium">Completed trades</p>
+                                <p className="text-sm text-emerald-700 font-medium">Recorded in Investments</p>
                             </div>
                             <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
                                 <CheckCircleIcon className="h-8 w-8 text-white" />
@@ -1185,16 +1348,16 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                 )}
 
                 {/* Plans Table */}
-                <SectionCard title="Investment Plans" className="min-h-[600px]">
+                <SectionCard title="Investment Plans" className="min-h-[600px]" collapsible collapsibleSummary="Planned trades" defaultExpanded>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     <th className="px-6 py-3">Asset</th>
                                     <th className="px-6 py-3">Action</th>
-                                    <th className="px-6 py-3">Trigger Condition</th>
-                                    <th className="px-6 py-3">Planned Price</th>
-                                    <th className="px-6 py-3">Signal</th>
+                                    <th className="px-6 py-3">Trigger</th>
+                                    <th className="px-6 py-3" title="Price in the stock's traded currency (USD or SAR)">Planned Price</th>
+                                    <th className="px-6 py-3" title="Is the current price good for your plan? Favorable = time to act">Signal</th>
                                     <th className="px-6 py-3">Priority</th>
                                     <th className="px-6 py-3">Status</th>
                                     <th className="px-6 py-3">Actions</th>
@@ -1244,15 +1407,15 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-2">
                                                 <button 
-                                                    onClick={() => onExecutePlan(plan)} 
+                                                    onClick={() => (triggerPageAction ? handleExecutePlan(plan) : onExecutePlan(plan))} 
                                                     disabled={plan.status === 'Executed'} 
-                                                    title="Execute Trade" 
+                                                    title="Record this trade in Investments" 
                                                     className="p-2 text-white bg-gradient-to-r from-primary to-secondary rounded-lg hover:from-primary/90 hover:to-secondary/90 disabled:from-gray-300 disabled:to-gray-400 transition-all"
                                                 >
                                                     <RocketLaunchIcon className="h-4 w-4"/>
                                                 </button>
                                                 <button 
-                                                    onClick={() => { setPlanToEdit(plan); setIsModalOpen(true); }} 
+                                                    onClick={() => handleOpenPlanModal(plan)} 
                                                     className="p-2 text-gray-500 hover:text-primary transition-colors"
                                                     title="Edit Plan"
                                                 >
@@ -1272,19 +1435,26 @@ const InvestmentPlanView: React.FC<{ onExecutePlan: (plan?: PlannedTrade) => voi
                             </tbody>
                         </table>
                         {visiblePlans.length === 0 && (
-                            <div className="text-center py-12">
-                                <div className="bg-gray-100 rounded-full p-4 w-16 h-16 mx-auto mb-4">
-                                    <ClipboardDocumentListIcon className="h-8 w-8 text-gray-400" />
-                                </div>
-                                <p className="text-gray-600">No investment plans match current focus/filter</p>
-                                <p className="text-sm text-gray-500 mt-1">Create your first plan to get started</p>
-                            </div>
+                            <EmptyState
+                                icon={<ClipboardDocumentListIcon className="w-12 h-12" />}
+                                title={EMPTY_STATE_MESSAGES.noPlannedTrades.title}
+                                description={symbolFocus ? 'No plans for this symbol. Clear focus or create one.' : EMPTY_STATE_MESSAGES.noPlannedTrades.description}
+                                action={symbolFocus ? undefined : { label: EMPTY_STATE_MESSAGES.noPlannedTrades.action ?? 'Create plan', onClick: () => handleOpenPlanModal(null) }}
+                            />
                         )}
                     </div>
                 </SectionCard>
             </div>
 
-            <PlanTradeModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSave} planToEdit={planToEdit} />
+            <PlanTradeModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSave={handleSave}
+                planToEdit={planToEdit}
+                universe={data?.portfolioUniverse ?? []}
+                simulatedPrices={simulatedPrices}
+                monthlyBudget={data?.investmentPlan?.monthlyBudget}
+            />
             <DeleteConfirmationModal 
                 isOpen={!!planToDelete} 
                 onClose={() => setPlanToDelete(null)} 

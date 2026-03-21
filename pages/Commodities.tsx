@@ -15,6 +15,7 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -157,6 +158,7 @@ interface CommoditiesProps {
 
 const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
@@ -185,6 +187,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const handleConfirmCommodityDelete = () => { if(commodityToDelete) { deleteCommodityHolding(commodityToDelete.id); setCommodityToDelete(null); } };
 
     const handleUpdatePrices = async () => {
+        trackAction('update-commodity-prices', 'Commodities');
         const holdingsForPrices = commodityRows;
         if (!holdingsForPrices.length) return;
         setIsUpdatingPrices(true);

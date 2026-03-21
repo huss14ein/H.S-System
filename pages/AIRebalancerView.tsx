@@ -11,6 +11,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
 import type { Page } from '../types';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
@@ -23,6 +24,7 @@ interface AIRebalancerViewProps {
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
+  const { trackAction } = useSelfLearning();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data?.investments?.[0]?.id ?? '');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
   const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
@@ -35,6 +37,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }, [selectedPortfolioId, portfolios]);
 
   const handleGeneratePlan = useCallback(async () => {
+    trackAction('generate-plan', 'AI Rebalancer');
     if (!selectedPortfolio) {
       alert('Please select a portfolio first.');
       return;
@@ -58,7 +61,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPortfolio, riskProfile]);
+  }, [selectedPortfolio, riskProfile, trackAction]);
 
   const targetAssetMix = useMemo(() => getTargetAllocationForProfile(riskProfile), [riskProfile]);
 
@@ -252,7 +255,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 <label htmlFor="portfolio-select" className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
                   <span className="text-lg">1️⃣</span>
                   Select Portfolio
-                  <InfoHint text="Choose which portfolio to analyze. Holdings and current allocation are taken from your Portfolios data." />
+                  <InfoHint text="Choose which portfolio to analyze. Holdings and current allocation are taken from your Portfolios data." hintId="rebalancer-portfolio" hintPage="AI Rebalancer" />
                 </label>
                 <select
                   id="portfolio-select"
@@ -271,7 +274,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
                   <span className="text-lg">📊</span>
                   Current Allocation
-                  <InfoHint text="Pie chart of current holdings by market value. Use this to see concentration before rebalancing." />
+                  <InfoHint text="Pie chart of current holdings by market value. Use this to see concentration before rebalancing." hintId="rebalancer-pie" hintPage="AI Rebalancer" />
                 </h4>
                 <div className="h-64 w-full">
                   <AllocationPieChart data={currentAllocation} />
@@ -283,7 +286,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
                   <span className="text-lg">2️⃣</span>
                   Risk Profile
-                  <InfoHint text="Conservative: lower volatility focus. Moderate: balanced. Aggressive: higher growth tolerance. AI suggestions adapt to your choice." />
+                  <InfoHint text="Conservative: lower volatility focus. Moderate: balanced. Aggressive: higher growth tolerance. AI suggestions adapt to your choice." hintId="rebalancer-risk-profile" hintPage="AI Rebalancer" />
                 </label>
                 <div className="grid grid-cols-3 gap-3">
                   {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (

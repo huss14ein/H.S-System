@@ -32,18 +32,21 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { subscriptionSpendMonthly } from '../services/transactionIntelligence';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { savingsRate } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
 import { personalFinanceHealthScore } from '../services/decisionScoringEngine';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -54,12 +57,14 @@ interface ExtendedBudget extends Budget {
 const AIExecutiveSummary: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
+    const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const handleGenerate = useCallback(async () => {
         if (!data) return;
+        trackAction('generate-ai-summary', 'Dashboard');
         setIsLoading(true);
         setError(null);
         setSummary('');
@@ -70,7 +75,7 @@ const AIExecutiveSummary: React.FC = () => {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [data]);
+    }, [data, trackAction]);
 
     return (
         <div className="section-card border-t-4 border-secondary">
@@ -133,7 +138,7 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
         <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()} aria-label="Accounts overview, click to open Accounts page">
             <h3 className="section-title"><BuildingLibraryIcon className="h-5 w-5 text-primary"/> Accounts Overview</h3>
             {safeAccounts.length === 0 ? (
-                <p className="text-sm text-slate-500 py-4">No accounts yet. Add accounts to track balances.</p>
+                <p className="text-sm text-slate-500 py-4">Add your bank accounts, savings, or investment platforms to see your balances here.</p>
             ) : (
             <ul className="space-y-3">
                 {safeAccounts.map(acc => (
@@ -162,7 +167,7 @@ const UpcomingBills: React.FC = () => {
 
         // Find recurring fixed expenses from the last year (personal accounts only)
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; transactionNature?: string; date: string }) => t.type === 'expense' && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
+            .filter((t: { type?: string; transactionNature?: string; date: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
             .forEach((t: { description?: string; amount?: number; date: string }) => {
                 const existing = recurringExpenses.get(t.description ?? '') || { totalAmount: 0, lastAmount: 0, lastDate: new Date(0), count: 0 };
                 const thisAmount = Math.abs(Number(t.amount) ?? 0);
@@ -292,9 +297,10 @@ type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance'
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
 
-const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, loading } = useContext(DataContext)!;
+const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
+    const { actionQueue, analysis, ready } = useFinancialEnginesIntegration();
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
@@ -303,6 +309,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     const [isAdmin, setIsAdmin] = useState(false);
     const kpiDensity = 'compact' as const;
 
+    /** Investment rows: tradable cash (ledger), not DB balance or holdings. */
+    const accountsForOverview = useMemo(() => {
+        const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        return list.map((acc: Account) => {
+            if (acc.type === 'Investment') {
+                return { ...acc, balance: tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd) };
+            }
+            return acc;
+        });
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     useEffect(() => {
         const loadRole = async () => {
@@ -320,7 +337,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
         const plan = data.investmentPlan;
         const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
-        const rate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+        const rate = resolveSarPerUsd(data, exchangeRate);
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
         const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
@@ -348,6 +365,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
             if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+
+            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
 
             const now = new Date();
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -382,8 +401,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
 
             // Net worth — shared with Summary / Risk hub (`services/personalNetWorth.ts`)
-            const netWorth = computePersonalNetWorthSAR(data, exchangeRate);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
+            const netWorth = computePersonalNetWorthSAR(data, sarPerUsd);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
             const netWorthPrevMonth = netWorth - monthlyPnL;
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
@@ -398,16 +417,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
             const totalInvestedSar = invTx
                 .filter((t: { type?: string }) => t.type === 'deposit')
-                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, sarPerUsd), 0);
             const totalWithdrawnSar = invTx
                 .filter((t: { type?: string }) => t.type === 'withdrawal')
-                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, sarPerUsd), 0);
             const netCapital = totalInvestedSar - totalWithdrawnSar;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
             
             const monthlySpending = new Map<string, number>();
-            monthlyTransactions.filter((t: { type?: string; budgetCategory?: string }) => t.type === 'expense' && t.budgetCategory).forEach((t: { budgetCategory?: string; amount?: number }) => {
+            monthlyTransactions.filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && t.budgetCategory).forEach((t: { budgetCategory?: string; amount?: number }) => {
                     const currentSpend = monthlySpending.get(t.budgetCategory!) || 0;
                     monthlySpending.set(t.budgetCategory!, currentSpend + Math.abs(Number(t.amount) ?? 0));
                 });
@@ -433,7 +452,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             });
             const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
 
-            const uncategorizedTransactions = transactions.filter((t: { type?: string; budgetCategory?: string }) => t.type === 'expense' && !t.budgetCategory);
+            const uncategorizedTransactions = transactions.filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory);
 
             const recentTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -506,20 +525,24 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
         const goals = data?.goals ?? [];
-        const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
-        const savingsRatePct = savingsRate(txs);
-        const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
         const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
         const incomeTx = txs.filter((t: { date: string; type?: string; category?: string; amount?: number }) =>
             countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoAgo);
-        const grossMonthlyIncome = incomeTx.length > 0
-            ? incomeTx.reduce((s: number, t: { amount?: number }) => s + (Number(t.amount) ?? 0), 0) / 6
-            : 1;
         const liquidAssets = accounts
             .filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''))
             .reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-        const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidAssets);
         const goalTotalTarget = goals.reduce((s: number, g: { targetAmount?: number }) => s + (g.targetAmount ?? 0), 0);
+
+        const hasSufficientData = liquidAssets > 0 || incomeTx.length > 0 || goalTotalTarget > 0;
+        if (!hasSufficientData) return null;
+
+        const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
+        const savingsRatePct = savingsRate(txs);
+        const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
+        const grossMonthlyIncome = incomeTx.length > 0
+            ? incomeTx.reduce((s: number, t: { amount?: number }) => s + (Number(t.amount) ?? 0), 0) / 6
+            : 1;
+        const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidAssets);
         const goalTotalCurrent = goals.reduce((s: number, g: { currentAmount?: number }) => s + (g.currentAmount ?? 0), 0);
         const goalProgressScore = goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 100;
         const budgetVariance = (kpiSummary as { budgetVariance?: number }).budgetVariance ?? 0;
@@ -560,8 +583,30 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
         );
     }
 
+    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const goals = data?.goals ?? [];
+    const isNewUser = accounts.length === 0 || (accounts.length <= 1 && recentTransactions.length === 0 && goals.length === 0);
+
     return (
         <div className="page-container">
+            {isNewUser && (
+                <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
+                    <h2 className="text-lg font-semibold text-slate-800">{PAGE_INTROS.Dashboard.title}</h2>
+                    <p className="mt-1 text-sm text-slate-600">{PAGE_INTROS.Dashboard.description}</p>
+                    <p className="mt-3 text-sm font-medium text-slate-700">Get started in 4 steps:</p>
+                    <ul className="mt-2 space-y-2">
+                        {GETTING_STARTED_STEPS.map((step, i) => (
+                            <li key={step.page} className="flex items-center gap-3 text-sm">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary font-semibold">{i + 1}</span>
+                                <span className="text-slate-600">{step.label}</span>
+                                <button type="button" onClick={() => setActivePage(step.page)} className="ml-auto text-primary font-medium hover:underline shrink-0">
+                                    {step.action} →
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
             <AIExecutiveSummary />
 
             {uncategorizedTransactions.length > 0 && (
@@ -612,6 +657,32 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
 
+            {ready && (actionQueue.length > 0 || (analysis?.alerts?.length ?? 0) > 0) && (
+                <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                    <h3 className="text-sm font-semibold text-slate-800 mb-2">Cross-engine actions & alerts</h3>
+                    {analysis?.alerts && analysis.alerts.length > 0 && (
+                        <ul className="space-y-1.5 mb-3">
+                            {analysis.alerts.slice(0, 3).map((a, i) => (
+                                <li key={i} className="text-sm text-amber-800 flex items-start gap-2">
+                                    <ExclamationTriangleIcon className="h-4 w-4 shrink-0 mt-0.5" />
+                                    <span>{a.message}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                    {actionQueue.length > 0 && (
+                        <ul className="space-y-1.5 text-sm text-slate-700">
+                            {actionQueue.slice(0, 5).map((item, i) => (
+                                <li key={i} className="flex justify-between gap-2">
+                                    <span>{item.action}</span>
+                                    <span className="text-slate-500 text-xs shrink-0">P{Math.round(item.priority)}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
             {nextBestActions.length > 0 && (
                 <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
                     <h3 className="text-sm font-semibold text-slate-800 mb-2">Suggested actions</h3>
@@ -619,10 +690,15 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                         {nextBestActions.slice(0, 5).map((action) => (
                             <li key={action.id} className="flex flex-wrap items-start gap-2 text-sm">
                                 <span className="text-slate-700 flex-1 min-w-0">{action.title}</span>
-                                {action.link && setActivePage && (
+                                {action.link && (setActivePage || triggerPageAction) && (
                                     <button
                                         type="button"
-                                        onClick={() => setActivePage(action.link as Page)}
+                                        onClick={() => {
+                                            const page = action.link as Page;
+                                            const subAction = (action as { data?: { action?: string } }).data?.action;
+                                            if (subAction && triggerPageAction) triggerPageAction(page, subAction);
+                                            else setActivePage?.(page);
+                                        }}
                                         className="text-primary font-medium hover:underline shrink-0"
                                     >
                                         {action.linkLabel ?? action.link} →
@@ -634,17 +710,23 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
                 </div>
             )}
 
-            {financialHealthScore != null && (
-                <div className="mb-4 flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
-                    <span className="font-medium text-slate-700">Financial health score:</span>
-                    <span className={`font-bold tabular-nums ${financialHealthScore >= 70 ? 'text-green-700' : financialHealthScore >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
-                        {financialHealthScore}/100
+            <div className="mb-4 flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                <span className="font-medium text-slate-700">Financial health score:</span>
+                {financialHealthScore != null ? (
+                    <>
+                        <span className={`font-bold tabular-nums ${financialHealthScore >= 70 ? 'text-green-700' : financialHealthScore >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
+                            {financialHealthScore}/100
+                        </span>
+                        <span className="text-slate-500 text-xs" title="Liquidity, savings rate, debt pressure, goal progress, expense control">
+                            (liquidity, savings, debt, goals, expenses)
+                        </span>
+                    </>
+                ) : (
+                    <span className="text-slate-500 text-xs">
+                        Add account balances, transactions, or goals to see your score.
                     </span>
-                    <span className="text-slate-500 text-xs" title="Liquidity, savings rate, debt pressure, goal progress, expense control">
-                        (liquidity, savings, debt, goals, expenses)
-                    </span>
-                </div>
-            )}
+                )}
+            </div>
 
             <p className="text-xs text-slate-500 mb-1">
                 Drag cards to reorder them; click a card to open that page.
@@ -721,7 +803,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void }> = ({ setActiv
             </div>
             
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <AccountsOverview accounts={(data as any)?.personalAccounts ?? data?.accounts ?? []} onClick={() => setActivePage('Accounts')} />
+                <AccountsOverview accounts={accountsForOverview} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 

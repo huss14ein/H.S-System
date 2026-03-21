@@ -12,6 +12,7 @@ import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { reconcileCashAccountBalance } from '../services/dataQuality';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import {
   validateSystemIntegrity,
@@ -325,7 +326,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       holdingExceptions,
     });
 
-    const missingCategory = (transactions ?? []).some((t) => t.type === 'expense' && !t.budgetCategory);
+    const missingCategory = (transactions ?? []).some((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory);
     const cashDrift = cashExceptions[0] ? { accountId: cashExceptions[0].accountId, drift: cashExceptions[0].drift } : undefined;
     const repairSuggestions = repairSuggestionEngine({ cashDrift, missingCategory });
 

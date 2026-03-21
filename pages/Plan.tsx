@@ -33,6 +33,8 @@ import {
 } from '../services/householdBudgetEngine';
 import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/enhancedBudgetEngine';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../services/transactionFilters';
+import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
 
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -135,8 +137,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const [planSubPage, setPlanSubPage] = useState<'overview' | 'experts'>('overview');
 
     const budgets = data?.budgets ?? [];
-    const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const transactions = getPersonalTransactions(data);
+    const accounts = getPersonalAccounts(data);
     const goals = data?.goals ?? [];
     const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
     const investmentPlan = data?.investmentPlan;
@@ -260,10 +262,30 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     React.useEffect(() => {
         const yearTx = transactions.filter((t: { date: string }) => new Date(t.date).getFullYear() === year);
 
-        // Income: planned and actual from Transactions (income type only); add expected recurring income to planned
+        // Suggested monthly salary from transactions: plan year first, then any year when plan year has no income (exclude Transfer/Transfers)
+        const planYearIncomeByMonth = Array(12).fill(0);
+        yearTx.forEach((t: { type?: string; amount?: number; category?: string }) => {
+            if (!countsAsIncomeForCashflowKpi(t)) return;
+            const d = new Date((t as any).date);
+            planYearIncomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+        });
+        const planYearWithData = planYearIncomeByMonth.filter((v) => v > 0);
+        let suggestedMonthlySalary = planYearWithData.length > 0 ? Math.round(planYearWithData.reduce((a, b) => a + b, 0) / planYearWithData.length) : 0;
+        if (suggestedMonthlySalary === 0 && transactions.length > 0) {
+            const anyYearIncome = Array(12).fill(0);
+            (transactions as Array<{ date: string; type?: string; amount?: number; category?: string }>).forEach((t) => {
+                if (!countsAsIncomeForCashflowKpi(t)) return;
+                const d = new Date(t.date);
+                anyYearIncome[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+            });
+            const anyWithData = anyYearIncome.filter((v) => v > 0);
+            suggestedMonthlySalary = anyWithData.length > 0 ? Math.round(anyWithData.reduce((a, b) => a + b, 0) / anyWithData.length) : 0;
+        }
+
+        // Income: planned and actual from Transactions (exclude Transfer/Transfers to avoid double-counting)
         const incomeActuals = Array(12).fill(0);
-        yearTx.forEach((t: { type?: string; amount: number; date: string }) => {
-            if (t.type === 'income') {
+        yearTx.forEach((t: { type?: string; amount: number; date: string; category?: string }) => {
+            if (countsAsIncomeForCashflowKpi(t)) {
                 const monthIndex = new Date(t.date).getMonth();
                 incomeActuals[monthIndex] += Number(t.amount) || 0;
             }
@@ -271,9 +293,16 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
         const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
         const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
-        const incomePlanned = incomeActuals.map((actual) => actual > 0 ? actual : incomeAvg);
-        // Recurring income: include both auto and manual so plan reflects full expected recurring (actuals already in Transactions)
-        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'income').reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
+        const salaryBaseline = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0
+            ? expectedMonthlySalary
+            : (incomeAvg > 0 ? incomeAvg : suggestedMonthlySalary);
+        const overrideByMonth = new Map((householdOverrides ?? []).map((o) => [((o.month ?? o.monthIndex ?? 1) - 1), Number(o.salary ?? 0)]));
+        const incomePlanned = incomeActuals.map((actual, m) => {
+            const override = overrideByMonth.get(m);
+            if (override != null && override > 0) return override;
+            return actual > 0 ? actual : (salaryBaseline || incomeAvg);
+        });
+        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string; category?: string; budgetCategory?: string }) => r.enabled && r.type === 'income' && !isInternalTransferTransaction({ category: r.budgetCategory || r.category })).reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
         for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
         const incomeRow: PlanRow = {
             type: 'income',
@@ -289,15 +318,20 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
         const budgetToMonthly = (limit: number, period?: string) =>
             period === 'yearly' ? limit / 12 : period === 'weekly' ? limit * (52 / 12) : period === 'daily' ? limit * (365 / 12) : limit;
+        const normalizeCategory = (cat: string) => {
+            const c = String(cat ?? '').trim().toLowerCase();
+            return c === 'transfers' ? 'Transfer' : cat;
+        };
         yearBudgets.forEach((b: { category: string; limit: number; month?: number; period?: string }) => {
             const limit = Number(b.limit) || 0;
             const period = (b as any).period;
             const monthly = budgetToMonthly(limit, period);
             const monthIndex = ((b as any).month ?? 1) - 1;
-            if (!byCategory.has(b.category)) {
-                byCategory.set(b.category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+            const key = normalizeCategory(b.category);
+            if (!byCategory.has(key)) {
+                byCategory.set(key, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
             }
-            const planned = byCategory.get(b.category)!.planned;
+            const planned = byCategory.get(key)!.planned;
             // Yearly, weekly, and daily apply to the whole year; monthly applies only to its calendar month
             const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
             if (appliesAllYear) {
@@ -308,9 +342,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         });
 
         yearTx.forEach((t: { type?: string; amount: number; date: string; category?: string; budgetCategory?: string }) => {
-            if (t.type !== 'expense') return;
+            if (!countsAsExpenseForCashflowKpi(t)) return;
             const monthIndex = new Date(t.date).getMonth();
-            const category = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
+            const raw = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
+            const category = normalizeCategory(raw);
             if (!byCategory.has(category)) {
                 byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
             }
@@ -318,8 +353,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         });
 
         // Recurring expenses: add expected amount to planned for each category (every month); include both auto and manual so plan aligns with recurring from Transactions
-        recurringTransactions.filter((r: { enabled: boolean; type: string }) => r.enabled && r.type === 'expense').forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
-            const cat = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
+        recurringTransactions.filter((r: { enabled: boolean; type: string; category?: string; budgetCategory?: string }) => r.enabled && r.type === 'expense' && !isInternalTransferTransaction({ category: r.budgetCategory || r.category })).forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
+            const raw = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
+            const cat = normalizeCategory(raw);
             if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
             const row = byCategory.get(cat)!;
             const amt = Number(r.amount) || 0;
@@ -353,7 +389,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             monthly_actual: investmentActuals,
         };
         setPlanData([incomeRow, ...expenseRows, investmentRow]);
-    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions]);
+    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions, expectedMonthlySalary, householdOverrides]);
     
     const processedPlanData: PlanRow[] = useMemo(() => {
         let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
@@ -521,9 +557,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
         const incomeByMonth = Array(12).fill(0);
-        (transactions as Array<{ date: string; type?: string; amount?: number }>).forEach((t) => {
+        (transactions as Array<{ date: string; type?: string; amount?: number; category?: string }>).forEach((t) => {
             const d = new Date(t.date);
-            if (d.getFullYear() !== year || t.type !== 'income') return;
+            if (d.getFullYear() !== year || !countsAsIncomeForCashflowKpi(t)) return;
             incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
         });
         const withData = incomeByMonth.filter((v) => v > 0);
@@ -683,7 +719,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </>
                 )}
                 <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
-                    Actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals from Goals; investment from Investment Plan; debt context from Liabilities.
+                    Actuals from Transactions; planned limits from Budgets; income planned uses expected salary (Household Engine) or transaction average when no salary set; recurring and scheduled transfers from Accounts/Recurring; goals from Goals; investment planned & actual from Investment Plan; debt context from Liabilities.
                 </span>
                 {householdProfileCloudEnabled && householdProfileSaveStatus !== 'idle' && (
                     <p className={`text-xs w-full pt-2 mt-1 border-t border-slate-200/80 ${householdProfileSaveStatus === 'error' ? 'text-amber-700' : householdProfileSaveStatus === 'saved' ? 'text-emerald-600' : 'text-slate-500'}`} role="status" aria-live="polite">

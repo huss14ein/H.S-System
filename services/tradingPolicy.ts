@@ -14,6 +14,22 @@ export const DEFAULT_TRADING_POLICY: TradingPolicy = {
   requireAckLargeSellNotional: 25000,
 };
 
+export const TRADING_POLICY_PRESETS: Record<string, TradingPolicy> = {
+  conservative: {
+    minRunwayMonthsToAllowBuys: 3,
+    maxPositionWeightPct: 15,
+    blockBuysIfMonthlyNetNegative: true,
+    requireAckLargeSellNotional: 10000,
+  },
+  moderate: { ...DEFAULT_TRADING_POLICY },
+  aggressive: {
+    minRunwayMonthsToAllowBuys: 0.5,
+    maxPositionWeightPct: 50,
+    blockBuysIfMonthlyNetNegative: false,
+    requireAckLargeSellNotional: 50000,
+  },
+};
+
 export function loadTradingPolicy(): TradingPolicy {
   try {
     const raw = localStorage.getItem(KEY);

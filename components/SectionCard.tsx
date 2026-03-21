@@ -1,5 +1,8 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useState } from 'react';
 import InfoHint from './InfoHint';
+import { ChevronDownIcon } from './icons/ChevronDownIcon';
+import { ChevronUpIcon } from './icons/ChevronUpIcon';
+import { resolveSectionInfoHint, type SectionHintPreset } from '../content/sectionInfoHints';
 
 interface SectionCardProps {
   children: ReactNode;
@@ -7,8 +10,16 @@ interface SectionCardProps {
   title?: string;
   /** Optional icon before title */
   icon?: ReactNode;
-  /** Short help text (?) next to title — use for engines, metrics, or non-obvious UI */
+  /** Short help text (?) next to title — overrides registry when set */
   infoHint?: string;
+  /** Lookup in `content/sectionInfoHints.ts` (semantic key or normalized title) */
+  infoHintKey?: string;
+  /** Preset blurb when no title-specific copy exists */
+  hintPreset?: SectionHintPreset;
+  /** Hide the (!) hint entirely */
+  noHint?: boolean;
+  /** When true (default), titled sections without registry copy get the default one-liner */
+  autoHint?: boolean;
   /** Optional hint/tooltip or extra header content */
   headerAction?: ReactNode;
   /** If true, card has hover lift (for clickable cards) */
@@ -17,6 +28,14 @@ interface SectionCardProps {
   onClick?: () => void;
   /** Extra class for the card container */
   className?: string;
+  /** Optional id for anchor/jump links */
+  id?: string;
+  /** When true, section is collapsible to reduce clutter */
+  collapsible?: boolean;
+  /** One-line summary shown when collapsed (use with collapsible) */
+  collapsibleSummary?: string;
+  /** Start expanded when collapsible (default: false) */
+  defaultExpanded?: boolean;
 }
 
 /**
@@ -28,47 +47,94 @@ const SectionCard: React.FC<SectionCardProps> = ({
   title,
   icon,
   infoHint,
+  infoHintKey,
+  hintPreset,
+  noHint,
+  autoHint = true,
   headerAction,
   hover = false,
   onClick,
   className = '',
+  id,
+  collapsible = false,
+  collapsibleSummary,
+  defaultExpanded = false,
 }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const cardClass = hover || onClick ? 'section-card-hover' : 'section-card';
+  const resolvedHint = resolveSectionInfoHint({
+    title,
+    infoHint,
+    infoHintKey,
+    hintPreset,
+    noHint,
+    autoHint,
+  });
+
+  const headerContent = (title || headerAction) && (
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 mb-4 min-w-0">
+      {title && (
+        <h2 className="section-title flex-1 min-w-0 flex flex-wrap items-center gap-1">
+          {icon}
+          <span className="inline-flex items-center gap-0.5">
+            {title}
+            {resolvedHint ? <InfoHint text={resolvedHint} /> : null}
+          </span>
+        </h2>
+      )}
+      {headerAction && <div className="flex-shrink-0">{headerAction}</div>}
+    </div>
+  );
+
   const content = (
     <>
-      {(title || headerAction) && (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 mb-4 min-w-0">
-          {title && (
-            <h2 className="section-title flex-1 min-w-0 flex flex-wrap items-center gap-1">
-              {icon}
-              <span className="inline-flex items-center gap-0.5">
-                {title}
-                {infoHint ? <InfoHint text={infoHint} /> : null}
-              </span>
-            </h2>
-          )}
-          {headerAction && <div className="flex-shrink-0">{headerAction}</div>}
+      {collapsible && title ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer hover:bg-slate-50/80 rounded-lg transition-colors -m-1 p-1"
+          aria-expanded={expanded}
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {icon}
+            <h2 className="section-title text-base font-semibold text-slate-800 truncate">{title}</h2>
+            {resolvedHint ? <InfoHint text={resolvedHint} /> : null}
+            {collapsibleSummary && !expanded && (
+              <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {collapsibleSummary}</span>
+            )}
+          </div>
+          <span className="flex-shrink-0 p-1 rounded text-slate-400 hover:text-slate-600" aria-hidden>
+            {expanded ? <ChevronUpIcon className="h-5 w-5" /> : <ChevronDownIcon className="h-5 w-5" />}
+          </span>
+        </button>
+      ) : (
+        headerContent
+      )}
+      {(!collapsible || expanded) && (
+        <div className={collapsible ? 'pt-3 mt-1 border-t border-slate-100' : undefined}>
+          {collapsible && headerAction ? <div className="mb-2">{headerAction}</div> : null}
+          {children}
         </div>
       )}
-      {children}
     </>
   );
 
-  if (onClick) {
+  const wrapperProps = { id, className: `${cardClass} ${className}` };
+  if (onClick && !collapsible) {
     return (
       <div
         role="button"
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onClick())}
-        className={`${cardClass} ${className}`}
+        {...wrapperProps}
       >
         {content}
       </div>
     );
   }
 
-  return <div className={`${cardClass} ${className}`}>{content}</div>;
+  return <div {...wrapperProps}>{content}</div>;
 };
 
 export default SectionCard;

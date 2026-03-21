@@ -17,14 +17,41 @@ import InfoHint from '../components/InfoHint';
 import { StatementIcons } from '../constants/statementIcons';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
+import { useSelfLearning } from '../context/SelfLearningContext';
 import { inferIsAdmin } from '../utils/role';
 import {
     validateTransactionRequiredFields,
     findDuplicateTransactions,
 } from '../services/dataQuality';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import {
+    countsAsExpenseForCashflowKpi,
+    countsAsIncomeForCashflowKpi,
+    isInternalTransferTransaction,
+} from '../services/transactionFilters';
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
+
+/**
+ * Income-specific categories. Do not include "Transfer" / "Transfers": those labels are reserved for
+ * internal account moves and are excluded from cashflow KPIs (`isInternalTransferTransaction` in
+ * `transactionFilters.ts`), so offering them here would suggest income that never appears in KPIs.
+ */
+const INCOME_CATEGORIES = ['Salary', 'Bonus', 'Investment Income', 'Freelance', 'Rental Income', 'Other Income'];
+
+/** Map AI/local strings onto a real category from `allowed` (exact, case-insensitive, then substring fuzzy). */
+function matchToAllowedCategory(suggested: string, allowed: string[]): string | null {
+    const s = String(suggested ?? '').trim();
+    if (!s || allowed.length === 0) return null;
+    if (allowed.includes(s)) return s;
+    const lower = s.toLowerCase();
+    const ci = allowed.find((a) => a.toLowerCase() === lower);
+    if (ci) return ci;
+    return (
+        allowed.find(
+            (a) => a.toLowerCase().includes(lower) || lower.includes(a.toLowerCase())
+        ) ?? null
+    );
+}
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -37,6 +64,19 @@ const TransactionModal: React.FC<{
     accounts: Account[],
     existingTransactions: Transaction[],
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts, existingTransactions }) => {
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const incomeCategoryOptions = React.useMemo(
+        () => [
+            ...new Set([
+                ...INCOME_CATEGORIES,
+                ...(existingTransactions ?? [])
+                    .filter((t) => countsAsIncomeForCashflowKpi(t))
+                    .map((t) => t.category)
+                    .filter(Boolean),
+            ]),
+        ],
+        [existingTransactions]
+    );
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -85,7 +125,9 @@ const TransactionModal: React.FC<{
             setDate(new Date(transactionToEdit.date).toISOString().split('T')[0]);
             setDescription(transactionToEdit.description);
             setAmount(String(Math.abs(transactionToEdit.amount)));
-            setCategory(transactionToEdit.category);
+            setCategory(transactionToEdit.type === 'income' && !incomeCategoryOptions.includes(transactionToEdit.category)
+                ? (incomeCategoryOptions[0] || 'Salary')
+                : transactionToEdit.category);
             setSubcategory(transactionToEdit.subcategory || '');
             setBudgetCategory(transactionToEdit.budgetCategory || '');
             setType(transactionToEdit.type);
@@ -107,14 +149,21 @@ const TransactionModal: React.FC<{
                 ]);
             }
         } else {
+            const learnedAccount = getLearnedDefault('transaction-add', 'accountId') as string | undefined;
+            const learnedType = getLearnedDefault('transaction-add', 'type') as 'income' | 'expense' | undefined;
+            const learnedCategory = getLearnedDefault('transaction-add', 'category') as string | undefined;
+            const learnedBudgetCat = getLearnedDefault('transaction-add', 'budgetCategory') as string | undefined;
+            const validAccount = learnedAccount && accounts.some(a => a.id === learnedAccount) ? learnedAccount : accounts[0]?.id || '';
+            const validCategory = learnedCategory && allCategories.includes(learnedCategory) ? learnedCategory : allCategories[0] || 'Groceries';
+            const validBudgetCat = learnedBudgetCat && budgetCategories.includes(learnedBudgetCat) ? learnedBudgetCat : budgetCategories[0] || '';
             setDate(new Date().toISOString().split('T')[0]);
             setDescription('');
             setAmount('');
-            setCategory(allCategories[0] || 'Groceries');
+            setCategory(validCategory);
             setSubcategory('');
-            setBudgetCategory(budgetCategories[0] || '');
-            setType('expense');
-            setAccountId(accounts[0]?.id || '');
+            setBudgetCategory(validBudgetCat);
+            setType(learnedType === 'income' || learnedType === 'expense' ? learnedType : 'expense');
+            setAccountId(validAccount);
             setTransactionNature('Variable');
             setExpenseType('Core');
             setUserNote('');
@@ -125,7 +174,7 @@ const TransactionModal: React.FC<{
             ]);
         }
         setAiSuggestionNote(null);
-    }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts]);
+    }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts, incomeCategoryOptions, getLearnedDefault]);
 
     const buildTransactionData = (): Omit<Transaction, 'id'> | null => {
         const absAmt = Math.abs(parseFloat(amount));
@@ -220,33 +269,72 @@ const TransactionModal: React.FC<{
             } else {
                 await onSave(transactionData);
             }
+            if (!transactionToEdit) {
+                trackFormDefault('transaction-add', 'accountId', accountId);
+                trackFormDefault('transaction-add', 'type', type);
+                trackFormDefault('transaction-add', 'category', category);
+                trackFormDefault('transaction-add', 'budgetCategory', budgetCategory);
+            }
             onClose();
         } catch (error) {
             // Error already alerted in DataContext
         }
     };
-    
+
+    /** Budget select only lists `budgetCategories`; never set state to a value not in that list. */
+    const applyBudgetForSuggestedCategory = (suggestedCat: string) => {
+        if (budgetCategories.length === 0) {
+            setBudgetCategory('');
+            return;
+        }
+        if (budgetCategories.includes(suggestedCat)) {
+            setBudgetCategory(suggestedCat);
+            return;
+        }
+        const matching = budgetCategories.find(
+            (bc) =>
+                bc.toLowerCase().includes(suggestedCat.toLowerCase()) ||
+                suggestedCat.toLowerCase().includes(bc.toLowerCase())
+        );
+        if (matching) setBudgetCategory(matching);
+    };
+
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
         setAiSuggestionNote(null);
         try {
-            const suggested = await getAICategorySuggestion(description, allCategories);
-            if (suggested && allCategories.includes(suggested)) {
+            const categoriesToUse = budgetCategories.length > 0 ? budgetCategories : allCategories;
+            const suggested = await getAICategorySuggestion(description, categoriesToUse);
+            if (suggested && categoriesToUse.includes(suggested)) {
                 setCategory(suggested);
-                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
-                if(matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
+                applyBudgetForSuggestedCategory(suggested);
                 setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
             } else if (suggested) {
-                setCategory(suggested);
-                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
+                const matched =
+                    matchToAllowedCategory(suggested, categoriesToUse) ??
+                    matchToAllowedCategory(suggested, allCategories);
+                if (matched) {
+                    setCategory(matched);
+                    applyBudgetForSuggestedCategory(matched);
+                    const relabel =
+                        matched !== suggested.trim()
+                            ? `Category suggested: ${matched} (matched from “${suggested.trim()}”)`
+                            : `Category suggested: ${matched}`;
+                    setAiSuggestionNote({ tone: 'success', text: relabel });
+                } else {
+                    setAiSuggestionNote({
+                        tone: 'warning',
+                        text: `AI suggested “${String(suggested).trim()}”, which doesn’t match your categories. Pick one from the list.`,
+                    });
+                }
             } else {
                 const fallback = suggestCategoryLocally(description);
-                if (fallback) {
-                    setCategory(fallback);
-                    const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
-                    if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
-                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${fallback}` });
+                const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
+                if (matched) {
+                    setCategory(matched);
+                    applyBudgetForSuggestedCategory(matched);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${matched}` });
                 } else {
                     setAiSuggestionNote({ tone: 'info', text: 'No suggestion available. You can continue with your selected category.' });
                 }
@@ -254,11 +342,11 @@ const TransactionModal: React.FC<{
         } catch (e) {
             console.error("Category suggestion failed", e);
             const fallback = suggestCategoryLocally(description);
-            if (fallback) {
-                setCategory(fallback);
-                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
-                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
-                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${fallback}` });
+            const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
+            if (matched) {
+                setCategory(matched);
+                applyBudgetForSuggestedCategory(matched);
+                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${matched}` });
             } else {
                 setAiSuggestionNote({ tone: 'warning', text: 'AI timeout/unavailable. Please continue manually.' });
             }
@@ -266,7 +354,17 @@ const TransactionModal: React.FC<{
             setIsSuggestingCategory(false);
         }
     };
-    
+
+    const handleSuggestCategoryRef = React.useRef(handleSuggestCategory);
+    handleSuggestCategoryRef.current = handleSuggestCategory;
+
+    // Auto-suggest when adding new expense: debounced on description (5+ chars)
+    React.useEffect(() => {
+        if (!isOpen || transactionToEdit || type !== 'expense' || !description?.trim() || description.trim().length < 5) return;
+        const t = window.setTimeout(() => handleSuggestCategoryRef.current(), 700);
+        return () => clearTimeout(t);
+    }, [description, type, isOpen, transactionToEdit]);
+
     const isInvestmentTransfer = type === 'expense' && budgetCategory === 'Savings & Investments';
 
     return (
@@ -274,16 +372,19 @@ const TransactionModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Date <InfoHint text="Transaction date; used for monthly reports and budget tracking." /></label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Date <InfoHint text="Transaction date; used for monthly reports and budget tracking." hintId="transaction-date" hintPage="Transactions" /></label>
                         <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="Enter a positive number; the system records income as positive and expense as negative." /></label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                        Amount{' '}
+                        <InfoHint text="Enter a positive number. The stored amount is + for income and − for expense. Account-to-account transfers use one expense and one income leg—those are excluded from the Transactions page Income/Expenses totals (Transfer/Transfers category)." hintId="transaction-amount" hintPage="Transactions" />
+                    </label>
                         <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
                     </div>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Description <InfoHint text="Short description for the transaction; AI can suggest category from this." /></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Description <InfoHint text="Short description for the transaction; AI can suggest category from this." hintId="transaction-description" hintPage="Transactions" /></label>
                     <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md"/>
                 </div>
                 <div>
@@ -294,14 +395,22 @@ const TransactionModal: React.FC<{
                     </select>
                 </div>
                 <div className="flex space-x-4">
-                    <label className="flex items-center"><input type="radio" value="expense" checked={type === 'expense'} onChange={() => setType('expense')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Expense</span></label>
-                    <label className="flex items-center"><input type="radio" value="income" checked={type === 'income'} onChange={() => setType('income')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Income</span></label>
+                    <label className="flex items-center"><input type="radio" value="expense" checked={type === 'expense'} onChange={() => { setType('expense'); setCategory(allCategories[0] || 'Groceries'); }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Expense</span></label>
+                    <label className="flex items-center"><input type="radio" value="income" checked={type === 'income'} onChange={() => { setType('income'); setCategory(incomeCategoryOptions[0] || 'Salary'); }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Income</span></label>
                 </div>
+                {type === 'income' && (
+                    <div>
+                        <label htmlFor="income-category" className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <select id="income-category" value={incomeCategoryOptions.includes(category) ? category : (incomeCategoryOptions[0] || 'Salary')} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md">
+                            {incomeCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+                )}
                  {type === 'expense' && (
                      <div className="space-y-4 border-t pt-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Spending category; use AI suggest (sparkle) to auto-fill from description." /></label>
+                                <label htmlFor="category" className="block text-sm font-medium text-gray-700 flex items-center">Category <InfoHint text="Spending category; use AI suggest (sparkle) to auto-fill from description." hintId="transaction-category" hintPage="Transactions" /></label>
                                 <div className="relative">
                                     <input list="categories" id="category-input" value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md pr-10"/>
                                     <datalist id="categories">{allCategories.map(c => <option key={c} value={c} />)}</datalist>
@@ -322,9 +431,21 @@ const TransactionModal: React.FC<{
                         </div>
                         <div>
                             <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
-                            <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                                <option value="" disabled>Map to Budget</option>
-                                {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                            <select
+                                id="budget-category"
+                                value={budgetCategory}
+                                onChange={(e) => setBudgetCategory(e.target.value)}
+                                required={budgetCategories.length > 0}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                            >
+                                <option value="">
+                                    {budgetCategories.length > 0 ? 'Select budget category' : '— No budget categories —'}
+                                </option>
+                                {budgetCategories.map((c) => (
+                                    <option key={c} value={c}>
+                                        {c}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -463,6 +584,7 @@ const RecurringModal: React.FC<{
     accounts: Account[];
     budgetCategories: string[];
 }> = ({ isOpen, onClose, onSave, recurring, accounts, budgetCategories }) => {
+    const incomeCategoryOptions = React.useMemo(() => [...new Set([...INCOME_CATEGORIES, ...(recurring?.type === 'income' && recurring?.category && !INCOME_CATEGORIES.includes(recurring.category) ? [recurring.category] : [])])], [recurring]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
     const [type, setType] = useState<'income' | 'expense'>('expense');
@@ -480,7 +602,7 @@ const RecurringModal: React.FC<{
             setType(recurring.type);
             setAccountId(recurring.accountId);
             setBudgetCategory(recurring.budgetCategory ?? '');
-            setCategory(recurring.category);
+            setCategory(recurring.type === 'income' ? (incomeCategoryOptions.includes(recurring.category) ? recurring.category : (incomeCategoryOptions[0] || 'Salary')) : recurring.category);
             setDayOfMonth(String(recurring.dayOfMonth));
             setEnabled(recurring.enabled);
             setAddManually(recurring.addManually === true);
@@ -490,12 +612,12 @@ const RecurringModal: React.FC<{
             setType('expense');
             setAccountId(accounts[0]?.id ?? '');
             setBudgetCategory(budgetCategories[0] ?? '');
-            setCategory('Rent');
+            setCategory(budgetCategories[0] ?? 'Rent');
             setDayOfMonth('1');
             setEnabled(true);
             setAddManually(false);
         }
-    }, [recurring, isOpen, accounts, budgetCategories]);
+    }, [recurring, isOpen, accounts, budgetCategories, incomeCategoryOptions]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -533,7 +655,11 @@ const RecurringModal: React.FC<{
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-                        <select value={type} onChange={e => setType(e.target.value as 'income' | 'expense')} className="select-base">
+                        <select value={type} onChange={e => {
+                            const next = e.target.value as 'income' | 'expense';
+                            setType(next);
+                            setCategory(next === 'income' ? (incomeCategoryOptions[0] || 'Salary') : (budgetCategories[0] || 'Rent'));
+                        }} className="select-base">
                             <option value="income">Income</option>
                             <option value="expense">Expense</option>
                         </select>
@@ -559,10 +685,19 @@ const RecurringModal: React.FC<{
                         </select>
                     </div>
                 )}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Category (e.g. Rent, Salary)</label>
-                    <input type="text" value={category} onChange={e => setCategory(e.target.value)} className="input-base" placeholder="Rent" />
-                </div>
+                {type === 'income' ? (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <select value={incomeCategoryOptions.includes(category) ? category : (incomeCategoryOptions[0] || 'Salary')} onChange={e => setCategory(e.target.value)} className="select-base">
+                            {incomeCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+                ) : (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category (e.g. Rent)</label>
+                        <input type="text" value={category} onChange={e => setCategory(e.target.value)} className="input-base" placeholder="Rent" />
+                    </div>
+                )}
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
                     <input type="number" min={1} max={28} value={dayOfMonth} onChange={e => setDayOfMonth(e.target.value)} className="input-base" />
@@ -1023,7 +1158,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     return (
         <PageLayout
-            title="Cash Flow"
+            title="Transactions"
             description="Track income and expenses. Import from bank or trading statements for less manual entry."
             action={
                 <div className="flex flex-wrap items-center gap-2">
@@ -1039,6 +1174,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         >
             <SectionCard
                 title="Recurring (monthly) transactions"
+                collapsible
+                collapsibleSummary="Templates, apply for month"
+                defaultExpanded
                 headerAction={
                     <div className="flex items-center gap-2">
                         <InfoHint text="Define templates (e.g. salary deposit, rent). Use &quot;Apply for this month&quot; to create actual transactions from them. Each rule runs once per month on the chosen day." />
@@ -1134,12 +1272,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                  <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
-                 <SectionCard title="Expense Breakdown" className="h-[400px] flex flex-col">
+                 <SectionCard title="Expense Breakdown" className="h-[400px] flex flex-col" collapsible collapsibleSummary="Category chart" defaultExpanded>
                     <div className="flex-1 min-h-0"><ExpenseBreakdownChart data={expenseBreakdown} /></div>
                 </SectionCard>
             </div>
 
-            <SectionCard title="Transaction History">
+            <SectionCard title="Transaction History" collapsible collapsibleSummary="List, filters" defaultExpanded>
                 <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
                     <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
@@ -1167,6 +1305,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <div className="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                                     <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
                                     <span className="badge-neutral">{transaction.category}</span>
+                                    {isInternalTransferTransaction(transaction) && (
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-800 bg-sky-100 px-1.5 py-0.5 rounded">
+                                            Between accounts
+                                        </span>
+                                    )}
                                     {transaction.status && (
                                         <span className={transaction.status === 'Approved' ? 'badge-success' : transaction.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}>{transaction.status}</span>
                                     )}
@@ -1205,7 +1348,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategories={budgetCategories}
                 allCategories={allCategories}
                 accounts={data?.accounts ?? []}
-                existingTransactions={data?.transactions ?? []}
+                existingTransactions={(data as any)?.personalTransactions ?? data?.transactions ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
             <RecurringModal

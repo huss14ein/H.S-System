@@ -6,6 +6,7 @@
 
 import { useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
+import { getPersonalTransactions, getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import {
   buildUnifiedFinancialContext,
   runCrossEngineAnalysis,
@@ -100,11 +101,11 @@ export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegration
       };
     }
 
-    const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
-    const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
+    const transactions = getPersonalTransactions(data);
+    const accounts = getPersonalAccounts(data);
     const budgets = data.budgets ?? [];
     const goals = data.goals ?? [];
-    const investments = (data as any).personalInvestments ?? data.investments ?? [];
+    const investments = getPersonalInvestments(data);
     const investmentsFlat = mapInvestmentsForContext(investments);
 
     const context = buildUnifiedFinancialContext(
@@ -133,6 +134,9 @@ export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegration
     data?.budgets,
     data?.goals,
     data?.investments,
+    (data as { personalTransactions?: unknown })?.personalTransactions,
+    (data as { personalAccounts?: unknown })?.personalAccounts,
+    (data as { personalInvestments?: unknown })?.personalInvestments,
   ]);
 
   const validateAction = useMemo(() => {

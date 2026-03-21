@@ -19,6 +19,10 @@ import OwnerBadge from '../components/OwnerBadge';
 import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
 import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
+import { useSelfLearning } from '../context/SelfLearningContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -30,6 +34,7 @@ function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolea
 }
 
 const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
@@ -44,13 +49,15 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setStatus(liabilityToEdit.status ?? 'Active');
             setOwner(liabilityToEdit.owner ?? '');
         } else {
+            const learnedType = getLearnedDefault('liability-add', 'type') as Liability['type'] | undefined;
+            const validTypes: Liability['type'][] = ['Credit Card', 'Loan', 'Personal Loan', 'Mortgage', 'Receivable'];
             setName('');
-            setType('Personal Loan');
+            setType(learnedType && validTypes.includes(learnedType) ? learnedType : 'Personal Loan');
             setAmount('');
             setStatus('Active');
             setOwner('');
         }
-    }, [liabilityToEdit, isOpen]);
+    }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -65,6 +72,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             owner: owner.trim() || undefined,
         };
         onSave(newLiability);
+        if (!liabilityToEdit) trackFormDefault('liability-add', 'type', type);
         onClose();
     };
 
@@ -76,12 +84,12 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                         {isReceivable ? 'Description (who owes you)' : 'Liability Name'}
-                        <InfoHint text={isReceivable ? "e.g. Friend's name, client name, or 'Personal loan to Ahmad'" : "A clear name (e.g. Car Loan, Mortgage) for tracking and net worth."} />
+                        <InfoHint text={isReceivable ? "e.g. Friend's name, client name, or 'Personal loan to Ahmad'" : "A clear name (e.g. Car Loan, Mortgage) for tracking and net worth."} hintId="liability-name" hintPage="Liabilities" />
                     </label>
                     <input type="text" placeholder={isReceivable ? "e.g. Ahmad - Personal loan" : "Liability Name"} value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Choose debt or money owed back to you; all are managed under liabilities." /></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="Choose debt or money owed back to you; all are managed under liabilities." hintId="liability-type" hintPage="Liabilities" /></label>
                     <select value={type} onChange={e => setType(e.target.value as Liability['type'])} required className="select-base">
                         <option value="Credit Card">Credit Card</option>
                         <option value="Loan">Loan (e.g., Car, Institutional)</option>
@@ -199,6 +207,8 @@ interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
 const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { data, loading, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
@@ -246,13 +256,11 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [data]);
+    }, [data, sarPerUsd]);
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
@@ -384,7 +392,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             </div>
 
             {allDebts.filter((l) => (l.status ?? 'Active') === 'Active').length > 0 && (
-                <SectionCard title="Debt intelligence" className="mt-6">
+                <SectionCard title="Debt intelligence" className="mt-6" collapsible collapsibleSummary="Payoff order, stress">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <h4 className="font-semibold text-slate-800 mb-1">Payoff order (avalanche)</h4>
@@ -406,7 +414,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </SectionCard>
             )}
 
-            <SectionCard title="What I Owe" className="mt-6">
+            <SectionCard title="What I Owe" className="mt-6" collapsible collapsibleSummary="Debts" defaultExpanded>
                 <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
                 {debts.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
@@ -427,7 +435,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 )}
             </SectionCard>
 
-            <SectionCard title="What I'm Owed" className="mt-6">
+            <SectionCard title="What I'm Owed" className="mt-6" collapsible collapsibleSummary="Receivables">
                 <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Add and track receivables here.</p>
                 {receivables.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No receivables in this group. Switch filter to Paid/All to review historical items, or add an entry.</p>

@@ -5,7 +5,7 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
 import { useCurrency } from '../../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../../utils/currencyMath';
 
 type TimePeriod = '1Y' | '3Y' | 'All';
 
@@ -17,6 +17,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
 
     const chartData = useMemo(() => {
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         const fullHistoricalData = [];
         const now = new Date();
 
@@ -34,7 +35,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
         const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
         const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const currentInvestmentsVal = getAllInvestmentsValueInSAR(investments, exchangeRate);
+        const currentInvestmentsVal = getAllInvestmentsValueInSAR(investments, sarPerUsd);
         const currentCash = accounts.filter((a: { type?: string; balance?: number }) => ['Checking', 'Savings'].includes(a.type ?? '')).reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
         const currentProperty = assets.filter((a: { type?: string; value?: number }) => a.type === 'Property').reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
         const currentLiabilitiesVal = liabilities.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0) + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);

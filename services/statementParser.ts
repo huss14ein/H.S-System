@@ -1,5 +1,6 @@
 import { Transaction, InvestmentTransaction } from '../types';
 import { invokeAI } from './geminiService';
+import { capitalizeCategoryName } from '../utils/categoryFormat';
 
 export interface ParseResult {
   transactions: Transaction[];
@@ -360,7 +361,7 @@ Only return valid JSON, no other text.`;
       date: tx.date || new Date().toISOString().split('T')[0],
       description: tx.description || 'Unknown Transaction',
       amount: typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount) || 0,
-      category: tx.category || 'Uncategorized',
+      category: capitalizeCategoryName(tx.category || 'Uncategorized'),
       accountId,
       type: tx.type || (tx.amount < 0 ? 'expense' : 'income'),
       status: 'Approved' as const

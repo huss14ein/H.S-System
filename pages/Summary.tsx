@@ -10,6 +10,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
@@ -19,7 +20,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
@@ -43,6 +44,7 @@ import {
     generateWealthSummaryReportHtml,
     generateWealthSummaryReportJson,
 } from '../services/reportingEngine';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -78,12 +80,15 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 
 interface SummaryProps {
   setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
     const { data, loading } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -116,7 +121,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const investments = data?.personalInvestments ?? data?.investments ?? [];
         const { netWorth, totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(
             data,
-            exchangeRate
+            sarPerUsd
         );
         const grossAssets = totalAssets + totalReceivable;
         const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
@@ -132,10 +137,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
              return { ...h, gainLoss, gainLossPercent };
         });
 
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
         const individualStocksValue = investmentTreemapData
             .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
         const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
         let investmentStyle = 'Balanced';
         if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
@@ -145,7 +150,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
             investmentTreemapData
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const managedWealthTotal = useMemo(() => {
         if (!data) return 0;
@@ -166,12 +171,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         const debt = (acc: { type?: string; balance?: number }[], liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0) + cashNegative(acc);
         const rec = (liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
         const fullCash = cash(fullAccounts), fullDebt = debt(fullAccounts, fullLiabilities), fullRec = rec(fullLiabilities);
-        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, exchangeRate);
+        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, sarPerUsd);
         const personalCash = cash(personalAccounts), personalDebt = debt(personalAccounts, personalLiabilities), personalRec = rec(personalLiabilities);
-        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, exchangeRate);
+        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, sarPerUsd);
         const fullNW = fullAst - fullDebt + fullRec, personalNW = personalAst - personalDebt + personalRec;
         return Math.round(fullNW - personalNW);
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const emergencyFund = useEmergencyFund(data);
     const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
@@ -245,6 +250,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     }, [data?.transactions, data?.personalTransactions]);
 
     const handleGenerateAnalysis = useCallback(async () => {
+        trackAction('generate-financial-persona', 'Summary');
         setIsLoading(true);
         setError(null);
         setAnalysis(null);
@@ -260,7 +266,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [financialMetricsWithEf]);
+    }, [financialMetricsWithEf, trackAction]);
 
     const wealthSummaryReportPayload = useMemo(() => ({
         generatedAtIso: new Date().toISOString(),
@@ -294,12 +300,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             gainLoss: Number(h.gainLoss ?? 0),
             gainLossPct: Number(h.gainLossPercent ?? 0),
             currency: String(h.portfolioCurrency ?? 'USD'),
-            currentValueSar: toSAR(Number(h.currentValue ?? 0), h.portfolioCurrency, exchangeRate),
+            currentValueSar: toSAR(Number(h.currentValue ?? 0), h.portfolioCurrency, sarPerUsd),
         })),
     }), [
         financialMetricsWithEf,
         investmentTreemapData,
-        exchangeRate,
+        sarPerUsd,
         liquidNw?.liquidNetWorth,
         managedWealthTotal,
         riskLane?.lane,
@@ -394,7 +400,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     >
                         <h2 className="text-lg font-medium text-gray-500 flex items-center gap-1">
                             My Net Worth
-                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" />
+                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" hintId="summary-personal-wealth" hintPage="Summary" />
                         </h2>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
                         <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
@@ -426,9 +432,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             </div>
 
-            <div className="section-card border border-slate-200 bg-slate-50/50 mt-4">
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">Liquid net worth (simplified)</h3>
-                <p className="text-2xl font-extrabold text-primary mb-2">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
+            <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50 mt-4">
+                <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600">
                     <span>Cash (checking/savings): {maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
                     <span>Investments (book): {maskBalance(formatCurrencyString(liquidNw.investmentsSAR, { digits: 0 }))}</span>
@@ -438,11 +443,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     <span className="text-slate-500">~30d cashflow est.: {maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-2">Excludes illiquid physical assets. Investment values in account currency; not FX-normalized to SAR here.</p>
-            </div>
+            </CollapsibleSection>
 
             {isAdmin && (
-                <div className="section-card border border-violet-100 bg-violet-50/40 mt-4">
-                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">Net worth change vs flows (local snapshots)</h3>
+                <CollapsibleSection title="Net worth change vs flows (local snapshots)" summary="Contribution vs market-style residual" className="border border-violet-100 bg-violet-50/40 mt-4">
                     {nwSnapshotInsight.attr ? (
                         <>
                             <ul className="text-sm text-slate-700 space-y-1 list-disc list-inside">
@@ -451,7 +455,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                                 ))}
                             </ul>
                             <p className="text-xs text-slate-500 mt-2">
-                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => setActivePage?.('Risk & Trading Hub')}>Risk &amp; Trading hub →</button>
+                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments')}>Safety &amp; rules →</button>
                             </p>
                         </>
                     ) : (
@@ -465,7 +469,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                             )}
                         </p>
                     )}
-                </div>
+                </CollapsibleSection>
             )}
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">

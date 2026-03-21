@@ -4,7 +4,10 @@ import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 import { getPersonalWealthData } from '../utils/wealthScope';
+import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { auditChangeLog } from '../services/auditLog';
+import { toast } from './ToastContext';
+import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
 
@@ -85,8 +88,9 @@ interface DataContextType {
   deleteRecurringTransaction: (id: string) => Promise<void>;
   applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
   applyRecurringDueToday: () => Promise<number>;
-  addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => Promise<void>;
-  updatePlatform: (platform: Account) => Promise<void>;
+  /** `balance` optional for new accounts (defaults to 0). Investment platforms usually omit it. */
+  addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => Promise<void>;
+  updatePlatform: (platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>;
   deletePlatform: (platformId: string) => Promise<void>;
   addPortfolio: (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => Promise<void>;
   updatePortfolio: (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => Promise<void>;
@@ -115,6 +119,8 @@ interface DataContextType {
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
+  /** Restore data from a previously exported JSON backup. Replaces all current data. */
+  restoreFromBackup: (backup: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
   /** Increments when Clear All Data is run; use in effects that fetch user-specific data (e.g. budget_requests) so they refetch after clear. */
   dataResetKey: number;
   saveExecutionLog: (log: InvestmentPlanExecutionLog) => Promise<void>;
@@ -408,6 +414,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
+    const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
+    /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
+    const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
@@ -752,10 +761,91 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const resetData = async () => {
       if (window.confirm("Are you sure you want to permanently delete all your financial data? This action cannot be undone.")) {
         await _internalResetData();
-        alert("Your data has been cleared.");
+        toast("Your data has been cleared.", 'success');
       }
     };
-    
+
+    const restoreFromBackup = async (backup: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> => {
+        if (!supabase || !auth?.user) return { ok: false, error: 'Not logged in' };
+        const backupVal = validateBackup(backup);
+        if (!backupVal.valid) {
+            return { ok: false, error: backupVal.errors.join(' ') };
+        }
+        const uid = auth.user.id;
+        const db = supabase;
+        const arr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+        const row = (r: any) => ({ ...r, user_id: uid });
+        const table = (name: string, rows: any[]) =>
+            rows.length ? db.from(name).insert(rows.map(row)) : Promise.resolve({ data: null, error: null });
+        try {
+            setLoading(true);
+            await _internalResetData();
+            if (!supabase || !auth?.user) return { ok: false, error: 'Session lost' };
+            setLoading(true);
+            const tables: { key: string; dbTable: string }[] = [
+                { key: 'accounts', dbTable: 'accounts' },
+                { key: 'assets', dbTable: 'assets' },
+                { key: 'liabilities', dbTable: 'liabilities' },
+                { key: 'goals', dbTable: 'goals' },
+                { key: 'transactions', dbTable: 'transactions' },
+                { key: 'budgets', dbTable: 'budgets' },
+                { key: 'watchlist', dbTable: 'watchlist' },
+                { key: 'zakatPayments', dbTable: 'zakat_payments' },
+                { key: 'priceAlerts', dbTable: 'price_alerts' },
+                { key: 'commodityHoldings', dbTable: 'commodity_holdings' },
+                { key: 'plannedTrades', dbTable: 'planned_trades' },
+                { key: 'portfolioUniverse', dbTable: 'portfolio_universe' },
+                { key: 'statusChangeLog', dbTable: 'status_change_log' },
+                { key: 'executionLogs', dbTable: 'execution_logs' },
+                { key: 'recurringTransactions', dbTable: 'recurring_transactions' },
+                { key: 'budgetRequests', dbTable: 'budget_requests' },
+            ];
+            for (const { key, dbTable } of tables) {
+                const rows = arr(backup[key] ?? backup[key.replace(/([A-Z])/g, '_$1').toLowerCase()]);
+                if (rows.length) {
+                    const { error } = await table(dbTable, rows);
+                    if (error) console.warn(`Restore ${dbTable}:`, error);
+                }
+            }
+            const investments = arr(backup.investments);
+            if (investments.length) {
+                const portfolioRows = investments.map((p: any) => {
+                    const { holdings, ...rest } = p;
+                    return row({ ...rest, account_id: rest.account_id ?? rest.accountId });
+                });
+                const { error: ep } = await db.from('investment_portfolios').insert(portfolioRows);
+                if (ep) console.warn('Restore investment_portfolios:', ep);
+                const allHoldings = investments.flatMap((p: any) => (p.holdings ?? []).map((h: any) => ({ ...h, portfolio_id: h.portfolio_id ?? h.portfolioId ?? p.id })));
+                if (allHoldings.length) {
+                    const { error: eh } = await db.from('holdings').insert(allHoldings.map(row));
+                    if (eh) console.warn('Restore holdings:', eh);
+                }
+            }
+            const invTx = arr(backup.investmentTransactions);
+            if (invTx.length) {
+                const { error } = await db.from('investment_transactions').insert(invTx.map(row));
+                if (error) console.warn('Restore investment_transactions:', error);
+            }
+            const settingsData = backup.settings;
+            if (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData)) {
+                const { error } = await db.from('settings').upsert(row(settingsData as any), { onConflict: 'user_id' });
+                if (error) console.warn('Restore settings:', error);
+            }
+            const planData = backup.investmentPlan;
+            if (planData && typeof planData === 'object' && !Array.isArray(planData)) {
+                const { error } = await db.from('investment_plan').upsert(row(planData as any), { onConflict: 'user_id' });
+                if (error) console.warn('Restore investment_plan:', error);
+            }
+            await fetchData();
+            setLoading(false);
+            return { ok: true };
+        } catch (e) {
+            setLoading(false);
+            const msg = e instanceof Error ? e.message : String(e);
+            return { ok: false, error: msg };
+        }
+    };
+
     const loadDemoData = async () => {
         console.warn('[DataContext] loadDemoData is disabled to protect real user data. No demo data was loaded.');
         return;
@@ -765,21 +855,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Assets ---
     const addAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) {
-            alert("You must be logged in to add an asset.");
+            toast("You must be logged in to add an asset.", 'error');
             return;
         }
+        const v = validateAsset({ name: asset.name, type: asset.type, value: asset.value });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const { id, user_id, ...insertData } = asset;
         const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
         if (error) { 
             console.error("Error adding asset:", error); 
-            alert(`Failed to add asset: ${error.message}`);
+            toast(`Failed to add asset: ${error.message}`, 'error');
             throw error; 
         }
         if (newAsset) setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
     };
     const updateAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) return;
+        const v = validateAsset({ name: asset.name, type: asset.type, value: asset.value });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const { error } = await db.from('assets').update(asset).match({ id: asset.id, user_id: auth.user.id });
         if (error) console.error("Error updating asset:", error);
@@ -796,7 +890,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Goals ---
     const addGoal = async (goal: Goal) => {
         if(!supabase || !auth?.user) {
-            alert("You must be logged in to add a goal.");
+            toast("You must be logged in to add a goal.", 'error');
+            return;
+        }
+        const v = validateGoal({ name: goal.name, targetAmount: goal.targetAmount, currentAmount: goal.currentAmount, deadline: goal.deadline });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
             return;
         }
         const db = supabase;
@@ -811,13 +910,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (error) {
             console.error("Error adding goal:", error);
-            alert(`Failed to add goal: ${error.message}`);
+            toast(`Failed to add goal: ${error.message}`, 'error');
             throw error;
         }
         if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, { ...newGoal, priority: newGoal.priority ?? goal.priority ?? 'Medium' }] }));
     };
     const updateGoal = async (goal: Goal) => {
       if(!supabase || !auth?.user) return;
+      const v = validateGoal({ name: goal.name, targetAmount: goal.targetAmount, currentAmount: goal.currentAmount, deadline: goal.deadline });
+      if (!v.valid) {
+        toast(v.errors.join('\n'), 'error');
+        return;
+      }
       const db = supabase;
       let error: any = null;
       for (const payload of goalPayloadVariants(goal)) {
@@ -838,6 +942,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
       if(!supabase || !auth?.user) return;
+      for (const a of allocations) {
+        const v = validateGoalAllocation({ savingsAllocationPercent: a.savingsAllocationPercent });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      }
       const db = supabase;
       const upsertData = allocations.map(a => ({ ...a, user_id: auth.user!.id }));
       const { error } = await db.from('goals').upsert(upsertData);
@@ -848,6 +956,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Liabilities ---
     const addLiability = async (liability: Liability) => {
       if(!supabase) return;
+      const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const { id, user_id, ...insertData } = liability;
       const { data: newLiability, error } = await db.from('liabilities').insert(withUser(insertData)).select().single();
@@ -856,6 +966,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateLiability = async (liability: Liability) => {
       if(!supabase || !auth?.user) return;
+      const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const { error } = await db.from('liabilities').update(liability).match({ id: liability.id, user_id: auth.user.id });
       if(error) console.error("Error updating liability:", error);
@@ -872,10 +984,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Budgets ---
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
-      if (budget.limit <= 0) {
-        alert('Budget amount must be greater than zero.');
-        return;
-      }
+      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
       if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
@@ -898,6 +1008,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateBudget = async (budget: Budget) => {
       if (!supabase || !auth?.user) return;
+      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const { category, month, year, limit, period, tier, destinationAccountId } = budget;
       const payload: Record<string, unknown> = {
@@ -937,8 +1049,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const sourceMonth = sourceDate.getMonth() + 1;
 
         const { data: sourceBudgets, error } = await supabase.from('budgets').select('*').match({ user_id: auth.user.id, year: sourceYear, month: sourceMonth });
-        if (error) { console.error("Error fetching source budgets:", error); alert("Could not fetch last month's budgets."); return; }
-        if (!sourceBudgets || sourceBudgets.length === 0) { alert("No budgets found for the previous month to copy."); return; }
+        if (error) { console.error("Error fetching source budgets:", error); toast("Could not fetch last month's budgets.", 'error'); return; }
+        if (!sourceBudgets || sourceBudgets.length === 0) { toast("No budgets found for the previous month to copy.", 'error'); return; }
 
         const existingTargetCategories = new Set((data?.budgets ?? []).filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
         
@@ -949,14 +1061,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return { ...rest, month: targetMonth, year: targetYear, period: b.period ?? 'monthly', destination_account_id: b.destination_account_id ?? undefined };
             });
 
-        if (budgetsToInsert.length === 0) { alert("All budgets from last month already exist for the selected month."); return; }
+        if (budgetsToInsert.length === 0) { toast("All budgets from last month already exist for the selected month.", 'info'); return; }
 
         const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert.map(b => withUser(b))).select();
-        if (insertError) { console.error("Error copying budgets:", insertError); alert("Failed to copy budgets."); }
+        if (insertError) { console.error("Error copying budgets:", insertError); toast("Failed to copy budgets.", 'error'); }
         else {
             const normalized = (insertedData || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional', destinationAccountId: b.destination_account_id ?? undefined }));
             setData(prev => ({ ...prev, budgets: [...prev.budgets, ...normalized] }));
-            alert(`${insertedData.length} budget(s) copied successfully.`);
+            toast(`${insertedData.length} budget(s) copied successfully.`, 'success');
         }
     };
     
@@ -1023,9 +1135,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
     };
 
+    /** Keep Checking/Savings `balance` aligned with the cash ledger (`transaction.amount` sums).
+     * Uses cashBalanceAccumulatorRef when multiple transactions hit the same account in a loop (e.g. applyRecurringForMonth). */
+    const applyCashAccountDeltaForTransaction = async (accountId: string | undefined, delta: number) => {
+        if (!accountId || !supabase || !auth?.user) return;
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) return;
+        const up = updatePlatformRef.current;
+        if (!up) return;
+        const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
+        if (!acc || (acc.type !== 'Checking' && acc.type !== 'Savings')) return;
+        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
+        const newBalance = prevBalance + d;
+        cashBalanceAccumulatorRef.current[accountId] = newBalance;
+        await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
+    };
+
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
         if(!supabase || !auth?.user) {
-            alert("You must be logged in to add a transaction.");
+            toast("You must be logged in to add a transaction.", 'error');
+            return;
+        }
+        const core = validateTransactionCore({
+            date: transaction.date,
+            amount: transaction.amount,
+            accountId: transaction.accountId,
+            description: transaction.description,
+        });
+        if (!core.valid) {
+            toast(core.errors.join('\n'), 'error');
             return;
         }
         const db = supabase;
@@ -1048,14 +1186,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (savedWithoutNote) {
             try {
-                alert(
-                    'Transaction saved, but split/memo was not stored: add column `note` on `transactions`. Run supabase/migrations/add_transactions_note.sql in Supabase SQL.'
-                );
+                toast('Transaction saved, but split/memo was not stored: add column `note` on `transactions`. Run supabase/migrations/add_transactions_note.sql in Supabase SQL.', 'info');
             } catch {}
         }
         if(error) {
             console.error("Error adding transaction:", error);
-            alert(`Failed to add transaction: ${error.message}`);
+            toast(`Failed to add transaction: ${error.message}`, 'error');
             throw error;
         }
         if (newTx) {
@@ -1069,13 +1205,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)} · ${normalized.amount}`,
                 userId: auth.user.id,
             });
+            await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
         }
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => {
         if (!supabase || !auth?.user) return;
-        const absAmount = Math.abs(amount);
-        if (absAmount <= 0) {
-            alert('Transfer amount must be greater than zero.');
+        const absAmount = Math.abs(Number(amount));
+        if (!Number.isFinite(absAmount) || absAmount <= 0) {
+            toast('Transfer amount must be a valid positive number.', 'error');
             return;
         }
         const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
@@ -1104,6 +1241,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateTransaction = async (transaction: Transaction) => {
         if(!supabase || !auth?.user) return;
+        const core = validateTransactionCore({ date: transaction.date, amount: transaction.amount, accountId: transaction.accountId, description: transaction.description });
+        if (!core.valid) { toast(core.errors.join('\n'), 'error'); return; }
         const db = supabase;
         let error: any = null;
         let savedWithoutNote = false;
@@ -1124,15 +1263,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (savedWithoutNote) {
             try {
-                alert(
-                    'Update saved without memo/splits: run supabase/migrations/add_transactions_note.sql to add the `note` column.'
-                );
+                toast('Update saved without memo/splits: run supabase/migrations/add_transactions_note.sql to add the `note` column.', 'info');
             } catch {}
         }
         if(error) console.error("Error updating transaction:", error);
         else {
+            const prev = data?.transactions?.find((t) => t.id === transaction.id);
             const normalized = normalizeTransaction(transaction as any);
-            setData(prev => ({ ...prev, transactions: prev.transactions.map(t => t.id === transaction.id ? normalized : t) }));
+            if (prev) {
+                if (prev.accountId === normalized.accountId) {
+                    await applyCashAccountDeltaForTransaction(
+                        normalized.accountId,
+                        (Number(normalized.amount) || 0) - (Number(prev.amount) || 0)
+                    );
+                } else {
+                    await applyCashAccountDeltaForTransaction(prev.accountId, -(Number(prev.amount) || 0));
+                    await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+                }
+            }
+            setData(prevState => ({ ...prevState, transactions: prevState.transactions.map(t => t.id === transaction.id ? normalized : t) }));
             await syncSharedBudgetTransactionMirror(normalized as any);
             auditChangeLog({
                 action: 'update',
@@ -1150,6 +1299,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
         else {
+            await applyCashAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
             setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
             await removeSharedBudgetTransactionMirror(transactionId);
             auditChangeLog({
@@ -1165,6 +1315,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Recurring transactions ---
     const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => {
         if (!supabase || !auth?.user) return;
+        const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = {
             description: recurring.description,
@@ -1180,7 +1332,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: inserted, error } = await db.from('recurring_transactions').insert(withUser(row)).select().single();
         if (error) {
             console.error("Error adding recurring transaction:", error);
-            alert(`Failed to add recurring: ${error.message}`);
+            toast(`Failed to add recurring: ${error.message}`, 'error');
             throw error;
         }
         if (inserted) {
@@ -1191,6 +1343,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateRecurringTransaction = async (recurring: RecurringTransaction) => {
         if (!supabase || !auth?.user) return;
+        const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = {
             description: recurring.description,
@@ -1223,6 +1377,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const applyRecurringForMonth = async (year: number, month: number): Promise<{ applied: number; skipped: number }> => {
         if (!supabase || !auth?.user) return { applied: 0, skipped: 0 };
+        cashBalanceAccumulatorRef.current = {};
         const enabled = data.recurringTransactions.filter(r => r.enabled && !(r.addManually === true));
         const monthStr = String(month).padStart(2, '0');
         const dayStr = (d: number) => String(d).padStart(2, '0');
@@ -1263,6 +1418,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // already alerted in addTransaction
             }
         }
+        cashBalanceAccumulatorRef.current = {};
         return { applied, skipped };
     };
 
@@ -1270,6 +1426,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
      * dayOfMonth is stored clamped to 1–28, so on the 29th/30th/31st we treat dayOfMonth 28 as due (end-of-month); we use effectiveDateStr 28th so duplicates are detected by applyRecurringForMonth. */
     const applyRecurringDueToday = useCallback(async (): Promise<number> => {
         if (!supabase || !auth?.user) return 0;
+        cashBalanceAccumulatorRef.current = {};
         const today = new Date();
         const year = today.getFullYear();
         const month = today.getMonth() + 1;
@@ -1316,6 +1473,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 throw err;
             }
         }
+        cashBalanceAccumulatorRef.current = {};
         return applied;
     }, [data.recurringTransactions, addTransaction, supabase, auth?.user]);
 
@@ -1333,13 +1491,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [loading, auth?.user, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
-    const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'>) => {
+    const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {
         if(!supabase || !auth?.user) {
-            alert("You must be logged in to add a platform.");
+            toast("You must be logged in to add a platform.", 'error');
+            return;
+        }
+        const v = validateAccount({ name: platform.name, type: platform.type, balance: platform.balance ?? 0 });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
             return;
         }
         const db = supabase;
-        const payload: any = { ...platform, balance: 0 };
+        const payload: any = { ...platform, balance: Number(platform.balance) || 0 };
         // Always persist linked_account_ids for Investment platforms (including empty array to clear links).
         if (platform.type === 'Investment') {
             payload.linked_account_ids = Array.isArray(platform.linkedAccountIds) ? platform.linkedAccountIds : [];
@@ -1348,7 +1511,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
         if(error) {
             console.error("Error adding platform:", error);
-            alert(`Failed to add platform: ${error.message}`);
+            toast(`Failed to add platform: ${error.message}`, 'error');
             throw error;
         }
         if (newPlatform) {
@@ -1356,10 +1519,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData(prev => ({ ...prev, accounts: [...prev.accounts, normalized] }));
         }
     };
-    const updatePlatform = async (platform: Account) => {
+    const updatePlatform = async (platform: Account, opts?: { fromTransactionDelta?: boolean }) => {
         if(!supabase || !auth?.user) return;
+        const v = validateAccount(
+            { name: platform.name, type: platform.type, balance: platform.balance },
+            opts?.fromTransactionDelta ? { allowNegativeBalance: true } : undefined
+        );
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
         const db = supabase;
-        
+
         // Build payload with proper snake_case for DB
         const payload: any = {
             name: platform.name,
@@ -1383,12 +1554,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
         if(error) {
             console.error("Error updating platform:", error);
-            alert(`Failed to update platform: ${error.message}`);
+            toast(`Failed to update platform: ${error.message}`, 'error');
         } else {
+            if (!opts?.fromTransactionDelta) delete cashBalanceAccumulatorRef.current[platform.id]; // Manual edit overrides; transaction-driven updates keep accumulator for next iteration
             const normalized = normalizeAccount({ ...platform, ...payload, linkedAccountIds: payload.linked_account_ids });
             setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
         }
     };
+    updatePlatformRef.current = updatePlatform;
     const deletePlatform = async (platformId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
@@ -1400,21 +1573,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Investments ---
     const addPortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => {
         if(!supabase || !auth?.user) {
-            alert("You must be logged in to add a portfolio.");
+            toast("You must be logged in to add a portfolio.", 'error');
             return;
         }
+        const v = validatePortfolio({ name: portfolio.name, accountId: portfolio.accountId });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = investmentPortfolioToRow(portfolio);
         const { data: newPortfolio, error } = await db.from('investment_portfolios').insert(withUser(row)).select().single();
         if(error) {
             console.error("Error adding portfolio:", error);
-            alert(`Failed to add portfolio: ${error.message}`);
+            toast(`Failed to add portfolio: ${error.message}`, 'error');
             throw error;
         }
         if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, accountId: (newPortfolio as any).account_id ?? (newPortfolio as any).accountId, holdings: [] }] }));
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
+        const v = validatePortfolio({ name: portfolio.name, accountId: portfolio.accountId });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = investmentPortfolioToRow(portfolio);
         const { error } = await db.from('investment_portfolios').update(row).match({ id: portfolio.id, user_id: auth.user.id });
@@ -1430,6 +1607,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const addHolding = async (holding: Omit<Holding, 'id' | 'user_id'>) => {
         if (!supabase) return;
+        const v = validateHolding({
+            symbol: holding.symbol,
+            quantity: holding.quantity,
+            avgCost: holding.avgCost,
+            currentValue: holding.currentValue,
+            portfolio_id: holding.portfolio_id,
+            portfolioId: (holding as any).portfolioId,
+        });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
         const row = holdingToRow(holding);
         const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
         if (error) { console.error("Error adding holding:", error); throw error; }
@@ -1447,6 +1636,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
+        const v = validateHolding({ symbol: holding.symbol, quantity: holding.quantity, avgCost: holding.avgCost, currentValue: holding.currentValue, portfolio_id: holding.portfolio_id, portfolioId: (holding as any).portfolioId });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = holdingToRow(holding);
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
@@ -1482,8 +1673,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
         }
-
         const isCashFlow = trade.type === 'deposit' || trade.type === 'withdrawal';
+        const tradeVal = validateTrade({
+            type: trade.type,
+            quantity: trade.quantity,
+            price: trade.price,
+            total: trade.total,
+            symbol: trade.symbol,
+        });
+        if (!tradeVal.valid) {
+            throw new Error(tradeVal.errors.join('\n'));
+        }
 
         tradeSubmissionInFlightRef.current = true;
         try {
@@ -1594,10 +1794,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         type: trade.type === 'deposit' ? 'expense' : 'income',
                         accountId: linkedCashAccountId,
                     });
-                    
-                    // Update the cash account balance
-                    const newBalance = cashAccount.balance + amount;
-                    await updatePlatform({ ...cashAccount, balance: newBalance });
                 }
             } catch (cashTxError) {
                 console.warn("Failed to create corresponding cash account transaction:", cashTxError);
@@ -1694,12 +1890,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Planned Trades ---
     const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => {
         if(!supabase) return;
+        const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
         if (error) { console.error(error); }
         else if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
     };
     const updatePlannedTrade = async (plan: PlannedTrade) => {
         if(!supabase || !auth?.user) return;
+        const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const { error } = await supabase.from('planned_trades').update(plan).match({ id: plan.id, user_id: auth.user.id });
         if (error) { console.error(error); }
         else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) })); }
@@ -1714,9 +1914,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Commodities --- (snake_case: purchase_value, current_value, zakah_class; name required)
     const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
         if (!supabase) return;
-        if (holding.purchaseValue <= 0) {
-            throw new Error("Purchase Value must be a positive number.");
-        }
+        const v = validateCommodityHolding({ name: holding.name, quantity: holding.quantity, purchaseValue: holding.purchaseValue, currentValue: holding.currentValue, symbol: holding.symbol });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const row = commodityHoldingToRow(holding);
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
@@ -1727,6 +1926,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateCommodityHolding = async (holding: CommodityHolding) => {
         if (!supabase || !auth?.user) return;
+        const v = validateCommodityHolding({ name: holding.name, quantity: holding.quantity, purchaseValue: holding.purchaseValue, currentValue: holding.currentValue, symbol: holding.symbol });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         if (holding.purchaseValue <= 0) {
             throw new Error("Purchase Value must be a positive number.");
         }
@@ -1779,24 +1980,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addWatchlistItem = async (item: WatchlistItem) => {
         if (!supabase || !auth?.user) {
             console.error('Supabase client not available or user not authenticated');
-            alert('You must be logged in to manage your watchlist.');
+            toast('You must be logged in to manage your watchlist.', 'error');
             return;
         }
+        const v = validateWatchlistItem({ symbol: item.symbol });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const symbol = String(item.symbol || '').trim().toUpperCase();
-        if (!symbol) {
-            alert('Please enter a valid symbol.');
-            return;
-        }
         if ((data?.watchlist ?? []).some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
-            alert(`${symbol} is already in your watchlist.`);
+            toast(`${symbol} is already in your watchlist.`, 'info');
             return;
         }
         const row = withUser({ ...item, symbol, name: String(item.name || symbol).trim() || symbol });
         const { data: inserted, error } = await db.from('watchlist').upsert(row, { onConflict: 'user_id,symbol' }).select().single();
         if (error) {
             console.error('Error adding watchlist item:', error);
-            alert(`Failed to add ${symbol} to watchlist: ${error.message}`);
+            toast(`Failed to add ${symbol} to watchlist: ${error.message}`, 'error');
             return;
         }
         if (inserted) {
@@ -1821,6 +2020,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
         if(!supabase) return;
+        const v = validatePriceAlert({ symbol: alert.symbol, targetPrice: alert.targetPrice });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const createdAt = new Date().toISOString();
         const targetPrice = typeof alert.targetPrice === 'number' && Number.isFinite(alert.targetPrice) ? alert.targetPrice : parseFloat(String(alert.targetPrice)) || 0;
@@ -1832,6 +2033,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updatePriceAlert = async (alert: PriceAlert) => {
         if(!supabase || !auth?.user) return;
+        if (alert.targetPrice != null) {
+            const v = validatePriceAlert({ symbol: alert.symbol, targetPrice: alert.targetPrice });
+            if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        }
         const db = supabase;
         const row: Record<string, unknown> = { status: alert.status };
         if (alert.targetPrice != null) row.target_price = alert.targetPrice;
@@ -1847,6 +2052,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => {
         if(!supabase) return;
+        const v = validateZakatPayment({ date: payment.date, amount: payment.amount });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const { data: newPayment, error } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
         if(error) console.error(error);
@@ -1855,6 +2062,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
         const merged = { ...(data?.settings ?? {}), ...settingsUpdate };
+        const toValidate: Partial<Settings> = {};
+        if ('goldPrice' in settingsUpdate) toValidate.goldPrice = merged.goldPrice ?? (merged as any).gold_price;
+        if ('nisabAmount' in settingsUpdate) toValidate.nisabAmount = merged.nisabAmount ?? (merged as any).nisab_amount;
+        if ('budgetThreshold' in settingsUpdate) toValidate.budgetThreshold = merged.budgetThreshold;
+        if ('driftThreshold' in settingsUpdate) toValidate.driftThreshold = merged.driftThreshold;
+        if ('riskProfile' in settingsUpdate) toValidate.riskProfile = merged.riskProfile;
+        const v = validateSettings(toValidate);
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
         const overrides = settingsOverridesToRow(merged, settingsUpdate);
         const row = { ...overrides, user_id: auth.user.id };
         const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
@@ -1867,6 +2085,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
         if (!supabase || !auth?.user) return;
+        const v = validateInvestmentPlan({
+            monthlyBudget: plan.monthlyBudget,
+            coreAllocation: plan.coreAllocation,
+            upsideAllocation: plan.upsideAllocation,
+            minimumUpsidePercentage: plan.minimumUpsidePercentage,
+            stale_days: plan.stale_days,
+            min_coverage_threshold: plan.min_coverage_threshold,
+        });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const overrides = investmentPlanOverridesToRow(plan);
         const planWithUser = { ...overrides, user_id: auth.user.id };
         const planStamped: InvestmentPlanSettings = {
@@ -1894,6 +2121,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const addUniverseTicker = async (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => {
         if (!supabase) return;
+        const v = validateUniverseTicker({ ticker: ticker.ticker, name: ticker.name, status: ticker.status });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const { data: newTicker, error } = await supabase.from('portfolio_universe').insert(withUser(ticker)).select().single();
         if (error) {
             console.error("Error adding ticker:", error);
@@ -1904,6 +2133,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateUniverseTickerStatus = async (tickerId: string, status: TickerStatus, updates: Partial<UniverseTicker> = {}) => {
         if (!supabase || !auth?.user) return;
+        const v = validateTickerStatus(status);
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const ticker = (data?.portfolioUniverse ?? []).find(t => t.id === tickerId);
         if (!ticker) return;
 
@@ -1946,6 +2177,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveExecutionLog = async (log: InvestmentPlanExecutionLog) => {
         if (!supabase || !auth?.user) return;
+        const v = validateExecutionLog({
+            date: log.date,
+            totalInvestment: log.totalInvestment,
+            status: log.status,
+            trades: log.trades,
+        });
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const row: Record<string, unknown> = {
             user_id: auth.user.id,
             date: log.date,
@@ -2002,13 +2240,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [dataWithPersonal]);
 
     const totalDeployableCash = useMemo(() => {
+        const sarPerUsd = resolveSarPerUsd(data as FinancialData);
         const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
         const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
-            return s + cash.SAR + cash.USD;
+            return s + tradableCashBucketToSAR(cash, sarPerUsd);
         }, 0);
         return bank + platformCash;
-    }, [accountsForDeployable, getAvailableCashForAccount]);
+    }, [accountsForDeployable, getAvailableCashForAccount, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
@@ -2054,7 +2293,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

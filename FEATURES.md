@@ -223,7 +223,7 @@ This document reflects features and functionalities implemented in the codebase.
 ### Recently added (data quality)
 
 - **`services/dataQuality/`** — Transaction validation + duplicate detection; cash-account balance vs transaction sum (`reconcileAccountBalance`); stale market + FX reminders; wired to Transactions, Statement import, Accounts, Notifications.
-- **`services/transactionFilters.ts`** — Transfers (`category: Transfer`) excluded from cashflow KPIs.
+- **`services/transactionFilters.ts`** — Internal moves (`category: Transfer` or `Transfers`) excluded from cashflow KPIs on Transactions.
 - **`services/financeMetrics.ts`**, **`services/goalMetrics.ts`**, **`services/portfolioMetrics.ts`**, **`services/decisionEngine.ts`**, **`services/stressScenario.ts`**, **`services/liabilityMetrics.ts`**
 - **`services/auditLog.ts`** — Local activity log; Settings → Activity log.
 - **Wired in UI:** Forecast (stress test + strategy blurbs), Watchlist (idea rank), Settings (capital split + buy-score sample), Goals (target date at pace), Dividend Tracker (unrealized P&L on top payers).

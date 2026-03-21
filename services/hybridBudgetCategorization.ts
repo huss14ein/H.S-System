@@ -48,6 +48,8 @@ export interface RecurringBillPattern {
   typicalAmount: number;
   amountVariance: number;
   frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annual';
+  /** Average interval in days between occurrences; use for exact month calculation (e.g. semi-annual ~180d) */
+  avgIntervalDays?: number;
   nextExpectedDate: Date;
   reliabilityScore: number; // 0-100
   isSubscription: boolean;
@@ -498,6 +500,7 @@ export function detectRecurringBillPatterns(
       typicalAmount: Math.round(typicalAmount),
       amountVariance: Math.round(amountVariance),
       frequency,
+      avgIntervalDays: Math.round(avgInterval),
       nextExpectedDate,
       reliabilityScore: Math.round(reliabilityScore),
       isSubscription,

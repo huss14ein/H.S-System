@@ -7,7 +7,9 @@ import { FinancialData } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
+import { computeLiquidNetWorth } from '../services/liquidNetWorth';
 
 type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
 
@@ -20,32 +22,23 @@ interface AIAdvisorProps {
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
-const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any, exchangeRate: number): Promise<string> => {
+const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any, sarPerUsd: number): Promise<string> => {
     switch (context) {
         case 'dashboard': {
+            const { netWorth, totalDebt } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
+            const { liquidNetWorth } = computeLiquidNetWorth(data);
             const d = data as any;
-            const assets = d?.personalAssets ?? data?.assets ?? [];
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-            const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
-            const investments = d?.personalInvestments ?? data?.investments ?? [];
-            const commodityHoldings = d?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
             const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
-            const totalCommodities = commodityHoldings.reduce((sum: number, ch: { currentValue?: number }) => sum + (ch.currentValue ?? 0), 0);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
-            const cashSavings = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings');
-            const cashPositive = cashSavings.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-            const cashNegative = cashSavings.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
-            const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + cashPositive + totalCommodities + totalInvestmentsValue;
-            const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0) + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0) + cashNegative;
-            const totalReceivable = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
-            const netWorth = totalAssets - totalDebt + totalReceivable;
+            const investments = d?.personalInvestments ?? data?.investments ?? [];
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
             const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
             const totalInvested = invTx.filter((t: { type?: string }) => t.type === 'buy').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0);
             const totalWithdrawn = Math.abs(invTx.filter((t: { type?: string }) => t.type === 'sell').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0));
             const netCapital = totalInvested - totalWithdrawn;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
-            const summary = { netWorth, roi, assetMix: [], liquidNetWorth: cashPositive, liabilitiesCoverage: totalDebt, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
+            const summary = { netWorth, roi, assetMix: [], liquidNetWorth, liabilitiesCoverage: totalDebt, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
             return getAIAnalysis(summary);
         }
         case 'investments':
@@ -97,7 +90,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setIsLoading(true);
         setInsight('');
         try {
-            const result = await getAnalysisForPage(pageContext, data, contextData, exchangeRate);
+            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+            const result = await getAnalysisForPage(pageContext, data, contextData, sarPerUsd);
             setInsight(result);
         } catch (error) {
             console.error("AI analysis failed:", error);

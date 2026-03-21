@@ -46,7 +46,7 @@ export function explainSellDecision(reasons: {
   const parts = r.map((x) => {
     if (x === 'max_weight' && reasons.aboveTargetPct != null)
       return `position ${reasons.aboveTargetPct.toFixed(1)}% above target`;
-    if (x === 'thesis_broken') return 'thesis broken or review due';
+    if (x === 'thesis_broken') return 'review needed';
     if (x === 'trim') return 'trim for rebalance or cash need';
     return x;
   });

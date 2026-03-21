@@ -1,5 +1,7 @@
 # System architecture — layered wealth system
 
+**See also:** [PAGES_SERVICES_WIRING.md](./PAGES_SERVICES_WIRING.md) — hash routing, provider tree, each `Page` → props → contexts and services. [FULL_UI_SECTIONS_WIRING.md](./FULL_UI_SECTIONS_WIRING.md) — per-page sections/cards and data sources.
+
 The system is structured in four layers so that **data**, **logic**, **output**, and **automation** stay separated and maintainable.
 
 ---

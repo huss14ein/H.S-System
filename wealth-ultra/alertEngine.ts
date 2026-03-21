@@ -36,9 +36,10 @@ export function runAlertEngine(
   const deployableCash = computeDeployableCash(config);
   const reserveAmount = totalValue * (config.cashReservePct / 100);
 
+  const driftThreshold = config.driftAlertPct ?? DRIFT_ALERT_PCT;
   // ---- Sleeve allocation drift (over or under target) ----
   for (const alloc of allocations) {
-    if (!isDriftAlert(alloc.driftPct)) continue;
+    if (!isDriftAlert(alloc.driftPct, driftThreshold)) continue;
     const over = alloc.driftPct > 0;
     const sleeve = alloc.sleeve;
     const type = over ? 'sleeve_overweight' : 'sleeve_drift';
@@ -127,7 +128,7 @@ export function runAlertEngine(
         title: 'Risk review',
         severity: 'critical',
         message: `${pos.ticker} is down ${pos.plPct.toFixed(0)}% (${pos.sleeveType}).`,
-        actionHint: 'Review your thesis. Exit if conviction is gone; average down only if you remain confident and within risk limits.',
+        actionHint: 'Review your notes. Exit if conviction is gone; average down only if you remain confident and within risk limits.',
         ticker: pos.ticker,
         value: pos.plPct,
       });
@@ -145,7 +146,7 @@ export function runAlertEngine(
       title: 'Dip-buy zone',
       severity: 'info',
       message: `${dipBuyCandidates.length} positions in DipBuy range (down 15–30%): ${tickers.join(', ')}.`,
-      actionHint: 'If thesis is intact for these names, consider adding within allocation limits. Prefer Core/Upside over Spec.',
+      actionHint: 'If your reasons still hold for these names, consider adding within allocation limits. Prefer Core/Upside over Spec.',
       tickers,
       value: dipBuyCandidates.length,
     });
@@ -156,7 +157,7 @@ export function runAlertEngine(
         title: 'Dip-buy zone',
         severity: 'info',
         message: `${pos.ticker} (${pos.sleeveType}) is down ${pos.plPct.toFixed(0)}% — in DipBuy range.`,
-        actionHint: 'If thesis is intact, consider adding within your allocation limits.',
+        actionHint: 'If your reasons still hold, consider adding within your allocation limits.',
         ticker: pos.ticker,
         value: pos.plPct,
       });
@@ -171,7 +172,7 @@ export function runAlertEngine(
         title: 'Spec loss',
         severity: 'warning',
         message: `Spec position ${pos.ticker} is down ${pos.plPct.toFixed(0)}%.`,
-        actionHint: 'Spec is higher risk. Decide: hold, trim, or exit based on your risk tolerance and thesis.',
+        actionHint: 'Spec is higher risk. Decide: hold, trim, or exit based on your risk tolerance and notes.',
         ticker: pos.ticker,
         value: pos.plPct,
       });
@@ -264,7 +265,7 @@ export function runAlertEngine(
         title: 'Review underperformers',
         severity: 'info',
         message: `Weakest risk-adjusted returns (return % × risk weight): ${pctStr}.`,
-        actionHint: 'Review these positions: trim or exit if thesis has changed; add only with high conviction.',
+        actionHint: 'Review these positions: trim or exit if your reasons have changed; add only with high conviction.',
         tickers: toReview.map(p => p.ticker),
         value: toReview.length,
       });
@@ -276,7 +277,7 @@ export function runAlertEngine(
   if (
     totalValue > 0 &&
     coreAlloc &&
-    coreAlloc.driftPct < -DRIFT_ALERT_PCT &&
+    coreAlloc.driftPct < -driftThreshold &&
     deployableCash >= totalValue * CASH_DEPLOY_MIN_RATIO &&
     !alerts.some(a => a.type === 'deployment_opportunity' && a.ticker)
   ) {
@@ -311,7 +312,7 @@ export function runAlertEngine(
   // ---- Portfolio on track (positive reinforcement when no critical/warning) ----
   const hasCritical = alerts.some(a => a.severity === 'critical');
   const hasWarning = alerts.some(a => a.severity === 'warning');
-  const allocsHealthy = allocations.every(a => !isDriftAlert(a.driftPct));
+  const allocsHealthy = allocations.every(a => !isDriftAlert(a.driftPct, driftThreshold));
   if (!hasCritical && !hasWarning && allocations.length > 0 && allocsHealthy && positions.length > 0) {
     alerts.push({
       type: 'portfolio_on_track',

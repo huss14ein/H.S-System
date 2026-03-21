@@ -687,17 +687,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [supabase, session, user]);
 
+    /** Never block auth init: if the query hangs or Netlify/RLS blocks REST, we time out and fail open (approved). */
     const fetchApprovalStatus = useCallback(async (userId: string) => {
         if (!supabase) {
             setIsApproved(true);
             return;
         }
+        const APPROVAL_FETCH_MS = 8000;
         try {
-            const { data, error } = await supabase
+            const query = supabase
                 .from('users')
                 .select('approved')
                 .eq('id', userId)
                 .maybeSingle();
+
+            const timeout = new Promise<null>((resolve) => {
+                setTimeout(() => resolve(null), APPROVAL_FETCH_MS);
+            });
+
+            const result = await Promise.race([query, timeout]);
+            if (result === null) {
+                setIsApproved(true);
+                return;
+            }
+            const { data, error } = result as { data: { approved?: boolean } | null; error: { message?: string } | null };
             if (error) {
                 setIsApproved(true);
                 return;
@@ -721,26 +734,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     
         const getSession = async () => {
-            const { data: { session } } = await currentSupabase.auth.getSession();
-            setSession(session);
-            setUser(session?.user ?? null);
-            setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
-            if (session?.user?.id) {
-                await fetchApprovalStatus(session.user.id);
-            } else {
+            try {
+                const { data: { session } } = await currentSupabase.auth.getSession();
+                setSession(session);
+                setUser(session?.user ?? null);
+                setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
+                if (session?.user?.id) {
+                    void fetchApprovalStatus(session.user.id);
+                } else {
+                    setIsApproved(null);
+                }
+            } catch {
+                setSession(null);
+                setUser(null);
                 setIsApproved(null);
+            } finally {
+                setLoading(false);
             }
-            setLoading(false);
         };
     
-        getSession();
+        void getSession();
     
-        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange(async (_event, session) => {
+        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);
             setUser(session?.user ?? null);
             setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
             if (session?.user?.id) {
-                await fetchApprovalStatus(session.user.id);
+                void fetchApprovalStatus(session.user.id);
             } else {
                 setIsApproved(null);
             }
