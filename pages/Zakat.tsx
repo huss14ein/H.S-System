@@ -147,7 +147,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 items-start">
                 <div className="space-y-6">
-                    <SectionCard title="Zakatable Assets">
+                    <SectionCard title="Zakatable Assets" collapsible collapsibleSummary="Cash, investments, receivables" defaultExpanded>
                          <div className="space-y-3">
                             <div className="flex justify-between text-sm pt-2">
                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Cash</span>
@@ -171,7 +171,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                             </div>
                         </div>
                     </SectionCard>
-                    <SectionCard title="Deductible Liabilities">
+                    <SectionCard title="Deductible Liabilities" collapsible collapsibleSummary="Debts to deduct">
                         <div className="space-y-3">
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Credit Card Debt</span><span>{formatCurrencyString(deductibleLiabilities.shortTermDebts)}</span></div>
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities)}</span></div>
@@ -184,7 +184,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </SectionCard>
                 </div>
 
-                <SectionCard title="Calculation" className="space-y-4">
+                <SectionCard title="Calculation" className="space-y-4" collapsible collapsibleSummary="Zakat due" defaultExpanded>
                      <div className="space-y-3">
                         <div className="flex items-center gap-2">
                             <input type="checkbox" id="use-nisab-amount" checked={useNisabAmount} onChange={(e) => { const checked = e.target.checked; setUseNisabAmount(checked); if (!checked) updateSettings({ nisabAmount: undefined }); }} className="h-4 w-4 text-primary rounded border-gray-300" />
