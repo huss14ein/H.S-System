@@ -41,13 +41,13 @@ interface FinancialJournalProps {
   dataTick?: number;
 }
 
-const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction }) => {
+const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, dataTick }) => {
   const { trackAction } = useSelfLearning();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
 
-  useEffect(() => setEntries(load()), []);
+  useEffect(() => setEntries(load()), [dataTick]);
 
   const sorted = useMemo(() => [...entries].sort((a, b) => b.at.localeCompare(a.at)), [entries]);
 
@@ -67,7 +67,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction }
   };
 
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
-  useEffect(() => setTheses(loadTheses()), []);
+  useEffect(() => setTheses(loadTheses()), [dataTick]);
 
   const [symbol, setSymbol] = useState('');
   const [buyThesis, setBuyThesis] = useState('');

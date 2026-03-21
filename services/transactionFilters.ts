@@ -18,6 +18,7 @@ export function countsAsExpenseForCashflowKpi(t: {
   return t.type === 'expense' && !isInternalTransferTransaction(t);
 }
 
+/** Income with category Transfer/Transfers is treated as an internal move, not earned cashflow. */
 export function countsAsIncomeForCashflowKpi(t: {
   type?: string;
   category?: string;

@@ -175,7 +175,7 @@ const App: React.FC = () => {
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Engines & Tools': return <EnginesAndToolsHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} pageAction={pageAction} clearPageAction={clearPageAction} />;
       
-      default: return <Dashboard setActivePage={setActivePage} />;
+      default: return <Dashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
     }
   };
   

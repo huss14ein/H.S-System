@@ -1,5 +1,5 @@
 import type { WealthUltraConfig, WealthUltraPosition, WealthUltraSleeveAllocation } from '../types';
-import { getTotalPortfolioValue, isDriftAlert } from './allocationEngine';
+import { getTotalPortfolioValue, isDriftAlert, DRIFT_ALERT_PCT } from './allocationEngine';
 import { computeDeployableCash } from './cashPlanner';
 
 export interface MonthlyDeploymentResult {
@@ -25,7 +25,8 @@ export function runMonthlyCoreDeployment(
     return { amountToDeploy: 0, suggestedTicker: null, reason: 'No deployable cash.' };
   }
 
-  if (isDriftAlert(coreAlloc.driftPct)) {
+  const driftThreshold = config.driftAlertPct ?? DRIFT_ALERT_PCT;
+  if (isDriftAlert(coreAlloc.driftPct, driftThreshold)) {
     return {
       amountToDeploy,
       suggestedTicker: null,

@@ -3564,7 +3564,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         setActiveTab('Safety & rules');
         clearPageAction?.();
     }
-  }, [pageAction, clearPageAction, data?.investments]);
+  }, [pageAction, clearPageAction, data?.investments, setActiveTab]);
 
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
@@ -3683,7 +3683,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     }}
                 />
             );
-      case 'Dividend Tracker': return <DividendTrackerView />;
+      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
       case 'Safety & rules': return <RiskTradingHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;

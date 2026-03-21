@@ -46,14 +46,14 @@ export function auditChangeLog(entry: Omit<AuditLogEntry, 'id' | 'at'> & { at?: 
 }
 
 export function getAuditLog(limit = 100, filter?: { entity?: AuditEntity; action?: AuditLogEntry['action']; search?: string }): AuditLogEntry[] {
-  let entries = load().slice(0, limit);
+  let entries = load();
   if (filter?.entity) entries = entries.filter((e) => e.entity === filter.entity);
   if (filter?.action) entries = entries.filter((e) => e.action === filter.action);
   if (filter?.search) {
     const q = filter.search.toLowerCase();
     entries = entries.filter((e) => e.summary.toLowerCase().includes(q) || e.entity.toLowerCase().includes(q));
   }
-  return entries;
+  return entries.slice(0, limit);
 }
 
 export function clearAuditLog(): void {

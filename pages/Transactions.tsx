@@ -31,8 +31,27 @@ import {
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 
-/** Income-specific categories. Expense categories (Groceries, Rent, etc.) are misleading for income. */
-const INCOME_CATEGORIES = ['Salary', 'Bonus', 'Investment Income', 'Transfer', 'Freelance', 'Rental Income', 'Other Income'];
+/**
+ * Income-specific categories. Do not include "Transfer" / "Transfers": those labels are reserved for
+ * internal account moves and are excluded from cashflow KPIs (`isInternalTransferTransaction` in
+ * `transactionFilters.ts`), so offering them here would suggest income that never appears in KPIs.
+ */
+const INCOME_CATEGORIES = ['Salary', 'Bonus', 'Investment Income', 'Freelance', 'Rental Income', 'Other Income'];
+
+/** Map AI/local strings onto a real category from `allowed` (exact, case-insensitive, then substring fuzzy). */
+function matchToAllowedCategory(suggested: string, allowed: string[]): string | null {
+    const s = String(suggested ?? '').trim();
+    if (!s || allowed.length === 0) return null;
+    if (allowed.includes(s)) return s;
+    const lower = s.toLowerCase();
+    const ci = allowed.find((a) => a.toLowerCase() === lower);
+    if (ci) return ci;
+    return (
+        allowed.find(
+            (a) => a.toLowerCase().includes(lower) || lower.includes(a.toLowerCase())
+        ) ?? null
+    );
+}
 
 const TransactionModal: React.FC<{
     isOpen: boolean;
@@ -46,7 +65,18 @@ const TransactionModal: React.FC<{
     existingTransactions: Transaction[],
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts, existingTransactions }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
-    const incomeCategoryOptions = React.useMemo(() => [...new Set([...INCOME_CATEGORIES, ...(existingTransactions ?? []).filter(t => t.type === 'income').map(t => t.category).filter(Boolean)])], [existingTransactions]);
+    const incomeCategoryOptions = React.useMemo(
+        () => [
+            ...new Set([
+                ...INCOME_CATEGORIES,
+                ...(existingTransactions ?? [])
+                    .filter((t) => countsAsIncomeForCashflowKpi(t))
+                    .map((t) => t.category)
+                    .filter(Boolean),
+            ]),
+        ],
+        [existingTransactions]
+    );
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -250,7 +280,25 @@ const TransactionModal: React.FC<{
             // Error already alerted in DataContext
         }
     };
-    
+
+    /** Budget select only lists `budgetCategories`; never set state to a value not in that list. */
+    const applyBudgetForSuggestedCategory = (suggestedCat: string) => {
+        if (budgetCategories.length === 0) {
+            setBudgetCategory('');
+            return;
+        }
+        if (budgetCategories.includes(suggestedCat)) {
+            setBudgetCategory(suggestedCat);
+            return;
+        }
+        const matching = budgetCategories.find(
+            (bc) =>
+                bc.toLowerCase().includes(suggestedCat.toLowerCase()) ||
+                suggestedCat.toLowerCase().includes(bc.toLowerCase())
+        );
+        if (matching) setBudgetCategory(matching);
+    };
+
     const handleSuggestCategory = async () => {
         if (!description) return;
         setIsSuggestingCategory(true);
@@ -260,20 +308,33 @@ const TransactionModal: React.FC<{
             const suggested = await getAICategorySuggestion(description, categoriesToUse);
             if (suggested && categoriesToUse.includes(suggested)) {
                 setCategory(suggested);
-                setBudgetCategory(suggested);
+                applyBudgetForSuggestedCategory(suggested);
                 setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
             } else if (suggested) {
-                setCategory(suggested);
-                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(suggested.toLowerCase()) || suggested.toLowerCase().includes(bc.toLowerCase()));
-                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
-                setAiSuggestionNote({ tone: 'success', text: `Category suggested: ${suggested}` });
+                const matched =
+                    matchToAllowedCategory(suggested, categoriesToUse) ??
+                    matchToAllowedCategory(suggested, allCategories);
+                if (matched) {
+                    setCategory(matched);
+                    applyBudgetForSuggestedCategory(matched);
+                    const relabel =
+                        matched !== suggested.trim()
+                            ? `Category suggested: ${matched} (matched from “${suggested.trim()}”)`
+                            : `Category suggested: ${matched}`;
+                    setAiSuggestionNote({ tone: 'success', text: relabel });
+                } else {
+                    setAiSuggestionNote({
+                        tone: 'warning',
+                        text: `AI suggested “${String(suggested).trim()}”, which doesn’t match your categories. Pick one from the list.`,
+                    });
+                }
             } else {
                 const fallback = suggestCategoryLocally(description);
-                if (fallback) {
-                    setCategory(fallback);
-                    const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
-                    if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
-                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${fallback}` });
+                const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
+                if (matched) {
+                    setCategory(matched);
+                    applyBudgetForSuggestedCategory(matched);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI unavailable, applied smart fallback: ${matched}` });
                 } else {
                     setAiSuggestionNote({ tone: 'info', text: 'No suggestion available. You can continue with your selected category.' });
                 }
@@ -281,11 +342,11 @@ const TransactionModal: React.FC<{
         } catch (e) {
             console.error("Category suggestion failed", e);
             const fallback = suggestCategoryLocally(description);
-            if (fallback) {
-                setCategory(fallback);
-                const matchingBudgetCategory = budgetCategories.find(bc => bc.toLowerCase().includes(fallback.toLowerCase()) || fallback.toLowerCase().includes(bc.toLowerCase()));
-                if (matchingBudgetCategory) setBudgetCategory(matchingBudgetCategory);
-                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${fallback}` });
+            const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
+            if (matched) {
+                setCategory(matched);
+                applyBudgetForSuggestedCategory(matched);
+                setAiSuggestionNote({ tone: 'warning', text: `AI timeout/unavailable. Smart fallback applied: ${matched}` });
             } else {
                 setAiSuggestionNote({ tone: 'warning', text: 'AI timeout/unavailable. Please continue manually.' });
             }
@@ -370,9 +431,21 @@ const TransactionModal: React.FC<{
                         </div>
                         <div>
                             <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
-                            <select id="budget-category" value={budgetCategory} onChange={e => setBudgetCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                                <option value="" disabled>Map to Budget</option>
-                                {budgetCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                            <select
+                                id="budget-category"
+                                value={budgetCategory}
+                                onChange={(e) => setBudgetCategory(e.target.value)}
+                                required={budgetCategories.length > 0}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                            >
+                                <option value="">
+                                    {budgetCategories.length > 0 ? 'Select budget category' : '— No budget categories —'}
+                                </option>
+                                {budgetCategories.map((c) => (
+                                    <option key={c} value={c}>
+                                        {c}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                         <div className="grid grid-cols-2 gap-4">

@@ -62,6 +62,8 @@ See **[`docs/DEPLOYMENT_CHECKLIST.md`](docs/DEPLOYMENT_CHECKLIST.md)** for the c
 - **[Deployment Summary](docs/DEPLOYMENT_SUMMARY.md)** - What's ready for deployment
 - **[Implementation Status](docs/IMPLEMENTATION_STATUS.md)** - System enhancement status
 - **[System Architecture](docs/SYSTEM_ARCHITECTURE.md)** - Architecture overview
+- **[Pages & services wiring](docs/PAGES_SERVICES_WIRING.md)** - Routes, providers, cross-page actions
+- **[Full UI sections wiring](docs/FULL_UI_SECTIONS_WIRING.md)** - Page-by-page cards, tabs, and data sources (companion to the wiring doc)
 - **[Weekly Email Setup](docs/weekly_email_implementation.md)** - Email digest configuration
 
 ---
