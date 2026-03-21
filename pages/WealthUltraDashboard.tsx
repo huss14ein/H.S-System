@@ -157,6 +157,7 @@ function buildEngineConfigFromSystem(
     targetUpsidePct = remainder * upsideRatio;
   }
 
+  const settings = data?.settings;
   return {
     ...base,
     monthlyDeposit: plan?.monthlyBudget ?? base.monthlyDeposit,
@@ -167,6 +168,7 @@ function buildEngineConfigFromSystem(
     coreTickers,
     upsideTickers,
     specTickers,
+    driftAlertPct: settings?.driftThreshold ?? (base as any).driftAlertPct,
   };
 }
 

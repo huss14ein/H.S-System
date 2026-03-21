@@ -13,7 +13,7 @@ import {
   isMonthLocked,
   createMonthlySnapshot,
 } from '../services/netWorthSnapshot';
-import { approximatePortfolioMWRR, flowsFromInvestmentTransactions } from '../services/portfolioXirr';
+import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSAR } from '../services/portfolioXirr';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -109,7 +109,7 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageA
 
   const mwrr = useMemo(() => {
     const txs = data?.investmentTransactions ?? [];
-    const flows = flowsFromInvestmentTransactions(txs as { date: string; type: string; total?: number }[]);
+    const flows = flowsFromInvestmentTransactionsInSAR(txs, exchangeRate);
     const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
     const tv = getAllInvestmentsValueInSAR(inv, exchangeRate);
     const r = approximatePortfolioMWRR(flows, tv, new Date().toISOString().slice(0, 10));

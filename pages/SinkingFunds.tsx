@@ -17,7 +17,9 @@ const SinkingFunds: React.FC = () => {
 
         for (const p of patterns) {
             if (p.typicalAmount < MIN_AMOUNT) continue;
-            const monthDiff = p.frequency === 'annual' ? 12 : p.frequency === 'quarterly' ? 3 : p.frequency === 'monthly' ? 1 : 0;
+            const monthDiff = p.avgIntervalDays != null && p.avgIntervalDays > 0
+                ? Math.max(1, Math.round(p.avgIntervalDays / 30))
+                : p.frequency === 'annual' ? 12 : p.frequency === 'quarterly' ? 3 : p.frequency === 'monthly' ? 1 : 0;
             if (monthDiff < 2) continue;
 
             const nextDueDate = new Date(p.nextExpectedDate);
@@ -26,11 +28,13 @@ const SinkingFunds: React.FC = () => {
             const savedMonths = monthDiff - monthsUntilDue;
             const saved = Math.max(0, (savedMonths / monthDiff) * p.typicalAmount);
 
+            const recurrenceLabel = monthDiff === 12 ? 'Annual' : monthDiff === 6 ? 'Semi-annual' : monthDiff === 3 ? 'Quarterly' : monthDiff === 1 ? 'Monthly' : `${monthDiff} months`;
+
             funds.push({
                 name: p.merchant,
                 target: p.typicalAmount,
                 nextDueDate,
-                recurrence: p.frequency === 'annual' ? 'Annual' : p.frequency === 'quarterly' ? 'Quarterly' : `${monthDiff} months`,
+                recurrence: recurrenceLabel,
                 saved,
             });
         }

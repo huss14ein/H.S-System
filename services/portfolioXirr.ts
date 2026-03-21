@@ -1,3 +1,5 @@
+import { toSAR } from '../utils/currencyMath';
+
 /**
  * Simple money-weighted return (IRR) via bisection on periodic cashflows.
  * cashflows: negative = invest, positive = withdraw/terminal value.
@@ -39,6 +41,21 @@ export function flowsFromInvestmentTransactions(
     const x = Math.abs(Number(t.total) || 0);
     if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -x });
     if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: x });
+  });
+  return out;
+}
+
+/** Same as `flowsFromInvestmentTransactions` but converts each flow to SAR using `currency` (defaults USD), matching `getAllInvestmentsValueInSAR` for MWRR. */
+export function flowsFromInvestmentTransactionsInSAR(
+  txs: { date: string; type: string; total?: number; currency?: string }[],
+  exchangeRate: number
+): { date: string; amount: number }[] {
+  const out: { date: string; amount: number }[] = [];
+  txs.forEach((t) => {
+    const x = Math.abs(Number(t.total) || 0);
+    const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate);
+    if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -sar });
+    if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: sar });
   });
   return out;
 }

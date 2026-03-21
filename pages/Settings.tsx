@@ -148,7 +148,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const refreshAuditRef = useRef(refreshAudit);
     refreshAuditRef.current = refreshAudit;
 
-    useEffect(() => { refreshAudit(); }, [data?.transactions?.length, auditFilter.entity, refreshAudit]);
+    useEffect(() => { refreshAuditRef.current(); }, [data?.transactions?.length, auditFilter.entity]);
 
     useEffect(() => {
         const t = setTimeout(() => refreshAuditRef.current(), 400);
@@ -417,7 +417,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                 </div>
             </SectionCard>
 
-            <SectionCard title="Decision preview (rules)" collapsible collapsibleSummary="Buy score, allocation">
+            <SectionCard id="decision-preview" title="Decision preview (rules)" collapsible collapsibleSummary="Buy score, allocation">
                 <p className="text-sm text-slate-600 mb-4">
                     Interactive preview of capital allocation and buy-score rules. Adjust sliders to see how runway, position size, and drift affect decisions.
                 </p>
@@ -600,7 +600,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                 </div>
             </SectionCard>
 
-            <SectionCard title="Reports & export" collapsible collapsibleSummary="Wealth summary, backup">
+            <SectionCard id="reports-export" title="Reports & export" collapsible collapsibleSummary="Wealth summary, backup">
                 <p className="text-sm text-slate-600 mb-4">Generate structured reports and exports. Wealth summary includes net worth, cashflow, holdings, and risk metrics.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                     <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">

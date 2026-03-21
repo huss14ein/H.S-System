@@ -983,7 +983,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Budgets ---
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
       if(!supabase) return;
-      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit });
+      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
@@ -1007,7 +1007,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateBudget = async (budget: Budget) => {
       if (!supabase || !auth?.user) return;
-      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit });
+      const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
       const { category, month, year, limit, period, tier, destinationAccountId } = budget;

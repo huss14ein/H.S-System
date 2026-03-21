@@ -16,7 +16,7 @@ import { toSAR, getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { unrealizedPnL } from '../services/portfolioMetrics';
 import type { Holding } from '../types';
 import type { Page } from '../types';
-import { approximatePortfolioMWRR, flowsFromInvestmentTransactions } from '../services/portfolioXirr';
+import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSAR } from '../services/portfolioXirr';
 
 const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
@@ -97,9 +97,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 yieldOnCostPct: h.yieldOnCostPct,
             }));
 
-        const flows = flowsFromInvestmentTransactions(
-            invTxPersonal as { date: string; type: string; total?: number }[]
-        );
+        const flows = flowsFromInvestmentTransactionsInSAR(invTxPersonal, exchangeRate);
         const termVal = getAllInvestmentsValueInSAR(portfolios, exchangeRate);
         const mwrrPct = approximatePortfolioMWRR(flows, termVal, new Date().toISOString().slice(0, 10));
 

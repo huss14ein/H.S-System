@@ -2,6 +2,8 @@
 
 Use this to satisfy release-style verification. **Income-tax flows are out of product scope** (Zakat remains on its own page). Automated checks: `npm run test` (lint + `tsc`).
 
+**Before code review:** See [BUG_FIXES_LOG.md](./BUG_FIXES_LOG.md) § Pre-review checklist for common failure patterns.
+
 ## 1. Household engine & buckets
 
 - Open **Budgets** (or **Plan** if buckets are surfaced there).  
