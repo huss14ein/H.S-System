@@ -17,9 +17,11 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import {
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
+    computeBulkAddLimitsForSelection,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     generateHouseholdBudgetCategories,
@@ -61,6 +63,9 @@ import {
 } from '../services/householdBudgetAnalytics';
 import { detectRecurringBillPatterns, addBenchmarkComparison } from '../services/hybridBudgetCategorization';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
+import { getPersonalTransactions } from '../utils/wealthScope';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 
 
@@ -91,6 +96,7 @@ interface BudgetModalProps {
 
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
@@ -112,12 +118,16 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
         } else {
+            const learnedPeriod = getLearnedDefault('budget-add', 'limitPeriod') as string | undefined;
+            const learnedTier = getLearnedDefault('budget-add', 'tier') as string | undefined;
+            const validPeriods: ('Monthly' | 'Weekly' | 'Daily' | 'Yearly')[] = ['Monthly', 'Weekly', 'Daily', 'Yearly'];
+            const validTiers: ('Core' | 'Supporting' | 'Optional')[] = ['Core', 'Supporting', 'Optional'];
             setCategory('');
             setLimit('');
-            setLimitPeriod('Monthly');
-            setTier('Optional');
+            setLimitPeriod(learnedPeriod && validPeriods.includes(learnedPeriod as any) ? (learnedPeriod as any) : 'Monthly');
+            setTier(learnedTier && validTiers.includes(learnedTier as any) ? (learnedTier as any) : 'Optional');
         }
-    }, [budgetToEdit, isOpen]);
+    }, [budgetToEdit, isOpen, getLearnedDefault]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -135,6 +145,10 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             period,
             tier,
         }, !!budgetToEdit);
+        if (!budgetToEdit) {
+            trackFormDefault('budget-add', 'limitPeriod', limitPeriod);
+            trackFormDefault('budget-add', 'tier', tier);
+        }
         onClose();
     };
     
@@ -193,6 +207,7 @@ interface BudgetsProps {
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
+    const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
@@ -234,6 +249,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
+    const [suggestedAdjustments, setSuggestedAdjustments] = useState<Array<{ orig: Budget; proposed: Budget }> | null>(null);
 
     // Update shared transaction month filter when current month changes
     useEffect(() => {
@@ -738,7 +754,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         }
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; status?: string; budgetCategory?: string }) => t.type === 'expense' && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
+            .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t: { date: string; amount?: number; budgetCategory?: string }) => {
                 const txDate = new Date(t.date);
                 const amount = Math.abs(t.amount ?? 0);
@@ -854,7 +870,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         const rangeStart = new Date(yr, mo - 1, 1);
         const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
         const spending = new Map<string, number>();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string }) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string }) => {
+            if (!countsAsExpenseForCashflowKpi(tx)) return;
             const d = new Date(tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
@@ -929,6 +946,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             return { ...cat, limit };
         });
     }, [bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, householdAdults, householdKids, engineProfile, householdBudgetEngine.months, bulkAddTargetMonth]);
+
+    // Limits auto-update based on profile, salary, and number of categories selected (envelope reallocation)
+    const bulkAddDisplayCategories = useMemo(() => {
+        const salary = Number(bulkAddSalary);
+        const fallback = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0)
+            ? expectedMonthlySalary
+            : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
+        const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
+        if (!monthlySalary || monthlySalary <= 0 || bulkAddSuggestedCategories.length === 0) return bulkAddSuggestedCategories;
+        return computeBulkAddLimitsForSelection(
+            bulkAddSuggestedCategories,
+            bulkAddSelectedCategories,
+            monthlySalary,
+            engineProfile
+        );
+    }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile]);
 
     // Default bulk-add selection to all suggested categories when list changes
     React.useEffect(() => {
@@ -1217,7 +1250,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string }) => t.type === 'expense' && !!t.budgetCategory);
+        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && !!t.budgetCategory);
         if (allTx.length === 0) {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
@@ -1287,6 +1320,34 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             } as any);
         });
     };
+
+    const handleSuggestBudgetAdjustments = async () => {
+        if (!isAdmin) return;
+        const txs = getPersonalTransactions(data) as import('../types').Transaction[];
+        const budgets = (data?.budgets ?? []) as Budget[];
+        const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear);
+        const currentForMonth = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
+        const proposals: Array<{ orig: Budget; proposed: Budget }> = [];
+        currentForMonth.forEach(orig => {
+            const prop = adjusted.find(b => b.id === orig.id || (b.category === orig.category && b.month === orig.month && b.year === orig.year));
+            if (prop && prop.limit !== orig.limit) {
+                proposals.push({ orig, proposed: prop });
+            }
+        });
+        if (proposals.length === 0) {
+            alert('No budget adjustments suggested. Need at least 2 months of spending data per category.');
+            return;
+        }
+        setSuggestedAdjustments(proposals);
+    };
+
+    const applySuggestedAdjustments = () => {
+        if (!suggestedAdjustments) return;
+        trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', true);
+        suggestedAdjustments.forEach(({ proposed }) => updateBudget(proposed));
+        setSuggestedAdjustments(null);
+    };
+
     const submitBudgetRequest = async () => {
         if (!supabase || !auth?.user) return;
 
@@ -1549,7 +1610,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     return (
         <PageLayout
             title={`Budgets (${budgetView})`}
-            description="Set limits by category and track spending. Core and essential categories feed into your emergency fund target (Summary & Dashboard)."
+            description="Set monthly spending limits for categories (groceries, dining, etc.). Get alerts when you're close to the limit."
             action={
                 <div className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 sm:gap-3">
                     <div className="inline-flex items-center p-1 rounded-lg border border-slate-200 bg-white">
@@ -1573,6 +1634,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     <PageActionsDropdown
                         ariaLabel="Budget actions"
                         actions={[
+                            { value: 'suggest-adjustments', label: 'Suggest budget adjustments', disabled: !isAdmin, onClick: handleSuggestBudgetAdjustments },
                             { value: 'smart-fill', label: 'Smart-fill from history', disabled: !isAdmin, onClick: handleSmartFillBudgets },
                             { value: 'copy-month', label: 'Copy last month', disabled: !isAdmin, onClick: handleCopyBudgets },
                             { value: 'add-budget', label: 'Add budget', disabled: !isAdmin, onClick: handleOpenModal },
@@ -1582,7 +1644,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             }
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
-            <SectionCard>
+            <SectionCard title="Budget requests" collapsible collapsibleSummary="Search & filters" defaultExpanded>
                 <div className="flex flex-wrap gap-3 items-center">
                     <input
                         value={requestSearch}
@@ -1627,7 +1689,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 </div>
             </SectionCard>
 
-            <SectionCard title="Budget Intelligence">
+            <SectionCard title="Budget Intelligence" collapsible collapsibleSummary="Portfolio, spend, attention" defaultExpanded>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
@@ -1654,7 +1716,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             </SectionCard>
 
             {recurringBillsWithBenchmarks.length > 0 && (
-                <SectionCard title="Recurring bills & price benchmarks">
+                <SectionCard title="Recurring bills & price benchmarks" collapsible collapsibleSummary="Bills, benchmarks">
                     <ul className="space-y-2 text-sm">
                         {recurringBillsWithBenchmarks.slice(0, 8).map((bill, i) => (
                             <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-2">
@@ -1673,7 +1735,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             )}
 
             {householdConstraints?.cashflowStressSignals && householdConstraints.cashflowStressSignals.length > 0 && (
-                <SectionCard title="Cashflow signals (household & budget engines)">
+                <SectionCard title="Cashflow signals (household & budget engines)" collapsible collapsibleSummary="Stress alerts">
                     <ul className="space-y-1 text-sm text-amber-900">
                         {householdConstraints.cashflowStressSignals.slice(0, 3).map((s, i) => (
                             <li key={i}>{s.message}{s.recommendedAction ? ` — ${s.recommendedAction}` : ''}</li>
@@ -1930,7 +1992,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
-            <SectionCard title="Household Budget Engine">
+            <SectionCard title="Household Budget Engine" collapsible collapsibleSummary="Household engine" defaultExpanded>
                 <div className="flex items-center justify-between mb-2">
                     <p className="text-sm text-slate-700 font-medium">
                         Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
@@ -2089,18 +2151,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
                             <p className="text-xs text-slate-600">Suggested limits use the same formulas as the engine (groceries scale with family size; rent, utilities, transport, schooling, etc. are consistent). If you have run the engine above for this year, amounts for the target month may reflect engine projections. Select categories to create or update.</p>
-                            {bulkAddSuggestedCategories.length > 0 && (
+                            {bulkAddDisplayCategories.length > 0 && (
                                 <>
                                     <div className="flex items-center justify-between gap-2">
-                                        <span className="text-xs font-medium text-slate-600">Select categories to create or update:</span>
+                                        <span className="text-xs font-medium text-slate-600">Select categories to create or update (limits sync with salary, profile & selection):</span>
                                         <span className="flex gap-2">
-                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddSuggestedCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddDisplayCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
                                             <span className="text-slate-300">|</span>
                                             <button type="button" onClick={() => setBulkAddSelectedCategories([])} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Deselect all</button>
                                         </span>
                                     </div>
                                     <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-white p-2 space-y-1.5">
-                                        {bulkAddSuggestedCategories.map((cat) => {
+                                        {bulkAddDisplayCategories.map((cat) => {
                                             const selected = bulkAddSelectedCategories.includes(cat.category);
                                             const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
                                             return (
@@ -2137,7 +2199,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                 return;
                                             }
                                             const selectedSet = new Set(bulkAddSelectedCategories);
-                                            const categories = bulkAddSuggestedCategories.filter((c) => selectedSet.has(c.category));
+                                            const categories = bulkAddDisplayCategories.filter((c) => selectedSet.has(c.category));
                                             if (!window.confirm(`Create or update ${categories.length} budgets for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated.`)) return;
                                             const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
                                             let created = 0, updated = 0;
@@ -2531,7 +2593,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 </div>
             )}
 
-            <SectionCard title="Budget sharing">
+            <SectionCard title="Budget sharing" collapsible collapsibleSummary="Shared budgets">
                 <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sharing audit snapshot</p>
                     <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
@@ -2622,7 +2684,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             </SectionCard>
 
             {isAdmin && (
-                <SectionCard title="Admin: Approved Budgets & Shared Account Tracking">
+                <SectionCard title="Admin: Approved Budgets & Shared Account Tracking" collapsible collapsibleSummary="Admin tracking">
                     <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
                         <h3 className="text-sm font-semibold text-indigo-900 mb-3">Approved Budgets Overview</h3>
                         <p className="text-xs text-indigo-700 mb-3">To create or update many budgets at once, use <strong>Household Engine</strong> tab → <strong>Bulk add budgets</strong>.</p>
@@ -2870,7 +2932,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             )}
 
             {(ownerSharedTransactions.length > 0 || mySharedBudgetTransactions.length > 0) && (
-                <SectionCard title="Shared Budget Transactions">
+                <SectionCard title="Shared Budget Transactions" collapsible collapsibleSummary="Shared tx" defaultExpanded>
                     <div className="mb-4">
                         <p className="text-xs text-slate-500 mb-3">
                             Default view is the <strong>current month</strong>. Use the month filter to view history. Track all transactions from shared accounts affecting your budgets; approved transactions are deducted from budget totals.
@@ -3108,6 +3170,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             )}
 
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
+            {suggestedAdjustments && (
+                <Modal isOpen onClose={() => { trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', false); setSuggestedAdjustments(null); }} title="Suggested budget adjustments">
+                    <p className="text-sm text-slate-600 mb-4">Based on your spending history. Apply to update limits.</p>
+                    <ul className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+                        {suggestedAdjustments.map(({ orig, proposed }) => (
+                            <li key={orig.id ?? orig.category} className="flex justify-between items-center text-sm">
+                                <span className="font-medium">{orig.category}</span>
+                                <span>
+                                    <span className="text-slate-500 line-through">{formatCurrencyString(orig.limit)}</span>
+                                    {' → '}
+                                    <span className="text-emerald-600 font-medium">{formatCurrencyString(proposed.limit)}</span>
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="flex gap-2 justify-end">
+                        <button type="button" onClick={() => { trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', false); setSuggestedAdjustments(null); }} className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">Cancel</button>
+                        <button type="button" onClick={applySuggestedAdjustments} className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:opacity-90">Apply all</button>
+                    </div>
+                </Modal>
+            )}
         </PageLayout>
     );
 };

@@ -28,9 +28,9 @@ Use this checklist when wiring or auditing AI features.
 | Research / commodity / hybrid categorization | `geminiService.ts` | Varies by caller; prefer aggregates |
 | Reconciliation hints | `StatementProcessingContext` | Discrepancy list + statement metadata |
 
-## Rotation / keys
+## Rotation / keys (4-API fallback)
 
-- **Production / server:** Netlify (or host) env: `GEMINI_API_KEY` — preferred for proxies.
+- **Netlify proxy** tries providers in order: Gemini primary → Gemini backup → Claude → Grok → OpenAI. When one hits rate limit or fails, the next is used. Set GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, OPENAI_API_KEY in Netlify env.
 - **Client (Vite):** `VITE_GEMINI_API_KEY` — only for local/dev; **do not** ship real secrets in public builds.
 - **Market data:** `VITE_FINNHUB_API_KEY` — client-side; not a secret but rate-limited.
 - **Finnhub market session:** `/stock/market-status` `session` strings are normalized in `services/finnhubService.ts` (`normalizeFinnhubMarketSession`) to `pre-market` | `post-market` | `regular` | `closed` so Watchlist/System Health stay consistent if the API wording changes.

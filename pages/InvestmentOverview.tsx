@@ -13,7 +13,7 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Safety & rules' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data, loading } = useContext(DataContext)!;

@@ -102,7 +102,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'top gainers':
     'Largest positive P&L names—useful for reviewing winners; combine with concentration and targets before adding more size.',
   'top losers':
-    'Largest negative P&L names—review thesis and risk tier before selling; may still be within plan if intentional.',
+    'Largest negative P&L names—review your notes and risk tier before selling; may still be within plan if intentional.',
   'capital efficiency ranking':
     'Ranks positions by return adjusted for risk tier (higher tiers get more weight). Higher score = more return per unit of assumed risk—good for spotting efficient vs crowded names.',
   'exception history':
@@ -110,41 +110,67 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'risk distribution':
     'Capital split across Low/Med/High/Spec tiers—sanity check for concentration and whether risk matches your intent.',
 
-  // Risk & Trading Hub
+  // Safety & rules (Risk & Trading Hub)
+  'months of expenses covered':
+    'How many months your checking + savings could cover essential spending. A common target is 3–6 months.',
   'emergency runway':
     'Months of essential expenses covered by checking + savings (positive balances). From the same emergency fund logic as Goals and Dashboard.',
+  'buy readiness':
+    'A simple score from 0–100: higher = conditions are better for buying (e.g. enough runway).',
   'sample scores (rules)':
     'buyScore / sellScore from decisionEngine using your runway and sample position/cash needs. Tune gates in Settings → trading policy.',
+  'your safety rules':
+    'Rules you set to avoid impulsive trades. Edit in Settings.',
   'trading policy (this device)':
-    'Stored in browser localStorage per device. Edit in Settings; Record Trade uses these rules for warnings.',
+    'Runway, position caps, large-sell ack. Presets: conservative/moderate/aggressive. Auto-saves; Record Trade uses these rules.',
+  'portfolio return (simplified)':
+    'How your investments performed over time, considering deposits and withdrawals. Not audited.',
   'approx. mwrr (cashflows)':
     'Money-weighted style return from investment buy/sell flows and current holdings value. Simplified; not a certified performance report.',
+  'why did net worth change?':
+    'Breaks down your net worth change into: money you added/withdrew vs market moves and other changes.',
   'net worth attribution (dashboard snapshots)':
     'Needs two local snapshots (newest vs previous in list). Explains NW change as personal cashflows vs residual (markets, debt, other). Create snapshots from Dashboard (admin) or below.',
+  'net worth snapshots':
+    'Save snapshots of your net worth over time to compare and see how it changed.',
   'snapshots & history':
     'Snapshots are saved on this device. “Create snapshot now” stores today’s computed net worth. Use “Fill last 2 dates” to auto-select the two most recent snapshot days for compare.',
+  'when to review':
+    'Suggested checklists for different timeframes—daily, weekly, monthly, etc.',
   'review cadence':
     'Auto-built from your data: e.g. daily flags stale market data and debt stress; weekly flags uncategorized spend; monthly nudges snapshot + budget categories. No manual refresh button needed.',
 
-  // Financial Journal
+  // Notes & ideas (Financial Journal)
+  'add an investment idea':
+    'Write why you bought it, when to check back, and what would change your mind. Helps you stay disciplined and avoid emotional trades. Stored only on this device.',
   'thesis tracker':
-    'Per-symbol investment thesis: why you bought, upside, timeline, risks, invalidation. Benefit: disciplined review and fewer emotional trades—compare later to actual outcomes. Stored only on this device.',
-  'new entry':
-    'Free-form journal notes (decisions, life events, reminders). Use alongside thesis cards for context that doesn’t fit a single symbol.',
+    'Write why you bought it, when to check back, and what would change your mind. Helps you stay disciplined. Stored only on this device.',
+  'quick note':
+    'Jot down a decision, reminder, or life event—anything you want to remember.',
+  'your saved ideas':
+    'Record actual return % and reflection when you sell. Helps you learn what worked and spot recurring mistakes.',
   'thesis review & outcomes':
-    'Record actual return % and reflection after the fact. The engine updates thesis validity—benefit: learn what worked, tighten rules, and spot recurring mistakes.',
+    'Record actual return % and reflection when you sell. Helps you learn what worked.',
+  'note history':
+    'Chronological list of your notes. Browse past entries for accountability.',
   history:
-    'Chronological list of general journal entries (not thesis cards). Browse past notes for accountability and pattern review.',
+    'Chronological list of your notes. Browse past entries for accountability.',
+  'new entry':
+    'Jot down a decision, reminder, or life event.',
 
-  // Liquidation
+  // Sell priority (Liquidation Planner)
+  'your investments, ranked by review priority':
+    'Higher scores indicate when you might want to look at trimming—e.g. if one holding is too big, or your notes say it\'s time to revisit. Not financial advice.',
   'ranked positions (higher = review trim first)':
-    'Rule-based sell urgency from concentration and need-cash signals (sellScore)—higher score means review trimming first if you need liquidity or to reduce size. Not a recommendation to sell; confirm in Investments and your thesis.',
+    'Rule-based sell urgency from concentration, idea validity (Notes & ideas), and need-cash signals—higher score means review trimming first if you need liquidity or to reduce size. Positions with expired review dates get a boost. Not a recommendation to sell; confirm in Investments.',
 
-  // Logic & Engines (titles match SectionCard title props)
+  // Behind the numbers (Logic & Engines)
+  'quick links':
+    'Jump to related tools: Safety & rules, Forecast, Settings.',
   'how to use this page':
     'Everything here recalculates when your Finova data changes. Net worth snapshots (local) also refresh when you return to this tab. Use the (!) buttons on each card for what the numbers mean and limits. Not financial advice.',
   'returns & benchmarks':
-    'Uses your last two saved net worth snapshots for simple return. Benchmark line uses a fixed 8% example unless you extend it. TWRR line is a small demo of linked sub-period returns. For full attribution, use Risk & Trading Hub.',
+    'Uses your last two saved net worth snapshots for simple return. Benchmark line uses a fixed 8% example unless you extend it. TWRR line is a small demo of linked sub-period returns. For full attribution, use Safety & rules.',
   'strategy comparison':
     'Ranks illustrative scenarios from your current net worth (not a forecast promise). Allocation models blend your plan core+upside weights with generic balanced/conservative examples.',
   'cash & liquidity':
@@ -187,17 +213,18 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'what i owe': 'Active debts and negative balances you owe—tie to payoff plans on Liabilities.',
   "what i'm owed": 'Receivables and positive liability rows—follow up collections separately from spending.',
   'expense breakdown': 'Category mix from your filtered transactions—spot drivers of spend.',
-  'transaction history': 'Filtered list of movements—reconcile with accounts and budgets.',
+  'transaction history':
+    'Filtered ledger for the month and account. Transfers appear as two lines (out/income legs); they do not count in the Income / Expenses / Net Flow cards above—only external salary, spend, etc. Category Transfer or Transfers marks internal moves.',
   'zakatable assets': 'Items included in Zakat calculation per your settings—verify against Shariah guidance you follow.',
   'deductible liabilities': 'Offsets applied before net zakatable amount—confirm with your scholar or policy.',
   calculation: 'Computed zakatable amount from inputs—educational; confirm methodology with qualified guidance.',
   notifications: 'In-app alerts from budgets, goals, approvals, and data-quality rules.',
-  'activity log (this device)': 'Local audit trail of actions on this browser—export from Settings if needed.',
+  'activity log (this device)': 'Local audit trail of creates/updates/deletes. Filter by entity, search, export CSV, or clear.',
   'reports & export': 'Backup and export options for your data.',
   'data management': 'Reset, import/export, and retention controls for your workspace.',
   'user profile': 'Identity and role used for admin features and approvals.',
   'user approvals': 'Pending signups or requests requiring admin action.',
-  'financial preferences': 'Currency, alerts, and defaults that other pages read.',
+  'financial preferences': 'Risk profile, budget/drift thresholds, presets. Guides AI and plan suggestions.',
   'enhanced default parameters': 'Advanced defaults for engines and forms.',
   'decision preview (rules)': 'Sample outputs from rule engines with current settings.',
   'settings snapshot': 'Quick read of key settings—open subsections to edit.',
@@ -234,7 +261,22 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'execution history': 'Record of trades or executions you logged—audit trail for review.',
   'physical assets': 'Property, vehicles, and non-broker assets—feeds net worth on Summary.',
   'sukuk in finova': 'Sukuk holdings and income—track separately from equities where applicable.',
-  'salary & planning experts': 'Household and salary planning helpers—inputs feed Plan and Budgets.',
+  'salary & planning experts':
+    'Seven AI planners for salary, cash flow, wealth, debt, automation, independence, and lifestyle. Fields prefill from Transactions, Budgets, Goals, Investment Plan, and Liabilities when available—edit before Run analysis. Use Copy prompt to paste into any chat. Outputs are educational—not financial advice.',
+  'salary allocation expert':
+    'Splits your take-home into essentials, savings, investing, and discretionary spend from your numbers and main goal. Good for a monthly budget envelope. Verify amounts against your real bills.',
+  'cash flow analyst':
+    'Reads your expense breakdown and savings rate, then suggests structural changes (not just “spend less”). More accurate with a detailed category list.',
+  '5-year wealth growth plan':
+    'Illustrative compounding over five years from salary, monthly investment, and net worth. Uses conservative-to-moderate return assumptions—treat as a scenario, not a forecast.',
+  'debt elimination strategy':
+    'Compares payoff paths (e.g. avalanche vs snowball) from your debt list. Add interest rates for the most accurate ordering; missing rates are guessed by the model.',
+  'salary → investment automation':
+    'Designs a boring, repeatable monthly invest-from-salary workflow and asset mix by risk. Saudi-aware examples (Sukuk, funds, ETFs) may appear in the answer—confirm products with your broker or advisor.',
+  'financial freedom / independence timeline':
+    'Uses FIRE-style math (expenses × portfolio multiple, safe withdrawal) with simplified growth assumptions. Timeline is illustrative; taxes and life changes are not modeled in full.',
+  'lifestyle upgrade without slowing wealth':
+    'Proposes swaps that raise daily satisfaction while keeping or improving your savings rate—often cutting low-joy spend first. Needs honest salary and expense inputs.',
   'we recovered from a page error': 'The app caught an error here; you can recover or reload. Report if it persists.',
   'system recovery mode': 'A global error was handled—navigation and data may be limited until refresh.',
 };

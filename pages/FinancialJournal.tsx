@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import type { Page } from '../types';
@@ -34,7 +35,14 @@ function save(entries: JournalEntry[]) {
   } catch {}
 }
 
-const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => {
+interface FinancialJournalProps {
+  setActivePage?: (p: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+  dataTick?: number;
+}
+
+const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction }) => {
+  const { trackAction } = useSelfLearning();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -71,6 +79,7 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
   const [reviewDate, setReviewDate] = useState('');
 
   const addThesis = () => {
+    trackAction('add-thesis', 'Engines & Tools');
     const sym = symbol.trim().toUpperCase();
     if (!sym) return;
     const record = createThesisRecord({
@@ -125,8 +134,14 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
     setReflection('');
   };
 
+  const recordOutcomeWithTracking = () => {
+    trackAction('record-outcome', 'Engines & Tools');
+    recordOutcome();
+  };
+
   const add = () => {
     if (!title.trim() && !body.trim()) return;
+    trackAction('add-journal-note', 'Engines & Tools');
     const e: JournalEntry = {
       id: `j-${Date.now()}`,
       at: new Date().toISOString(),
@@ -141,85 +156,107 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
   };
 
   return (
-    <PageLayout title="Financial journal" description="Private notes on this device—investment thesis, decisions, and reminders.">
-      <SectionCard title="Thesis tracker">
+    <PageLayout
+      title="Notes & ideas"
+      description="Write down why you bought each investment and when to revisit it. Stored only on this device—your private notes."
+    >
+      <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 p-4">
+        <p className="text-sm text-slate-700">
+          <strong className="text-slate-900">Why use this?</strong> Writing down your reasons helps you avoid emotional decisions. When you set a review date, the system reminds you to check if your reasons still hold.
+        </p>
+      </div>
+
+      {triggerPageAction && theses.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); }}>
+            See sell priority list
+          </button>
+          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Investments', 'openRiskTradingHub'); }}>
+            Safety & rules
+          </button>
+        </div>
+      )}
+
+      <SectionCard title="Add an investment idea" infoHint="Write why you bought it, when to check back, and what would change your mind. Helps you stay disciplined." collapsible collapsibleSummary="Symbol, thesis, review date" defaultExpanded>
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Symbol</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Stock or fund symbol</label>
               <input className="input-base w-full" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="e.g. AAPL" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Review date</label>
-              <input className="input-base w-full" type="date" value={reviewDate} onChange={(e) => setReviewDate(e.target.value)} />
+              <label className="block text-sm font-medium text-slate-700 mb-1">When to review</label>
+              <input className="input-base w-full" type="date" value={reviewDate} onChange={(e) => setReviewDate(e.target.value)} title="Set a date to check if your reasons still hold" />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Buy thesis</label>
-            <textarea className="input-base w-full min-h-[90px]" value={buyThesis} onChange={(e) => setBuyThesis(e.target.value)} placeholder="Expected upside, timeline, why now, what would change your mind…" />
+            <label className="block text-sm font-medium text-slate-700 mb-1">Why did you buy this?</label>
+            <textarea className="input-base w-full min-h-[90px]" value={buyThesis} onChange={(e) => setBuyThesis(e.target.value)} placeholder="e.g. Strong growth, good dividend, believe in the company long-term. What made it a good idea for you?" />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Expected upside % (optional)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Expected growth % (optional)</label>
               <input className="input-base w-full" value={expectedUpsidePct} onChange={(e) => setExpectedUpsidePct(e.target.value)} placeholder="e.g. 25" />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Expected timeline (optional)</label>
-              <input className="input-base w-full" value={expectedTimeline} onChange={(e) => setExpectedTimeline(e.target.value)} placeholder="e.g. 12-18 months" />
+              <label className="block text-sm font-medium text-slate-700 mb-1">Time horizon (optional)</label>
+              <input className="input-base w-full" value={expectedTimeline} onChange={(e) => setExpectedTimeline(e.target.value)} placeholder="e.g. 12–18 months" />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Key risks (optional)</label>
-            <textarea className="input-base w-full min-h-[70px]" value={keyRisks} onChange={(e) => setKeyRisks(e.target.value)} placeholder="What can go wrong?" />
+            <label className="block text-sm font-medium text-slate-700 mb-1">What could go wrong? (optional)</label>
+            <textarea className="input-base w-full min-h-[70px]" value={keyRisks} onChange={(e) => setKeyRisks(e.target.value)} placeholder="Risks you're aware of" />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Catalyst dates (optional)</label>
-              <input className="input-base w-full" value={catalystDates} onChange={(e) => setCatalystDates(e.target.value)} placeholder="YYYY-MM-DD, YYYY-MM-DD…" />
+              <label className="block text-sm font-medium text-slate-700 mb-1">Key dates (optional)</label>
+              <input className="input-base w-full" value={catalystDates} onChange={(e) => setCatalystDates(e.target.value)} placeholder="Earnings, product launch, etc." />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Invalidation point (optional)</label>
-              <input className="input-base w-full" value={invalidationPoint} onChange={(e) => setInvalidationPoint(e.target.value)} placeholder="e.g. price <= X or thesis disproved" />
+              <label className="block text-sm font-medium text-slate-700 mb-1">When would you change your mind? (optional)</label>
+              <input className="input-base w-full" value={invalidationPoint} onChange={(e) => setInvalidationPoint(e.target.value)} placeholder="e.g. If price drops below X, or company misses target" />
             </div>
           </div>
 
           <button type="button" className="btn-primary" onClick={addThesis}>
-            Save thesis
+            Save idea
           </button>
         </div>
       </SectionCard>
 
-      <SectionCard title="New entry">
+      <SectionCard title="Quick note" collapsible collapsibleSummary="Quick note">
+        <p className="text-sm text-slate-600 mb-2">Jot down a decision, reminder, or life event—anything you want to remember.</p>
         <input
           className="input-base w-full mb-2"
-          placeholder="Title"
+          placeholder="Title (e.g. Sold AAPL, bought house)"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
         <textarea
           className="input-base w-full min-h-[100px]"
-          placeholder="Thesis, trade rationale, life event…"
+          placeholder="Your note…"
           value={body}
           onChange={(e) => setBody(e.target.value)}
         />
         <button type="button" className="btn-primary mt-2" onClick={add}>
-          Save entry
+          Save note
         </button>
       </SectionCard>
 
-      <SectionCard title="Thesis review & outcomes" className="mt-6">
+      <SectionCard title="Your saved ideas" className="mt-6" collapsible collapsibleSummary={`${theses.length} ideas saved`} defaultExpanded>
         {theses.length === 0 ? (
-          <p className="text-sm text-slate-500">No thesis records yet.</p>
+          <p className="text-sm text-slate-500">No ideas saved yet. Add one above to get started.</p>
         ) : (
           <div className="space-y-5">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm text-slate-600 mb-3">When you sell a holding, record how it went so you can learn from it.</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Record outcome for</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Which one did you sell?</label>
                   <select className="input-base w-full" value={outcomeSymbol} onChange={(e) => setOutcomeSymbol(e.target.value)}>
                     {theses.map((t) => (
                       <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
@@ -231,14 +268,14 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
                   <input className="input-base w-full" value={actualReturnPct} onChange={(e) => setActualReturnPct(e.target.value)} placeholder="e.g. 12.5" />
                 </div>
                 <div>
-                  <button type="button" className="btn-primary w-full mt-5" onClick={recordOutcome}>
-                    Record outcome
+                  <button type="button" className="btn-primary w-full mt-5" onClick={recordOutcomeWithTracking}>
+                    Save outcome
                   </button>
                 </div>
               </div>
               <div className="mt-3">
-                <label className="block text-sm font-medium text-slate-700 mb-1">Reflection</label>
-                <textarea className="input-base w-full min-h-[70px]" value={reflection} onChange={(e) => setReflection(e.target.value)} placeholder="What went right/wrong? Did the thesis hold? Next steps…" />
+                <label className="block text-sm font-medium text-slate-700 mb-1">What did you learn?</label>
+                <textarea className="input-base w-full min-h-[70px]" value={reflection} onChange={(e) => setReflection(e.target.value)} placeholder="What went right or wrong? Would you do it again?" />
               </div>
             </div>
 
@@ -253,20 +290,20 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
                         <p className="font-semibold text-slate-900">{t.symbol}</p>
                       </div>
                       <span className={`text-xs px-2 py-1 rounded-full font-semibold ${validity.valid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {validity.valid ? 'Thesis valid' : 'Needs review'}
+                        {validity.valid ? 'On track' : 'Time to review'}
                       </span>
                     </div>
                     <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{t.buyThesis}</p>
                     <div className="mt-3 text-sm text-slate-600 space-y-1">
-                      {t.expectedUpsidePct != null && <div>Expected upside: {t.expectedUpsidePct}%</div>}
-                      {t.expectedTimeline && <div>Timeline: {t.expectedTimeline}</div>}
+                      {t.expectedUpsidePct != null && <div>Expected growth: {t.expectedUpsidePct}%</div>}
+                      {t.expectedTimeline && <div>Time horizon: {t.expectedTimeline}</div>}
                       {t.keyRisks && <div>Risks: {t.keyRisks}</div>}
-                      {t.catalystDates && <div>Catalysts: {t.catalystDates}</div>}
-                      {t.invalidationPoint && <div>Invalidation: {t.invalidationPoint}</div>}
-                      {t.reviewDate && <div>Review date: {new Date(t.reviewDate).toLocaleDateString()}</div>}
+                      {t.catalystDates && <div>Key dates: {t.catalystDates}</div>}
+                      {t.invalidationPoint && <div>Change mind if: {t.invalidationPoint}</div>}
+                      {t.reviewDate && <div>Review by: {new Date(t.reviewDate).toLocaleDateString()}</div>}
                       {t.postResultReflection && (
                         <div className="pt-2 border-t border-slate-200">
-                          <div className="text-xs font-semibold text-slate-500">Post-result reflection</div>
+                          <div className="text-xs font-semibold text-slate-500">What I learned</div>
                           <div className="whitespace-pre-wrap mt-1">{t.postResultReflection}</div>
                         </div>
                       )}
@@ -279,12 +316,9 @@ const FinancialJournal: React.FC<{ setActivePage?: (p: Page) => void }> = () => 
           </div>
         )}
       </SectionCard>
-      <SectionCard
-        title="History"
-        className="mt-6"
-      >
+      <SectionCard title="Note history" className="mt-6" collapsible collapsibleSummary="Journal notes">
         {sorted.length === 0 ? (
-          <p className="text-sm text-slate-500">No entries yet.</p>
+          <p className="text-sm text-slate-500">No notes yet.</p>
         ) : (
           <ul className="space-y-4">
             {sorted.map((e) => (

@@ -30,9 +30,10 @@ import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
-const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setActivePage }) => {
+const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading } = useContext(DataContext)!;
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
@@ -80,7 +81,7 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
     const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
     const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
     const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
-    const uncategorized = txs.filter((t) => t.type === 'expense' && !t.budgetCategory).length;
+    const uncategorized = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory).length;
     const liquid = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
     const monthlyDebt = liabilities.filter((l: { status?: string }) => l.status === 'Active').reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
     const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
@@ -110,15 +111,10 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
     const txs = data?.investmentTransactions ?? [];
     const flows = flowsFromInvestmentTransactions(txs as { date: string; type: string; total?: number }[]);
     const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-    let tv = 0;
-    inv.forEach((p: { holdings?: { currentValue?: number }[] }) => {
-      (p.holdings ?? []).forEach((h: { currentValue?: number }) => {
-        tv += Number(h.currentValue) || 0;
-      });
-    });
+    const tv = getAllInvestmentsValueInSAR(inv, exchangeRate);
     const r = approximatePortfolioMWRR(flows, tv, new Date().toISOString().slice(0, 10));
     return r;
-  }, [data]);
+  }, [data, exchangeRate]);
 
   const attr = useMemo(() => {
     if (snaps.length < 2) return null;
@@ -146,40 +142,44 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
 
   return (
     <PageLayout
-      title="Risk & trading hub"
-      description="Policy, scores, and net worth snapshots update from your data automatically. Checklists refresh from live metrics (stale quotes, debt stress, uncategorized spend). Educational only—not financial advice."
+      title="Safety & rules"
+      description="Your safety checks and rules before buying or selling. See how much you have in reserve, your portfolio return, and when to review things."
     >
-      {setActivePage && (
+      <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 p-4">
+        <p className="text-sm text-slate-700">
+          <strong className="text-slate-900">What is this?</strong> A quick view of your emergency cushion, how your portfolio is doing, and the rules you set to avoid impulsive trades. Not financial advice.
+        </p>
+      </div>
+
+      {(setActivePage || triggerPageAction) && (
         <p className="text-sm text-slate-600 mb-4">
-          <button type="button" className="text-primary-600 font-medium underline" onClick={() => setActivePage('Logic & Engines')}>
-            Logic & Engines
+          <button type="button" className="text-primary-600 font-medium hover:text-primary-700 underline" onClick={() => setActivePage?.('Engines & Tools')}>
+            Money Tools
           </button>{' '}
-          — returns, cash/FX, retirement, probabilistic planning, cross-engine integration (all wired to your data).
+          — sell priority, notes & ideas, and behind-the-numbers.
         </p>
       )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SectionCard
-          title="Emergency runway"
+        <SectionCard title="Months of expenses covered" infoHint="How many months your checking + savings could cover essential spending. A common target is 3–6 months." collapsible collapsibleSummary="Runway" defaultExpanded
         >
           <p className="text-2xl font-bold text-slate-900">{ef.monthsCovered.toFixed(1)} mo</p>
           <p className="text-sm text-slate-600">Coverage vs {ef.targetMonths} mo target</p>
         </SectionCard>
-        <SectionCard
-          title="Sample scores (rules)"
+        <SectionCard title="Buy readiness" infoHint="A simple score from 0–100: higher = conditions are better for buying (e.g. enough runway)." collapsible collapsibleSummary="0–100 score"
         >
           <p className="text-sm">
-            Buy-score: <strong className="text-primary">{buyS}</strong> / 100 · Sell sample:{' '}
+            Score: <strong className="text-primary">{buyS}</strong> / 100 · Sell sample:{' '}
             <strong className="text-rose-700">{sellS.score}</strong> ({sellS.reasons.join(', ')})
           </p>
         </SectionCard>
-        <SectionCard
-          title="Trading policy (this device)"
+        <SectionCard title="Your safety rules" infoHint="Rules you set to avoid impulsive trades. Edit in Settings." collapsible collapsibleSummary="Trading guardrails"
         >
           <ul className="text-sm text-slate-700 space-y-1">
-            <li>Min runway for buys: {policy.minRunwayMonthsToAllowBuys} mo</li>
-            <li>Max position weight: {policy.maxPositionWeightPct}%</li>
-            <li>Block buys if 30d net negative: {policy.blockBuysIfMonthlyNetNegative ? 'Yes' : 'No'}</li>
-            <li>Large sell ack over: {formatCurrencyString(policy.requireAckLargeSellNotional, { digits: 0 })}</li>
+            <li>Min months of savings before buying: {policy.minRunwayMonthsToAllowBuys} mo</li>
+            <li>Max % in any single holding: {policy.maxPositionWeightPct}%</li>
+            <li>Block buys if last month was negative: {policy.blockBuysIfMonthlyNetNegative ? 'Yes' : 'No'}</li>
+            <li>Large sell confirmation over: {formatCurrencyString(policy.requireAckLargeSellNotional, { digits: 0 })}</li>
           </ul>
           {setActivePage && (
             <button type="button" className="btn-outline text-sm mt-3" onClick={() => setActivePage('Settings')}>
@@ -187,16 +187,14 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
             </button>
           )}
         </SectionCard>
-        <SectionCard
-          title="Approx. MWRR (cashflows)"
+        <SectionCard title="Portfolio return (simplified)" infoHint="How your investments performed over time, considering deposits and withdrawals. Not audited." collapsible collapsibleSummary="Return over time"
         >
           <p className="text-2xl font-bold">{mwrr != null ? `${mwrr.toFixed(2)}%` : '—'}</p>
-          <p className="text-xs text-slate-500">Simplified IRR on deposits/withdrawals + terminal value. Not audited.</p>
+          <p className="text-xs text-slate-500">Based on your deposits, withdrawals, and current value.</p>
         </SectionCard>
       </div>
-      <SectionCard
-        title="Net worth attribution (Dashboard snapshots)"
-        className="mt-4"
+      <SectionCard title="Why did net worth change?" className="mt-4" collapsible collapsibleSummary="Contributions vs market"
+        infoHint="Breaks down your net worth change into: money you added/withdrew vs market moves and other changes."
       >
         {attr ? (
           <>
@@ -206,25 +204,25 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
               ))}
             </ul>
             <p className="text-xs text-slate-500 mt-3">
-              Cashflow is from personal transactions between snapshot times; residual captures markets, debt, and non-cash items. Also on <strong>Summary</strong> (admin).
+              Cashflow = money you added or withdrew. Residual = market moves, debt, and other changes.
             </p>
           </>
         ) : (
           <p className="text-sm text-slate-600">
-            Need <strong>two</strong> local net worth snapshots. Visit <strong>Dashboard</strong> as admin on two different days—each visit updates today&apos;s snapshot. Then return here for flows vs residual.
+            Need <strong>two</strong> net worth snapshots. Create one on the Dashboard on two different days, then return here.
           </p>
         )}
       </SectionCard>
 
-      <SectionCard
-        title="Snapshots & history"
-        className="mt-4"
+      <SectionCard title="Net worth snapshots" className="mt-4" collapsible collapsibleSummary="Saved snapshots"
+        infoHint="Save snapshots of your net worth over time to compare and see how it changed."
       >
-        <p className="text-sm text-slate-600 mb-3">Compare two snapshots, view net worth as of a date, or lock a month (no further edits to that month).</p>
+        <p className="text-sm text-slate-600 mb-3">Save a snapshot of your net worth today, compare two dates, or view a past date.</p>
         <div className="flex flex-wrap items-end gap-3 mb-4">
           <button
             type="button"
             className="btn-primary text-sm"
+            title="Save today's net worth"
             onClick={() => {
               const nw = currentNetWorth;
               if (typeof nw === 'number' && Number.isFinite(nw)) {
@@ -236,16 +234,16 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
               }
             }}
           >
-            Create snapshot now
+            Save snapshot now
           </button>
           <button
             type="button"
             className="btn-outline text-sm"
             onClick={fillLastTwoSnapshots}
             disabled={snapshotDates.length < 2}
-            title={snapshotDates.length < 2 ? 'Need at least two snapshot dates' : 'Set compare from/to to the two latest dates'}
+            title={snapshotDates.length < 2 ? 'Need at least two snapshots' : 'Use the two most recent dates'}
           >
-            Fill last 2 snapshot dates
+            Use last 2 dates
           </button>
           <span className="text-xs text-slate-500">Current NW: {formatCurrencyString(Number.isFinite(currentNetWorth) ? (currentNetWorth ?? 0) : 0, { digits: 0 })}</span>
         </div>
@@ -281,7 +279,7 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
             )}
             <div className="flex flex-wrap items-end gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Restore view (as of date)</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">View net worth as of</label>
                 <input type="date" className="input-base w-full max-w-[180px]" value={restoreDate} onChange={(e) => setRestoreDate(e.target.value)} />
               </div>
               {restoredSnapshot && (
@@ -289,18 +287,16 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
               )}
             </div>
             <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200">
-              <label className="block text-xs font-semibold text-slate-600">Lock month (YYYY-MM)</label>
+              <label className="block text-xs font-semibold text-slate-600">Lock month (no further edits)</label>
               <input type="month" className="input-base w-36" value={lockYearMonth} onChange={(e) => setLockYearMonth(e.target.value)} />
-              <button type="button" className="btn-outline text-sm" onClick={() => lockYearMonth && lockMonthEnd(lockYearMonth)}>Lock month</button>
+              <button type="button" className="btn-outline text-sm" onClick={() => lockYearMonth && lockMonthEnd(lockYearMonth)}>Lock</button>
               {lockYearMonth && isMonthLocked(lockYearMonth) && <span className="text-xs text-amber-700 font-medium">Locked</span>}
             </div>
           </div>
         )}
       </SectionCard>
 
-      <SectionCard
-        title="Review cadence"
-        className="mt-4"
+      <SectionCard title="Review cadence" className="mt-4" collapsible collapsibleSummary="When to review"
       >
         <p className="text-sm text-slate-600 mb-4">Structured checklists for daily, weekly, monthly, quarterly, and annual reviews.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -366,13 +362,13 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setAc
         {setActivePage && (
           <>
             <button type="button" className="btn-primary" onClick={() => setActivePage('Investments')}>
-              Record trade
+              Record a trade
             </button>
-            <button type="button" className="btn-outline" onClick={() => setActivePage('Liquidation Planner')}>
-              Liquidation planner
+            <button type="button" className="btn-outline" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openLiquidation') : setActivePage?.('Engines & Tools')}>
+              Sell priority
             </button>
-            <button type="button" className="btn-outline" onClick={() => setActivePage('Financial Journal')}>
-              Journal
+            <button type="button" className="btn-outline" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openJournal') : setActivePage?.('Engines & Tools')}>
+              Notes & ideas
             </button>
           </>
         )}

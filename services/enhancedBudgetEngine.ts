@@ -4,6 +4,7 @@
  */
 
 import { Transaction } from '../types';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 
 // Types for enhanced budget engine
 export interface DynamicBaseline {
@@ -75,9 +76,9 @@ export function calculateDynamicBaselines(
   const categoryData: { [category: string]: number[] } = {};
   const categoryDates: { [category: string]: Date[] } = {};
 
-  // Group transactions by category
+  // Group transactions by category (exclude Transfer/Transfers)
   transactions.forEach(tx => {
-    if (tx.type === 'expense') {
+    if (countsAsExpenseForCashflowKpi(tx)) {
       const category = tx.budgetCategory || tx.category || 'Uncategorized';
       if (!categoryData[category]) {
         categoryData[category] = [];
@@ -162,7 +163,7 @@ export function generatePredictiveSpend(
     // Calculate confidence based on data quality
     const recentSpends = recentTransactions
       .filter(tx => tx.budgetCategory === baseline.category || tx.category === baseline.category)
-      .filter(tx => tx.type === 'expense')
+      .filter(tx => countsAsExpenseForCashflowKpi(tx))
       .map(tx => Math.abs(tx.amount));
     
     const dataPoints = recentSpends.length;
@@ -297,7 +298,7 @@ export function analyzeSpendingPatterns(transactions: Transaction[]): SpendingPa
   const categoryGroups: { [category: string]: Transaction[] } = {};
   
   transactions.forEach(tx => {
-    if (tx.type === 'expense') {
+    if (countsAsExpenseForCashflowKpi(tx)) {
       const category = tx.budgetCategory || tx.category || 'Uncategorized';
       if (!categoryGroups[category]) {
         categoryGroups[category] = [];
@@ -380,7 +381,7 @@ export function calculateBudgetHealthMetrics(
   // Forecast accuracy
   const actualByCategory: { [category: string]: number } = {};
   transactions.forEach(tx => {
-    if (tx.type === 'expense') {
+    if (countsAsExpenseForCashflowKpi(tx)) {
       const cat = tx.budgetCategory || tx.category || 'Uncategorized';
       actualByCategory[cat] = (actualByCategory[cat] || 0) + Math.abs(Number(tx.amount) ?? 0);
     }

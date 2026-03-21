@@ -1,25 +1,26 @@
 import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
 import { finnhubFetch } from './finnhubService';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
+import { capitalizeCategoryName } from '../utils/categoryFormat';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
 
 /** Expert advisor persona: used so the AI speaks as a senior financial and investment advisor everywhere. */
-const EXPERT_ADVISOR_PERSONA = `You are Finova AI: a very clever, expert-level financial and investment advisor. You have deep experience in wealth management, portfolio construction, budgeting, and goal-based planning. You speak with authority, clarity, and insight—never generic. You spot what others miss and give direct, actionable guidance. You use precise numbers and concrete next steps. You are encouraging but honest.`;
+const EXPERT_ADVISOR_PERSONA = `You are Finova AI: an expert financial and investment advisor. Wealth management, portfolio construction, budgeting, goal-based planning. Authoritative, clear, insightful—never generic. Direct, actionable guidance with precise numbers and concrete next steps.`;
 
-/** Scope instruction: all data passed to you is the user's personal wealth only (their own accounts, assets, liabilities, and transactions). Do not reference or mix in any third-party or managed wealth; speak only about the user's personal finances. */
-const PERSONAL_WEALTH_SCOPE = `All numbers and data you receive are the user's personal wealth only—their own accounts, assets, and transactions. Do not reference or assume any other person's or managed wealth; analyze and respond only about the user's personal finances.`;
+/** Scope instruction: all data passed to you is the user's personal wealth only. */
+const PERSONAL_WEALTH_SCOPE = `All data is the user's personal wealth only—their accounts, assets, transactions. Analyze only their personal finances.`;
+
+/** Strict response rules: brief, direct, useful. No filler, no hedging, no test phrases. */
+const BRIEF_DIRECT_RULES = `CRITICAL: Be brief. Be direct. Be useful. No filler, no hedging, no generic phrases like "I'd be happy to help" or "Here are some thoughts." Lead with the insight. One sentence per bullet. Use exact numbers. Markdown only: ### headers, - bullets, ** emphasis. No HTML.`;
 
 const DEFAULT_SYSTEM_INSTRUCTION = `${EXPERT_ADVISOR_PERSONA}
 
 ${PERSONAL_WEALTH_SCOPE}
 
-Response style:
-- Lead with the main insight in one clear, expert-level sentence.
-- Use Markdown only: ### for section headers, - for bullets, ** for emphasis. Never use HTML.
-- Use section titles that convey meaning: "Key Highlights", "Areas for Attention", "Strategic Recommendation", "Status Assessment", "Next Steps".
-- One sentence per bullet. Use concrete numbers. No filler or hedging. Sound like a senior advisor, not a generic assistant.`;
+${BRIEF_DIRECT_RULES}`;
 
 
 // --- AI Error Formatting (single source for all AI pages) ---
@@ -85,17 +86,8 @@ export function formatAiError(error: any): string {
     if (isQuotaOrRateLimitError(mergedMessage, parsedForQuota)) {
         return AI_QUOTA_MESSAGE;
     }
-    if (/GEMINI_API_KEY not set/i.test(mergedMessage)) {
-        return `
-### AI Service Configuration Error
-The AI service is not configured correctly. The \`GEMINI_API_KEY\` is missing in your deployment environment.
-
-**To fix this:**
-- Go to your Netlify project settings.
-- Navigate to **Site configuration > Environment variables**.
-- Add a new variable with the key \`GEMINI_API_KEY\` and your Google Gemini API key as the value.
-- Redeploy your site.
-`;
+    if (/GEMINI_API_KEY not set|No AI providers configured/i.test(mergedMessage)) {
+        return `AI not configured. Set at least one in Netlify env: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, or OPENAI_API_KEY.`;
     }
     if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
@@ -527,7 +519,9 @@ const SALARY_EXPERT_SYSTEM = `${EXPERT_ADVISOR_PERSONA}
 
 ${PERSONAL_WEALTH_SCOPE}
 
-Respond in Markdown only (no HTML). Use ### for sections, ** for emphasis, exact amounts and percentages. Be specific and actionable for someone in Saudi Arabia (SAR, local context).`;
+${BRIEF_DIRECT_RULES}
+
+SAR, Saudi context. Exact amounts and percentages.`;
 
 export type SalaryAllocationExpertParams = { salary: number; fixedExpenses: number; currentSavings: number; goal: string };
 export type CashFlowExpertParams = { salary: number; expenseBreakdown: string };
@@ -646,7 +640,7 @@ export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]
     try {
         const personalTx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const personalInv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Analyze this snapshot and return 4-5 feed items as JSON. Be direct: each title is one short punchy line; each description is one sentence with a number or action.
+        const prompt = `You are Finova AI, expert financial advisor. Return 4-5 feed items as JSON. Brief: each title = one punchy line; each description = one sentence with a number or action.
 Data: Recent tx: ${personalTx.slice(0, 5).map((t: { description?: string; amount?: number }) => `${t.description ?? ''} ${t.amount ?? 0}`).join('; ')}. Budgets: ${(data?.budgets ?? []).map(b => `${b.category ?? ''} ${b.limit ?? 0}`).join('; ')}. Goals: ${(data?.goals ?? []).map(g => `${g.name ?? ''} ${((g.targetAmount ?? 0) > 0 ? (((g.currentAmount ?? 0) / (g.targetAmount ?? 1)) * 100).toFixed(0) : '0')}%`).join('; ')}. Top holding: ${getTopHoldingSymbol(personalInv)}.
 Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, specific), emoji (single). Prioritize what matters most.`;
 
@@ -686,7 +680,7 @@ export const getAIAnalysis = async (summary: KPISummary): Promise<string> => {
   if (cached) return cached;
 
   try {
-    const prompt = `You are Finova AI, a very clever expert financial and investment advisor. Summary (SAR): Net worth ${summary.netWorth.toLocaleString()}; income ${summary.monthlyIncome.toLocaleString()}; expenses ${summary.monthlyExpenses.toLocaleString()}; investment ROI ${(summary.roi * 100).toFixed(1)}%. Return a short, expert-level analysis in Markdown only (no HTML). Use ### for sections. Be direct with numbers and insight.
+    const prompt = `You are Finova AI, expert advisor. Summary (SAR): Net worth ${summary.netWorth.toLocaleString()}; income ${summary.monthlyIncome.toLocaleString()}; expenses ${summary.monthlyExpenses.toLocaleString()}; ROI ${(summary.roi * 100).toFixed(1)}%. Brief Markdown analysis. Direct. Numbers. No filler.
 
 ### Overall
 One sentence on financial health this month.
@@ -715,7 +709,7 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
 
     try {
         const spending = new Map<string, number>();
-        transactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
+        transactions.filter(t => countsAsExpenseForCashflowKpi(t) && t.budgetCategory).forEach(t => {
             const currentSpend = spending.get(t.budgetCategory!) || 0;
             spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
         });
@@ -726,9 +720,9 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
         }).join('\n');
 
-        const prompt = `You are Finova AI, a very clever expert financial advisor. Monthly spending:
+        const prompt = `You are Finova AI, expert advisor. Monthly spending:
 ${budgetPerformance}
-Return a short, actionable analysis in Markdown only (no HTML). Use ### for each section. One sentence or 2 bullets each; use numbers.
+Brief Markdown. One sentence or 2 bullets per section. Numbers. No filler.
 
 ### Key Spending Insight
 - Main observation (e.g. which category is over/under; quote %).
@@ -953,15 +947,15 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthlyTransactions = transactions.filter((t: { date: string }) => new Date(t.date) >= firstDayOfMonth);
-    const monthlyIncome = monthlyTransactions.filter((t: { type?: string }) => t.type === 'income').reduce((sum: number, t: { amount?: number }) => sum + (t.amount ?? 0), 0);
-    const monthlyExpenses = monthlyTransactions.filter((t: { type?: string }) => t.type === 'expense').reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
+    const monthlyIncome = monthlyTransactions.filter((t: { type?: string; category?: string }) => countsAsIncomeForCashflowKpi(t)).reduce((sum: number, t: { amount?: number }) => sum + (t.amount ?? 0), 0);
+    const monthlyExpenses = monthlyTransactions.filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t)).reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
     const monthlyPnL = monthlyIncome - monthlyExpenses;
 
     const budgetMonthlyLimit = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
     const overspentBudgets = (data?.budgets ?? [])
         .map(budget => {
             const spent = monthlyTransactions
-                .filter((t: { type?: string; budgetCategory?: string }) => t.type === 'expense' && t.budgetCategory === budget.category)
+                .filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && t.budgetCategory === budget.category)
                 .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
             const limit = budgetMonthlyLimit(budget);
             const percentage = limit > 0 ? (spent / limit) * 100 : 0;
@@ -1025,7 +1019,7 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<stri
 
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
     try {
-        const prompt = `You are Finova AI, a very clever expert investment advisor. Based on unrealized gains/losses for ${holdings.length} assets, provide a performance and risk analysis in markdown. Your response must not contain any HTML. Sections: Key Performance Contributors, Key Performance Detractors, Risk Assessment. Be direct and insightful.`;
+        const prompt = `You are Finova AI, expert advisor. Unrealized gains/losses for ${holdings.length} assets. Brief Markdown: Key Contributors, Key Detractors, Risk Assessment. Direct. No HTML.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve analysis.";
     } catch (error) { return formatAiError(error); }
@@ -1033,7 +1027,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
 
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
-        const prompt = `You are Finova AI, a very clever expert investment advisor. Analyze these holdings and provide educational strategic ideas in markdown. Your response must not contain any HTML. Sections: Current Strategy Assessment, Strategic Opportunities & Ideas. Speak as a senior advisor; do not give specific buy/sell advice. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}`;
+        const prompt = `You are Finova AI, expert advisor. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}. Brief Markdown: Strategy Assessment, Opportunities. Educational. No buy/sell advice. No HTML.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve strategy.";
     } catch (error) { return formatAiError(error); }
@@ -1507,7 +1501,13 @@ export const getAICategorySuggestion = async (description: string, categories: s
     try {
         const prompt = `You are Finova AI, an expert financial advisor. Categorize this transaction: "${description}". Choose one category from this list: [${categories.join(', ')}]. Respond with only the category name, nothing else.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text?.trim() || "";
+        const raw = response.text?.trim() || "";
+        if (!raw) return "";
+        const exact = categories.find((c) => c === raw);
+        if (exact) return exact;
+        const ci = categories.find((c) => c.toLowerCase() === raw.toLowerCase());
+        if (ci) return ci;
+        return capitalizeCategoryName(raw);
     } catch (error) {
         console.error("Error fetching AI category suggestion:", error);
         throw error;

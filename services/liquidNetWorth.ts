@@ -1,5 +1,12 @@
 import type { FinancialData } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
+import {
+  getPersonalAccounts,
+  getPersonalInvestments,
+  getPersonalCommodityHoldings,
+  getPersonalLiabilities,
+  getPersonalTransactions,
+} from '../utils/wealthScope';
 
 /** Cash-like + investments + commodities + receivables − debt (simplified liquid picture). */
 export function computeLiquidNetWorth(data: FinancialData | null | undefined): {
@@ -24,20 +31,20 @@ export function computeLiquidNetWorth(data: FinancialData | null | undefined): {
       marketMoveEstimate30d: 0,
     };
   }
-  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
+  const accounts = getPersonalAccounts(data);
   const liquidCash = accounts
     .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
     .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
-  const inv = (data as any).personalInvestments ?? data.investments ?? [];
+  const inv = getPersonalInvestments(data);
   let investmentsSAR = 0;
   inv.forEach((p: { holdings?: { currentValue?: number }[] }) => {
     (p.holdings ?? []).forEach((h: { currentValue?: number }) => {
       investmentsSAR += Number(h.currentValue) || 0;
     });
   });
-  const comm = (data as any).personalCommodityHoldings ?? data.commodityHoldings ?? [];
+  const comm = getPersonalCommodityHoldings(data);
   const commodities = comm.reduce((s: number, c: { currentValue?: number }) => s + (Number(c.currentValue) || 0), 0);
-  const liab = (data as any).personalLiabilities ?? data.liabilities ?? [];
+  const liab = getPersonalLiabilities(data);
   const receivables = liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
   const shortTermDebt =
     liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) +
@@ -46,7 +53,7 @@ export function computeLiquidNetWorth(data: FinancialData | null | undefined): {
       .reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0);
   const liquidNetWorth = liquidCash + investmentsSAR + commodities + receivables - shortTermDebt;
 
-  const txs = (data as any).personalTransactions ?? data.transactions ?? [];
+  const txs = getPersonalTransactions(data);
   const now = new Date();
   const d30 = new Date(now);
   d30.setDate(d30.getDate() - 30);

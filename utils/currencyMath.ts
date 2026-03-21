@@ -1,14 +1,16 @@
 import { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
 
+const safeRate = (r: number): number => (Number.isFinite(r) && r > 0 ? r : 3.75);
+
 export const toSAR = (amount: number, currency: TradeCurrency | undefined, exchangeRate: number): number => {
   const safeAmount = Number.isFinite(amount) ? amount : 0;
-  if ((currency ?? 'USD') === 'USD') return safeAmount * exchangeRate;
+  if ((currency ?? 'USD') === 'USD') return safeAmount * safeRate(exchangeRate);
   return safeAmount;
 };
 
 export const fromSAR = (amountSar: number, currency: TradeCurrency | undefined, exchangeRate: number): number => {
   const safeAmount = Number.isFinite(amountSar) ? amountSar : 0;
-  if ((currency ?? 'USD') === 'USD') return safeAmount / exchangeRate;
+  if ((currency ?? 'USD') === 'USD') return safeAmount / safeRate(exchangeRate);
   return safeAmount;
 };
 

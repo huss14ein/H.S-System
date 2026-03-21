@@ -147,6 +147,60 @@ async function callClaude(
   return { text, candidates: [], functionCalls: undefined };
 }
 
+async function callOpenAI(
+  contents: unknown,
+  config: unknown
+): Promise<NormalizedResponse> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not set in environment variables.');
+  }
+  const prompt = normalizeContentsToPrompt(contents);
+  const systemInstruction =
+    (config as any)?.systemInstruction && typeof (config as any).systemInstruction === 'string'
+      ? (config as any).systemInstruction
+      : undefined;
+
+  const body: any = {
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    max_tokens: 1500,
+    messages: [
+      ...(systemInstruction
+        ? [{ role: 'system', content: systemInstruction }]
+        : []),
+      { role: 'user', content: prompt },
+    ],
+  };
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI API error ${response.status}: ${errorText}`);
+  }
+
+  const json = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  const text =
+    json.choices &&
+    json.choices[0] &&
+    json.choices[0].message &&
+    typeof json.choices[0].message.content === 'string'
+      ? json.choices[0].message.content
+      : null;
+
+  return { text, candidates: [], functionCalls: undefined };
+}
+
 async function callGrok(
   contents: unknown,
   config: unknown
@@ -229,7 +283,8 @@ const handler: Handler = async (event: HandlerEvent) => {
       const geminiConfigured = Boolean(primaryApiKey || backupApiKey);
       const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
       const grokConfigured = Boolean(process.env.GROK_API_KEY);
-      const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured;
+      const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
+      const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -240,6 +295,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             gemini: { configured: geminiConfigured, primaryConfigured: Boolean(primaryApiKey), backupConfigured: Boolean(backupApiKey) },
             anthropic: { configured: anthropicConfigured },
             grok: { configured: grokConfigured },
+            openai: { configured: openaiConfigured },
           },
         }),
       };
@@ -251,31 +307,21 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     let lastError: unknown = null;
 
-    // 1) Try Gemini (primary, then backup on quota)
+    // 1) Try Gemini (primary, then backup on any failure — quota, timeout, etc.)
     if (primaryApiKey || backupApiKey) {
-      try {
-        if (!primaryApiKey) {
-          throw new Error('Primary Gemini key missing.');
-        }
-        const result = await callGemini(primaryApiKey, requestedModel, contents, config);
-        return {
-          statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(result),
-        };
-      } catch (primaryError) {
-        lastError = primaryError;
-        if (backupApiKey && isQuotaError(primaryError)) {
-          console.warn('Gemini proxy: primary key quota-limited, retrying with backup Gemini key.');
-          try {
-            const result = await callGemini(backupApiKey, requestedModel, contents, config);
-            return {
-              statusCode: 200,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-              body: JSON.stringify(result),
-            };
-          } catch (backupError) {
-            lastError = backupError;
+      for (const key of [primaryApiKey, backupApiKey].filter(Boolean)) {
+        try {
+          if (!key) continue;
+          const result = await callGemini(key, requestedModel, contents, config);
+          return {
+            statusCode: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify(result),
+          };
+        } catch (geminiErr) {
+          lastError = geminiErr;
+          if (key === primaryApiKey && backupApiKey) {
+            console.warn('Gemini proxy: primary failed, retrying with backup key.');
           }
         }
       }
@@ -309,8 +355,22 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    if (!primaryApiKey && !backupApiKey && !process.env.ANTHROPIC_API_KEY && !process.env.GROK_API_KEY) {
-      throw new Error("No AI providers configured. Please set at least one of GEMINI_API_KEY, ANTHROPIC_API_KEY, or GROK_API_KEY.");
+    // 4) Try OpenAI if available
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const result = await callOpenAI(contents, config);
+        return {
+          statusCode: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(result),
+        };
+      } catch (openaiError) {
+        lastError = openaiError;
+      }
+    }
+
+    if (!primaryApiKey && !backupApiKey && !process.env.ANTHROPIC_API_KEY && !process.env.GROK_API_KEY && !process.env.OPENAI_API_KEY) {
+      throw new Error("No AI providers configured. Set at least one: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, or OPENAI_API_KEY.");
     }
 
     if (lastError) {
@@ -318,12 +378,6 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
 
     throw new Error('AI proxy invocation failed for all configured providers.');
-
-    return {
-      statusCode: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(result),
-    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("Error in Gemini/Grok/Claude proxy function:", error);

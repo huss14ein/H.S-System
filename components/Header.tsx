@@ -1,6 +1,6 @@
 import React, { useState, useContext, useMemo, useRef, useEffect } from 'react';
 import { Page } from '../types';
-import { NAVIGATION_ITEMS } from '../constants';
+import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
 import { HSLogo } from './icons/HSLogo';
 import { AuthContext } from '../context/AuthContext';
 import { UserCircleIcon } from './icons/UserCircleIcon';
@@ -100,7 +100,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Statement Upload', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
-    { name: 'Strategy', items: ['Investments', 'Risk & Trading Hub', 'Logic & Engines', 'Liquidation Planner', 'Market Events', 'Plan', 'Liabilities', 'Assets', 'Financial Journal'] },
+    { name: 'Strategy', items: ['Investments', 'Engines & Tools', 'Market Events', 'Plan', 'Liabilities', 'Assets'] },
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
@@ -163,7 +163,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                               }`}
                             >
                               <navItem.icon className={`mr-3 h-5 w-5 ${activePage === itemName ? 'text-primary' : 'text-gray-400'}`} />
-                              {itemName}
+                              {PAGE_DISPLAY_NAMES[itemName as Page] ?? itemName}
                             </button>
                           );
                         })}
@@ -330,7 +330,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                               }`}
                           >
                               <navItem.icon className={`mr-4 h-5 w-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />
-                              {itemName}
+                              {PAGE_DISPLAY_NAMES[itemName as Page] ?? itemName}
                           </button>
                         );
                       })}

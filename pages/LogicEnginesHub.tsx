@@ -1,5 +1,6 @@
-import React, { useContext, useMemo, useEffect, useState } from 'react';
+import React, { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
+import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
@@ -9,7 +10,6 @@ import {
   simpleReturn,
   annualizedReturn,
   timeWeightedReturn,
-  benchmarkExcessReturn,
   totalReturnAttribution,
 } from '../services/returnMeasurementEngine';
 import { compareStrategies, compareAllocationModels } from '../services/strategyComparisonEngine';
@@ -55,6 +55,8 @@ import { savingsRate, netCashFlowForMonth } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useCurrency } from '../context/CurrencyContext';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 
 function getScopedData(d: FinancialData | null) {
   if (!d) {
@@ -95,40 +97,21 @@ function getScopedData(d: FinancialData | null) {
   return { accounts, txs, budgets, goals, liabilities, investmentsFlat };
 }
 
-function computeNetWorth(data: FinancialData | null): number {
-  if (!data) return 0;
-  const d = data as any;
-  const accounts = d.personalAccounts ?? data.accounts ?? [];
-  const assets = d.personalAssets ?? data.assets ?? [];
-  const liabilities = d.personalLiabilities ?? data.liabilities ?? [];
-  const inv = d.personalInvestments ?? data.investments ?? [];
-  const cash = accounts.reduce((s: number, a: { balance?: number }) => s + (Number(a.balance) ?? 0), 0);
-  const assetVal = assets.reduce((s: number, a: { value?: number }) => s + (Number(a.value) ?? 0), 0);
-  const invVal = inv.reduce((s: number, p: { holdings?: { currentValue?: number }[] }) => {
-    return s + (p.holdings ?? []).reduce((t: number, h: { currentValue?: number }) => t + (Number(h.currentValue) ?? 0), 0);
-  }, 0);
-  const debt = liabilities
-    .filter((l: { amount?: number }) => (l.amount ?? 0) < 0)
-    .reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0);
-  return cash + assetVal + invVal - debt;
+interface LogicEnginesHubProps {
+  setActivePage?: (p: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+  dataTick?: number;
 }
 
-const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setActivePage }) => {
+const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
   const { data, loading } = useContext(DataContext)!;
+  const { trackAction } = useSelfLearning();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
-  const [dataTick, setDataTick] = useState(0);
-  /** Re-run derived engine outputs when user returns to the tab (automation without polling). */
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === 'visible') setDataTick((t) => t + 1);
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
+  const { exchangeRate } = useCurrency();
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
-  const netWorth = useMemo(() => computeNetWorth(data ?? null), [data]);
+  const netWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, exchangeRate), [data, exchangeRate]);
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(() => computeLiquidityRunwayFromData(data ?? null), [data]);
@@ -436,7 +419,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
   if (loading && !data) {
     return (
-      <PageLayout title="Logic & Engines" description="Financial engines wired to your data">
+      <PageLayout title="Behind the numbers" description="How your portfolio returns, cash flow, and retirement projections are calculated.">
         <p className="text-gray-500">Loading…</p>
       </PageLayout>
     );
@@ -444,41 +427,45 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
 
   return (
     <PageLayout
-      title="Logic & Engines"
-      description="Spec logic layers (returns, cash, FX, retirement, risk, integration) driven by your profile — not dead code."
+      title="Behind the numbers"
+      description="How your portfolio returns, cash flow, and retirement projections are calculated—all using your real data."
     >
       <div className="space-y-6">
-        <SectionCard
-          title="How to use this page"
-        >
-          <p className="text-sm text-gray-600 mb-3">
-            Each section calls a service under <code className="text-xs bg-gray-100 px-1 rounded">services/</code> with your real data
-            where possible—no extra setup. Open <strong>Strategy → Logic & Engines</strong> or the sidebar anytime.
+        <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+          <p className="text-sm text-slate-700">
+            <strong className="text-slate-900">What is this?</strong> A behind-the-scenes view of how Finova calculates things like returns, runway, and retirement projections. Each section uses your real data. Use the (?) next to section titles for more detail.
           </p>
-          {setActivePage && (
+        </div>
+
+        <SectionCard title="Quick links" collapsible collapsibleSummary="Jump to Safety, Forecast, Settings" defaultExpanded>
+          <p className="text-sm text-gray-600 mb-3">
+            Jump to related tools:
+          </p>
+          {(setActivePage || triggerPageAction) && (
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="text-sm text-primary-600 underline" onClick={() => setActivePage('Risk & Trading Hub')}>
-                Risk & Trading Hub
+              <button
+                type="button"
+                className="text-sm text-primary-600 hover:text-primary-700 underline"
+                onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments'); }}
+              >
+                Safety & rules
               </button>
-              <button type="button" className="text-sm text-primary-600 underline" onClick={() => setActivePage('Forecast')}>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-forecast', 'Engines & Tools'); setActivePage?.('Forecast'); }}>
                 Forecast
               </button>
-              <button type="button" className="text-sm text-primary-600 underline" onClick={() => setActivePage('Settings')}>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Settings')}>
                 Settings
               </button>
             </div>
           )}
         </SectionCard>
 
-        <SectionCard
-          title="Returns & benchmarks"
-        >
+        <SectionCard title="Returns & benchmarks" infoHint="How your portfolio performed compared to a simple benchmark. Uses your saved net worth snapshots." collapsible collapsibleSummary="TWR, attribution, benchmark" defaultExpanded>
           <ul className="text-sm space-y-1 text-gray-700">
             <li>Simple return (last two snapshots): {portfolioReturnPct.toFixed(2)}%</li>
             <li>Annualized (demo 2y on 10%): {annualizedReturn(10, 2).toFixed(2)}%</li>
             <li>TWRR link (demo sub-periods): {twrDemo.toFixed(2)}%</li>
-            <li>Benchmark excess (portfolio vs 8%): {benchmarkExcessReturn(portfolioReturnPct, 8).toFixed(2)} pp</li>
-            <li>vs benchmark: {benchmarkCmp.outperforming ? 'Outperforming' : 'Behind'} (excess {benchmarkCmp.excess.toFixed(2)} pp)</li>
+            <li>vs 8% benchmark: {benchmarkCmp.outperforming ? 'Outperforming' : 'Behind'} (excess {benchmarkCmp.excess.toFixed(2)} pp)</li>
             <li>
               Attribution demo: price {attrDemo.price}% + div {attrDemo.dividend}% + FX {attrDemo.fx}% + contrib {attrDemo.contribution}% ={' '}
               {attrDemo.total.toFixed(2)}%
@@ -486,9 +473,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Strategy comparison"
-        >
+        <SectionCard title="Strategy comparison" collapsible collapsibleSummary="Scenarios and allocation models">
           <p className="text-xs text-gray-500 mb-2">compareStrategies / compareAllocationModels</p>
           <p className="text-sm mb-2">Scenarios (projected NW): {strategyRank.map((s) => `${s.label}: ${formatCurrencyString(s.projectedNetWorth)}`).join(' · ')}</p>
           <ul className="text-sm text-gray-700">
@@ -500,9 +485,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Cash & liquidity"
-        >
+        <SectionCard title="Cash & liquidity" collapsible collapsibleSummary="Runway, buckets, idle cash">
           <p className="text-xs text-gray-500 mb-2">cashAllocationEngine + liquidityRunwayEngine</p>
           <ul className="text-sm space-y-1 text-gray-700">
             <li>Runway: {(liquidityRunway?.monthsOfRunway ?? 0).toFixed(1)} mo — {liquidityRunway?.status ?? '—'}</li>
@@ -513,18 +496,14 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="FX"
-        >
+        <SectionCard title="FX" collapsible collapsibleSummary="Portfolio FX allocation">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Portfolio by currency (balances as base): {fxAlloc.map((f) => `${f.currency} ${f.allocationPct.toFixed(0)}%`).join(', ') || '—'}</li>
             <li>Demo convert 1000 USD→SAR @3.75: {fxConverted.toFixed(2)} SAR</li>
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Seasonality"
-        >
+        <SectionCard title="Seasonality" collapsible collapsibleSummary="Adjusted expense, provision">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>This month adjusted expense: {formatCurrencyString(seasonAdj)}</li>
             <li>Annual cost monthly provision (demo): {formatCurrencyString(annualProv)}</li>
@@ -547,9 +526,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Insurance (baseline)"
-        >
+        <SectionCard title="Insurance (baseline)" collapsible collapsibleSummary="Gaps and renewal alerts">
           <ul className="text-sm text-gray-700 space-y-1">
             {insuranceGaps.gaps.map((g) => (
               <li key={g.type}>
@@ -581,9 +558,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           )}
         </SectionCard>
 
-        <SectionCard
-          title="Planning assumptions"
-        >
+        <SectionCard title="Planning assumptions" collapsible collapsibleSummary="Assumption validation">
           <p className="text-sm">{assumptionValidation.ok ? 'All demo assumptions in range.' : 'Validation issues:'}</p>
           {!assumptionValidation.ok && (
             <ul className="text-sm text-amber-800">
@@ -596,9 +571,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           )}
         </SectionCard>
 
-        <SectionCard
-          title="Behavioral & explainability"
-        >
+        <SectionCard title="Behavioral & explainability" collapsible collapsibleSummary="Buy policy, cooldown">
           <ul className="text-sm text-gray-700 space-y-2">
             <li>Buy policy: {behaviorBuy.allowed ? 'Allowed' : `Blocked (${behaviorBuy.flags.join(', ')})`}</li>
             <li>{explainBuy}</li>
@@ -608,9 +581,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Order planning (demo ladder)"
-        >
+        <SectionCard title="Order planning (demo ladder)" collapsible collapsibleSummary="Buy tranches">
           <ul className="text-sm text-gray-700">
             {buyTranches.map((t, i) => (
               <li key={i}>
@@ -620,9 +591,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="UX guardrails"
-        >
+        <SectionCard title="UX guardrails" collapsible collapsibleSummary="Badge, hints, guards">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Badge: {badgeDemo.text} ({badgeDemo.severity})</li>
             <li>Field hint (amount): {hintDemo ?? '—'}</li>
@@ -630,17 +599,13 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Corporate actions (demo)"
-        >
+        <SectionCard title="Corporate actions (demo)" collapsible collapsibleSummary="Split demo">
           <p className="text-sm text-gray-700">
             2:1 split: 100 sh @ 40 → {splitDemo.quantity.toFixed(2)} sh @ {splitDemo.avgCost.toFixed(4)} cost/sh
           </p>
         </SectionCard>
 
-        <SectionCard
-          title="Risk lane"
-        >
+        <SectionCard title="Risk lane" collapsible collapsibleSummary="Suggested profile">
           <p className="text-sm text-gray-700">
             Lane: <strong>{riskLane.lane}</strong> → suggested profile {riskLane.suggestedProfile}
           </p>
@@ -651,16 +616,14 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Next best actions"
-        >
+        <SectionCard title="Next best actions" collapsible collapsibleSummary="Prioritized actions">
           <ul className="text-sm space-y-2">
             {nextActions.slice(0, 6).map((a) => (
               <li key={a.id} className="border-b border-gray-100 pb-2">
                 <span className="font-medium">{a.title}</span> <span className="text-gray-400">({a.priorityScore})</span>
                 <p className="text-gray-600 text-xs">{a.description}</p>
                 {setActivePage && a.link && (
-                  <button type="button" className="text-xs text-primary-600 underline mt-1" onClick={() => setActivePage(a.link as Page)}>
+                  <button type="button" className="text-xs text-primary-600 underline mt-1" onClick={() => { trackAction(`link-${String(a.link).toLowerCase().replace(/\s+/g, '-')}`, 'Engines & Tools'); setActivePage(a.link as Page); }}>
                     Open {a.linkLabel ?? a.link}
                   </button>
                 )}
@@ -670,9 +633,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Shock drill & scenario timeline"
-        >
+        <SectionCard title="Shock drill & scenario timeline" collapsible collapsibleSummary="Stress scenarios">
           {shock ? (
             <ul className="text-sm text-gray-700 space-y-1">
               <li>
@@ -694,9 +655,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Engine integration (cross-engine)"
-        >
+        <SectionCard title="Engine integration (cross-engine)" collapsible collapsibleSummary="Alerts and recs">
           {unified ? (
             <>
               <p className="text-sm text-gray-700 mb-2">
@@ -716,9 +675,7 @@ const LogicEnginesHub: React.FC<{ setActivePage?: (p: Page) => void }> = ({ setA
           )}
         </SectionCard>
 
-        <SectionCard
-          title="Lifestyle guardrails & provisioning"
-        >
+        <SectionCard title="Lifestyle guardrails & provisioning" collapsible collapsibleSummary="Guardrails, provision">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Guardrail: {lifestyle.ok ? 'OK' : 'Flags: ' + lifestyle.flags.join(', ')}</li>
             <li>Discretionary sample: {discretionary.allowed ? 'Approved' : discretionary.reason}</li>

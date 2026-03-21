@@ -9,6 +9,7 @@ import InfoHint from '../components/InfoHint';
 import { FlagIcon } from '../components/icons/FlagIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
@@ -302,7 +303,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             description="Deterministic long-horizon view from today’s balances, savings rate, and return assumptions—use alongside Goals and your real plan."
         >
             <div className="space-y-6 lg:space-y-8">
-            <SectionCard title="Forecast methodology" className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm">
+            <CollapsibleSection title="Forecast methodology" summary="How projections are calculated" className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm">
                 <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
                     <li>
                         <strong className="text-slate-900">Investment path:</strong> each month adds your savings contribution to the investment balance, then applies compound return using your annual investment growth % as a monthly rate.
@@ -320,12 +321,15 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 <p className="text-xs text-slate-500 mt-4 border-t border-slate-200/80 pt-3">
                     Educational only—not financial advice. Run Conservative / Base / Aggressive to compare sensitivity to assumptions.
                 </p>
-            </SectionCard>
+            </CollapsibleSection>
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start gap-6 lg:gap-8">
                 <SectionCard
                     title="Forecast Assumptions"
                     className="lg:col-span-1 sticky top-24 space-y-4"
+                    collapsible
+                    collapsibleSummary="Presets, horizon, run"
+                    defaultExpanded
                 >
                     <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
                     <div className="flex flex-wrap gap-2">
@@ -401,7 +405,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             </div>
                         </div>
                         {confidenceBand && (
-                            <SectionCard title="Uncertainty band (heuristic)">
+                            <SectionCard title="Uncertainty band (heuristic)" collapsible collapsibleSummary="Low / base / high" defaultExpanded>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                                     <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3"><p className="text-xs text-slate-500 uppercase tracking-wide">Low</p><p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(confidenceBand.low, { digits: 0 })}</p></div>
                                     <div className="rounded-xl border border-primary/20 bg-primary/5 p-3"><p className="text-xs text-primary/80 uppercase tracking-wide">Base</p><p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(summary.projectedNetWorth, { digits: 0 })}</p></div>
@@ -416,7 +420,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
 
                     {forecastData.length > 0 && !isLoading ? (
-                        <SectionCard title="Projection chart" className="flex flex-col">
+                        <SectionCard title="Projection chart" className="flex flex-col" collapsible collapsibleSummary="Net worth & investments" defaultExpanded>
                             <div className="h-[420px] sm:h-[520px] w-full rounded-xl overflow-hidden border border-slate-100 bg-slate-50/30">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <ComposedChart data={forecastData} margin={{ ...CHART_MARGIN, right: 24, left: 20, bottom: 5 }}>
@@ -442,14 +446,14 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         </SectionCard>
                     ) : (
                          !isLoading && !summary && (
-                            <SectionCard title="Results" className="border-dashed border-slate-300 bg-slate-50/50">
+                            <SectionCard title="Results" className="border-dashed border-slate-300 bg-slate-50/50" collapsible collapsibleSummary="Run forecast first">
                                 <p className="text-sm text-slate-600 text-center py-6">Set assumptions on the left, then run the forecast to see projections, the chart, and scenario comparison.</p>
                             </SectionCard>
                          )
                     )}
 
                     {Object.values(comparisonResults).some(Boolean) && !isLoading && (
-                        <SectionCard title={`Scenario comparison (${horizon}‑year)`}>
+                        <SectionCard title={`Scenario comparison (${horizon}‑year)`} collapsible collapsibleSummary="Conservative / Base / Aggressive" defaultExpanded>
                             <div className="overflow-x-auto rounded-xl border border-slate-200">
                                 <table className="min-w-full text-sm">
                                     <thead>
@@ -481,7 +485,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
 
                     {goalProjections.length > 0 && !isLoading && (
-                        <SectionCard title="Goal outlook">
+                        <SectionCard title="Goal outlook" collapsible collapsibleSummary="Goal thresholds" defaultExpanded>
                             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-3">
                                 {goalProjections.map(proj => (
                                     <div key={proj.name} className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50/80">
@@ -508,7 +512,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
             </div>
 
-            <SectionCard title="Stress test (illustrative)">
+            <CollapsibleSection title="Stress test (illustrative)" summary="Job loss, market drop, one-off cost scenarios">
                 <p className="text-xs text-slate-600 mb-4">
                     Rough cash runway after job loss, a market hit on part of liquid wealth, and a one-off cost. Not advice—use with your real numbers.
                 </p>
@@ -562,10 +566,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <p className="mt-1">{lumpDca.dcaNote}</p>
                     </div>
                 </div>
-            </SectionCard>
+            </CollapsibleSection>
 
             {timeline && (
-                <SectionCard title="Scenario timeline">
+                <SectionCard title="Scenario timeline" collapsible collapsibleSummary="Narrative years" defaultExpanded>
                     <p className="text-xs text-slate-600 mb-3">
                         Narrative view of your baseline forecast over the next {timeline.horizonYears} year(s).
                     </p>

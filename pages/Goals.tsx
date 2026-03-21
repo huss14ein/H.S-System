@@ -19,6 +19,7 @@ import ProgressBar from '../components/ProgressBar';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR } from '../utils/currencyMath';
@@ -27,6 +28,7 @@ import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { DEFAULT_BONUS_RULES } from '../services/goalWaterfall';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -155,7 +157,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   );
   const activeGoals = useMemo(() => goals.filter(g => (g.targetAmount ?? 0) > (g.currentAmount ?? 0)), [goals]);
   return (
-    <SectionCard title="Goal conflict & feasibility" className="border border-amber-200 bg-amber-50/40">
+    <CollapsibleSection title="Goal conflict & feasibility" summary={conflicts.length > 0 ? `${conflicts.length} conflict(s) detected` : 'No conflicts'} defaultExpanded={conflicts.length > 0} className="border border-amber-200 bg-amber-50/40">
       <p className="text-xs text-slate-600 mb-3">
         Detects when the same cash is funding too many goals or target dates are not achievable with current surplus.
       </p>
@@ -191,7 +193,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
           </ul>
         </div>
       )}
-    </SectionCard>
+    </CollapsibleSection>
   );
 };
 
@@ -403,6 +405,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
 const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -508,7 +511,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         });
     }, [data?.goals]);
     
-    const handleOpenModal = (goal: Goal | null = null) => { setGoalToEdit(goal); setIsModalOpen(true); };
+    const handleOpenModal = (goal: Goal | null = null) => { if (!goal) trackAction('add-goal', 'Goals'); setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
     
     const handleSaveGoal = async (goal: Goal) => {
@@ -536,6 +539,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => sum + p, 0), [allocations]);
     
     const handleSaveAllocations = () => {
+        trackAction('save-allocation', 'Goals');
         const allocationArray = Object.entries(allocations).map(([id, savingsAllocationPercent]) => ({ id, savingsAllocationPercent }));
         updateGoalAllocations(allocationArray);
         alert("Savings allocation strategy saved!");
@@ -554,7 +558,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
   return (
     <PageLayout
       title="Goal Command Center"
-      description="Set targets, track progress, and allocate savings. Link assets and portfolios to goals for automatic progress."
+      description="Set goals (house, car, emergency fund) and track progress. We suggest how to split your savings across goals."
       action={
         <div className="flex items-center gap-2">
           {setActivePage && (
@@ -567,14 +571,14 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       }
     >
       {efGoals.monthsCovered < 2 && (
-        <SectionCard title="Weak cashflow — pause low-priority funding?" className="border-amber-200 bg-amber-50/60">
+        <SectionCard title="Weak cashflow — pause low-priority funding?" className="border-amber-200 bg-amber-50/60" collapsible collapsibleSummary="Runway alert">
           <p className="text-sm text-amber-900">
             Liquid runway is under ~2 months. Consider pausing <strong>discretionary</strong> or <strong>Low</strong>-priority goal contributions until your emergency buffer improves.
           </p>
         </SectionCard>
       )}
 
-      <SectionCard title="Overall Goal Progress" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100">
+      <SectionCard title="Overall Goal Progress" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Progress bar" defaultExpanded>
         <GoalProgressBar progress={overallProgress} colorClass="bg-primary" />
         <div className="flex justify-between items-baseline text-sm mt-2">
             <div>
@@ -588,7 +592,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         </div>
       </SectionCard>
 
-      <SectionCard title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100">
+      <SectionCard title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
         <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
             {goalsByPriority.map(goal => (
@@ -605,7 +609,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         </div>
       </SectionCard>
 
-      <SectionCard title="System Funding Suggestions" className="bg-white border border-slate-200">
+      <CollapsibleSection title="System Funding Suggestions" summary="Suggested monthly funding per goal" className="bg-white border border-slate-200">
         <p className="text-xs text-slate-600 mb-3">
             Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span> per month.
         </p>
@@ -629,9 +633,9 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
                 </div>
             ))}
         </div>
-      </SectionCard>
+      </CollapsibleSection>
 
-      <SectionCard title="Funding waterfall (suggested order)" className="border border-violet-100 bg-violet-50/30">
+      <CollapsibleSection title="Funding waterfall (suggested order)" summary="Priority order for funding goals" className="border border-violet-100 bg-violet-50/30">
         <p className="text-xs text-slate-600 mb-3">
           After you fully fund a goal, shift focus to the next: <strong>priority</strong> (High → Low) then <strong>earliest deadline</strong>.
         </p>
@@ -646,7 +650,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
             ))
           )}
         </ol>
-      </SectionCard>
+      </CollapsibleSection>
 
       <GoalConflictAndFeasibilitySection
         goals={(data?.goals ?? []).map(g => ({ ...g, currentAmount: goalCurrentAmountByGoalId[g.id] ?? 0 }))}
@@ -654,7 +658,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         allocations={allocations}
       />
 
-      <SectionCard title="Bonus / windfall allocation ideas" className="border border-slate-200">
+      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Reference split for windfalls" className="border border-slate-200">
         <p className="text-xs text-slate-600 mb-2">Reference split (customize in your head or with an advisor)—not automated.</p>
         <ul className="text-sm text-slate-700 space-y-2">
           {DEFAULT_BONUS_RULES.map((r) => (
@@ -669,7 +673,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
             </li>
           ))}
         </ul>
-      </SectionCard>
+      </CollapsibleSection>
 
       <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
       

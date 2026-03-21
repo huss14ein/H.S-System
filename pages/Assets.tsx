@@ -22,10 +22,13 @@ import OwnerBadge from '../components/OwnerBadge';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { useAI } from '../context/AiContext';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import PageLayout from '../components/PageLayout';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
+    const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<AssetType>('Property');
     const [value, setValue] = useState('');
@@ -44,10 +47,17 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
             setOwner(assetToEdit.owner || '');
         } else {
-            setName(''); setType(preferredType); setValue(''); setPurchasePrice('');
-            setIsRental(false); setMonthlyRent(''); setOwner('');
+            const learnedType = getLearnedDefault('asset-add', 'type') as AssetType | undefined;
+            const validTypes: AssetType[] = ['Sukuk', 'Property', 'Vehicle', 'Other'];
+            setName('');
+            setType(learnedType && validTypes.includes(learnedType) ? learnedType : preferredType);
+            setValue('');
+            setPurchasePrice('');
+            setIsRental(false);
+            setMonthlyRent('');
+            setOwner('');
         }
-    }, [assetToEdit, isOpen, preferredType]);
+    }, [assetToEdit, isOpen, preferredType, getLearnedDefault]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -59,7 +69,9 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
             goalId: assetToEdit?.goalId, owner: owner || undefined,
         };
-        onSave(newAsset); onClose();
+        onSave(newAsset);
+        if (!assetToEdit) trackFormDefault('asset-add', 'type', type);
+        onClose();
     };
 
 
@@ -67,8 +79,8 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="select-base">
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Name <InfoHint text="Name this asset clearly so reports and goal links stay readable." hintId="asset-name" hintPage="Assets" /></label><input type="text" placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Asset Type <InfoHint text="Choose the closest type to improve categorization and analytics." hintId="asset-type" hintPage="Assets" /></label><select value={type} onChange={e => setType(e.target.value as AssetType)} required className="select-base">
                     <option value="Sukuk">Sukuk (Islamic fixed income)</option>
                     <option value="Property">Property</option>
                     <option value="Vehicle">Vehicle</option>
@@ -522,7 +534,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             }
         >
 
-            <SectionCard title="Sukuk in Finova" className="overflow-hidden">
+            <CollapsibleSection title="Sukuk in Finova" summary="How Sukuk is handled and how to add it" className="overflow-hidden border-sky-100">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
                     <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
                         <p className="font-semibold text-sky-800">How it is handled</p>
@@ -537,7 +549,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong> (or Add Physical Asset and choose type Sukuk), enter value/purchase price, then optionally link it to a goal.</p>
                     </div>
                 </div>
-            </SectionCard>
+            </CollapsibleSection>
 
             <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
                 <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set." />
@@ -546,7 +558,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
 
-            <SectionCard title="Physical Assets" className="overflow-visible">
+            <SectionCard title="Physical Assets" className="overflow-visible" collapsible collapsibleSummary="Property, vehicles" defaultExpanded>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedAssets.map((asset) => (
                         <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data?.goals ?? []} />
@@ -558,6 +570,9 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <SectionCard
                 title="Commodities (Metals & Crypto)"
                 className="overflow-visible"
+                collapsible
+                collapsibleSummary="Gold, silver, crypto"
+                defaultExpanded
                 headerAction={
                     <button
                         type="button"

@@ -1,5 +1,5 @@
 import type { Transaction } from '../types';
-import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
 
 /** Normalize merchant from bank-style descriptions. */
 export function normalizeMerchant(description: string): string {
@@ -101,8 +101,8 @@ export interface RefundPair {
 }
 
 export function findRefundPairs(transactions: Transaction[], windowDays = 14): RefundPair[] {
-  const expenses = transactions.filter((t) => t.type === 'expense');
-  const incomes = transactions.filter((t) => t.type === 'income');
+  const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t));
+  const incomes = transactions.filter((t) => countsAsIncomeForCashflowKpi(t));
   const pairs: RefundPair[] = [];
   const used = new Set<string>();
   for (const e of expenses) {
@@ -133,7 +133,7 @@ export function findRefundPairs(transactions: Transaction[], windowDays = 14): R
 export function detectBnplMentions(transactions: Transaction[]): { description: string; date: string; amount: number }[] {
   const re = /tabby|tamara|klarna|afterpay|affirm|spotii|postpay/i;
   return transactions
-    .filter((t) => t.type === 'expense' && re.test(t.description || ''))
+    .filter((t) => countsAsExpenseForCashflowKpi(t) && re.test(t.description || ''))
     .slice(0, 20)
     .map((t) => ({
       description: t.description,

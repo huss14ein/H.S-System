@@ -182,7 +182,7 @@ begin
     alter table public.investment_plan add column if not exists target_provider text default 'Default';
     alter table public.investment_plan add column if not exists core_portfolio jsonb default '[]';
     alter table public.investment_plan add column if not exists upside_sleeve jsonb default '[]';
-    alter table public.investment_plan add column if not exists broker_constraints jsonb default '{}';
+    alter table public.investment_plan add column if not exists broker_constraints jsonb default '{"allowFractionalShares":true,"minimumOrderSize":100,"roundingRule":"round","leftoverCashRule":"reinvest_core"}';
     alter table public.investment_plan add column if not exists sleeves jsonb default null;
     alter table public.investment_plan add column if not exists created_at timestamptz default now();
     alter table public.investment_plan add column if not exists updated_at timestamptz default now();

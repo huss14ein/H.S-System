@@ -1,24 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Page } from '../types';
+import { useSelfLearning } from '../context/SelfLearningContext';
 import { PlusIcon } from './icons/PlusIcon';
 import { CreditCardIcon } from './icons/CreditCardIcon';
 import { BuildingLibraryIcon } from './icons/BuildingLibraryIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
+import { BookOpenIcon } from './icons/BookOpenIcon';
 
 interface QuickActionsSidebarProps {
     onAction: (page: Page, action: string) => void;
 }
 
+const BASE_ACTIONS = [
+    { name: 'Add Transaction', icon: CreditCardIcon, page: 'Transactions' as Page, action: 'open-transaction-modal', actionId: 'add-transaction' },
+    { name: 'Add Asset', icon: BuildingLibraryIcon, page: 'Assets' as Page, action: 'open-asset-modal', actionId: 'add-asset' },
+    { name: 'Log a Trade', icon: ArrowTrendingUpIcon, page: 'Investments' as Page, action: 'open-trade-modal', actionId: 'log-trade' },
+    { name: 'Notes & ideas', icon: BookOpenIcon, page: 'Engines & Tools' as Page, action: 'openJournal', actionId: 'notes-ideas' },
+];
+
 const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ onAction }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const { getTopActions, trackAction } = useSelfLearning();
 
-    const actions = [
-        { name: 'Add Transaction', icon: CreditCardIcon, page: 'Transactions' as Page, action: 'open-transaction-modal' },
-        { name: 'Add Asset', icon: BuildingLibraryIcon, page: 'Assets' as Page, action: 'open-asset-modal' },
-        { name: 'Log a Trade', icon: ArrowTrendingUpIcon, page: 'Investments' as Page, action: 'open-trade-modal' },
-    ];
+    const actions = useMemo(() => {
+        const top = getTopActions(undefined, 10);
+        if (top.length === 0) return BASE_ACTIONS;
+        return [...BASE_ACTIONS].sort((a, b) => {
+            const aRank = top.findIndex(t => t.actionId === a.actionId);
+            const bRank = top.findIndex(t => t.actionId === b.actionId);
+            if (aRank === -1 && bRank === -1) return 0;
+            if (aRank === -1) return 1;
+            if (bRank === -1) return -1;
+            return aRank - bRank;
+        });
+    }, [getTopActions]);
 
-    const handleActionClick = (page: Page, action: string) => {
+    const handleActionClick = (page: Page, action: string, actionId: string) => {
+        trackAction(actionId, page);
         onAction(page, action);
         setIsOpen(false);
     };
@@ -29,7 +47,7 @@ const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ onAction }) =
                 {actions.map((action, index) => (
                     <button
                         key={action.name}
-                        onClick={() => handleActionClick(action.page, action.action)}
+                        onClick={() => handleActionClick(action.page, action.action, action.actionId)}
                         className="group relative flex items-center justify-center w-14 h-14 bg-white rounded-full shadow-lg hover:bg-primary transition-colors"
                         style={{ transitionDelay: `${index * 30}ms` }}
                     >

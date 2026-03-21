@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
 import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPersonalCommodityHoldings, getPersonalInvestments } from '../utils/wealthScope';
 
 export type PersonalNetWorthBreakdownSAR = {
   /** Physical + financial assets (SAR), excluding receivables */
@@ -19,12 +20,11 @@ export function computePersonalNetWorthBreakdownSAR(
   if (!data) {
     return { totalAssets: 0, totalDebt: 0, totalReceivable: 0, netWorth: 0 };
   }
-  const d = data as any;
-  const accounts = d?.personalAccounts ?? data.accounts ?? [];
-  const assets = d?.personalAssets ?? data.assets ?? [];
-  const liabilities = d?.personalLiabilities ?? data.liabilities ?? [];
-  const commodityHoldings = d?.personalCommodityHoldings ?? data.commodityHoldings ?? [];
-  const investments = d?.personalInvestments ?? data.investments ?? [];
+  const accounts = getPersonalAccounts(data);
+  const assets = getPersonalAssets(data);
+  const liabilities = getPersonalLiabilities(data);
+  const commodityHoldings = getPersonalCommodityHoldings(data);
+  const investments = getPersonalInvestments(data);
 
   const cashSavingsAccounts = accounts.filter(
     (a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings'

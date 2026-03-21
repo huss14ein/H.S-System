@@ -1,4 +1,4 @@
-import React, { useState, useContext, useCallback, useEffect, Suspense, lazy, startTransition } from 'react';
+import React, { useState, useContext, useCallback, useEffect, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
 import { Page } from './types';
 import LoginPage from './pages/LoginPage';
@@ -20,6 +20,9 @@ import { AIProvider } from './context/TransactionAIContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
 import { MultiBankProvider } from './context/MultiBankContext';
 import { PrivacyProvider } from './context/PrivacyContext';
+import { ToastProvider } from './context/ToastContext';
+import { SelfLearningProvider } from './context/SelfLearningContext';
+import { PAGE_DISPLAY_NAMES } from './constants';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -59,10 +62,7 @@ const StatementHistoryView = lazy(() => import('./pages/StatementHistoryView'));
 
 // Wealth Ultra (allocation engine)
 const WealthUltraDashboard = lazy(() => import('./pages/WealthUltraDashboard'));
-const RiskTradingHub = lazy(() => import('./pages/RiskTradingHub'));
-const LogicEnginesHub = lazy(() => import('./pages/LogicEnginesHub'));
-const FinancialJournal = lazy(() => import('./pages/FinancialJournal'));
-const LiquidationPlanner = lazy(() => import('./pages/LiquidationPlanner'));
+const EnginesAndToolsHub = lazy(() => import('./pages/EnginesAndToolsHub'));
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions', 
@@ -70,7 +70,7 @@ const VALID_PAGES: Page[] = [
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan', 
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist', 
   'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities',
-  'Risk & Trading Hub', 'Logic & Engines', 'Financial Journal', 'Liquidation Planner',
+  'Engines & Tools',
 ];
 
 function getPageFromHash(): Page | null {
@@ -92,9 +92,7 @@ function getInitialPage(): Page {
 const App: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
   const setActivePage = useCallback((page: Page) => {
-    startTransition(() => {
-      setActivePageState(page);
-    });
+    setActivePageState(page);
     try {
       const hash = '#' + encodeURIComponent(page);
       if (window.location.hash !== hash) window.location.hash = hash;
@@ -104,7 +102,8 @@ const App: React.FC = () => {
   // Update document title for browser tab / bookmarks
   useEffect(() => {
     const base = 'Finova';
-    document.title = activePage === 'Dashboard' ? base : `${base} – ${activePage}`;
+    const displayName = PAGE_DISPLAY_NAMES[activePage] ?? activePage;
+    document.title = activePage === 'Dashboard' ? base : `${base} – ${displayName}`;
     return () => { document.title = base; };
   }, [activePage]);
 
@@ -113,9 +112,7 @@ const App: React.FC = () => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
       const page = getPageFromHash();
-      startTransition(() => {
-        setActivePageState(page ?? 'Dashboard');
-      });
+      setActivePageState(page ?? 'Dashboard');
     };
     window.addEventListener('hashchange', onHashChange);
     if (!window.location.hash) window.location.replace('#Dashboard');
@@ -140,8 +137,8 @@ const App: React.FC = () => {
   const renderPage = () => {
     const actionProps = { pageAction, clearPageAction };
     switch (activePage) {
-      case 'Dashboard': return <Dashboard setActivePage={setActivePage} />;
-      case 'Summary': return <Summary setActivePage={setActivePage} />;
+      case 'Dashboard': return <Dashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Summary': return <Summary setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Accounts': return <Accounts setActivePage={setActivePage} />;
       case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
       case 'Transactions': return <Transactions {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
@@ -151,10 +148,10 @@ const App: React.FC = () => {
       case 'Analysis': return <Analysis setActivePage={setActivePage} />;
       case 'Zakat': return <Zakat setActivePage={setActivePage} />;
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
-      case 'Settings': return <Settings setActivePage={setActivePage} />;
+      case 'Settings': return <Settings setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Investment & Strategy Pages
-      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} setActivePage={setActivePage} />;
+      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Recovery Plan': return <RecoveryPlanView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
       case 'AI Rebalancer': return <AIRebalancerView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
       case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
@@ -176,10 +173,7 @@ const App: React.FC = () => {
       case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Risk & Trading Hub': return <RiskTradingHub setActivePage={setActivePage} />;
-      case 'Logic & Engines': return <LogicEnginesHub setActivePage={setActivePage} />;
-      case 'Financial Journal': return <FinancialJournal setActivePage={setActivePage} />;
-      case 'Liquidation Planner': return <LiquidationPlanner setActivePage={setActivePage} />;
+      case 'Engines & Tools': return <EnginesAndToolsHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} pageAction={pageAction} clearPageAction={clearPageAction} />;
       
       default: return <Dashboard setActivePage={setActivePage} />;
     }
@@ -230,36 +224,40 @@ const App: React.FC = () => {
 
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AiProvider>
-          <DataProvider>
-            <CurrencyProvider>
-              <MarketDataProvider>
-                <NotificationsProvider>
-                  <StatementProcessingProvider>
-                    <AIProvider>
-                      <ReconciliationProvider>
-                        <MultiBankProvider>
-                          <PrivacyProvider>
-                          <MarketSimulator />
-                          <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-                          <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
-                            <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                              {renderPage()}
-                            </Suspense>
-                          </AppErrorBoundary>
-                          </Layout>
-                          </PrivacyProvider>
-                        </MultiBankProvider>
-                      </ReconciliationProvider>
-                    </AIProvider>
-                  </StatementProcessingProvider>
-                </NotificationsProvider>
-              </MarketDataProvider>
-            </CurrencyProvider>
-          </DataProvider>
-        </AiProvider>
-      </AuthProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <SelfLearningProvider>
+            <AiProvider>
+              <DataProvider>
+                <CurrencyProvider>
+                  <MarketDataProvider>
+                    <NotificationsProvider>
+                      <StatementProcessingProvider>
+                        <AIProvider>
+                          <ReconciliationProvider>
+                            <MultiBankProvider>
+                              <PrivacyProvider>
+                                <MarketSimulator />
+                                <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
+                                  <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
+                                    <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
+                                      {renderPage()}
+                                    </Suspense>
+                                  </AppErrorBoundary>
+                                </Layout>
+                              </PrivacyProvider>
+                            </MultiBankProvider>
+                          </ReconciliationProvider>
+                        </AIProvider>
+                      </StatementProcessingProvider>
+                    </NotificationsProvider>
+                    </MarketDataProvider>
+                </CurrencyProvider>
+              </DataProvider>
+            </AiProvider>
+            </SelfLearningProvider>
+          </ToastProvider>
+        </AuthProvider>
     </ThemeProvider>
   );
 };

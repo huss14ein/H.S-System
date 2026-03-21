@@ -79,3 +79,34 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
     personalTransactions,
   };
 }
+
+/** Centralized accessors for personal data. Use instead of ad-hoc (data as any)?.personalX ?? data?.x. */
+export function getPersonalTransactions(data: FinancialData | null | undefined): Transaction[] {
+  const p = getPersonalWealthData(data);
+  return p.personalTransactions.length > 0 ? p.personalTransactions : (data?.transactions ?? []);
+}
+
+export function getPersonalAccounts(data: FinancialData | null | undefined): Account[] {
+  const p = getPersonalWealthData(data);
+  return p.personalAccounts.length > 0 ? p.personalAccounts : (data?.accounts ?? []);
+}
+
+export function getPersonalAssets(data: FinancialData | null | undefined): Asset[] {
+  const p = getPersonalWealthData(data);
+  return p.personalAssets.length > 0 ? p.personalAssets : (data?.assets ?? []);
+}
+
+export function getPersonalLiabilities(data: FinancialData | null | undefined): Liability[] {
+  const p = getPersonalWealthData(data);
+  return p.personalLiabilities.length > 0 ? p.personalLiabilities : (data?.liabilities ?? []);
+}
+
+export function getPersonalInvestments(data: FinancialData | null | undefined): InvestmentPortfolio[] {
+  const p = getPersonalWealthData(data);
+  return p.personalInvestments.length > 0 ? p.personalInvestments : (data?.investments ?? []);
+}
+
+export function getPersonalCommodityHoldings(data: FinancialData | null | undefined): CommodityHolding[] {
+  const p = getPersonalWealthData(data);
+  return p.personalCommodityHoldings.length > 0 ? p.personalCommodityHoldings : (data?.commodityHoldings ?? []);
+}

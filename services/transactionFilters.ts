@@ -1,12 +1,14 @@
 /**
- * Internal account-to-account transfers use category "Transfer" (see DataContext.addTransfer).
- * Exclude both legs from spend/income KPIs so cash-flow metrics reflect external flows only.
+ * Internal moves between your accounts (and cash↔brokerage legs that use the same categories).
+ * `addTransfer` uses "Transfer"; recurring + some flows use "Transfers" — treat both as internal
+ * so Income/Expenses/Net Flow on Transactions are not inflated by money that never left your world.
  */
 export function isInternalTransferTransaction(t: {
   category?: string;
   type?: string;
 }): boolean {
-  return String(t.category ?? '').trim().toLowerCase() === 'transfer';
+  const c = String(t.category ?? '').trim().toLowerCase();
+  return c === 'transfer' || c === 'transfers';
 }
 
 export function countsAsExpenseForCashflowKpi(t: {

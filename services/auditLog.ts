@@ -45,12 +45,30 @@ export function auditChangeLog(entry: Omit<AuditLogEntry, 'id' | 'at'> & { at?: 
   save([full, ...prev].slice(0, MAX_ENTRIES));
 }
 
-export function getAuditLog(limit = 100): AuditLogEntry[] {
-  return load().slice(0, limit);
+export function getAuditLog(limit = 100, filter?: { entity?: AuditEntity; action?: AuditLogEntry['action']; search?: string }): AuditLogEntry[] {
+  let entries = load().slice(0, limit);
+  if (filter?.entity) entries = entries.filter((e) => e.entity === filter.entity);
+  if (filter?.action) entries = entries.filter((e) => e.action === filter.action);
+  if (filter?.search) {
+    const q = filter.search.toLowerCase();
+    entries = entries.filter((e) => e.summary.toLowerCase().includes(q) || e.entity.toLowerCase().includes(q));
+  }
+  return entries;
 }
 
 export function clearAuditLog(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch {}
+}
+
+export function exportAuditLogAsCsv(entries: AuditLogEntry[]): string {
+  const headers = ['Timestamp', 'Action', 'Entity', 'Summary'];
+  const rows = entries.map((e) => [
+    new Date(e.at).toISOString(),
+    e.action,
+    e.entity,
+    (e.summary ?? '').replace(/"/g, '""'),
+  ]);
+  return [headers.join(','), ...rows.map((r) => r.map((c) => (c.includes(',') || c.includes('"') ? `"${c}"` : c)).join(','))].join('\n');
 }

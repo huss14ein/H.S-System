@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useContext } from 'react';
-import { NAVIGATION_ITEMS } from '../constants';
+import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
+import { useSelfLearning } from '../context/SelfLearningContext';
 import { MagnifyingGlassIcon } from './icons/MagnifyingGlassIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { ArrowDownTrayIcon } from './icons/ArrowDownTrayIcon';
@@ -10,27 +11,52 @@ interface CommandPaletteProps {
     isOpen: boolean;
     setIsOpen: (isOpen: boolean) => void;
     setActivePage: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
     onOpenLiveAdvisor?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, onOpenLiveAdvisor }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor }) => {
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const { data } = useContext(DataContext)!;
+    const { getTopPages, trackAction } = useSelfLearning();
+    const topPages = getTopPages(5);
 
     const commands = useMemo(() => {
-        const nav = NAVIGATION_ITEMS.map(item => ({
-            name: `Go to ${item.name}`,
-            action: () => { setActivePage(item.name); setIsOpen(false); },
+        const navItems = [...NAVIGATION_ITEMS];
+        if (topPages.length > 0) {
+            navItems.sort((a, b) => {
+                const aRank = topPages.findIndex(t => t.page === a.name);
+                const bRank = topPages.findIndex(t => t.page === b.name);
+                if (aRank === -1 && bRank === -1) return 0;
+                if (aRank === -1) return 1;
+                if (bRank === -1) return -1;
+                return aRank - bRank;
+            });
+        }
+        const nav = navItems.map(item => ({
+            name: `Go to ${PAGE_DISPLAY_NAMES[item.name] ?? item.name}`,
+            action: () => {
+                trackAction(`go-to-${item.name}`, item.name);
+                setActivePage(item.name);
+                setIsOpen(false);
+            },
             icon: item.icon,
         }));
+        const subPages: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
+        if (triggerPageAction) {
+            subPages.push({ name: 'Go to Safety & rules', action: () => { trackAction('safety-rules', 'Investments'); triggerPageAction('Investments', 'openRiskTradingHub'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Investments')!.icon });
+            subPages.push({ name: 'Go to Sell priority', action: () => { trackAction('liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
+            subPages.push({ name: 'Go to Notes & ideas', action: () => { trackAction('journal', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openJournal'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
+        }
         const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (onOpenLiveAdvisor) {
-            quick.push({ name: 'Open AI Advisor', action: () => { onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
+            quick.push({ name: 'Open AI Advisor', action: () => { trackAction('open-advisor', 'Dashboard'); onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
         }
         quick.push({
             name: 'Export my data (backup)',
             action: () => {
+                trackAction('export-backup', 'Dashboard');
                 const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -42,8 +68,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             },
             icon: ArrowDownTrayIcon,
         });
-        return [...quick, ...nav];
-    }, [setActivePage, setIsOpen, onOpenLiveAdvisor, data]);
+        return [...quick, ...subPages, ...nav];
+    }, [setActivePage, setIsOpen, triggerPageAction, onOpenLiveAdvisor, data, topPages, trackAction]);
 
     const filteredCommands = useMemo(() => {
         if (!query) return commands;

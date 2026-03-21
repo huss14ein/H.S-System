@@ -6,6 +6,7 @@ import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
+import { useTrackPageVisit } from '../context/SelfLearningContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -20,6 +21,7 @@ const Layout: React.FC<LayoutProps> = ({
   setActivePage,
   triggerPageAction,
 }) => {
+  useTrackPageVisit(activePage);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
@@ -80,6 +82,7 @@ const Layout: React.FC<LayoutProps> = ({
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
         setActivePage={setActivePage}
+        triggerPageAction={triggerPageAction}
         onOpenLiveAdvisor={() => {
           setIsCommandPaletteOpen(false);
           setIsLiveAdvisorOpen(true);

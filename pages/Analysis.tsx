@@ -224,9 +224,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
         >
             <AIAdvisor pageContext="analysis" contextData={contextData} />
 
-            <SectionCard
-                title="Salary vs expense coverage"
-                className="mt-6"
+            <SectionCard title="Salary vs expense coverage" className="mt-6" collapsible collapsibleSummary="Coverage ratio" defaultExpanded
             >
                 <p className="text-sm text-slate-700 mb-2">
                     {(contextData as any).salaryCoverage?.ratio != null ? (
@@ -249,9 +247,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
                 <p className="text-xs text-slate-400">Heuristic from largest monthly credits vs 6-mo avg external expenses.</p>
             </SectionCard>
 
-            <SectionCard
-                title="Spend intelligence"
-                className="mt-6"
+            <SectionCard title="Spend intelligence" className="mt-6" collapsible collapsibleSummary="Subscriptions, patterns"
             >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                     <div>
@@ -301,9 +297,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
             </SectionCard>
 
             {((contextData as any).refundPairs?.length ?? 0) > 0 && (
-                <SectionCard
-                    title="Possible refund pairs"
-                    className="mt-6"
+                <SectionCard title="Possible refund pairs" className="mt-6" collapsible collapsibleSummary="Duplicate detection"
                 >
                     <p className="text-xs text-slate-500 mb-3">
                         Expense + income with similar amounts within 14 days (heuristic). Verify in Transactions.
@@ -327,25 +321,19 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
             )}
 
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 mt-6">
-                <SectionCard
-                    title="Spending by Budget Category"
-                    className="min-h-[380px] flex flex-col"
+                <SectionCard title="Spending by Budget Category" className="min-h-[380px] flex flex-col" collapsible collapsibleSummary="Category breakdown" defaultExpanded
                 >
                     <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
                         <SpendingByCategoryChart />
                     </div>
                 </SectionCard>
-                <SectionCard
-                    title="Monthly Income vs. Expense"
-                    className="min-h-[380px] flex flex-col"
+                <SectionCard title="Monthly Income vs. Expense" className="min-h-[380px] flex flex-col" collapsible collapsibleSummary="Income vs spend"
                 >
                     <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
                         <IncomeExpenseTrendChart />
                     </div>
                 </SectionCard>
-                <SectionCard
-                    title="Current Financial Position"
-                    className="lg:col-span-2 min-h-[380px] flex flex-col"
+                <SectionCard title="Current Financial Position" className="lg:col-span-2 min-h-[380px] flex flex-col" collapsible collapsibleSummary="Net worth composition"
                 >
                     <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
                         <AssetLiabilityChart />

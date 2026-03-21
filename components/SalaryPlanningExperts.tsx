@@ -19,6 +19,12 @@ import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { DocumentDuplicateIcon } from './icons/DocumentDuplicateIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { lookupHintForTitle } from '../content/sectionInfoHints';
+
+const DEFAULT_EXPERT_RESULT_HINT =
+    'Markdown from the AI for this expert. Review numbers and assumptions; tables are illustrative. Not financial advice.';
+const SALARY_ALLOCATION_RESULT_HINT =
+    'Allocation percentages (e.g. Essentials %, Savings %, Investment %) show how to split your salary. Amounts are in SAR. Use as a guide; adjust to your situation. Not financial advice.';
 
 type ExpertParamKey = 'salary' | 'fixedExpenses' | 'currentSavings' | 'goal' | 'expenseBreakdown' | 'monthlyInvestment' | 'currentNetWorth' | 'debtList' | 'investmentAmountOrPct' | 'riskTolerance' | 'monthlyExpenses' | 'currentPortfolio' | 'currentExpenses';
 
@@ -372,6 +378,7 @@ const SalaryPlanningExperts: React.FC = () => {
             <div className="space-y-3">
                 {EXPERTS.map((expert) => {
                     const isExpanded = expandedId === expert.id;
+                    const expertTitleHint = lookupHintForTitle(expert.name);
                     return (
                         <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden hover:border-slate-300 transition-colors">
                             <button
@@ -380,14 +387,20 @@ const SalaryPlanningExperts: React.FC = () => {
                                 className="w-full flex items-center justify-between gap-3 p-4 text-left hover:bg-slate-50/80 transition-colors"
                             >
                                 <div className="min-w-0">
-                                    <span className="font-semibold text-slate-800">{expert.name}</span>
+                                    <div className="flex flex-wrap items-center gap-1">
+                                        <span className="font-semibold text-slate-800">{expert.name}</span>
+                                        {expertTitleHint ? <InfoHint text={expertTitleHint} /> : null}
+                                    </div>
                                     <p className="text-xs text-slate-500 mt-1">{expert.logic}</p>
                                 </div>
                                 <ChevronDownIcon className={`h-5 w-5 text-slate-400 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             </button>
                             {isExpanded && (
                                 <div className="border-t border-slate-200 bg-slate-50/50 p-5 sm:p-6 space-y-5">
-                                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Your inputs</p>
+                                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex flex-wrap items-center gap-1">
+                                        Your inputs
+                                        <InfoHint text="Prefilled from Finova when possible (green “From …” tags). Edit any field before Run analysis; the AI uses exactly what you see here." />
+                                    </p>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         {expert.params.includes('salary') && (
                                             <div className="space-y-1">
@@ -547,34 +560,45 @@ const SalaryPlanningExperts: React.FC = () => {
                                         <div className="mt-6 pt-5 border-t border-slate-200">
                                             <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-2">
                                                 Result
-                                                <InfoHint text="Allocation percentages (e.g. Essentials %, Savings %, Investment %) show how to split your salary. Amounts are in SAR. Use this as a guide; adjust to your situation. Not financial advice." />
+                                                <InfoHint
+                                                    text={
+                                                        expert.id === 'salary-allocation'
+                                                            ? SALARY_ALLOCATION_RESULT_HINT
+                                                            : DEFAULT_EXPERT_RESULT_HINT
+                                                    }
+                                                />
                                             </h4>
                                             <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
                                                 <div className="prose prose-sm max-w-none text-slate-800">
                                                     <SafeMarkdownRenderer content={result.markdown} />
                                                 </div>
                                             </div>
-                                            <div className="mt-4 pt-3 border-t border-slate-100">
-                                                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Guide to allocation categories</p>
-                                                <ul className="text-xs text-slate-600 space-y-1.5">
-                                                    <li className="flex items-center gap-2">
-                                                        <span className="font-medium text-slate-700">Essentials %</span>
-                                                        <InfoHint text="Rent, utilities, insurance, groceries, debt payments—must-pay items. Keep this sustainable so you can stick to the plan." />
-                                                    </li>
-                                                    <li className="flex items-center gap-2">
-                                                        <span className="font-medium text-slate-700">Savings %</span>
-                                                        <InfoHint text="Emergency fund and short-term goals. Build 3–6 months of expenses first, then allocate to specific goals." />
-                                                    </li>
-                                                    <li className="flex items-center gap-2">
-                                                        <span className="font-medium text-slate-700">Investment %</span>
-                                                        <InfoHint text="Long-term wealth (e.g. index funds, retirement). Pay yourself first; automate this amount each month." />
-                                                    </li>
-                                                    <li className="flex items-center gap-2">
-                                                        <span className="font-medium text-slate-700">Discretionary %</span>
-                                                        <InfoHint text="Flexible spending—dining, hobbies, travel. Enjoy responsibly without compromising essentials or savings targets." />
-                                                    </li>
-                                                </ul>
-                                            </div>
+                                            {expert.id === 'salary-allocation' && (
+                                                <div className="mt-4 pt-3 border-t border-slate-100">
+                                                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2 flex flex-wrap items-center gap-1">
+                                                        Guide to allocation categories
+                                                        <InfoHint text="These labels often appear in Salary Allocation results. Other experts use different headings—read the markdown above for their definitions." />
+                                                    </p>
+                                                    <ul className="text-xs text-slate-600 space-y-1.5">
+                                                        <li className="flex items-center gap-2">
+                                                            <span className="font-medium text-slate-700">Essentials %</span>
+                                                            <InfoHint text="Rent, utilities, insurance, groceries, debt payments—must-pay items. Keep this sustainable so you can stick to the plan." />
+                                                        </li>
+                                                        <li className="flex items-center gap-2">
+                                                            <span className="font-medium text-slate-700">Savings %</span>
+                                                            <InfoHint text="Emergency fund and short-term goals. Build 3–6 months of expenses first, then allocate to specific goals." />
+                                                        </li>
+                                                        <li className="flex items-center gap-2">
+                                                            <span className="font-medium text-slate-700">Investment %</span>
+                                                            <InfoHint text="Long-term wealth (e.g. index funds, retirement). Pay yourself first; automate this amount each month." />
+                                                        </li>
+                                                        <li className="flex items-center gap-2">
+                                                            <span className="font-medium text-slate-700">Discretionary %</span>
+                                                            <InfoHint text="Flexible spending—dining, hobbies, travel. Enjoy responsibly without compromising essentials or savings targets." />
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

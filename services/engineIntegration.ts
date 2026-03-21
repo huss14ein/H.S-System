@@ -5,9 +5,10 @@
 
 import { Transaction, Account, Budget, Goal } from '../types';
 import { generateCashflowStressSignals, calculateDynamicBaselines } from './enhancedBudgetEngine';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { detectRecurringBillPatterns } from './hybridBudgetCategorization';
+import { calculatePortfolioRisk } from './advancedRiskScoring';
 
-// Define missing types locally for internal portfolio risk
 interface Investment {
   id: string;
   symbol: string;
@@ -17,28 +18,6 @@ interface Investment {
   avgCost: number;
   currentPrice: number;
   type: string;
-}
-
-interface RiskMetrics {
-  volatility: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  valueAtRisk: number;
-  overallRiskScore?: number;
-  beta?: number;
-  alpha?: number;
-  currentDrawdown?: number;
-  var95?: number;
-  var99?: number;
-  cvar95?: number;
-  sortinoRatio?: number;
-  treynorRatio?: number;
-  calmarRatio?: number;
-  concentrationRisk?: number;
-  liquidityRisk?: number;
-  correlationRisk?: number;
-  riskRating?: number;
-  sleeveRiskScore?: number;
 }
 
 function mapRecurringBillsToInfo(transactions: Transaction[]): RecurringBillInfo[] {
@@ -172,8 +151,8 @@ export function buildUnifiedFinancialContext(
     .filter(b => b.frequency === 'monthly')
     .reduce((sum, b) => sum + (b.amount ?? 0), 0);
   
-  // Calculate risk constraints
-  const portfolioRisk = calculatePortfolioRiskForInvestments(investments);
+  // Calculate risk constraints using advanced risk scoring
+  const portfolioRisk = computeRiskFromInvestments(investments);
   
   // Generate cashflow stress signals
   const lastMonthTransactions = transactions.filter(t => {
@@ -184,7 +163,7 @@ export function buildUnifiedFinancialContext(
   });
   
   const totalExpenses = lastMonthTransactions
-    .filter(t => t.type === 'expense')
+    .filter(t => countsAsExpenseForCashflowKpi(t))
     .reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
   
   const stressSignals = generateCashflowStressSignals(
@@ -231,63 +210,36 @@ export function buildUnifiedFinancialContext(
   };
 }
 
-/**
- * Calculate portfolio risk from investments
- */
-function calculatePortfolioRiskForInvestments(investments: Investment[]): RiskMetrics {
+function computeRiskFromInvestments(investments: Investment[]): { overallRiskScore: number; concentrationRisk: number } {
   if (investments.length === 0) {
-    return {
-      volatility: 0,
-      beta: 0,
-      alpha: 0,
-      maxDrawdown: 0,
-      currentDrawdown: 0,
-      var95: 0,
-      var99: 0,
-      cvar95: 0,
-      sharpeRatio: 0,
-      sortinoRatio: 0,
-      treynorRatio: 0,
-      calmarRatio: 0,
-      concentrationRisk: 0,
-      liquidityRisk: 0,
-      correlationRisk: 0,
-      overallRiskScore: 50,
-      riskRating: 2,
-      sleeveRiskScore: 50,
-      valueAtRisk: 0,
-    };
+    return { overallRiskScore: 50, concentrationRisk: 0 };
   }
-  
-  // Simplified risk calculation
-  const totalValue = investments.reduce((sum, inv) => 
-    sum + (inv.shares * (inv.currentPrice || inv.avgCost)), 0
-  );
-  
-  const largestPosition = Math.max(...investments.map(inv => 
-    (inv.shares * (inv.currentPrice || inv.avgCost)) / totalValue
-  ));
-  
+  const positions = investments.map(inv => {
+    const shares = inv.shares ?? inv.quantity ?? 0;
+    const price = inv.currentPrice || inv.avgCost || inv.averageCost || 0;
+    const marketValue = shares * price;
+    return {
+      symbol: inv.symbol || inv.id,
+      shares,
+      currentPrice: price,
+      marketValue,
+      avgCost: inv.avgCost ?? inv.averageCost ?? 0,
+      sector: 'Unknown',
+      assetClass: inv.type || 'stock',
+    };
+  });
+  const totalPortfolioValue = positions.reduce((sum, p) => sum + p.marketValue, 0);
+  if (totalPortfolioValue <= 0) {
+    return { overallRiskScore: 50, concentrationRisk: 0 };
+  }
+  const { portfolioMetrics } = calculatePortfolioRisk({
+    positions,
+    cashBalance: 0,
+    totalPortfolioValue,
+  });
   return {
-    volatility: 0.20,
-    beta: 1.0,
-    alpha: 0,
-    maxDrawdown: 0.15,
-    currentDrawdown: 0,
-    var95: totalValue * 0.02,
-    var99: totalValue * 0.03,
-    cvar95: totalValue * 0.04,
-    sharpeRatio: 1.0,
-    sortinoRatio: 1.2,
-    treynorRatio: 0.05,
-    calmarRatio: 0.5,
-    concentrationRisk: largestPosition,
-    liquidityRisk: 0.3,
-    correlationRisk: 0.5,
-    overallRiskScore: Math.round(largestPosition * 100 + 30),
-    riskRating: largestPosition > 0.25 ? 3 : 2,
-    sleeveRiskScore: Math.round(largestPosition * 100),
-    valueAtRisk: totalValue * 0.025,
+    overallRiskScore: portfolioMetrics.overallRiskScore,
+    concentrationRisk: portfolioMetrics.concentrationRisk,
   };
 }
 

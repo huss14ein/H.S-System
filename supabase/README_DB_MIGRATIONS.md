@@ -2,7 +2,19 @@
 
 Run scripts in the **Supabase SQL editor** in the order below. All scripts are idempotent unless noted.
 
-## Required (core app)
+## One-shot production setup (recommended)
+
+After your **base** tables exist (`accounts`, `transactions`, `budgets`, `settings`, etc.), run:
+
+| File | Purpose |
+|------|---------|
+| **`UNIFIED_PRODUCTION_DB_SETUP.sql`** | Single script: full schema extensions (`investment_plan`, `execution_logs`, …), recurring transactions, `budget_category`, and **RLS** for all user-scoped tables. |
+
+This replaces running `run_these_for_app.sql` → `full_schema_for_app.sql` → `add_recurring_*` → `ensure_transactions_budget_category.sql` → `rls_all_user_tables.sql` separately (content is merged and deduplicated).
+
+---
+
+## Required (core app) — granular order (if not using the unified file)
 
 | Order | File | Purpose |
 |-------|------|--------|
@@ -35,6 +47,7 @@ Run scripts in the **Supabase SQL editor** in the order below. All scripts are i
 | `migrations/add_optional_schema_extras.sql` | `budgets.destination_account_id`, `holdings.holding_type`. |
 | `migrations/add_investment_plan_fx_rate_updated_at.sql` | `investment_plan.fx_rate_updated_at`. |
 | `migrations/add_owner_column_wealth_segmentation.sql` | `owner` on accounts, assets, liabilities, commodities, portfolios. |
+| `add_timestamps_all_tables.sql` | Add `created_at` and `updated_at` to all app tables; backfill existing rows. |
 
 ## One-time “run all required” (minimal)
 

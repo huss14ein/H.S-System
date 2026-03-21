@@ -3,6 +3,8 @@
  * Minimal implementation for build compatibility.
  */
 
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
+
 export interface HouseholdMonthlyOverride {
   monthIndex?: number;
   month?: number;
@@ -261,6 +263,92 @@ export function generateHouseholdBudgetCategories(
   return result;
 }
 
+/** Monthly SAR equivalent for comparing weekly/yearly budget limits. */
+export function monthlyEquivalentFromBudgetLimit(
+  limit: number,
+  period: HouseholdBudgetCategorySuggestion['period']
+): number {
+  const n = Number(limit) || 0;
+  const p = period ?? 'monthly';
+  if (p === 'monthly') return n;
+  if (p === 'yearly') return n / 12;
+  if (p === 'weekly') return n * (52 / 12);
+  if (p === 'daily') return n * (365 / 12);
+  return n;
+}
+
+/** Inverse of monthlyEquivalentFromBudgetLimit (rounded). */
+export function budgetLimitFromMonthlyEquivalent(
+  monthly: number,
+  period: HouseholdBudgetCategorySuggestion['period']
+): number {
+  const m = Math.max(0, Number(monthly) || 0);
+  const p = period ?? 'monthly';
+  if (p === 'monthly') return Math.round(m);
+  if (p === 'yearly') return Math.round(m * 12);
+  if (p === 'weekly') return Math.round(m / (52 / 12));
+  if (p === 'daily') return Math.round(m / (365 / 12));
+  return Math.round(m);
+}
+
+/**
+ * Share of monthly salary used as the “spending envelope” when splitting across a subset of categories.
+ * Conservative = tighter envelope (more implied savings); Aggressive = wider envelope.
+ */
+const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
+  Conservative: 0.52,
+  Moderate: 0.58,
+  Aggressive: 0.64,
+  Growth: 0.62,
+};
+
+/**
+ * When **all** categories are selected, returns the base suggestions unchanged (engine-merged template).
+ * When **fewer** are selected, reallocates `salary × envelope(profile)` across selected rows in proportion
+ * to each row’s monthly-equivalent weight from the base list so limits stay synced with salary + profile + selection count.
+ */
+export function computeBulkAddLimitsForSelection(
+  baseSuggestions: HouseholdBudgetCategorySuggestion[],
+  selectedCategoryNames: string[],
+  monthlySalary: number,
+  profile: HouseholdEngineProfile
+): HouseholdBudgetCategorySuggestion[] {
+  if (!baseSuggestions.length) return [];
+  const salary = Number(monthlySalary) || 0;
+  if (salary <= 0) return baseSuggestions.map((c) => ({ ...c }));
+
+  const selected = new Set(selectedCategoryNames.filter(Boolean));
+  const allSelected =
+    selected.size === baseSuggestions.length && baseSuggestions.every((c) => selected.has(c.category));
+  if (allSelected) return baseSuggestions.map((c) => ({ ...c }));
+
+  const selectedRows = baseSuggestions.filter((c) => selected.has(c.category));
+  if (selectedRows.length === 0) return baseSuggestions.map((c) => ({ ...c }));
+
+  const envelopePct =
+    PROFILE_BULK_ENVELOPE_PCT[String(profile)] ?? PROFILE_BULK_ENVELOPE_PCT.Moderate ?? 0.58;
+  const envelope = salary * envelopePct;
+
+  const weights = selectedRows.map((c) => monthlyEquivalentFromBudgetLimit(c.limit, c.period));
+  const sumW = weights.reduce((a, b) => a + b, 0);
+
+  const allocatedMonthly: number[] =
+    sumW > 0
+      ? weights.map((w) => (envelope * w) / sumW)
+      : selectedRows.map(() => envelope / selectedRows.length);
+
+  const limitByCategory = new Map<string, number>();
+  selectedRows.forEach((c, i) => {
+    limitByCategory.set(c.category, budgetLimitFromMonthlyEquivalent(allocatedMonthly[i], c.period));
+  });
+
+  return baseSuggestions.map((c) => {
+    if (!selected.has(c.category)) return { ...c };
+    const next = limitByCategory.get(c.category);
+    return next != null ? { ...c, limit: next } : { ...c };
+  });
+}
+
 /** @deprecated Use generateHouseholdBudgetCategories. */
 export const generateSaudiBudgetCategories = generateHouseholdBudgetCategories;
 
@@ -331,8 +419,8 @@ export function buildHouseholdEngineInputFromData(
       if (d.getFullYear() !== year) return;
       const m = d.getMonth();
       const amount = Math.max(0, Number(t.amount) ?? 0);
-      if (t.type === 'income') monthlyActualIncome[m] += amount;
-      else if (t.type === 'expense') monthlyActualExpense[m] += amount;
+      if (countsAsIncomeForCashflowKpi(t)) monthlyActualIncome[m] += amount;
+      else if (countsAsExpenseForCashflowKpi(t)) monthlyActualExpense[m] += amount;
     });
   }
   for (let i = 0; i < 12; i++) {

@@ -26,6 +26,7 @@ import { toSAR } from '../utils/currencyMath';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 
 interface WatchlistBucket {
@@ -517,6 +518,7 @@ type WatchlistViewProps = {
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage }) => {
     const { data, loading, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const { simulatedPrices } = useMarketData();
@@ -819,6 +821,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     };
 
     const handleAddWatchlistItemWithBucket = (item: WatchlistItem) => {
+        trackAction('add-watchlist', 'Watchlist');
         addWatchlistItem(item);
         handleAddToActiveBucket(item.symbol);
     };

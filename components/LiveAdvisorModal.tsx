@@ -3,6 +3,7 @@ import Modal from './Modal';
 import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { DataContext } from '../context/DataContext';
 import { invokeAI } from '../services/geminiService';
+import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
@@ -50,7 +51,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const spent = transactions
-            .filter((t: { type?: string; date: string; budgetCategory?: string }) => t.type === 'expense' && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
+            .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
             .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
         return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
     }, [data]);

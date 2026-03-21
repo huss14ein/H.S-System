@@ -29,6 +29,7 @@ import {
   type RecoveryTimelineProjection,
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -78,6 +79,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const ctx = useContext(DataContext)!;
   const { data, loading, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
+  const { trackAction } = useSelfLearning();
   const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
@@ -253,6 +255,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   // Track recovery plan when generated
   const handleGenerateRecoveryPlan = useCallback((holding: Holding, plan: any, positionConfig: RecoveryPositionConfig) => {
+    trackAction('save-recovery-execution', 'Recovery Plan');
     try {
       const executionId = `recovery-${holding.id}-${Date.now()}`;
       saveRecoveryExecution({
@@ -280,7 +283,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       console.warn('Failed to save recovery execution:', error);
       setStatsError(error instanceof Error ? error.message : 'Failed to save recovery execution.');
     }
-  }, []);
+  }, [trackAction]);
 
   // Selected holding & plan, derived after initial selection
   const selected = selectedHoldingId
@@ -372,6 +375,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
+    trackAction('ai-suggest-recovery', 'Recovery Plan');
     const sym = (selected.holding.symbol || '').toUpperCase();
     if (!sym) return;
     setIsAiRecoveryLoading(true);
@@ -392,11 +396,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, deployableCashSAR, safeFxRate]);
+  }, [selected, deployableCashSAR, safeFxRate, trackAction]);
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
     if (qualifiedPositions.length === 0) return;
+    trackAction('ai-apply-all-recovery', 'Recovery Plan');
     setIsBulkAiRecoveryLoading(true);
     setAiRecoveryError(null);
     try {
@@ -422,7 +427,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [qualifiedPositions, deployableCashSAR, safeFxRate]);
+  }, [qualifiedPositions, deployableCashSAR, safeFxRate, trackAction]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;
@@ -457,6 +462,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       alert('Please select a position first.');
       return;
     }
+    trackAction('generate-draft-orders', 'Recovery Plan');
     if (!selectedPlan.qualified) {
       alert('This position does not qualify for recovery. Loss must exceed the trigger threshold.');
       return;
@@ -594,7 +600,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
       {/* Enhanced Performance Statistics */}
       {showStats && recoveryStats && recoveryStats.totalExecutions > 0 && (
-        <SectionCard title="Recovery Plan Performance Statistics">
+        <SectionCard title="Recovery Plan Performance Statistics" collapsible collapsibleSummary="Stats and metrics" defaultExpanded>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
@@ -711,7 +717,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </div>
 
       {/* Enhanced Losing positions table */}
-      <SectionCard title="Positions in loss" className="overflow-hidden">
+      <SectionCard title="Positions in loss" className="overflow-hidden" collapsible collapsibleSummary="Holdings to review" defaultExpanded>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-gradient-to-r from-slate-50 to-slate-100">
@@ -800,7 +806,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </SectionCard>
 
       {selected && selectedPlan && (
-        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5">
+        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5" collapsible collapsibleSummary="Ladder, targets" defaultExpanded>
           {(() => {
             const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
             if (symbolHistory.length > 0) {
@@ -1321,7 +1327,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       )}
 
       {draftOrders && draftOrders.length > 0 && (
-        <SectionCard title="Draft orders (export to broker)" className="space-y-3">
+        <SectionCard title="Draft orders (export to broker)" className="space-y-3" collapsible collapsibleSummary="Limit orders">
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
             <div className="flex gap-2">

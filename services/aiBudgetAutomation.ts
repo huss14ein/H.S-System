@@ -5,6 +5,9 @@
 
 import { Transaction, Budget } from '../types';
 import { invokeAI } from './geminiService';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { EXPENSE_CATEGORIES } from './hybridBudgetCategorization';
+import { capitalizeCategoryName } from '../utils/categoryFormat';
 
 export interface SpendingPattern {
   category: string;
@@ -51,7 +54,7 @@ export async function autoCategorizeExpense(
 ): Promise<AICategorySuggestion> {
   const similarTransactions = historicalTransactions
     .filter(t => 
-      t.type === 'expense' && 
+      countsAsExpenseForCashflowKpi(t) && 
       t.budgetCategory &&
       Math.abs(t.amount - transaction.amount) < Math.abs(transaction.amount * 0.5)
     )
@@ -102,10 +105,10 @@ Respond in JSON format:
     return {
       transactionId: transaction.id,
       description: transaction.description,
-      suggestedCategory: parsed.suggestedCategory || 'Miscellaneous',
+      suggestedCategory: capitalizeCategoryName(parsed.suggestedCategory || 'Miscellaneous'),
       confidence: parsed.confidence || 0.5,
       reasoning: parsed.reasoning || 'AI analysis',
-      alternativeCategories: parsed.alternativeCategories || []
+      alternativeCategories: (parsed.alternativeCategories || []).map(capitalizeCategoryName)
     };
   } catch (error) {
     // Fallback to pattern matching
@@ -113,8 +116,23 @@ Respond in JSON format:
   }
 }
 
+function buildFallbackPatternsFromTaxonomy(): Record<string, string[]> {
+  const base: Record<string, string[]> = {};
+  for (const cat of EXPENSE_CATEGORIES) {
+    base[cat.name] = [...cat.keywords];
+  }
+  base['Housing'] = [...(base['Housing'] ?? []), 'villa', 'compound', 'apartment'];
+  base['Food & Dining'] = [...(base['Food & Dining'] ?? []), 'panda', 'carrefour', 'danube', 'lulu', 'hypermarket'];
+  base['Utilities'] = [...(base['Utilities'] ?? []), 'sec', 'nwc', 'stc', 'mobily', 'zain', 'fiber', '5g', 'mobile'];
+  base['Transportation'] = [...(base['Transportation'] ?? []), 'petrol', 'careem', 'metro'];
+  base['Subscriptions'] = [...(base['Subscriptions'] ?? []), 'netflix', 'shahid'];
+  base['Health & Wellness'] = [...(base['Health & Wellness'] ?? []), 'clinic', 'hospital'];
+  base['Financial Services'] = [...(base['Financial Services'] ?? []), 'remittance', 'western union', 'moneygram'];
+  return base;
+}
+
 /**
- * Fallback categorization using pattern matching
+ * Fallback categorization using pattern matching (aligned with hybridBudgetCategorization.EXPENSE_CATEGORIES)
  */
 function fallbackCategorization(
   transaction: Transaction,
@@ -122,19 +140,8 @@ function fallbackCategorization(
   existingBudgets: Budget[]
 ): AICategorySuggestion {
   const desc = transaction.description.toLowerCase();
-  
-  // Pattern matching for common KSA expenses
-  const patterns: Record<string, string[]> = {
-    'Housing': ['rent', 'apartment', 'villa', 'compound', 'housing'],
-    'Groceries': ['supermarket', 'hypermarket', 'panda', 'carrefour', 'danube', 'lulu', 'food', 'grocery'],
-    'Utilities': ['sec', 'nwc', 'electricity', 'water', 'utility'],
-    'Telecommunications': ['stc', 'mobily', 'zain', 'internet', 'fiber', '5g', 'mobile'],
-    'Transportation': ['petrol', 'fuel', 'gas station', 'metro', 'uber', 'careem', 'taxi'],
-    'Dining & Entertainment': ['restaurant', 'cafe', 'netflix', 'shahid', 'entertainment', 'cinema'],
-    'Health': ['clinic', 'hospital', 'pharmacy', 'medical', 'doctor'],
-    'Education': ['school', 'tuition', 'books', 'uniform', 'education'],
-    'Remittances': ['remittance', 'transfer', 'western union', 'moneygram']
-  };
+
+  const patterns = buildFallbackPatternsFromTaxonomy();
 
   for (const [category, keywords] of Object.entries(patterns)) {
     if (keywords.some(keyword => desc.includes(keyword))) {
@@ -150,7 +157,7 @@ function fallbackCategorization(
 
   // Check historical patterns
   const similar = historicalTransactions.find(t => 
-    t.type === 'expense' && 
+    countsAsExpenseForCashflowKpi(t) && 
     t.budgetCategory &&
     desc.includes(t.description.toLowerCase().split(' ')[0])
   );
@@ -158,7 +165,7 @@ function fallbackCategorization(
   return {
     transactionId: transaction.id,
     description: transaction.description,
-    suggestedCategory: similar?.budgetCategory || existingBudgets[0]?.category || 'Miscellaneous',
+    suggestedCategory: capitalizeCategoryName(similar?.budgetCategory || existingBudgets[0]?.category || 'Miscellaneous'),
     confidence: similar ? 0.6 : 0.3,
     reasoning: similar ? 'Matched historical pattern' : 'Default category'
   };
@@ -171,7 +178,7 @@ export async function analyzeSpendingPatternsAI(
   transactions: Transaction[],
   _budgets: Budget[]
 ): Promise<SpendingPattern[]> {
-  const expenses = transactions.filter(t => t.type === 'expense' && t.budgetCategory);
+  const expenses = transactions.filter(t => countsAsExpenseForCashflowKpi(t) && t.budgetCategory);
   const categoryGroups = new Map<string, Transaction[]>();
   
   expenses.forEach(t => {
@@ -236,7 +243,7 @@ export async function generateBudgetRecommendations(
   currentYear: number
 ): Promise<BudgetRecommendation[]> {
   const expenses = transactions.filter(t => 
-    t.type === 'expense' && 
+    countsAsExpenseForCashflowKpi(t) && 
     t.budgetCategory &&
     new Date(t.date).getMonth() + 1 === currentMonth &&
     new Date(t.date).getFullYear() === currentYear
@@ -259,7 +266,7 @@ export async function generateBudgetRecommendations(
 
     // Analyze historical spending for this category
     const historical = transactions.filter(t =>
-      t.type === 'expense' &&
+      countsAsExpenseForCashflowKpi(t) &&
       t.budgetCategory === budget.category &&
       new Date(t.date).getFullYear() === currentYear
     );
@@ -367,7 +374,7 @@ export async function predictFutureExpenses(
   
   // Group by category
   const categoryData = new Map<string, Transaction[]>();
-  transactions.filter(t => t.type === 'expense' && t.budgetCategory).forEach(t => {
+  transactions.filter(t => countsAsExpenseForCashflowKpi(t) && t.budgetCategory).forEach(t => {
     const cat = t.budgetCategory!;
     if (!categoryData.has(cat)) {
       categoryData.set(cat, []);
@@ -483,7 +490,7 @@ export async function learnAndAutoAdjust(
   currentYear: number
 ): Promise<Budget[]> {
   const expenses = transactions.filter(t =>
-    t.type === 'expense' &&
+    countsAsExpenseForCashflowKpi(t) &&
     t.budgetCategory &&
     new Date(t.date).getFullYear() === currentYear
   );

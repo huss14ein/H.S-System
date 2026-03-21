@@ -10,6 +10,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
@@ -43,6 +44,7 @@ import {
     generateWealthSummaryReportHtml,
     generateWealthSummaryReportJson,
 } from '../services/reportingEngine';
+import { useSelfLearning } from '../context/SelfLearningContext';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -78,10 +80,12 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 
 interface SummaryProps {
   setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
     const { data, loading } = useContext(DataContext)!;
+    const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
@@ -245,6 +249,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     }, [data?.transactions, data?.personalTransactions]);
 
     const handleGenerateAnalysis = useCallback(async () => {
+        trackAction('generate-financial-persona', 'Summary');
         setIsLoading(true);
         setError(null);
         setAnalysis(null);
@@ -260,7 +265,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [financialMetricsWithEf]);
+    }, [financialMetricsWithEf, trackAction]);
 
     const wealthSummaryReportPayload = useMemo(() => ({
         generatedAtIso: new Date().toISOString(),
@@ -394,7 +399,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     >
                         <h2 className="text-lg font-medium text-gray-500 flex items-center gap-1">
                             My Net Worth
-                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" />
+                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" hintId="summary-personal-wealth" hintPage="Summary" />
                         </h2>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
                         <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
@@ -426,9 +431,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             </div>
 
-            <div className="section-card border border-slate-200 bg-slate-50/50 mt-4">
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">Liquid net worth (simplified)</h3>
-                <p className="text-2xl font-extrabold text-primary mb-2">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
+            <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50 mt-4">
+                <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600">
                     <span>Cash (checking/savings): {maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
                     <span>Investments (book): {maskBalance(formatCurrencyString(liquidNw.investmentsSAR, { digits: 0 }))}</span>
@@ -438,11 +442,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     <span className="text-slate-500">~30d cashflow est.: {maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-2">Excludes illiquid physical assets. Investment values in account currency; not FX-normalized to SAR here.</p>
-            </div>
+            </CollapsibleSection>
 
             {isAdmin && (
-                <div className="section-card border border-violet-100 bg-violet-50/40 mt-4">
-                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">Net worth change vs flows (local snapshots)</h3>
+                <CollapsibleSection title="Net worth change vs flows (local snapshots)" summary="Contribution vs market-style residual" className="border border-violet-100 bg-violet-50/40 mt-4">
                     {nwSnapshotInsight.attr ? (
                         <>
                             <ul className="text-sm text-slate-700 space-y-1 list-disc list-inside">
@@ -451,7 +454,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                                 ))}
                             </ul>
                             <p className="text-xs text-slate-500 mt-2">
-                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => setActivePage?.('Risk & Trading Hub')}>Risk &amp; Trading hub →</button>
+                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments')}>Safety &amp; rules →</button>
                             </p>
                         </>
                     ) : (
@@ -465,7 +468,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                             )}
                         </p>
                     )}
-                </div>
+                </CollapsibleSection>
             )}
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
