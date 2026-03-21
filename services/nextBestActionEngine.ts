@@ -110,7 +110,7 @@ export function generateNextBestActions(input: NextBestActionInput): NextBestAct
       title: 'Add net worth snapshots',
       description: 'Add at least two snapshots (e.g. month-end) to see why your net worth changed.',
       priorityScore: 25,
-      link: 'Investments',
+      link: 'Engines & Tools',
       linkLabel: 'Safety & rules',
       data: { action: 'openRiskTradingHub' },
     });
