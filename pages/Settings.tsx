@@ -24,7 +24,7 @@ import {
 } from '../services/reportingEngine';
 import { netCashFlowForMonth } from '../services/financeMetrics';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 
 const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; budgetThreshold: number; driftThreshold: number }> = {
@@ -59,8 +59,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     );
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
-        if (!data || !exchangeRate) return null;
-        const { netWorth } = computePersonalNetWorthBreakdownSAR(data, exchangeRate);
+        if (!data) return null;
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const { netWorth } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const { income, expenses, net } = netCashFlowForMonth(txs);
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
@@ -84,11 +85,11 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     gainLoss: gl,
                     gainLossPct: glPct,
                     currency: portfolioCurrency,
-                    currentValueSar: toSAR(val, portfolioCurrency, exchangeRate),
+                    currentValueSar: toSAR(val, portfolioCurrency, sarPerUsd),
                 };
             })
         );
-        const managedTotal = getAllInvestmentsValueInSAR(inv, exchangeRate);
+        const managedTotal = getAllInvestmentsValueInSAR(inv, sarPerUsd);
         return {
             generatedAtIso: new Date().toISOString(),
             currency: 'SAR',

@@ -22,6 +22,7 @@ import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -207,6 +208,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { data, loading, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
@@ -254,11 +256,11 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, exchangeRate);
+        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];

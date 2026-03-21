@@ -13,7 +13,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -58,6 +58,7 @@ interface ZakatProps {
 const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     
     const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
@@ -100,11 +101,11 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
         const invValue = investments
             .flatMap((p: { holdings?: { zakahClass?: string; currentValue?: number }[]; currency?: string }) => (p.holdings || []).map((h: { zakahClass?: string; currentValue?: number; portfolioCurrency?: string }) => ({ ...h, portfolioCurrency: p.currency })))
             .filter((h: { zakahClass?: string }) => h.zakahClass === 'Zakatable')
-            .reduce((sum: number, h: { currentValue?: number; portfolioCurrency?: string }) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency as 'USD' | 'SAR' | undefined, exchangeRate), 0);
+            .reduce((sum: number, h: { currentValue?: number; portfolioCurrency?: string }) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency as 'USD' | 'SAR' | undefined, sarPerUsd), 0);
         const commodities = commodityHoldings.filter((c: { zakahClass?: string }) => c.zakahClass === 'Zakatable').reduce((sum: number, c: { currentValue?: number }) => sum + (c.currentValue ?? 0), 0);
         const total = cash + invValue + commodities;
         return { cash, investments: invValue, commodities, total };
-    }, [data?.accounts, data?.investments, data?.commodityHoldings, (data as any)?.personalAccounts, (data as any)?.personalInvestments, (data as any)?.personalCommodityHoldings, exchangeRate]);
+    }, [data?.accounts, data?.investments, data?.commodityHoldings, (data as any)?.personalAccounts, (data as any)?.personalInvestments, (data as any)?.personalCommodityHoldings, sarPerUsd]);
 
     const deductibleLiabilities = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];

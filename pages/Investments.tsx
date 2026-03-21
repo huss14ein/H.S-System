@@ -52,6 +52,7 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -120,15 +121,16 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
-    
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0, planCurrency: 'SAR' as TradeCurrency };
 
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             if (fromCurrency === toCurrency) return amount;
-            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * exchangeRate;
-            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / exchangeRate;
+            if (fromCurrency === 'USD' && toCurrency === 'SAR') return amount * sarPerUsd;
+            if (fromCurrency === 'SAR' && toCurrency === 'USD') return amount / sarPerUsd;
             return amount;
         };
 
@@ -160,7 +162,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
             specPct,
             planCurrency,
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     if (!data?.investmentPlan) return null;
 
@@ -813,8 +815,10 @@ const RecordTradeModal: React.FC<{
 
 // #region Portfolio View Components
 const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
+    const { data } = useContext(DataContext)!;
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
@@ -925,8 +929,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
-    const toSAR = (valueUsd: number) => valueUsd * exchangeRate;
-    const toUSD = (valueSar: number) => valueSar / exchangeRate;
+    const toSAR = (valueUsd: number) => valueUsd * sarPerUsd;
+    const toUSD = (valueSar: number) => valueSar / sarPerUsd;
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
@@ -934,8 +938,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const convertBetweenCurrencies = (value: number, from: TradeCurrency, to: TradeCurrency) => {
         if (!Number.isFinite(value)) return 0;
         if (from === to) return value;
-        if (from === 'USD' && to === 'SAR') return value * exchangeRate;
-        if (from === 'SAR' && to === 'USD') return value / exchangeRate;
+        if (from === 'USD' && to === 'SAR') return value * sarPerUsd;
+        if (from === 'SAR' && to === 'USD') return value / sarPerUsd;
         return value;
     };
 
@@ -1393,6 +1397,7 @@ const PlatformCard: React.FC<{
     portfolios: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
     goals: Goal[];
+    sarPerUsd: number;
     availableCashByCurrency?: { SAR: number; USD: number };
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
@@ -1402,9 +1407,8 @@ const PlatformCard: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, goals, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
     const platformCurrency = useMemo(() => {
@@ -1415,7 +1419,7 @@ const PlatformCard: React.FC<{
 
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
         const allHoldings = portfolios.flatMap(p => p.holdings || []);
-        const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+        const rate = sarPerUsd;
 
         // Treat simulated prices as SAR; convert to platform currency only for display.
         let valueSarFromSim = 0;
@@ -1517,7 +1521,7 @@ const PlatformCard: React.FC<{
             roi,
             totalAvailable,
         };
-    }, [portfolios, transactions, simulatedPrices, platformCurrency, exchangeRate, availableCashByCurrency]);
+    }, [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
         const priceInfo = simulatedPrices[h.symbol];
@@ -1793,6 +1797,7 @@ const PlatformView: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
@@ -1811,11 +1816,10 @@ const PlatformView: React.FC<{
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
     const aggregateValue = useMemo(() => {
-        const safeFx = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
         const toSar = (amount: number, currency?: string) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             const c = (currency === 'USD' || currency === 'SAR') ? currency : 'USD';
-            return c === 'USD' ? amount * safeFx : amount;
+            return c === 'USD' ? amount * sarPerUsd : amount;
         };
 
         return platformsData.reduce((sum, p) => {
@@ -1837,7 +1841,7 @@ const PlatformView: React.FC<{
             }, 0);
             return sum + platformTotalSar;
         }, 0);
-    }, [platformsData, props.simulatedPrices, exchangeRate]);
+    }, [platformsData, props.simulatedPrices, sarPerUsd]);
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = totalPortfolios > 0;
 
@@ -1885,7 +1889,7 @@ const PlatformView: React.FC<{
                     <div className="mt-5 pt-5 border-t border-slate-200">
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
-                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio value (holdings)</span>
                                 <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -1941,6 +1945,7 @@ const PlatformView: React.FC<{
                         portfolios={p.portfolios}
                         transactions={p.transactions}
                         goals={data?.goals ?? []}
+                        sarPerUsd={sarPerUsd}
                         availableCashByCurrency={p.availableCashByCurrency}
                         onEditPlatform={props.onEditPlatform}
                         onDeletePlatform={props.onDeletePlatform}
@@ -1985,6 +1990,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { simulatedPrices } = useMarketData();
 
     const planFromData = data?.investmentPlan;
@@ -2131,12 +2137,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
-        const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
         const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
             if (fromCurrency === toCurrency) return amount;
-            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+            return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
         };
 
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
@@ -2169,7 +2174,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
         }
         return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
-    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, exchangeRate, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -2373,11 +2378,10 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         setSaveError(null);
         try {
             const planCurrency = ((plan.budgetCurrency as TradeCurrency) || 'SAR');
-            const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
             const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
                 if (!Number.isFinite(amount) || amount <= 0) return 0;
                 if (fromCurrency === toCurrency) return amount;
-                return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * safeRate : amount / safeRate;
+                return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
             };
 
             const portfoliosForPlan = (data as any)?.personalInvestments ?? data?.investments ?? [];
@@ -2615,7 +2619,7 @@ Save anyway?`)) return;
         const mapBySymbol = new Map((data?.portfolioUniverse ?? []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
         const candidates: AddOnCandidate[] = [];
 
-        const fx = exchangeRate > 0 ? exchangeRate : 3.75;
+        const fx = sarPerUsd;
         const convertPlanToTrade = (amount: number, tradeCurrency: TradeCurrency): number => {
             const pair = `${planCurrency}-${tradeCurrency}`;
             if (pair === 'SAR-USD') return amount / fx;
@@ -2713,7 +2717,7 @@ Save anyway?`)) return;
             .slice(0, 6);
 
         return allocated;
-    }, [data?.investments, data?.portfolioUniverse, exchangeRate, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
+    }, [data?.investments, data?.portfolioUniverse, sarPerUsd, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
@@ -2724,7 +2728,7 @@ Save anyway?`)) return;
                 forceRuleBased,
                 planCurrency: plan.budgetCurrency,
                 tickerCurrencyMap,
-                fxRate: exchangeRate,
+                fxRate: sarPerUsd,
             });
             setExecutionResult(result);
             setExecutionError(null);
@@ -2746,7 +2750,7 @@ Save anyway?`)) return;
                         forceRuleBased: true,
                         planCurrency: plan.budgetCurrency,
                         tickerCurrencyMap,
-                        fxRate: exchangeRate,
+                        fxRate: sarPerUsd,
                     });
                     setExecutionResult(fallbackResult);
                     setExecutionError(null);
@@ -3470,7 +3474,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
     const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
     const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
-    const rate = Number.isFinite(exchangeRate) && exchangeRate > 2 && exchangeRate < 10 ? exchangeRate : 3.75;
+    const rate = resolveSarPerUsd(data, exchangeRate);
     let valueSAR = 0, valueUSD = 0;
     portfolios.forEach((p: InvestmentPortfolio) => {
         const cur = (p.currency || 'USD') as TradeCurrency;
@@ -3508,7 +3512,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;

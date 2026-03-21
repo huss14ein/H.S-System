@@ -4,6 +4,7 @@ import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 import { getPersonalWealthData } from '../utils/wealthScope';
+import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
@@ -2239,13 +2240,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [dataWithPersonal]);
 
     const totalDeployableCash = useMemo(() => {
+        const sarPerUsd = resolveSarPerUsd(data as FinancialData);
         const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
         const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
-            return s + cash.SAR + cash.USD;
+            return s + tradableCashBucketToSAR(cash, sarPerUsd);
         }, 0);
         return bank + platformCash;
-    }, [accountsForDeployable, getAvailableCashForAccount]);
+    }, [accountsForDeployable, getAvailableCashForAccount, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {

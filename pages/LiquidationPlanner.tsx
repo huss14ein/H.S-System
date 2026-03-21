@@ -5,7 +5,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
 import type { Holding, InvestmentPortfolio, Page } from '../types';
@@ -41,6 +41,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
   const { trackAction } = useSelfLearning();
   const { formatCurrencyString } = useFormatCurrency();
   const { exchangeRate } = useCurrency();
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
 
   useEffect(() => {
@@ -61,7 +62,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
       const cur = p.currency || 'USD';
       (p.holdings || []).forEach((h: Holding) => {
         const rawVal = getHoldingValue(h);
-        const v = toSAR(rawVal, cur as 'USD' | 'SAR', exchangeRate);
+        const v = toSAR(rawVal, cur as 'USD' | 'SAR', sarPerUsd);
         totalSAR += v;
       });
     });
@@ -69,7 +70,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
       const cur = p.currency || 'USD';
       (p.holdings || []).forEach((h: Holding) => {
         const rawVal = getHoldingValue(h);
-        const v = toSAR(rawVal, cur as 'USD' | 'SAR', exchangeRate);
+        const v = toSAR(rawVal, cur as 'USD' | 'SAR', sarPerUsd);
         const w = totalSAR > 0 ? (v / totalSAR) * 100 : 0;
         const sym = (h.symbol || '').toUpperCase();
         const thesis = thesisBySymbol.get(sym);
@@ -90,7 +91,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
       });
     });
     return rows.sort((a, b) => b.score - a.score);
-  }, [data, exchangeRate, thesisBySymbol]);
+  }, [data, sarPerUsd, thesisBySymbol]);
 
   if (loading || !data) {
     return (

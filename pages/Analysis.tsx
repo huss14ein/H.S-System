@@ -17,7 +17,7 @@ import {
 } from '../services/transactionIntelligence';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, totalLiquidCashSARFromAccounts, resolveSarPerUsd } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
@@ -113,7 +113,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
 };
 
 const AssetLiabilityChart: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
@@ -123,8 +123,9 @@ const AssetLiabilityChart: React.FC = () => {
         const ast = d?.personalAssets ?? data?.assets ?? [];
         const liab = d?.personalLiabilities ?? data?.liabilities ?? [];
 
-        const totalInvestments = getAllInvestmentsValueInSAR(inv, exchangeRate);
-        const totalCash = acc.filter((a: { type?: string; balance?: number }) => a.type !== 'Credit').reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const totalInvestments = getAllInvestmentsValueInSAR(inv, fx);
+        const totalCash = totalLiquidCashSARFromAccounts(acc, getAvailableCashForAccount, fx);
         const totalPhysicalAssets = ast.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
         const totalDebt = liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0)
             + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, a: { balance?: number }) => sum + Math.abs(a.balance ?? 0), 0);
@@ -137,7 +138,7 @@ const AssetLiabilityChart: React.FC = () => {
             { name: 'Receivables', value: totalReceivable },
             { name: 'Debt', value: totalDebt },
         ];
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const hasSignal = chartData.some((x) => x.value > 0);
     const isEmpty = !hasSignal;
@@ -163,7 +164,7 @@ const AssetLiabilityChart: React.FC = () => {
 };
 
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
 
@@ -186,8 +187,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
 
         const trendData = buildTrendData(transactions, 6);
 
-        const totalInvestments = getAllInvestmentsValueInSAR(investments, exchangeRate);
-        const totalCash = accounts.filter((a: { type?: string; balance?: number }) => a.type !== 'Credit').reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const totalInvestments = getAllInvestmentsValueInSAR(investments, fx);
+        const totalCash = totalLiquidCashSARFromAccounts(accounts, getAvailableCashForAccount, fx);
         const totalPhysicalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
         const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0)
             + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
@@ -208,7 +210,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
         const salaryCoverage = salaryToExpenseCoverage(transactions as Transaction[], 6);
 
         return { spendingData, trendData, compositionData, merchants, salary, subs, bnpl, refundPairs, salaryCoverage };
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     if (loading || !data) {
         return (

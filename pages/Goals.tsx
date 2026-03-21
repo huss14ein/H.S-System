@@ -22,7 +22,7 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
@@ -200,6 +200,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
 const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -216,11 +217,11 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number }[] }) => {
             const holdings = p.holdings ?? [];
             if (p.goalId === goal.id) {
-                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
+                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
                 linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
             } else {
                 holdings.filter((h: { goalId?: string }) => h.goalId === goal.id).forEach((h: { symbol?: string; currentValue?: number }) => {
-                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate) });
+                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) });
                 });
             }
         });
@@ -228,7 +229,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
-    }, [data?.assets, data?.investments, goal.id, exchangeRate]);
+    }, [data?.assets, data?.investments, goal.id, sarPerUsd]);
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
@@ -407,6 +408,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -454,12 +456,12 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
             const holdings = p.holdings ?? [];
             if (p.goalId) {
-                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
+                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
                 goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
             } else {
                 holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
                     if (h.goalId) {
-                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate));
+                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd));
                     }
                 });
             }
@@ -473,7 +475,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         const goalCurrentAmountByGoalId: Record<string, number> = {};
         goals.forEach(g => { goalCurrentAmountByGoalId[g.id] = goalAssetValues.get(g.id) || 0; });
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent, goalCurrentAmountByGoalId };
-    }, [data?.goals, data?.assets, data?.investments, exchangeRate]);
+    }, [data?.goals, data?.assets, data?.investments, sarPerUsd]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 

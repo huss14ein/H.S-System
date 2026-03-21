@@ -38,7 +38,7 @@ This document is a **page-by-page inventory** of major UI blocks (cards, `Sectio
 | **Net worth composition** (admin) | `NetWorthCompositionChart` — personal aggregates; non-admin sees restriction copy |
 | **Monthly cash flow** chart | 12-month series from personal transactions |
 | **Investment allocation & performance** | `PerformanceTreemap` from personal holdings |
-| **Accounts overview** | `personalAccounts ?? accounts` → list + navigate to Accounts |
+| **Accounts overview** | Same list; **Investment** rows show **tradable cash** (ledger), not DB `balance` or holdings |
 | **Upcoming bills** | Recurring **fixed** expenses from personal tx (`countsAsExpenseForCashflowKpi` + `transactionNature === 'Fixed'`) |
 | **Budget health** | Monthly budget rollups vs limits |
 | **Recent transactions** | Recent personal transactions |
@@ -71,11 +71,11 @@ This document is a **page-by-page inventory** of major UI blocks (cards, `Sectio
 
 | Block | Data |
 |-------|------|
-| **Summary row** | `Card`s: total cash (Checking+Savings), total credit, total investment platform value |
+| **Summary row** | `Card`s: total cash (Checking+Savings), total credit, **tradable cash** summed across investment platforms (SAR, from investment-transaction ledger via `getAvailableCashForAccount` + `tradableCashBucketToSAR`) — not portfolio market value |
 | **Emergency fund** | `useEmergencyFund` + link to Summary |
 | **Share account** (admin) | `data.accounts`, shareable users, Supabase share RPCs |
-| **Transfer between accounts** | Tabs **Scheduled** \| **History**; `addTransfer`, recurring CRUD |
-| **Account grid** | Per-account `AccountCardComponent`: balance, type, linked portfolios, cash reconciliation warning (`reconcileCashAccountBalance` pattern) |
+| **Transfer between accounts** | Tabs **Scheduled** \| **History**; `addTransfer`, recurring CRUD; available amounts use tradable cash for investment sources |
+| **Account grid** | **Investment** rows: **Cash for trading** = same ledger; other types: `accounts.balance`; cash reconciliation on Checking/Savings only |
 | **Modals** | Add/edit account, transfer, recurring transfer, delete confirm |
 
 ---
@@ -173,6 +173,7 @@ Underlying data: **`data.budgets`**, personal transactions for spend, RPC-backed
 | Spending by budget category | Chart on categorized spend |
 | Monthly income vs expense | Chart |
 | Current financial position | Net worth composition |
+| Asset/liability bar chart — **Cash** slice | `totalLiquidCashSARFromAccounts`: Checking/Savings balances + investment-platform **tradable** cash (not holdings) |
 
 ---
 

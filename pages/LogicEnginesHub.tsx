@@ -57,6 +57,7 @@ import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 function getScopedData(d: FinancialData | null) {
   if (!d) {
@@ -109,9 +110,10 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
   const { exchangeRate } = useCurrency();
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
-  const netWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, exchangeRate), [data, exchangeRate]);
+  const netWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, sarPerUsd), [data, sarPerUsd]);
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(() => computeLiquidityRunwayFromData(data ?? null), [data]);

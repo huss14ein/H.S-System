@@ -30,7 +30,7 @@ import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
@@ -75,7 +75,8 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageA
   }, [snaps, restoreDate]);
 
   const { exchangeRate } = useCurrency();
-  const currentNetWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, exchangeRate), [data, exchangeRate]);
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const currentNetWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, sarPerUsd), [data, sarPerUsd]);
 
   const reviewInputs = useMemo(() => {
     const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
@@ -109,12 +110,12 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageA
 
   const mwrr = useMemo(() => {
     const txs = data?.investmentTransactions ?? [];
-    const flows = flowsFromInvestmentTransactionsInSAR(txs, exchangeRate);
+    const flows = flowsFromInvestmentTransactionsInSAR(txs, sarPerUsd);
     const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-    const tv = getAllInvestmentsValueInSAR(inv, exchangeRate);
+    const tv = getAllInvestmentsValueInSAR(inv, sarPerUsd);
     const r = approximatePortfolioMWRR(flows, tv, new Date().toISOString().slice(0, 10));
     return r;
-  }, [data, exchangeRate]);
+  }, [data, sarPerUsd]);
 
   const attr = useMemo(() => {
     if (snaps.length < 2) return null;

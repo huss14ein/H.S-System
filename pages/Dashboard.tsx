@@ -32,7 +32,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
@@ -298,7 +298,7 @@ type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance'
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { actionQueue, analysis, ready } = useFinancialEnginesIntegration();
     const { exchangeRate } = useCurrency();
@@ -309,6 +309,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const [isAdmin, setIsAdmin] = useState(false);
     const kpiDensity = 'compact' as const;
 
+    /** Investment rows: tradable cash (ledger), not DB balance or holdings. */
+    const accountsForOverview = useMemo(() => {
+        const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        return list.map((acc: Account) => {
+            if (acc.type === 'Investment') {
+                return { ...acc, balance: tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd) };
+            }
+            return acc;
+        });
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     useEffect(() => {
         const loadRole = async () => {
@@ -326,7 +337,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
         const plan = data.investmentPlan;
         const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
-        const rate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+        const rate = resolveSarPerUsd(data, exchangeRate);
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
         const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
@@ -354,6 +365,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
             if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+
+            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
 
             const now = new Date();
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -388,8 +401,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
 
             // Net worth — shared with Summary / Risk hub (`services/personalNetWorth.ts`)
-            const netWorth = computePersonalNetWorthSAR(data, exchangeRate);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
+            const netWorth = computePersonalNetWorthSAR(data, sarPerUsd);
+            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
             const netWorthPrevMonth = netWorth - monthlyPnL;
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
@@ -404,10 +417,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
             const totalInvestedSar = invTx
                 .filter((t: { type?: string }) => t.type === 'deposit')
-                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, sarPerUsd), 0);
             const totalWithdrawnSar = invTx
                 .filter((t: { type?: string }) => t.type === 'withdrawal')
-                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, exchangeRate), 0);
+                .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, t.currency as any, sarPerUsd), 0);
             const netCapital = totalInvestedSar - totalWithdrawnSar;
             const totalGainLoss = totalInvestmentsValue - netCapital;
             const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
@@ -790,7 +803,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             </div>
             
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <AccountsOverview accounts={(data as any)?.personalAccounts ?? data?.accounts ?? []} onClick={() => setActivePage('Accounts')} />
+                <AccountsOverview accounts={accountsForOverview} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
 

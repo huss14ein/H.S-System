@@ -2,6 +2,9 @@ import React, { useState, useRef, useContext, useCallback, useEffect } from 'rea
 import Modal from './Modal';
 import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { DataContext } from '../context/DataContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 import { invokeAI } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -11,6 +14,7 @@ import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const [history, setHistory] = useState<Content[]>([]);
     const [userInput, setUserInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -34,14 +38,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
-        const d = data as any;
-        const assets = d?.personalAssets ?? data?.assets ?? [];
-        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
-        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-        return { netWorth: totalAssets + totalLiabilities };
-    }, [data]);
+        return { netWorth: computePersonalNetWorthSAR(data, resolveSarPerUsd(data, exchangeRate)) };
+    }, [data, exchangeRate]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
         const budget = (data?.budgets ?? []).find(b => b.category.toLowerCase() === category.toLowerCase());

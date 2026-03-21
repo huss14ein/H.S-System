@@ -12,7 +12,8 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page } from '../types';
 import { normalizedMonthlyExpense } from '../services/financeMetrics';
@@ -121,15 +122,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const initialValues = useMemo(() => {
         const d = data as any;
-        const assets = d?.personalAssets ?? data?.assets ?? [];
-        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
         const investments = d?.personalInvestments ?? data?.investments ?? [];
-        const totalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) > 0).reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-        const totalLiabilities = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) + accounts.filter((a: { balance?: number }) => (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivables = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((sum: number, l: { amount?: number }) => sum + (l.amount ?? 0), 0);
-        const netWorth = totalAssets - totalLiabilities + totalReceivables;
-        const investmentValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const netWorth = computePersonalNetWorthSAR(data, fx);
+        const investmentValue = getAllInvestmentsValueInSAR(investments, fx);
         return { netWorth, investmentValue };
     }, [data, exchangeRate]);
 

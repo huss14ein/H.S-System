@@ -11,7 +11,7 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
@@ -21,6 +21,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     const { exchangeRate } = useCurrency();
 
     const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation } = useMemo(() => {
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap((p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
             (p.holdings || []).map((h: Holding) => ({ ...h, portfolioCurrency: p.currency })),
@@ -33,8 +34,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 const marketValue = Number(h.currentValue || 0);
                 const costValue = avgCost * qty;
                 const effectiveValue = marketValue > 0 ? marketValue : (costValue > 0 ? costValue : 0);
-                const effectiveValueSar = toSAR(effectiveValue, h.portfolioCurrency, exchangeRate);
-                const costValueSar = toSAR(costValue, h.portfolioCurrency, exchangeRate);
+                const effectiveValueSar = toSAR(effectiveValue, h.portfolioCurrency, sarPerUsd);
+                const costValueSar = toSAR(costValue, h.portfolioCurrency, sarPerUsd);
                 const gainLossSar = effectiveValueSar - costValueSar;
                 const gainLossPercentSar = costValueSar > 0 ? (gainLossSar / costValueSar) * 100 : 0;
                 return { ...h, currentValue: effectiveValueSar, gainLoss: gainLossSar, gainLossPercent: gainLossPercentSar };
@@ -60,7 +61,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
                     return sum + effectiveValue;
                 }, 0);
-                return { name: p.name, value: toSAR(portfolioValue, (p.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate) };
+                return { name: p.name, value: toSAR(portfolioValue, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) };
             })
             .filter((x: { name?: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
             .sort((a: { value: number }, b: { value: number }) => b.value - a.value);

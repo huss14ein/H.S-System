@@ -12,7 +12,7 @@ import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { toSAR, getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { unrealizedPnL } from '../services/portfolioMetrics';
 import type { Holding } from '../types';
 import type { Page } from '../types';
@@ -21,6 +21,7 @@ import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSAR } from '
 const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
@@ -35,13 +36,13 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
         const dividendIncomeYTD = dividendTransactions
             .filter(t => new Date(t.date).getFullYear() === now.getFullYear())
-            .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency ?? 'USD', exchangeRate), 0);
+            .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency ?? 'USD', sarPerUsd), 0);
 
         const monthlyDividends = new Map<string, number>();
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
         dividendTransactions.filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
-            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, t.currency ?? 'USD', exchangeRate));
+            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, t.currency ?? 'USD', sarPerUsd));
         });
         
         const monthlyDividendsChartData = Array.from(monthlyDividends.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ 
@@ -60,7 +61,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
         type HoldingRow = { currentValue?: number; dividendYield?: number; name?: string; symbol?: string; avgCost?: number; quantity?: number };
         const allHoldings = portfolios.flatMap((p: { holdings?: HoldingRow[]; currency?: string }) => ((p.holdings ?? []) as HoldingRow[]).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' }))) as (HoldingRow & { portfolioCurrency?: string })[];
-        const totalInvestmentValue = allHoldings.reduce((sum: number, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate), 0);
+        const totalInvestmentValue = allHoldings.reduce((sum: number, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
 
         const holdingsWithProjectedDividends = allHoldings
             .filter(h => {
@@ -77,8 +78,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const yieldOnCostPct = costBasis > 0.01 && annualDivLocal > 0 ? (annualDivLocal / costBasis) * 100 : null;
                 return {
                     name: h.name ?? h.symbol ?? '—',
-                    projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate) * (dy / 100),
-                    unrealizedSAR: toSAR(uPnL, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', exchangeRate),
+                    projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) * (dy / 100),
+                    unrealizedSAR: toSAR(uPnL, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd),
                     forwardYieldPct: dy,
                     yieldOnCostPct,
                 };
@@ -97,8 +98,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 yieldOnCostPct: h.yieldOnCostPct,
             }));
 
-        const flows = flowsFromInvestmentTransactionsInSAR(invTxPersonal, exchangeRate);
-        const termVal = getAllInvestmentsValueInSAR(portfolios, exchangeRate);
+        const flows = flowsFromInvestmentTransactionsInSAR(invTxPersonal, sarPerUsd);
+        const termVal = getAllInvestmentsValueInSAR(portfolios, sarPerUsd);
         const mwrrPct = approximatePortfolioMWRR(flows, termVal, new Date().toISOString().slice(0, 10));
 
         return {
@@ -110,7 +111,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             topPayers,
             mwrrPct,
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);

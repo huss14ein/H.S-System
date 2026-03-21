@@ -30,6 +30,7 @@ import {
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -80,7 +81,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { data, loading, getAvailableCashForAccount } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
-  const safeFxRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 3.75;
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable } = useAI();
@@ -137,10 +138,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
     const platformCashSAR = accounts
       .filter((a: { type?: string; id: string }) => a.type === 'Investment')
-      .reduce((s: number, a: { id: string }) => {
-        const cash = getAvailableCashForAccount(a.id);
-        return s + (cash.SAR || 0) + (cash.USD || 0) * safeFxRate;
-      }, 0);
+      .reduce(
+        (s: number, a: { id: string }) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd),
+        0,
+      );
 
     const total = bankCash + platformCashSAR;
     // Validate result
@@ -149,7 +150,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       return 0;
     }
     return total;
-  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, safeFxRate]);
+  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, sarPerUsd]);
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
@@ -206,7 +207,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR;
+      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
       const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInHoldingCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
       const mergedConfig: RecoveryPositionConfig = ai
@@ -237,7 +238,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
       return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
-  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, safeFxRate, aiRecoveryBySymbol]);
+  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
@@ -354,24 +355,24 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
   const selectedCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR)
+    ? (selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR)
     : deployableCashSAR;
   const alternateCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR : deployableCashSAR / safeFxRate)
-    : deployableCashSAR / safeFxRate;
+    ? (selected.currency === 'USD' ? deployableCashSAR : deployableCashSAR / sarPerUsd)
+    : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
 
   const selectedRecoveryBrief = useMemo(() => {
     if (!selected || !selectedPlan) return null;
     const secondaryCurrency: TradeCurrency = selected.currency === 'USD' ? 'SAR' : 'USD';
-    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
-    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, safeFxRate);
+    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
+    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
     const triggerGap = Math.abs(selectedPlan.plPct) - Math.abs(selected.positionConfig.lossTriggerPct);
     const triggerStatus = triggerGap >= 0 ? 'trigger met' : 'monitor only';
     const aiNote = selected.aiNotes ? ` AI note: ${selected.aiNotes}` : '';
     return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder?.length ?? 0} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
-  }, [selected, selectedPlan, safeFxRate, formatCurrencyString]);
+  }, [selected, selectedPlan, sarPerUsd, formatCurrencyString]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
@@ -386,7 +387,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         sleeveType: selected.positionConfig.sleeveType,
         riskTier: selected.positionConfig.riskTier,
         plPct: selected.plan.plPct,
-        deployableCash: selected.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR,
+        deployableCash: selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
       });
@@ -396,7 +397,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, deployableCashSAR, safeFxRate, trackAction]);
+  }, [selected, deployableCashSAR, sarPerUsd, trackAction]);
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
@@ -408,7 +409,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const updates = await Promise.all(
         qualifiedPositions.slice(0, 12).map(async (position) => {
           const sym = (position.holding.symbol || '').toUpperCase();
-          const deployableCash = position.currency === 'USD' ? deployableCashSAR / safeFxRate : deployableCashSAR;
+          const deployableCash = position.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
           const suggestion = await suggestRecoveryParameters({
             symbol: sym,
             sleeveType: position.positionConfig.sleeveType,
@@ -427,7 +428,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [qualifiedPositions, deployableCashSAR, safeFxRate, trackAction]);
+  }, [qualifiedPositions, deployableCashSAR, sarPerUsd, trackAction]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;

@@ -20,7 +20,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
@@ -88,6 +88,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -120,7 +121,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         const investments = data?.personalInvestments ?? data?.investments ?? [];
         const { netWorth, totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(
             data,
-            exchangeRate
+            sarPerUsd
         );
         const grossAssets = totalAssets + totalReceivable;
         const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
@@ -136,10 +137,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
              return { ...h, gainLoss, gainLossPercent };
         });
 
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
         const individualStocksValue = investmentTreemapData
             .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, exchangeRate), 0);
+            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
         const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
         let investmentStyle = 'Balanced';
         if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
@@ -149,7 +150,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
             investmentTreemapData
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const managedWealthTotal = useMemo(() => {
         if (!data) return 0;
@@ -170,12 +171,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         const debt = (acc: { type?: string; balance?: number }[], liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0) + cashNegative(acc);
         const rec = (liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
         const fullCash = cash(fullAccounts), fullDebt = debt(fullAccounts, fullLiabilities), fullRec = rec(fullLiabilities);
-        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, exchangeRate);
+        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, sarPerUsd);
         const personalCash = cash(personalAccounts), personalDebt = debt(personalAccounts, personalLiabilities), personalRec = rec(personalLiabilities);
-        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, exchangeRate);
+        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, sarPerUsd);
         const fullNW = fullAst - fullDebt + fullRec, personalNW = personalAst - personalDebt + personalRec;
         return Math.round(fullNW - personalNW);
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const emergencyFund = useEmergencyFund(data);
     const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
@@ -299,12 +300,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             gainLoss: Number(h.gainLoss ?? 0),
             gainLossPct: Number(h.gainLossPercent ?? 0),
             currency: String(h.portfolioCurrency ?? 'USD'),
-            currentValueSar: toSAR(Number(h.currentValue ?? 0), h.portfolioCurrency, exchangeRate),
+            currentValueSar: toSAR(Number(h.currentValue ?? 0), h.portfolioCurrency, sarPerUsd),
         })),
     }), [
         financialMetricsWithEf,
         investmentTreemapData,
-        exchangeRate,
+        sarPerUsd,
         liquidNw?.liquidNetWorth,
         managedWealthTotal,
         riskLane?.lane,
