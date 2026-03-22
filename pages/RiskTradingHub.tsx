@@ -33,7 +33,12 @@ import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
-const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
+const RiskTradingHub: React.FC<{
+  setActivePage?: (p: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+  /** When true, render without full-page chrome (e.g. inside Money Tools). */
+  embedded?: boolean;
+}> = ({ setActivePage, triggerPageAction, embedded = false }) => {
   const { data, loading } = useContext(DataContext)!;
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
@@ -141,18 +146,18 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageA
     );
   }
 
-  return (
-    <PageLayout
-      title="Safety & rules"
-      description="Your safety checks and rules before buying or selling. See how much you have in reserve, your portfolio return, and when to review things."
-    >
+  const pageDescription =
+    'Your safety checks and rules before buying or selling. See how much you have in reserve, your portfolio return, and when to review things.';
+
+  const body = (
+    <>
       <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 p-4">
         <p className="text-sm text-slate-700">
           <strong className="text-slate-900">What is this?</strong> A quick view of your emergency cushion, how your portfolio is doing, and the rules you set to avoid impulsive trades. Not financial advice.
         </p>
       </div>
 
-      {(setActivePage || triggerPageAction) && (
+      {!embedded && (setActivePage || triggerPageAction) && (
         <p className="text-sm text-slate-600 mb-4">
           <button type="button" className="text-primary-600 font-medium hover:text-primary-700 underline" onClick={() => setActivePage?.('Engines & Tools')}>
             Money Tools
@@ -374,6 +379,24 @@ const RiskTradingHub: React.FC<{ setActivePage?: (p: Page) => void; triggerPageA
           </>
         )}
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="space-y-6">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold text-slate-900">Safety & rules</h2>
+          <p className="mt-1 text-sm text-slate-600">{pageDescription}</p>
+        </div>
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <PageLayout title="Safety & rules" description={pageDescription}>
+      {body}
     </PageLayout>
   );
 };

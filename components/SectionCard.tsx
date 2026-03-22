@@ -89,24 +89,32 @@ const SectionCard: React.FC<SectionCardProps> = ({
   const content = (
     <>
       {collapsible && title ? (
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer hover:bg-slate-50/80 rounded-lg transition-colors -m-1 p-1"
-          aria-expanded={expanded}
-        >
-          <div className="flex items-center gap-2 min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2 w-full rounded-lg -m-1 p-1 min-w-0 hover:bg-slate-50/80 transition-colors">
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="flex items-center gap-2 min-w-0 flex-1 text-left py-1 pr-1 cursor-pointer rounded-lg"
+            aria-expanded={expanded}
+          >
             {icon}
             <h2 className="section-title text-base font-semibold text-slate-800 truncate">{title}</h2>
-            {resolvedHint ? <InfoHint text={resolvedHint} /> : null}
             {collapsibleSummary && !expanded && (
               <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {collapsibleSummary}</span>
             )}
+          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {resolvedHint ? <InfoHint text={resolvedHint} popoverAlign="right" /> : null}
+            <button
+              type="button"
+              onClick={() => setExpanded((e) => !e)}
+              className="flex-shrink-0 p-1 rounded text-slate-400 hover:text-slate-600"
+              aria-expanded={expanded}
+              aria-label={expanded ? 'Collapse section' : 'Expand section'}
+            >
+              {expanded ? <ChevronUpIcon className="h-5 w-5" /> : <ChevronDownIcon className="h-5 w-5" />}
+            </button>
           </div>
-          <span className="flex-shrink-0 p-1 rounded text-slate-400 hover:text-slate-600" aria-hidden>
-            {expanded ? <ChevronUpIcon className="h-5 w-5" /> : <ChevronDownIcon className="h-5 w-5" />}
-          </span>
-        </button>
+        </div>
       ) : (
         headerContent
       )}

@@ -42,6 +42,7 @@ import type { Transaction } from '../types';
 import {
     generateWealthSummaryReportCsv,
     generateWealthSummaryReportHtml,
+    openHtmlForPrint,
     generateWealthSummaryReportJson,
 } from '../services/reportingEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -347,13 +348,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
 
     const handlePrintWealthSummary = useCallback(() => {
         const html = generateWealthSummaryReportHtml(wealthSummaryReportPayload);
-        const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760');
-        if (!w) return;
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        w.focus();
-        w.print();
+        openHtmlForPrint(html);
     }, [wealthSummaryReportPayload]);
 
     if (loading || !data) {
@@ -455,7 +450,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                                 ))}
                             </ul>
                             <p className="text-xs text-slate-500 mt-2">
-                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments')}>Safety &amp; rules →</button>
+                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools')}>Safety &amp; rules →</button>
                             </p>
                         </>
                     ) : (

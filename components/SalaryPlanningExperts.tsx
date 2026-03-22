@@ -381,20 +381,28 @@ const SalaryPlanningExperts: React.FC = () => {
                     const expertTitleHint = lookupHintForTitle(expert.name);
                     return (
                         <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden hover:border-slate-300 transition-colors">
-                            <button
-                                type="button"
-                                onClick={() => setExpandedId(isExpanded ? null : expert.id)}
-                                className="w-full flex items-center justify-between gap-3 p-4 text-left hover:bg-slate-50/80 transition-colors"
-                            >
-                                <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-1">
-                                        <span className="font-semibold text-slate-800">{expert.name}</span>
-                                        {expertTitleHint ? <InfoHint text={expertTitleHint} /> : null}
-                                    </div>
+                            <div className="flex items-start justify-between gap-3 p-4 hover:bg-slate-50/80 transition-colors">
+                                <button
+                                    type="button"
+                                    onClick={() => setExpandedId(isExpanded ? null : expert.id)}
+                                    className="min-w-0 flex-1 text-left"
+                                >
+                                    <span className="font-semibold text-slate-800 block">{expert.name}</span>
                                     <p className="text-xs text-slate-500 mt-1">{expert.logic}</p>
+                                </button>
+                                <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                                    {expertTitleHint ? <InfoHint text={expertTitleHint} popoverAlign="right" /> : null}
+                                    <button
+                                        type="button"
+                                        onClick={() => setExpandedId(isExpanded ? null : expert.id)}
+                                        className="p-1 rounded text-slate-400 hover:text-slate-600"
+                                        aria-expanded={isExpanded}
+                                        aria-label={isExpanded ? 'Collapse expert' : 'Expand expert'}
+                                    >
+                                        <ChevronDownIcon className={`h-5 w-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                    </button>
                                 </div>
-                                <ChevronDownIcon className={`h-5 w-5 text-slate-400 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                            </button>
+                            </div>
                             {isExpanded && (
                                 <div className="border-t border-slate-200 bg-slate-50/50 p-5 sm:p-6 space-y-5">
                                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex flex-wrap items-center gap-1">

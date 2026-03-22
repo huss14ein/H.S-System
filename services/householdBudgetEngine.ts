@@ -190,6 +190,32 @@ export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
   'Leisure (Weekly)': 'Weekend outings, cinema, or family gatherings.',
 };
 
+/**
+ * How much extra room groceries get vs the neutral profile (after the global +10% bump).
+ * Conservative = higher essential-food envelope; Aggressive/Growth = leaner vs investing focus.
+ */
+function groceryProfileSpendingMultiplier(profile: HouseholdEngineProfile): number {
+  if (profile === 'Conservative') return 1.06;
+  if (profile === 'Aggressive' || profile === 'Growth') return 0.94;
+  return 1.0;
+}
+
+/**
+ * Groceries & Supermarket as a share of monthly expense base (`baseExpense`).
+ * Base formula scales with adults/kids; then +10% vs legacy; then profile multiplier; clamped.
+ */
+export function groceryShareOfBaseExpense(
+  adults: number,
+  kids: number,
+  profile: HouseholdEngineProfile
+): number {
+  const extraAdults = Math.max(adults - 1, 0);
+  const raw = 0.06 + extraAdults * 0.015 + kids * 0.012;
+  const bumped = raw * 1.1;
+  const merged = bumped * groceryProfileSpendingMultiplier(profile);
+  return Math.max(0.07, Math.min(merged, 0.22));
+}
+
 /** Household-engine budget categories with suggested limits from household size and salary.
  * Single source for bulk-add; covers monthly, yearly, weekly. */
 export function generateHouseholdBudgetCategories(
@@ -206,11 +232,8 @@ export function generateHouseholdBudgetCategories(
 
   // ——— Monthly (recurring, every 30 days) ———
   result.push({ category: 'Housing Rent (Monthly)', limit: pct(0.30), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'] });
-  // Groceries: conservative Saudi-specific baseline.
-  // Start from a low base percent and scale with adults and kids, then clamp to a safe band.
-  const extraAdults = Math.max(adults - 1, 0);
-  const groceriesPctRaw = 0.06 + extraAdults * 0.015 + kids * 0.012;
-  const groceriesPct = Math.max(0.06, Math.min(groceriesPctRaw, 0.14)); // 6%–14% of baseExpense
+  // Groceries: Saudi baseline +10% vs prior; scaled by household size; profile adjusts envelope (Conservative higher, Aggressive leaner).
+  const groceriesPct = groceryShareOfBaseExpense(adults, kids, profile);
   result.push({
     category: 'Groceries & Supermarket',
     limit: pct(groceriesPct),
@@ -255,8 +278,14 @@ export function generateHouseholdBudgetCategories(
   result.push({ category: 'Zakat', limit: Math.round(income * 0.025), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Zakat'] });
   result.push({ category: 'Annual Vacation', limit: Math.round(income * 0.08), period: 'yearly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Annual Vacation'] });
 
-  // ——— Weekly ———
-  result.push({ category: 'Fresh Produce (Weekly)', limit: Math.round((baseExpense * 0.03) / 4.33), period: 'weekly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Fresh Produce (Weekly)'] });
+  // ——— Weekly ——— (aligned with grocery bump + profile)
+  result.push({
+    category: 'Fresh Produce (Weekly)',
+    limit: Math.round((baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(profile)) / 4.33),
+    period: 'weekly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Fresh Produce (Weekly)'],
+  });
   result.push({ category: 'Household Help (Hourly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Household Help (Hourly)'] });
   result.push({ category: 'Leisure (Weekly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Leisure (Weekly)'] });
 
@@ -506,10 +535,11 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
     const baseExpense = expense || (income * 0.6); // Default 60% of income for expenses if no expense data
     
     // KSA-specific monthly expense allocations (as percentages of total monthly expenses)
+    const groceryShare = groceryShareOfBaseExpense(adults, kids, profile);
     const allocations: Record<string, number> = {
       // Monthly Recurring Expenses
       housing: baseExpense * 0.30,      // 30% - Housing Rent (if paid monthly)
-      groceries: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // 12% base + per person - Groceries & Supermarket
+      groceries: baseExpense * groceryShare, // +10% vs legacy; same formula as bulk-add; profile-aware
       utilities: baseExpense * 0.08,     // 8% - Electricity (SEC), Water (NWC) - spikes in summer
       telecommunications: baseExpense * 0.04, // 4% - Home Fiber/5G internet and Mobile data plans
       transportation: baseExpense * 0.10, // 10% - Petrol/Fuel, Riyadh Metro, Uber/Careem
@@ -521,7 +551,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       pocketMoney: baseExpense * 0.02,   // 2% - Cash for small daily needs (tea, snacks, parking)
       
       // Legacy category mappings for backward compatibility
-      food: baseExpense * (0.12 + (adults * 0.04) + (kids * 0.02)), // Alias for groceries
+      food: baseExpense * groceryShare, // Alias for groceries
       health: baseExpense * 0.02,        // Alias for insuranceCoPay
       personalCare: baseExpense * 0.03,  // 3% - Grooming, hygiene (part of groceries)
       entertainment: baseExpense * 0.06,  // Alias for diningEntertainment
@@ -554,7 +584,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
 
     // Weekly Expenses - convert to monthly (multiply by 4.33)
     const weeklyExpenses = {
-      freshProduce: (baseExpense * 0.03) * 4.33,   // Fruit, vegetables, bread from local markets
+      freshProduce: baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(profile) * 4.33, // Aligned with grocery profile bump
       householdHelpHourly: (baseExpense * 0.02) * 4.33, // Hourly cleaning services (Mudarri or Java)
       leisureWeekly: (baseExpense * 0.02) * 4.33,  // Weekend outings, cinema, family gatherings
     };

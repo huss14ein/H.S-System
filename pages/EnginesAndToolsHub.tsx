@@ -1,5 +1,5 @@
 /**
- * Unified Engines & Tools: Logic & Engines, Liquidation Planner, Financial Journal
+ * Money Tools (Engines & Tools): Logic & Engines, Safety & rules, Liquidation, Financial Journal
  * Fully wired to DataContext, useFinancialEnginesIntegration. URL hash sync, visibility refresh.
  */
 
@@ -10,14 +10,16 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
+import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import LoadingSpinner from '../components/LoadingSpinner';
 import CollapsibleSection from '../components/CollapsibleSection';
 
 const LogicEnginesHub = lazy(() => import('./LogicEnginesHub'));
 const LiquidationPlanner = lazy(() => import('./LiquidationPlanner'));
 const FinancialJournal = lazy(() => import('./FinancialJournal'));
+const RiskTradingHub = lazy(() => import('./RiskTradingHub'));
 
-export type EnginesSubTab = 'Logic & Engines' | 'Liquidation' | 'Journal';
+export type EnginesSubTab = 'Logic & Engines' | 'Safety & rules' | 'Liquidation' | 'Journal';
 
 const ENGINES_TAB_KEY = 'finova_engines_tab';
 
@@ -57,6 +59,9 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
     } else if (pageAction === 'openLogic') {
       setTab('Logic & Engines');
       clearPageAction?.();
+    } else if (pageAction === 'openRiskTradingHub') {
+      setTab('Safety & rules');
+      clearPageAction?.();
     }
   }, [pageAction, clearPageAction, setTab]);
 
@@ -64,7 +69,13 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
     if (typeof window === 'undefined') return;
     try {
       const saved = sessionStorage.getItem(ENGINES_TAB_KEY) as EnginesSubTab | null;
-      if (saved && (saved === 'Logic & Engines' || saved === 'Liquidation' || saved === 'Journal')) {
+      if (
+        saved &&
+        (saved === 'Logic & Engines' ||
+          saved === 'Safety & rules' ||
+          saved === 'Liquidation' ||
+          saved === 'Journal')
+      ) {
         setActiveTab(saved);
       }
     } catch (_) {}
@@ -79,6 +90,7 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const tabs = useMemo(
     () => [
       { id: 'Logic & Engines' as EnginesSubTab, label: 'Behind the numbers', icon: CubeIcon },
+      { id: 'Safety & rules' as EnginesSubTab, label: 'Safety & rules', icon: ShieldCheckIcon },
       { id: 'Liquidation' as EnginesSubTab, label: 'Sell priority', icon: ArrowTrendingDownIcon },
       { id: 'Journal' as EnginesSubTab, label: 'Notes & ideas', icon: BookOpenIcon },
     ],
@@ -90,6 +102,8 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
     switch (activeTab) {
       case 'Logic & Engines':
         return <LogicEnginesHub {...common} />;
+      case 'Safety & rules':
+        return <RiskTradingHub embedded setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Liquidation':
         return <LiquidationPlanner {...common} />;
       case 'Journal':
@@ -108,10 +122,11 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
         </p>
       </div>
 
-      <CollapsibleSection title="What are these tools?" summary="Logic, Liquidation, Journal" defaultExpanded={false}>
+      <CollapsibleSection title="What are these tools?" summary="Logic, Safety, Liquidation, Journal" defaultExpanded={false}>
         <p className="text-sm text-slate-700">
           <strong className="text-slate-900">Choose a tool:</strong>{' '}
           <span className="text-slate-600">Behind the numbers</span> shows how your portfolio is calculated;{' '}
+          <span className="text-slate-600">Safety &amp; rules</span> covers runway, trading guardrails, and net worth snapshots;{' '}
           <span className="text-slate-600">Sell priority</span> lists investments to review first if you need to trim;{' '}
           <span className="text-slate-600">Notes & ideas</span> lets you jot down why you bought something and when to revisit it.
         </p>

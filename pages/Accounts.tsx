@@ -64,12 +64,19 @@ const AccountModal: React.FC<{
     accountToEdit: Account | null;
     allAccounts?: Account[];
 }> = ({ isOpen, onClose, onSave, accountToEdit, allAccounts = [] }) => {
+    const { data } = useContext(DataContext)!;
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Account['type']>('Checking');
     const [owner, setOwner] = useState('');
     const [linkedAccountIds, setLinkedAccountIds] = useState<string[]>([]);
     const [balanceStr, setBalanceStr] = useState('');
+    const [cashCurrency, setCashCurrency] = useState<'SAR' | 'USD'>('SAR');
+
+    const planDefaultCash: 'SAR' | 'USD' =
+        String((data?.investmentPlan as { budgetCurrency?: string } | undefined)?.budgetCurrency ?? '').toUpperCase() === 'USD'
+            ? 'USD'
+            : 'SAR';
 
     useEffect(() => {
         if (accountToEdit) {
@@ -77,6 +84,7 @@ const AccountModal: React.FC<{
             setType(accountToEdit.type);
             setOwner(accountToEdit.owner || '');
             setLinkedAccountIds(accountToEdit.linkedAccountIds || []);
+            setCashCurrency(accountToEdit.currency ?? planDefaultCash);
             setBalanceStr(
                 accountToEdit.type === 'Investment'
                     ? ''
@@ -89,9 +97,10 @@ const AccountModal: React.FC<{
             setType(learnedType && validTypes.includes(learnedType) ? learnedType : 'Checking');
             setOwner('');
             setLinkedAccountIds([]);
+            setCashCurrency(planDefaultCash);
             setBalanceStr('');
         }
-    }, [accountToEdit, isOpen, getLearnedDefault]);
+    }, [accountToEdit, isOpen, getLearnedDefault, planDefaultCash]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -104,6 +113,7 @@ const AccountModal: React.FC<{
             // Always send linkedAccountIds for Investment so backend can persist (including clearing when empty)
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
             ...(type !== 'Investment' ? { balance: parsedBalance } : {}),
+            ...(type === 'Checking' || type === 'Savings' || type === 'Credit' ? { currency: cashCurrency } : {}),
         };
 
         try {
@@ -151,7 +161,22 @@ const AccountModal: React.FC<{
                 {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                            {accountToEdit ? 'Current balance (SAR)' : 'Starting balance (SAR)'}
+                            Account currency <InfoHint text="Your bank balance and transfers from this account are in this currency. Investment deposits from a SAR bank should use SAR so the platform ledger matches your transfer." />
+                        </label>
+                        <select
+                            value={cashCurrency}
+                            onChange={(e) => setCashCurrency(e.target.value as 'SAR' | 'USD')}
+                            className="select-base w-full max-w-xs"
+                        >
+                            <option value="SAR">SAR</option>
+                            <option value="USD">USD</option>
+                        </select>
+                    </div>
+                )}
+                {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            {accountToEdit ? 'Current balance' : 'Starting balance'} ({cashCurrency})
                             <InfoHint
                                 text={
                                     accountToEdit

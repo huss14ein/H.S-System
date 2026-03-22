@@ -171,7 +171,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
           <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); }}>
             See sell priority list
           </button>
-          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Investments', 'openRiskTradingHub'); }}>
+          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openRiskTradingHub'); }}>
             Safety & rules
           </button>
         </div>

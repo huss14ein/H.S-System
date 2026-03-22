@@ -1,11 +1,10 @@
 /**
- * Fetches and caches company name for ticker symbols via Finnhub API.
- * Fallback: static map when API fails; then symbol as display name so auto-retrieve always works.
+ * Fetches and caches company name for ticker symbols via Finnhub only.
+ * If the API returns nothing, the symbol string is shown (no alternate static catalog).
  */
 
 import { useState, useEffect } from 'react';
 import { getCompanyProfile } from '../services/finnhubService';
-import { getStaticCompanyName } from '../services/staticCompanyNameService';
 
 const cache = new Map<string, string | null>();
 const pending = new Map<string, Promise<string | null>>();
@@ -22,10 +21,9 @@ async function fetchAndCache(symbol: string): Promise<string | null> {
       const profile = await getCompanyProfile(key);
       name = profile?.name ?? null;
     } catch {
-      // API key missing, network error, or rate limit – use fallbacks
+      // API key missing, network error, or rate limit
     }
-    if (!name) name = getStaticCompanyName(key);
-    if (!name) name = key; // always show something: use symbol as display name
+    if (!name) name = key;
     cache.set(key, name);
     pending.delete(key);
     return name;

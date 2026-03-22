@@ -70,6 +70,8 @@ export interface Account {
   name: string;
   type: 'Checking' | 'Savings' | 'Investment' | 'Credit';
   balance: number;
+  /** Denomination of `balance` and transfer amounts for Checking/Savings (defaults via investment plan / SAR). */
+  currency?: 'USD' | 'SAR';
   owner?: string;
   /** For Investment accounts: linked cash account IDs that can fund this platform */
   linkedAccountIds?: string[];
@@ -158,6 +160,23 @@ export type HoldingAssetClass =
   | 'NFT'
   | 'Other';
 
+/** Allowed `holdings.asset_class` values (Supabase check + app). Keep in sync with migrations. */
+export const HOLDING_ASSET_CLASS_OPTIONS: readonly HoldingAssetClass[] = [
+  'Stock',
+  'Sukuk',
+  'Mutual Fund',
+  'ETF',
+  'REIT',
+  'Cryptocurrency',
+  'Commodity',
+  'CD',
+  'Private Equity',
+  'Venture Capital',
+  'Savings Bond',
+  'NFT',
+  'Other',
+];
+
 export interface Holding {
   id: string; 
   user_id?: string;
@@ -183,7 +202,7 @@ export interface InvestmentPortfolio {
   user_id?: string;
   name: string;
   accountId: string;
-  /** Base currency for this portfolio (all holding values are in this currency). Default USD for US markets. */
+  /** Base currency for this portfolio (all holding values are in this currency). If unset, inferred from holdings (Tadawul *.SR/*.SA ⇒ SAR). */
   currency?: TradeCurrency;
   holdings: Holding[];
   goalId?: string;

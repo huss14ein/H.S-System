@@ -1,6 +1,6 @@
 import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 
@@ -268,25 +268,6 @@ const getFinnhubApiKey = (): string => {
     return apiKey;
 };
 
-const toFinnhubSymbol = (symbol: string): string => {
-    const upper = symbol.toUpperCase().trim();
-    if (!upper) return upper;
-    if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
-    if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
-    const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
-    if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
-    return upper;
-};
-
-const fromFinnhubSymbol = (symbol: string): string => {
-    const upper = symbol.toUpperCase();
-    if (upper === 'BINANCE:BTCUSDT') return 'BTC';
-    if (upper === 'BINANCE:ETHUSDT') return 'ETH';
-    const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
-    if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
-    return upper;
-};
-
 /** Stooq uses lowercase with dot for Saudi: 2222.sr. Others use dash (e.g. aapl.us). */
 const toStooqSymbol = (symbol: string): string => {
     const s = (symbol || '').trim();
@@ -312,7 +293,13 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             if (!Number.isFinite(price) || price <= 0) continue;
             if (!Number.isFinite(change)) change = 0;
             if (!Number.isFinite(changePercent)) changePercent = 0;
-            mapped[fromFinnhubSymbol(finnhubSymbol)] = { price, change, changePercent };
+            const quote = { price, change, changePercent };
+            const displayKey = fromFinnhubSymbol(finnhubSymbol);
+            const rawUpper = (rawSymbol || '').trim().toUpperCase();
+            const keys = new Set<string>([displayKey, rawUpper].filter(Boolean));
+            const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
+            if (tad) keys.add(`${tad[1]}.SA`);
+            for (const k of keys) mapped[k] = quote;
         } catch (error) {
             console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
         }
@@ -1312,10 +1299,12 @@ const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conser
         return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
     }
 
+    const equityLike = new Set(['Stock', 'ETF', 'Mutual Fund', 'REIT']);
     const bucket = { stocks: 0, sukuk: 0, other: 0 };
     normalized.forEach((h) => {
-        if (h.assetClass === 'Stock') bucket.stocks += h.value;
-        else if (h.assetClass === 'Sukuk') bucket.sukuk += h.value;
+        const ac = h.assetClass || 'Other';
+        if (ac === 'Sukuk') bucket.sukuk += h.value;
+        else if (equityLike.has(ac)) bucket.stocks += h.value;
         else bucket.other += h.value;
     });
 
@@ -1690,25 +1679,10 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     try {
-        if (provider === 'finnhub') {
-            try {
-                return await tryFinnhub();
-            } catch {
-                return await tryStooq();
-            }
-        }
         if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
-
-        // auto: Finnhub first, then fill Saudi (.SR) and other missing symbols via Stooq
-        let result = await getFinnhubLivePrices(symbols).catch(() => ({} as { [s: string]: { price: number; change: number; changePercent: number } }));
-        const missing = symbols.filter((s) => !result[(s || '').trim().toUpperCase()]);
-        if (missing.length > 0) {
-            const stooqResult = await getStooqLivePrices(missing).catch(() => ({}));
-            result = { ...result, ...stooqResult };
-        }
-        if (Object.keys(result).length > 0) return result;
-        throw new Error('No live prices returned from Finnhub or Stooq');
+        // finnhub | auto | unset: Finnhub only (shared toFinnhubSymbol / fromFinnhubSymbol with finnhubService)
+        return await tryFinnhub();
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;

@@ -1,10 +1,24 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
-import { getPersonalWealthData } from '../utils/wealthScope';
+import {
+  getPersonalAccounts,
+  getPersonalAssets,
+  getPersonalCommodityHoldings,
+  getPersonalInvestments,
+  getPersonalLiabilities,
+  getPersonalTransactions,
+} from '../utils/wealthScope';
 import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import {
+    inferInvestmentTransactionCurrency,
+    ledgerCurrencyCashToInvestment,
+    ledgerCurrencyInvestmentToCash,
+    resolveCashAccountCurrency,
+} from '../utils/investmentLedgerCurrency';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
@@ -240,6 +254,8 @@ function normalizeAccount(raw: any): Account {
     const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
     const balance = Number(raw.balance ?? 0);
     const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
+    const cur = raw.currency;
+    const accountCurrency = cur === 'SAR' || cur === 'USD' ? cur : undefined;
     return {
         ...(raw as Record<string, unknown>),
         id,
@@ -247,6 +263,7 @@ function normalizeAccount(raw: any): Account {
         name: name || (id ? `Account ${id.slice(0, 8)}` : 'Account'),
         type,
         balance,
+        currency: accountCurrency,
         owner: raw.owner,
         linkedAccountIds: Array.isArray(linkedAccountIds) ? linkedAccountIds.filter((id: any): id is string => typeof id === 'string') : undefined,
         platformDetails: raw.platformDetails ?? raw.platform_details,
@@ -290,17 +307,13 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
     return row;
 }
 
-/** Allowed asset_class values for DB check constraint. Must match holdings_asset_class_check. */
-const HOLDINGS_ASSET_CLASS_ALLOWED = [
-    'Stock', 'Sukuk', 'Mutual Fund', 'ETF', 'REIT', 'Cryptocurrency', 'Commodity',
-    'CD', 'Private Equity', 'Venture Capital', 'Savings Bond', 'NFT', 'Other',
-] as const;
-
 function normalizeAssetClassForDb(value: string | null | undefined): string | undefined {
     if (value == null || value === '') return undefined;
     const v = String(value).trim();
-    if (HOLDINGS_ASSET_CLASS_ALLOWED.includes(v as any)) return v;
-    if (v.toLowerCase() === 'equity') return 'Stock';
+    if (HOLDING_ASSET_CLASS_OPTIONS.includes(v as HoldingAssetClass)) return v;
+    const lower = v.toLowerCase();
+    if (lower === 'equity' || lower === 'equities') return 'Stock';
+    if (lower === 'sukuk' || lower === 'sukuks' || lower.includes('islamic bond')) return 'Sukuk';
     return 'Other';
 }
 
@@ -436,12 +449,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
     };
 
-    const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => ({
-        ...transaction,
-        accountId: transaction.accountId || transaction.account_id,
-        currency: transaction.currency ?? undefined,
-        linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
-    });
+    const normalizeInvestmentTransaction = (transaction: any): InvestmentTransaction => {
+        const curRaw = transaction.currency as string | undefined;
+        const currency = curRaw === 'SAR' || curRaw === 'USD' ? curRaw : undefined;
+        return {
+            ...transaction,
+            accountId: transaction.accountId || transaction.account_id,
+            currency,
+            linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
+        };
+    };
 
     const normalizeCommodityHolding = (holding: any): CommodityHolding => {
         const name = holding.name ?? holding.Name;
@@ -676,11 +693,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
                     const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
+                    const holdings = (portfolio.holdings || []).map(normalizeHolding);
+                    const currency = resolveInvestmentPortfolioCurrency({ ...portfolio, holdings });
                     return {
                         ...portfolio,
                         accountId: resolved,
-                        currency: portfolio.currency ?? 'USD',
-                        holdings: (portfolio.holdings || []).map(normalizeHolding),
+                        currency,
+                        holdings,
                     };
                 }),
                 investmentTransactions: filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
@@ -1222,6 +1241,84 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const dateStr = date ?? new Date().toISOString().split('T')[0];
         const descOut = note ? `Transfer to ${toName}: ${note}` : `Transfer to ${toName}`;
         const descIn = note ? `Transfer from ${fromName}: ${note}` : `Transfer from ${fromName}`;
+
+        const isCashAccount = (a: Account | undefined) => Boolean(a && (a.type === 'Checking' || a.type === 'Savings'));
+
+        /** Tradable cash is tracked in `investment_transactions`, not personal `transactions`. */
+        if (isCashAccount(fromAcc) && toAcc?.type === 'Investment') {
+            const links = toAcc.linkedAccountIds ?? [];
+            if (links.length > 0 && !links.includes(fromAccountId)) {
+                toast('This investment platform only accepts transfers from its linked cash accounts. Add the source account under the platform’s linked accounts, then try again.', 'error');
+                return;
+            }
+            const linkedCashAccountId = links.length > 0 ? fromAccountId : undefined;
+            try {
+                await recordTrade({
+                    type: 'deposit',
+                    date: dateStr,
+                    accountId: toAccountId,
+                    total: absAmount,
+                    currency: ledgerCurrencyCashToInvestment(fromAcc, data ?? null),
+                    symbol: 'CASH',
+                    quantity: 0,
+                    price: 0,
+                    linkedCashAccountId,
+                } as Parameters<typeof recordTrade>[0]);
+            } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : 'Transfer failed.';
+                toast(msg, 'error');
+                return;
+            }
+            if (!linkedCashAccountId) {
+                await addTransaction({
+                    date: dateStr,
+                    description: descOut,
+                    amount: -absAmount,
+                    type: 'expense',
+                    accountId: fromAccountId,
+                    category: 'Transfer',
+                });
+            }
+            return;
+        }
+
+        if (fromAcc?.type === 'Investment' && isCashAccount(toAcc)) {
+            const links = fromAcc.linkedAccountIds ?? [];
+            if (links.length > 0 && !links.includes(toAccountId)) {
+                toast('This investment platform only allows withdrawals to its linked cash accounts. Link the destination account to the platform first.', 'error');
+                return;
+            }
+            const linkedCashAccountId = links.length > 0 ? toAccountId : undefined;
+            try {
+                await recordTrade({
+                    type: 'withdrawal',
+                    date: dateStr,
+                    accountId: fromAccountId,
+                    total: absAmount,
+                    currency: ledgerCurrencyInvestmentToCash(toAcc, data ?? null),
+                    symbol: 'CASH',
+                    quantity: 0,
+                    price: 0,
+                    linkedCashAccountId,
+                } as Parameters<typeof recordTrade>[0]);
+            } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : 'Transfer failed.';
+                toast(msg, 'error');
+                return;
+            }
+            if (!linkedCashAccountId) {
+                await addTransaction({
+                    date: dateStr,
+                    description: descIn,
+                    amount: absAmount,
+                    type: 'income',
+                    accountId: toAccountId,
+                    category: 'Transfer',
+                });
+            }
+            return;
+        }
+
         await addTransaction({
             date: dateStr,
             description: descOut,
@@ -1538,7 +1635,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             owner: platform.owner,
             balance: platform.balance,
         };
-        
+        if (platform.currency === 'SAR' || platform.currency === 'USD') {
+            payload.currency = platform.currency;
+        }
+
         // Always sync linkedAccountIds to linked_account_ids in DB
         if (Array.isArray(platform.linkedAccountIds)) {
             payload.linked_account_ids = platform.linkedAccountIds;
@@ -1687,7 +1787,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         tradeSubmissionInFlightRef.current = true;
         try {
-            const { portfolioId, name, ...tradeData } = trade;
+            const { portfolioId, name, assetClass: tradeAssetClass, ...tradeData } = trade as typeof trade & { assetClass?: string };
 
         let accountIdForInsert: string;
         let portfolio: InvestmentPortfolio | undefined;
@@ -1761,6 +1861,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (linkedCashAccountId) {
             tradePayload.linked_cash_account_id = linkedCashAccountId;
         }
+        if (isCashFlow && !(tradePayload.currency === 'SAR' || tradePayload.currency === 'USD')) {
+            const cashAcc = linkedCashAccountId
+                ? (data?.accounts ?? []).find((a: Account) => a.id === linkedCashAccountId)
+                : undefined;
+            if (cashAcc && (cashAcc.type === 'Checking' || cashAcc.type === 'Savings')) {
+                tradePayload.currency = resolveCashAccountCurrency(cashAcc, data);
+            } else {
+                const pf = (data?.investments ?? []).find(
+                    (p) => resolveAccountId(p.accountId || (p as { account_id?: string }).account_id, data?.accounts ?? []) === accountIdForInsert,
+                );
+                const pc = pf?.currency as string | undefined;
+                tradePayload.currency = pc === 'SAR' || pc === 'USD' ? pc : 'SAR';
+            }
+        }
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
@@ -1829,6 +1943,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         currentValue: merged.currentValue,
                     });
                 } else {
+                    const resolvedClass = (normalizeAssetClassForDb(tradeAssetClass) ?? 'Stock') as HoldingAssetClass;
                     const newHoldingData = {
                         portfolioId: portfolio.id,
                         symbol: tradeData.symbol,
@@ -1836,7 +1951,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         quantity: qAdd,
                         avgCost: px,
                         currentValue: px * qAdd,
-                        assetClass: 'Stock' as const,
+                        assetClass: resolvedClass,
                         zakahClass: 'Zakatable' as const,
                         realizedPnL: 0,
                     };
@@ -2213,7 +2328,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!accId) return;
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
             const amt = t.total ?? 0;
-            const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
+            const cur = inferInvestmentTransactionCurrency(t, data?.accounts ?? [], data?.investments ?? []);
             const delta = t.type === 'deposit' || t.type === 'sell' || t.type === 'dividend' ? amt : (t.type === 'withdrawal' || t.type === 'buy' ? -amt : 0);
             map[accId][cur] += delta;
         });
@@ -2229,9 +2344,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { SAR: v.SAR, USD: v.USD };
     }, [availableCashByAccountId]);
 
+    /**
+     * Personal wealth slices must use the getters — not a raw merge from getPersonalWealthData.
+     * Otherwise `personalInvestments: []` (all portfolios have an owner) overwrites `investments` for
+     * consumers that read `personalInvestments` first, and `??` does not fall back (empty array is not nullish).
+     */
     const dataWithPersonal = useMemo(() => {
-        const personal = getPersonalWealthData(data);
-        return { ...data, ...personal };
+        if (!data) return data;
+        return {
+            ...data,
+            personalAccounts: getPersonalAccounts(data),
+            personalAssets: getPersonalAssets(data),
+            personalLiabilities: getPersonalLiabilities(data),
+            personalInvestments: getPersonalInvestments(data),
+            personalCommodityHoldings: getPersonalCommodityHoldings(data),
+            personalTransactions: getPersonalTransactions(data),
+        };
     }, [data]);
 
     const accountsForDeployable = useMemo((): Account[] => {

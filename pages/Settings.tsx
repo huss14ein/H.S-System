@@ -20,6 +20,7 @@ import {
     generateWealthSummaryReportJson,
     generateWealthSummaryReportCsv,
     generateWealthSummaryReportHtml,
+    openHtmlForPrint,
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { netCashFlowForMonth } from '../services/financeMetrics';
@@ -547,7 +548,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                         Reset defaults
                     </button>
                     {setActivePage && (
-                        <button type="button" className="btn-outline text-sm" onClick={() => triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments')}>
+                        <button type="button" className="btn-outline text-sm" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools')}>
                             Safety &amp; rules
                         </button>
                     )}
@@ -611,7 +612,16 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 <>
                                     <button type="button" className="btn-outline text-sm" onClick={() => { const j = generateWealthSummaryReportJson(wealthSummaryPayload); const blob = new Blob([j], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `finova-wealth-summary-${new Date().toISOString().slice(0, 10)}.json`; a.click(); URL.revokeObjectURL(a.href); showToast('Wealth summary exported.', 'success'); }}>JSON</button>
                                     <button type="button" className="btn-outline text-sm" onClick={() => { const c = generateWealthSummaryReportCsv(wealthSummaryPayload); const blob = new Blob([c], { type: 'text/csv;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `finova-wealth-summary-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href); showToast('Wealth summary exported.', 'success'); }}>CSV</button>
-                                    <button type="button" className="btn-outline text-sm" onClick={() => { const h = generateWealthSummaryReportHtml(wealthSummaryPayload); const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760'); if (w) { w.document.write(h); w.document.close(); w.print(); } }}>Print HTML</button>
+                                    <button
+                                        type="button"
+                                        className="btn-outline text-sm"
+                                        onClick={() => {
+                                            const h = generateWealthSummaryReportHtml(wealthSummaryPayload);
+                                            if (!openHtmlForPrint(h)) showToast('Allow pop-ups to print.', 'error');
+                                        }}
+                                    >
+                                        Print HTML
+                                    </button>
                                 </>
                             )}
                             {!wealthSummaryPayload && <span className="text-xs text-slate-500">Add data to generate.</span>}

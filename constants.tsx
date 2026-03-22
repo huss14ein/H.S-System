@@ -20,6 +20,10 @@ import { PresentationChartLineIcon } from './components/icons/PresentationChartL
 import { DocumentArrowUpIcon } from './components/icons/DocumentArrowUpIcon';
 import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
 import { CubeIcon } from './components/icons/CubeIcon';
+import { FlagIcon } from './components/icons/FlagIcon';
+import { BanknotesIcon } from './components/icons/BanknotesIcon';
+import { SparklesIcon } from './components/icons/SparklesIcon';
+import { EyeIcon } from './components/icons/EyeIcon';
 
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
@@ -34,6 +38,11 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Statement History', icon: DocumentTextIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
+  { name: 'Recovery Plan', icon: FlagIcon },
+  { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+  { name: 'Dividend Tracker', icon: BanknotesIcon },
+  { name: 'AI Rebalancer', icon: SparklesIcon },
+  { name: 'Watchlist', icon: EyeIcon },
   { name: 'Market Events', icon: ChartBarIcon },
   { name: 'Budgets', icon: PiggyBankIcon },
   { name: 'Goals', icon: TrophyIcon },

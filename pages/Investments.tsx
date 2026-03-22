@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, buildFallbackAnalystReport, executeInvestmentPlanStrategy, formatAiError, getSuggestedAnalystEligibility } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, HoldingAssetClass, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
+import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
@@ -37,7 +37,6 @@ import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
@@ -52,7 +51,9 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, totalLiquidCashSARFromAccounts, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getPersonalWealthData } from '../utils/wealthScope';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -60,7 +61,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Safety & rules' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -101,13 +102,10 @@ class InvestmentTabErrorBoundary extends React.Component<
     }
 }
 
-const RiskTradingHub = lazy(() => import('./RiskTradingHub'));
-
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
-    { name: 'Safety & rules', icon: ShieldCheckIcon },
     { name: 'Recovery Plan', icon: ArrowsRightLeftIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
@@ -246,7 +244,7 @@ const RecordTradeModal: React.FC<{
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
-    const { currency: appCurrency } = useCurrency();
+    const { currency: appCurrency, exchangeRate } = useCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
     const [type, setType] = useState<'buy' | 'sell' | 'deposit' | 'withdrawal'>('buy');
@@ -258,6 +256,7 @@ const RecordTradeModal: React.FC<{
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [goalId, setGoalId] = useState<string | undefined>(undefined);
     const [holdingName, setHoldingName] = useState('');
+    const [holdingAssetClass, setHoldingAssetClass] = useState<HoldingAssetClass>('Stock');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
     const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
@@ -270,6 +269,18 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    /** Checking/Savings + tradable cash on investment platforms (SAR), so runway matches money moved to a broker. */
+    const liquidCashSARForBuyPolicy = useMemo(() => {
+        if (!data) return 0;
+        const { personalAccounts } = getPersonalWealthData(data);
+        return totalLiquidCashSARFromAccounts(personalAccounts, getAvailableCashForAccount, sarPerUsd);
+    }, [data, getAvailableCashForAccount, sarPerUsd]);
+    const runwayMonthsForBuyPolicy = useMemo(() => {
+        const exp = efRunway.monthlyCoreExpenses;
+        if (exp > 0) return liquidCashSARForBuyPolicy / exp;
+        return liquidCashSARForBuyPolicy > 0 ? 99 : 0;
+    }, [liquidCashSARForBuyPolicy, efRunway.monthlyCoreExpenses]);
     const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
@@ -293,6 +304,7 @@ const RecordTradeModal: React.FC<{
         setType('buy'); setSymbol(''); setQuantity(''); setPrice(''); setCashAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setHoldingName('');
+        setHoldingAssetClass('Stock');
         setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
@@ -472,11 +484,11 @@ const RecordTradeModal: React.FC<{
         const posPct = denom > 0 ? (afterSym / denom) * 100 : 0;
         return evaluateBuyAgainstPolicy({
             policy: tradingPolicy,
-            runwayMonths: efRunway.monthsCovered,
+            runwayMonths: runwayMonthsForBuyPolicy,
             monthlyNetLast30d,
             positionWeightAfterBuyPct: posPct,
         });
-    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, efRunway.monthsCovered, monthlyNetLast30d, isCashFlow]);
+    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d, isCashFlow]);
 
     const sellRuleScore = useMemo(() => {
         if (type !== 'sell' || !portfolioId || isCashFlow) return null;
@@ -605,6 +617,7 @@ const RecordTradeModal: React.FC<{
                     date,
                     currency: tradeCurrency,
                     ...(goalId && { goalId }),
+                    ...(type === 'buy' && isNewHolding ? { assetClass: holdingAssetClass } : {}),
                 }, executedPlanId);
                 trackFormDefault('record-trade', 'accountId', accountId);
                 trackFormDefault('record-trade', 'portfolioId', portfolioId);
@@ -761,6 +774,24 @@ const RecordTradeModal: React.FC<{
                     <div>
                         <label htmlFor="holdingName" className="block text-sm font-medium text-gray-700">Company Name</label>
                         <input type="text" id="holdingName" value={holdingName} onChange={e => setHoldingName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., Saudi Aramco"/>
+                    </div>
+                )}
+                {type === 'buy' && isNewHolding && (
+                    <div>
+                        <label htmlFor="trade-asset-class" className="block text-sm font-medium text-gray-700">Asset class</label>
+                        <select
+                            id="trade-asset-class"
+                            value={holdingAssetClass}
+                            onChange={(e) => setHoldingAssetClass(e.target.value as HoldingAssetClass)}
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        >
+                            {HOLDING_ASSET_CLASS_OPTIONS.map((ac) => (
+                                <option key={ac} value={ac}>
+                                    {ac === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : ac}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-xs text-slate-500">Use <strong>Sukuk</strong> for Shariah-compliant fixed-income securities so allocation, AI rebalancer, and benchmarks classify them correctly (not as stocks).</p>
                     </div>
                 )}
                 <div className="grid grid-cols-2 gap-4">
@@ -1225,12 +1256,11 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Asset Class</label>
                     <select value={assetClass} onChange={e => setAssetClass(e.target.value as HoldingAssetClass)} className="mt-1 w-full p-2 border border-gray-300 rounded-md">
-                        <option value="Stock">Stock</option>
-                        <option value="Sukuk">Sukuk</option>
-                        <option value="ETF">ETF</option>
-                        <option value="Mutual Fund">Mutual Fund</option>
-                        <option value="REIT">REIT</option>
-                        <option value="Other">Other</option>
+                        {HOLDING_ASSET_CLASS_OPTIONS.map((ac) => (
+                            <option key={ac} value={ac}>
+                                {ac === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : ac}
+                            </option>
+                        ))}
                     </select>
                 </div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
@@ -1409,6 +1439,7 @@ const PlatformCard: React.FC<{
 }> = (props) => {
     const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
+    const { data: dataCtx } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
     const platformCurrency = useMemo(() => {
@@ -1418,11 +1449,13 @@ const PlatformCard: React.FC<{
     const hasMixedCurrencies = platformCurrency === undefined && portfolios.length > 1;
 
     const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
-        const allHoldings = portfolios.flatMap(p => p.holdings || []);
         const rate = sarPerUsd;
+        const accList = dataCtx?.accounts ?? [];
+        const invList = dataCtx?.investments ?? [];
 
-        // Treat simulated prices as SAR; convert to platform currency only for display.
+        // Simulated/live quotes are treated in the **portfolio base currency** (SAR vs USD), not always SAR.
         let valueSarFromSim = 0;
+        let valueUsdFromSim = 0;
         let valueSarFromStored = 0;
         let valueUsdFromStored = 0;
 
@@ -1432,14 +1465,13 @@ const PlatformCard: React.FC<{
                 const symbol = (h.symbol || '').trim().toUpperCase();
                 const priceInfo = simulatedPrices[symbol];
                 if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                    // Live SAR price
-                    const liveSar = priceInfo.price * (h.quantity || 0);
-                    if (Number.isFinite(liveSar) && liveSar > 0) {
-                        valueSarFromSim += liveSar;
+                    const live = priceInfo.price * (h.quantity || 0);
+                    if (Number.isFinite(live) && live > 0) {
+                        if (cur === 'SAR') valueSarFromSim += live;
+                        else valueUsdFromSim += live;
                         return;
                     }
                 }
-                // Fallback: use stored currentValue in portfolio currency
                 const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
                 if (!Number.isFinite(fallback) || fallback <= 0) return;
                 if (cur === 'SAR') valueSarFromStored += fallback;
@@ -1447,7 +1479,11 @@ const PlatformCard: React.FC<{
             });
         });
 
-        const totalValueInSAR = valueSarFromSim + valueSarFromStored + valueUsdFromStored * rate;
+        const cashInSar = tradableCashBucketToSAR(
+            { SAR: availableCashByCurrency.SAR ?? 0, USD: availableCashByCurrency.USD ?? 0 },
+            rate,
+        );
+        const totalValueInSAR = valueSarFromSim + valueSarFromStored + (valueUsdFromStored + valueUsdFromSim) * rate + cashInSar;
         const totalValue =
             platformCurrency === 'SAR'
                 ? totalValueInSAR
@@ -1455,16 +1491,14 @@ const PlatformCard: React.FC<{
                 ? (totalValueInSAR / rate)
                 : totalValueInSAR;
 
-        // Capital flows: deposits into the platform vs withdrawals OUT of the platform.
-        // These are explicit cash movements, not buys/sells of holdings.
         let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
         transactions.filter(t => t.type === 'deposit').forEach(t => {
-            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            const c = inferInvestmentTransactionCurrency(t, accList, invList);
             if (c === 'SAR') invSAR += t.total ?? 0;
             else invUSD += t.total ?? 0;
         });
         transactions.filter(t => t.type === 'withdrawal').forEach(t => {
-            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+            const c = inferInvestmentTransactionCurrency(t, accList, invList);
             if (c === 'SAR') wdrSAR += t.total ?? 0;
             else wdrUSD += t.total ?? 0;
         });
@@ -1485,22 +1519,25 @@ const PlatformCard: React.FC<{
         const totalGainLoss = totalValue - netCapital;
         const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-        // Daily P/L: simulated change is assumed in SAR; convert for display currency.
-        const dailyPnLSar = allHoldings.reduce(
-            (s, h) => {
+        let dailySar = 0;
+        let dailyUsd = 0;
+        portfolios.forEach(p => {
+            const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+            (p.holdings || []).forEach(h => {
                 const symbol = (h.symbol || '').trim().toUpperCase();
                 const info = simulatedPrices[symbol];
-                if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return s;
-                return s + info.change * (h.quantity || 0);
-            },
-            0
-        );
+                if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
+                const d = info.change * (h.quantity || 0);
+                if (cur === 'SAR') dailySar += d;
+                else dailyUsd += d;
+            });
+        });
         const dailyPnL =
             platformCurrency === 'SAR'
-                ? dailyPnLSar
+                ? dailySar + dailyUsd * rate
                 : platformCurrency === 'USD'
-                ? (dailyPnLSar / rate)
-                : dailyPnLSar;
+                ? dailyUsd + dailySar / rate
+                : dailySar + dailyUsd * rate;
 
         const cashSAR = availableCashByCurrency.SAR ?? 0;
         const cashUSD = availableCashByCurrency.USD ?? 0;
@@ -1521,7 +1558,7 @@ const PlatformCard: React.FC<{
             roi,
             totalAvailable,
         };
-    }, [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency]);
+    }, [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, dataCtx?.investments]);
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
         const priceInfo = simulatedPrices[h.symbol];
@@ -1823,22 +1860,22 @@ const PlatformView: React.FC<{
         };
 
         return platformsData.reduce((sum, p) => {
+            const cashSar = tradableCashBucketToSAR(p.availableCashByCurrency, sarPerUsd);
             const platformTotalSar = p.portfolios.reduce((portfolioSum, portfolio) => {
                 const portfolioCurrency = portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD';
                 const holdingsTotalSar = (portfolio.holdings || []).reduce((holdingSum, h) => {
                     const symbol = (h.symbol || '').trim().toUpperCase();
                     const priceInfo = props.simulatedPrices[symbol];
-                    // If we have a simulated price, treat it as SAR price and skip FX
                     if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                        const liveSar = priceInfo.price * (h.quantity || 0);
-                        return holdingSum + (Number.isFinite(liveSar) ? liveSar : 0);
+                        const live = priceInfo.price * (h.quantity || 0);
+                        if (!Number.isFinite(live) || live <= 0) return holdingSum;
+                        return holdingSum + (portfolioCurrency === 'SAR' ? live : live * sarPerUsd);
                     }
-                    // Fallback: use stored currentValue in portfolio currency and convert to SAR
                     const fallbackValue = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
                     return holdingSum + toSar(fallbackValue, portfolioCurrency);
                 }, 0);
                 return portfolioSum + holdingsTotalSar;
-            }, 0);
+            }, 0) + cashSar;
             return sum + platformTotalSar;
         }, 0);
     }, [platformsData, props.simulatedPrices, sarPerUsd]);
@@ -1889,7 +1926,7 @@ const PlatformView: React.FC<{
                     <div className="mt-5 pt-5 border-t border-slate-200">
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
-                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio value (holdings)</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value (holdings + cash)</span>
                                 <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -3437,7 +3474,7 @@ interface InvestmentsProps {
 }
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -3482,7 +3519,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             const sym = (h.symbol || '').trim().toUpperCase();
             const priceInfo = simulatedPrices[sym];
             if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                valueSAR += priceInfo.price * (h.quantity || 0);
+                const live = priceInfo.price * (h.quantity || 0);
+                if (cur === 'SAR') valueSAR += live;
+                else valueUSD += live;
             } else {
                 const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
                 if (cur === 'SAR') valueSAR += fallback; else valueUSD += fallback;
@@ -3490,15 +3529,32 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         });
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
+    const invAccounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []).filter(
+        (a: { id: string; type?: string }) => personalAccountIds.has(a.id) && a.type === 'Investment',
+    ) as { id: string }[];
+    const invTradableCashSAR = invAccounts.reduce(
+        (s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate),
+        0,
+    );
     const totalCommoditiesValue = allCommodities.reduce((sum: number, ch: { symbol?: string; quantity?: number; currentValue?: number }) => sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].price * (ch.quantity ?? 0) : (ch.currentValue ?? 0)), 0);
-    const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
+    const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue + invTradableCashSAR;
 
     // Capital flows: use deposit/withdrawal for personal accounts only
     const invTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'deposit');
     const wdrTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'withdrawal');
+    const accList = data?.accounts ?? [];
+    const invPortfolios = data?.investments ?? [];
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    invTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    wdrTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    invTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        if (c === 'SAR') invSAR += t.total ?? 0;
+        else invUSD += t.total ?? 0;
+    });
+    wdrTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        if (c === 'SAR') wdrSAR += t.total ?? 0;
+        else wdrUSD += t.total ?? 0;
+    });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + (ch.purchaseValue ?? 0), 0);
@@ -3506,13 +3562,27 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const allHoldings = portfolios.flatMap((p: InvestmentPortfolio) => p.holdings || []);
-    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum: number, item: { symbol?: string; quantity?: number }) => (simulatedPrices[item.symbol!] ? sum + simulatedPrices[item.symbol!].change * (item.quantity ?? 0) : sum), 0);
+    let totalDailyPnL = 0;
+    portfolios.forEach((p: InvestmentPortfolio) => {
+        const cur = (p.currency || 'USD') as TradeCurrency;
+        (p.holdings || []).forEach((h: Holding) => {
+            const sym = (h.symbol || '').trim().toUpperCase();
+            const info = simulatedPrices[sym];
+            if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
+            const d = info.change * (h.quantity ?? 0);
+            totalDailyPnL += cur === 'SAR' ? d : d * rate;
+        });
+    });
+    totalDailyPnL += allCommodities.reduce(
+        (sum: number, ch: { symbol?: string; quantity?: number }) =>
+            sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].change * (ch.quantity ?? 0) : 0),
+        0,
+    );
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -3565,10 +3635,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         clearPageAction?.();
     }
     if (pageAction === 'openRiskTradingHub') {
-        setActiveTab('Safety & rules');
-        clearPageAction?.();
+        triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
     }
-  }, [pageAction, clearPageAction, data?.investments, setActiveTab]);
+  }, [pageAction, clearPageAction, data?.investments, setActiveTab, triggerPageAction]);
 
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
@@ -3688,7 +3757,6 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 />
             );
       case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
-      case 'Safety & rules': return <RiskTradingHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
@@ -3741,7 +3809,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Combined value of all portfolios and commodity holdings at current prices."
+                tooltip="Holdings at current prices, plus tradable cash on investment platforms (SAR/USD per ledger), plus commodities."
             />
             <Card
                 title="Unrealized P/L"

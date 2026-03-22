@@ -62,9 +62,9 @@ Authenticated users get this **provider order** (outer → inner). Inner provide
 
 - **`Transactions`**, **`Investments`**, **`Assets`**, **`Settings`**, **`InvestmentPlanView`**, **`WealthUltraDashboard`**, **`EnginesAndToolsHub`** — receive `pageAction` + `clearPageAction` (subset also get `triggerPageAction`).
 
-**`EnginesAndToolsHub`** maps actions to sub-tabs, e.g. `openLiquidation`, `openJournal`, `openLogic`.
+**`EnginesAndToolsHub`** maps actions to sub-tabs, e.g. `openLiquidation`, `openJournal`, `openLogic`, `openRiskTradingHub` (Safety & rules).
 
-**`Investments`** maps e.g. `open-trade-modal`, `focus-investment-plan`, `openRiskTradingHub`.
+**`Investments`** maps e.g. `open-trade-modal`, `focus-investment-plan`. Legacy `openRiskTradingHub` is forwarded to **`Engines & Tools`** with the same action (opens Money Tools → Safety & rules).
 
 ---
 
@@ -195,7 +195,6 @@ All tabs sit **inside** the same DataContext/MarketData/Currency providers; the 
 | Portfolios | `PlatformView` | `data` + `simulatedPrices`, CRUD via context mutators |
 | Investment Plan | `InvestmentPlan` (inner) | `investmentPlan`, planned trades, record trade callback |
 | Dividend Tracker | `DividendTrackerView` | **Same component as top-level route**; `investmentTransactions` (dividends), holdings, **`setActivePage` passed when embedded** for cross-page links |
-| Safety & rules | `RiskTradingHub` | Policies + `setActivePage` / `triggerPageAction` |
 | Recovery Plan | `RecoveryPlanView` | `recoveryPlan` services + `onOpenWealthUltra` |
 | AI Rebalancer | `AIRebalancerView` | Portfolios + `portfolioConstruction` / AI |
 | Watchlist | `WatchlistView` | `data.watchlist` + MarketData quotes |
@@ -210,6 +209,7 @@ Cards and engines consume **`data`** (personal investments, plan, config), **`we
 | Sub-tab | Component | Data |
 |---------|-----------|------|
 | Logic & Engines | `LogicEnginesHub` | `useFinancialEnginesIntegration`, portfolio + metrics |
+| Safety & rules | `RiskTradingHub` (`embedded`) | Policies, runway, net worth snapshots, MWRR; `setActivePage` / `triggerPageAction` |
 | Liquidation | `LiquidationPlanner` | Theses + holdings + `dataTick` refresh |
 | Journal | `FinancialJournal` | **localStorage** keys (`finova_financial_journal_v1`, `finova_thesis_records_v1`); not Supabase; **`dataTick`** reloads on tab visibility |
 

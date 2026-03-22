@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
+import { canonicalQuoteLookupKey } from '../services/finnhubService';
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
@@ -129,10 +130,12 @@ const MarketSimulator: React.FC = () => {
 
             (allHoldings as { id?: string; symbol?: string; quantity?: number }[]).forEach((holding: { id?: string; symbol?: string; quantity?: number }) => {
                 const sym = holding.symbol;
-                if (holding.id && sym != null && newPrices[sym]) {
+                if (sym == null || !holding.id) return;
+                const row = newPrices[sym] ?? newPrices[canonicalQuoteLookupKey(sym)];
+                if (row) {
                     holdingUpdates.push({
                         id: holding.id,
-                        currentValue: newPrices[sym].price * (holding.quantity ?? 0)
+                        currentValue: row.price * (holding.quantity ?? 0)
                     });
                 }
             });
