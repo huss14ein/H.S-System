@@ -45,7 +45,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
         }));
         const subPages: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (triggerPageAction) {
-            subPages.push({ name: 'Go to Safety & rules', action: () => { trackAction('safety-rules', 'Investments'); triggerPageAction('Investments', 'openRiskTradingHub'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Investments')!.icon });
+            subPages.push({ name: 'Go to Safety & rules', action: () => { trackAction('safety-rules', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openRiskTradingHub'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
             subPages.push({ name: 'Go to Sell priority', action: () => { trackAction('liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
             subPages.push({ name: 'Go to Notes & ideas', action: () => { trackAction('journal', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openJournal'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
         }
