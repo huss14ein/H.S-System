@@ -1,6 +1,6 @@
 import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 
@@ -513,7 +513,7 @@ SAR, Saudi context. Exact amounts and percentages.`;
 export type SalaryAllocationExpertParams = { salary: number; fixedExpenses: number; currentSavings: number; goal: string };
 export type CashFlowExpertParams = { salary: number; expenseBreakdown: string };
 export type Wealth5YExpertParams = { salary: number; monthlyInvestment: number; currentNetWorth: number };
-export type DebtEliminationExpertParams = { salary: number; debtList: string };
+export type DebtEliminationExpertParams = { salary: number; debtList: string; receivablesContext?: string };
 export type InvestmentAutomationExpertParams = { salary: number; investmentAmountOrPct: string; riskTolerance: string };
 export type FinancialIndependenceExpertParams = { monthlyExpenses: number; currentPortfolio: number; monthlyInvestment: number };
 export type LifestyleUpgradeExpertParams = { salary: number; currentExpenses: number };
@@ -556,11 +556,22 @@ Highlight the single change that would have the biggest impact on the final numb
 }
 
 export async function getDebtEliminationExpert(params: DebtEliminationExpertParams): Promise<string> {
-    const prompt = `My monthly take-home salary is ${params.salary} SAR.
-I currently have the following debts:
-${params.debtList}
+    const recv = (params.receivablesContext ?? '').trim();
+    const recvBlock = recv
+        ? `
 
-Calculate the fastest and cheapest way to become completely debt-free.
+Amounts owed TO me (receivables — money others owe me; these are ASSETS for context only, NOT debts to pay off):
+${recv}`
+        : '';
+    const prompt = `My monthly take-home salary is ${params.salary} SAR.
+
+DEBTS I OWE (money I must repay — analyze ONLY these for payoff order, interest, and timeline):
+${params.debtList}
+${recvBlock}
+
+Important: In Finova, negative liability balances are debts you owe; positive balances are receivables (owed to you). Never treat receivables as debt to "pay off." If the debt section is empty or none, say so and give general debt-payoff guidance only.
+
+Calculate the fastest and cheapest way to become completely debt-free for debts I actually owe.
 Show month-by-month payoff timeline, total interest paid, and how much faster/cheaper it is compared to minimum payments only.
 Recommend avalanche vs snowball and why. Minimize total interest and time to payoff.`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
@@ -1550,10 +1561,18 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
             finnhubSym = 'BINANCE:ETHUSDT';
             normalizedSym = 'ETH';
+        } else if (sym.startsWith('XAU_OUNCE')) {
+            finnhubSym = 'OANDA:XAU_USD';
+            priceMultiplier = SAR_PER_USD;
+            normalizedSym = sym;
         } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
+        } else if (sym.startsWith('XAG_OUNCE')) {
+            finnhubSym = 'OANDA:XAG_USD';
+            priceMultiplier = SAR_PER_USD;
+            normalizedSym = sym;
         } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
             priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
@@ -1668,21 +1687,46 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
 
     const provider = (import.meta.env.VITE_LIVE_PRICE_PROVIDER || 'auto').toLowerCase();
     const tryFinnhub = async () => {
-        const finnhub = await getFinnhubLivePrices(symbols);
-        if (Object.keys(finnhub).length > 0) return finnhub;
-        throw new Error('Finnhub returned no symbols');
+        try {
+            return await getFinnhubLivePrices(symbols);
+        } catch (e) {
+            console.warn('Finnhub live batch failed:', e);
+            return {};
+        }
     };
-    const tryStooq = async () => {
-        const stooq = await getStooqLivePrices(symbols);
-        if (Object.keys(stooq).length > 0) return stooq;
-        throw new Error('Stooq returned no symbols');
+    const tryStooq = async (syms: string[]) => {
+        const stooq = await getStooqLivePrices(syms);
+        return Object.keys(stooq).length > 0 ? stooq : {};
+    };
+
+    const mergeFinnhubAndStooq = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+        const finnhub = await tryFinnhub();
+        const missing = symbols.filter((s) => {
+            const u = (s || '').trim().toUpperCase();
+            const canon = canonicalQuoteLookupKey(s);
+            const has =
+                finnhub[s] ||
+                finnhub[u] ||
+                finnhub[canon] ||
+                Object.keys(finnhub).some((k) => canonicalQuoteLookupKey(k) === canon);
+            return !has;
+        });
+        if (missing.length === 0 && Object.keys(finnhub).length > 0) return finnhub;
+        const stooq = await tryStooq(missing.length > 0 ? missing : symbols);
+        return { ...stooq, ...finnhub };
     };
 
     try {
-        if (provider === 'stooq') return await tryStooq();
+        if (provider === 'stooq') {
+            const stooq = await tryStooq(symbols);
+            if (Object.keys(stooq).length > 0) return stooq;
+            throw new Error('Stooq returned no symbols');
+        }
         if (provider === 'ai') return await aiFetch();
-        // finnhub | auto | unset: Finnhub only (shared toFinnhubSymbol / fromFinnhubSymbol with finnhubService)
-        return await tryFinnhub();
+        // finnhub | auto | unset: Finnhub first, Stooq fills gaps (same mapping as finnhubService)
+        const merged = await mergeFinnhubAndStooq();
+        if (Object.keys(merged).length > 0) return merged;
+        throw new Error('No live prices from Finnhub or Stooq');
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;

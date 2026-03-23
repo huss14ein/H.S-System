@@ -668,7 +668,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 { value: 'goals', label: 'Goals', onClick: () => setActivePage('Goals') },
                                 { value: 'liabilities', label: 'Liabilities', onClick: () => setActivePage('Liabilities') },
                                 { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
-                                { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investments') },
+                                { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investment Plan') },
                                 { value: 'forecast', label: 'Forecast (long-range)', onClick: () => setActivePage('Forecast') },
                             ]}
                         />

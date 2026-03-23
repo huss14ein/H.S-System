@@ -23,10 +23,29 @@ import {
     openHtmlForPrint,
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
-import { netCashFlowForMonth } from '../services/financeMetrics';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR, resolveSarPerUsd } from '../utils/currencyMath';
-import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
+import type { FinancialData } from '../types';
+
+/** Largest single holding as % of total managed holdings value (personal scope). */
+function computeLargestHoldingWeightPercent(data: FinancialData | null): number {
+    if (!data) return 0;
+    const inv = getPersonalInvestments(data);
+    let total = 0;
+    const values: number[] = [];
+    for (const p of inv) {
+        for (const h of p.holdings ?? []) {
+            const v = Math.max(0, Number(h.currentValue ?? 0));
+            total += v;
+            values.push(v);
+        }
+    }
+    if (total <= 0 || values.length === 0) return 0;
+    return (Math.max(...values) / total) * 100;
+}
 
 const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; budgetThreshold: number; driftThreshold: number }> = {
     conservative: { riskProfile: 'Conservative', budgetThreshold: 80, driftThreshold: 3 },
@@ -35,7 +54,7 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
 };
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, loading, updateSettings, restoreFromBackup } = useContext(DataContext)!;
+    const { data, loading, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate } = useCurrency();
@@ -43,8 +62,48 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
     const [auditFilter, setAuditFilter] = useState<{ entity?: AuditEntity; search: string }>({ search: '' });
     const [capitalPreviewAmount, setCapitalPreviewAmount] = useState(50000);
-    const [decisionPreview, setDecisionPreview] = useState({ maxPositionPct: 20, currentPositionPct: 12, driftFromTargetPct: 4 });
+    const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
     const ef = useEmergencyFund(data ?? null);
+
+    const liquidCashSar = useMemo(() => {
+        const accounts = getPersonalAccounts(data);
+        return accounts
+            .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
+    }, [data]);
+
+    const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
+
+    /** Live inputs for buyScore — derived from portfolio, trading policy, and sleeve drift (same engine as Wealth Ultra). */
+    const liveDecisionInputs = useMemo(() => {
+        const largestPct = computeLargestHoldingWeightPercent(data);
+        const maxPct = Math.min(50, Math.max(5, tradingPolicyLocal.maxPositionWeightPct));
+        const driftThresholdSetting = Math.min(15, Math.max(0, Number(localSettings?.driftThreshold ?? 5)));
+        const driftForScore = sleeveDriftPct ?? 0;
+        return {
+            maxPositionPct: maxPct,
+            currentPositionPct: Math.min(50, Math.round(largestPct)),
+            /** Passed to buyScore: actual max |sleeve drift| when computable; else 0. */
+            driftFromTargetPct: driftForScore,
+            driftThresholdSettingPct: driftThresholdSetting,
+            sleeveDriftPct,
+        };
+    }, [data, tradingPolicyLocal.maxPositionWeightPct, localSettings?.driftThreshold, sleeveDriftPct]);
+
+    const capitalPreviewTouchedRef = useRef(false);
+    const lastAuthUserIdRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        const uid = auth.user?.id;
+        if (uid !== lastAuthUserIdRef.current) {
+            lastAuthUserIdRef.current = uid;
+            capitalPreviewTouchedRef.current = false;
+        }
+    }, [auth.user?.id]);
+
+    useEffect(() => {
+        if (!data || capitalPreviewTouchedRef.current) return;
+        setCapitalPreviewAmount(Math.max(5000, Math.round(liquidCashSar * 0.15)));
+    }, [data, liquidCashSar]);
 
     const capitalRanks = useMemo(() => rankCapitalUses(Math.max(0, capitalPreviewAmount)), [capitalPreviewAmount]);
     const sampleBuyScore = useMemo(
@@ -52,73 +111,19 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             buyScore({
                 emergencyFundMonths: ef.monthsCovered,
                 runwayMonths: ef.monthsCovered,
-                maxPositionPct: decisionPreview.maxPositionPct,
-                currentPositionPct: decisionPreview.currentPositionPct,
-                driftFromTargetPct: decisionPreview.driftFromTargetPct,
+                maxPositionPct: liveDecisionInputs.maxPositionPct,
+                currentPositionPct: liveDecisionInputs.currentPositionPct,
+                driftFromTargetPct: liveDecisionInputs.driftFromTargetPct,
             }),
-        [ef.monthsCovered, decisionPreview]
+        [ef.monthsCovered, liveDecisionInputs]
     );
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
         if (!data) return null;
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-        const { netWorth } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const { income, expenses, net } = netCashFlowForMonth(txs);
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const liquid = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? '')).reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-        const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const holdings = inv.flatMap((p: { holdings?: { symbol?: string; currentValue?: number; avgCost?: number; quantity?: number }[]; currency?: string }) =>
-            (p.holdings ?? []).map((h) => {
-                const portfolioCurrency = (p.currency ?? 'USD') as 'USD' | 'SAR';
-                const qty = Number(h.quantity ?? 0);
-                const cost = Number(h.avgCost ?? 0);
-                const val = Number(h.currentValue ?? 0);
-                const costBasis = cost * qty;
-                const gl = costBasis > 0 ? val - costBasis : 0;
-                const glPct = costBasis > 0 ? (gl / costBasis) * 100 : 0;
-                return {
-                    symbol: (h.symbol ?? '').toUpperCase(),
-                    name: String(h.symbol ?? ''),
-                    quantity: qty,
-                    avgCost: cost,
-                    currentValue: val,
-                    gainLoss: gl,
-                    gainLossPct: glPct,
-                    currency: portfolioCurrency,
-                    currentValueSar: toSAR(val, portfolioCurrency, sarPerUsd),
-                };
-            })
-        );
-        const managedTotal = getAllInvestmentsValueInSAR(inv, sarPerUsd);
-        return {
-            generatedAtIso: new Date().toISOString(),
-            currency: 'SAR',
-            netWorth: Number(netWorth) || 0,
-            netWorthTrendPct: 0,
-            monthlyIncome: income,
-            monthlyExpenses: expenses,
-            monthlyPnL: net,
-            savingsRatePct: income > 0 ? ((income - expenses) / income) * 100 : 0,
-            debtToAssetRatioPct: 0,
-            emergencyFundMonths: ef.monthsCovered,
-            emergencyFundTargetAmount: ef.targetAmount,
-            emergencyFundShortfall: ef.shortfall,
-            liquidNetWorth: liquid,
-            managedWealthTotal: managedTotal,
-            riskLane: 'Balanced',
-            liquidityRunwayMonths: ef.monthsCovered,
-            disciplineScore: 50,
-            investmentStyle: String(localSettings?.riskProfile ?? 'Moderate'),
-            householdStressLabel: 'Not available',
-            householdStressPressureMonths: 0,
-            shockDrillSeverity: 'Not available',
-            shockDrillEstimatedGap: 0,
-            holdings,
-        };
-    }, [data, exchangeRate, ef, localSettings?.riskProfile]);
+        return computeWealthSummaryReportModel(data, sarPerUsd, getAvailableCashForAccount).wealthSummaryReportPayload;
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
-    const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
@@ -164,12 +169,23 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
             setIsAdmin(admin);
             if (admin) {
-                const { data: users } = await supabase
+                const { data: users, error: pendingErr } = await supabase
                     .from('users')
                     .select('id, name, email, created_at')
                     .eq('approved', false)
                     .order('created_at', { ascending: false });
-                setPendingUsers(users ?? []);
+                const missingApprovalColumn =
+                    pendingErr &&
+                    (pendingErr.code === '42703' ||
+                        (typeof pendingErr.message === 'string' && pendingErr.message.includes('approved')));
+                if (missingApprovalColumn) {
+                    setPendingUsers([]);
+                } else if (pendingErr) {
+                    console.warn('Could not load pending signups:', pendingErr.message);
+                    setPendingUsers([]);
+                } else {
+                    setPendingUsers(users ?? []);
+                }
             }
         };
         loadAdminAndPending();
@@ -220,7 +236,7 @@ const hasData = accountsForEmptyCheck.length > 0;
     }
 
     return (
-        <div className="page-container space-y-6 sm:space-y-8 relative">
+        <div className="page-container relative">
             {/* Hero Section */}
             <div className="section-card p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
@@ -250,21 +266,50 @@ const hasData = accountsForEmptyCheck.length > 0;
                         <a key={id} href={`#${id}`} className="text-sm px-2 py-1 rounded-md text-slate-600 hover:text-primary hover:bg-primary/10 transition-colors">{label}</a>
                     ))}
                 </nav>
-                <div className="mt-6 bg-slate-50 rounded-xl p-6 border border-slate-200">
-                    <p className="text-slate-700 leading-relaxed">
-                        Personalize how the app works for you. Set your risk comfort level, when to get alerts, and how to manage your data.
-                        Each option has a (?) hint—no finance degree needed.
+                <div className="mt-6 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 p-5 sm:p-6">
+                    <p className="text-slate-700 leading-relaxed text-sm sm:text-base">
+                        Personalize how the app works for you: risk level, alerts, notifications, and data. Look for the{' '}
+                        <span
+                            className="inline-flex h-5 w-5 align-middle items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold text-slate-600 mx-0.5"
+                            aria-hidden
+                        >
+                            !
+                        </span>{' '}
+                        icon — hover (or tap on mobile) to read a short explanation. No finance degree needed.
                     </p>
                 </div>
             </div>
 
             <div className="space-y-6 sm:space-y-8">
             <SectionCard id="settings-snapshot" title="Settings Snapshot" collapsible collapsibleSummary="Risk, budget, drift" defaultExpanded>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <SnapCard label="Risk profile" value={localSettings?.riskProfile ?? '—'} />
-                    <SnapCard label="Budget alert" value={`${localSettings?.budgetThreshold ?? 90}%`} />
-                    <SnapCard label="Drift threshold" value={`${localSettings?.driftThreshold ?? 5}%`} />
-                    <SnapCard label="Email summary" value={localSettings?.enableEmails ? 'Enabled' : 'Disabled'} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <SnapshotMetricCard
+                        variant="risk"
+                        label="Risk profile"
+                        value={String(localSettings?.riskProfile ?? '—')}
+                        hint="Drives guidance across investing and planning. Conservative = lower volatility; Aggressive = higher growth tolerance."
+                    />
+                    <SnapshotMetricCard
+                        variant="budget"
+                        label="Budget alert"
+                        value={`${localSettings?.budgetThreshold ?? 90}%`}
+                        percent={Number(localSettings?.budgetThreshold ?? 90)}
+                        hint="You get a heads-up when spending reaches this share of your monthly budget."
+                    />
+                    <SnapshotMetricCard
+                        variant="drift"
+                        label="Drift threshold"
+                        value={`${localSettings?.driftThreshold ?? 5}%`}
+                        percent={Math.min(100, (Number(localSettings?.driftThreshold ?? 5) / 20) * 100)}
+                        hint="Alerts when portfolio allocation drifts this far from your targets (percentage points)."
+                    />
+                    <SnapshotMetricCard
+                        variant="email"
+                        label="Email summary"
+                        value={localSettings?.enableEmails ? 'Enabled' : 'Disabled'}
+                        on={Boolean(localSettings?.enableEmails)}
+                        hint="Periodic summary emails with highlights from your data (if enabled)."
+                    />
                 </div>
             </SectionCard>
 
@@ -412,7 +457,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                     <button type="button" onClick={() => { navigator.clipboard.writeText(JSON.stringify(defaultWealthUltra, null, 2)); showToast('Config copied to clipboard.', 'success'); }} className="btn-outline text-sm">Copy config (JSON)</button>
                     {setActivePage && (
                         <>
-                            <button type="button" onClick={() => setActivePage?.('Investment Plan')} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
+                            <button type="button" onClick={() => (triggerPageAction ? triggerPageAction('Investments', 'investment-tab:Investment Plan') : setActivePage?.('Investment Plan'))} className="px-3 py-1.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/5">Investment Plan</button>
                             <button type="button" onClick={() => setActivePage?.('Wealth Ultra')} className="btn-outline text-violet-700 border-violet-300 hover:bg-violet-50">Open Wealth Ultra</button>
                         </>
                     )}
@@ -421,13 +466,48 @@ const hasData = accountsForEmptyCheck.length > 0;
 
             <SectionCard id="decision-preview" title="Decision preview (rules)" collapsible collapsibleSummary="Buy score, allocation">
                 <p className="text-sm text-slate-600 mb-4">
-                    Interactive preview of capital allocation and buy-score rules. Adjust sliders to see how runway, position size, and drift affect decisions.
+                    <strong className="text-slate-800">Fully automated from your data:</strong> largest holding weight, live sleeve drift (Wealth Ultra targets), policy caps, and runway refresh when investments or settings change. Lump-sum tracks liquid until you edit it.
                 </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700">Policy max position</p>
+                        <p className="text-lg font-bold tabular-nums text-indigo-950">{liveDecisionInputs.maxPositionPct}%</p>
+                    </div>
+                    <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-800">Largest holding</p>
+                        <p className="text-lg font-bold tabular-nums text-sky-950">{liveDecisionInputs.currentPositionPct}%</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900">Sleeve drift (max)</p>
+                        <p className="text-lg font-bold tabular-nums text-amber-950">
+                            {liveDecisionInputs.sleeveDriftPct == null ? '—' : `${liveDecisionInputs.sleeveDriftPct}%`}
+                        </p>
+                        <p className="text-[10px] text-amber-800/90 mt-0.5">Alert at {liveDecisionInputs.driftThresholdSettingPct}% (Financial preferences)</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800">Runway</p>
+                        <p className="text-lg font-bold tabular-nums text-emerald-950">{ef.monthsCovered.toFixed(1)} mo</p>
+                    </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Windfall / lump sum (SAR)</label>
-                            <input id="cap-prev" type="number" min={0} step={1000} value={capitalPreviewAmount} onChange={(e) => setCapitalPreviewAmount(Number(e.target.value) || 0)} className="input-base w-full max-w-[180px]"/>
+                            <label className="block text-sm font-medium text-slate-700 mb-1 flex flex-wrap items-center gap-2">
+                                Windfall / lump sum (SAR)
+                                <span className="text-xs font-normal text-slate-500">Default ≈ 15% of liquid cash — edit to simulate</span>
+                            </label>
+                            <input
+                                id="cap-prev"
+                                type="number"
+                                min={0}
+                                step={1000}
+                                value={capitalPreviewAmount}
+                                onChange={(e) => {
+                                    capitalPreviewTouchedRef.current = true;
+                                    setCapitalPreviewAmount(Number(e.target.value) || 0);
+                                }}
+                                className="input-base w-full max-w-[200px]"
+                            />
                         </div>
                         <ul className="space-y-2 text-sm">
                             {capitalRanks.map((row) => (
@@ -438,26 +518,12 @@ const hasData = accountsForEmptyCheck.length > 0;
                             ))}
                         </ul>
                     </div>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Max position %</label>
-                            <input type="range" min={5} max={50} value={decisionPreview.maxPositionPct} onChange={(e) => setDecisionPreview((p) => ({ ...p, maxPositionPct: Number(e.target.value) }))} className="w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"/>
-                            <span className="text-xs text-slate-500">{decisionPreview.maxPositionPct}%</span>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Current position %</label>
-                            <input type="range" min={0} max={50} value={decisionPreview.currentPositionPct} onChange={(e) => setDecisionPreview((p) => ({ ...p, currentPositionPct: Number(e.target.value) }))} className="w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"/>
-                            <span className="text-xs text-slate-500">{decisionPreview.currentPositionPct}%</span>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Drift from target %</label>
-                            <input type="range" min={0} max={15} value={decisionPreview.driftFromTargetPct} onChange={(e) => setDecisionPreview((p) => ({ ...p, driftFromTargetPct: Number(e.target.value) }))} className="w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"/>
-                            <span className="text-xs text-slate-500">{decisionPreview.driftFromTargetPct}%</span>
-                        </div>
-                        <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
-                            <p className="text-xs text-slate-600 mb-1">Buy score (0–100) with ~{ef.monthsCovered.toFixed(1)} mo runway</p>
-                            <p className="text-2xl font-bold text-primary tabular-nums">{sampleBuyScore}</p>
-                        </div>
+                    <div className="rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/25 p-5">
+                        <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">Buy score (0–100)</p>
+                        <p className="text-4xl font-bold text-primary tabular-nums">{sampleBuyScore}</p>
+                        <p className="text-xs text-slate-600 mt-2">
+                            From decisionEngine: runway, trading policy max position, largest holding weight, and live sleeve drift (Wealth Ultra allocation vs targets). Drift alert % in Financial preferences is shown on the card above—not a substitute for measured drift.
+                        </p>
                     </div>
                 </div>
             </SectionCard>
@@ -633,20 +699,21 @@ const hasData = accountsForEmptyCheck.length > 0;
                     <button
                         type="button"
                         onClick={() => {
-                            if (!data) return;
-                            const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-                            const { income, expenses, net } = netCashFlowForMonth(txs);
-                            const nw = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-                            const liquid = nw.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
+                            if (!data || !wealthSummaryPayload) {
+                                showToast('Add accounts and data to generate a monthly report.', 'error');
+                                return;
+                            }
+                            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount);
                             const report = generateMonthlyReport({
                                 periodLabel: new Date().toISOString().slice(0, 7),
-                                netWorth: 0,
-                                liquidNetWorth: liquid,
-                                monthlyIncome: income,
-                                monthlyExpenses: expenses,
-                                monthlyPnL: net,
-                                budgetVariance: 0,
-                                roi: 0,
+                                netWorth: wealthSummaryPayload.netWorth,
+                                liquidNetWorth: wealthSummaryPayload.liquidNetWorth,
+                                monthlyIncome: wealthSummaryPayload.monthlyIncome,
+                                monthlyExpenses: wealthSummaryPayload.monthlyExpenses,
+                                monthlyPnL: wealthSummaryPayload.monthlyPnL,
+                                budgetVariance,
+                                roi,
                             });
                             const blob = new Blob([report], { type: 'application/json' });
                             const url = URL.createObjectURL(blob);
@@ -655,6 +722,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                             a.download = `finova-monthly-report-${new Date().toISOString().slice(0, 7)}.json`;
                             a.click();
                             URL.revokeObjectURL(url);
+                            showToast('Monthly report exported.', 'success');
                         }}
                         className="btn-outline text-sm"
                     >
@@ -663,14 +731,17 @@ const hasData = accountsForEmptyCheck.length > 0;
                     <button
                         type="button"
                         onClick={() => {
-                            if (!data?.goals) return;
+                            if (!data?.goals?.length) {
+                                showToast('No goals to export.', 'info');
+                                return;
+                            }
                             const csv = exportGoalStatus({
-                                goals: data.goals.map((g: { id: string; name: string; targetAmount: number; currentAmount: number; deadline: string }) => ({
+                                goals: data.goals.map((g) => ({
                                     id: g.id,
                                     name: g.name,
                                     targetAmount: g.targetAmount ?? 0,
                                     currentAmount: g.currentAmount ?? 0,
-                                    deadline: (g.deadline ?? '').toString(),
+                                    deadline: String(g.deadline ?? ''),
                                 })),
                             });
                             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -680,6 +751,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                             a.download = `finova-goals-${new Date().toISOString().slice(0, 10)}.csv`;
                             a.click();
                             URL.revokeObjectURL(url);
+                            showToast('Goal status exported.', 'success');
                         }}
                         className="btn-outline text-sm"
                     >
@@ -688,16 +760,28 @@ const hasData = accountsForEmptyCheck.length > 0;
                     <button
                         type="button"
                         onClick={() => {
+                            if (!data) return;
                             const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-                            const positions = inv.flatMap((p: { holdings?: { symbol?: string; currentValue?: number; avgCost?: number; percentage?: number }[] }) =>
-                                (p.holdings ?? []).map((h: { symbol?: string; currentValue?: number; avgCost?: number; percentage?: number }) => ({
-                                    symbol: h.symbol ?? '',
-                                    marketValue: h.currentValue ?? 0,
-                                    avgCost: h.avgCost ?? 0,
-                                    plPct: 0,
-                                    sleeve: '',
-                                }))
+                            const positions = inv.flatMap((p: { holdings?: { symbol?: string; currentValue?: number; avgCost?: number; quantity?: number }[] }) =>
+                                (p.holdings ?? []).map((h) => {
+                                    const qty = Number(h.quantity ?? 0);
+                                    const avg = Number(h.avgCost ?? 0);
+                                    const val = Number(h.currentValue ?? 0);
+                                    const costBasis = qty * avg;
+                                    const plPct = costBasis > 0 ? ((val - costBasis) / costBasis) * 100 : 0;
+                                    return {
+                                        symbol: String(h.symbol ?? ''),
+                                        marketValue: val,
+                                        avgCost: avg,
+                                        plPct,
+                                        sleeve: '',
+                                    };
+                                })
                             );
+                            if (positions.length === 0) {
+                                showToast('No investment holdings to export.', 'info');
+                                return;
+                            }
                             const csv = exportPortfolioReview({ positions });
                             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
                             const url = URL.createObjectURL(blob);
@@ -706,6 +790,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                             a.download = `finova-portfolio-${new Date().toISOString().slice(0, 10)}.csv`;
                             a.click();
                             URL.revokeObjectURL(url);
+                            showToast('Portfolio review exported.', 'success');
                         }}
                         className="btn-outline text-sm"
                     >
@@ -791,11 +876,89 @@ const hasData = accountsForEmptyCheck.length > 0;
     );
 };
 
-function SnapCard({ label, value }: { label: string; value: string }) {
+function SnapshotMetricCard({
+    variant,
+    label,
+    value,
+    hint,
+    percent,
+    on,
+}: {
+    variant: 'risk' | 'budget' | 'drift' | 'email';
+    label: string;
+    value: string;
+    hint: string;
+    /** 0–100 for bar fill */
+    percent?: number;
+    on?: boolean;
+}) {
+    const border =
+        variant === 'risk'
+            ? 'border-l-indigo-500'
+            : variant === 'budget'
+              ? 'border-l-amber-500'
+              : variant === 'drift'
+                ? 'border-l-teal-500'
+                : 'border-l-emerald-500';
+
+    const riskVisual =
+        value === 'Conservative'
+            ? { pill: 'bg-slate-100 text-slate-800 ring-1 ring-slate-200', dot: 'bg-slate-500' }
+            : value === 'Moderate'
+              ? { pill: 'bg-amber-50 text-amber-950 ring-1 ring-amber-200', dot: 'bg-amber-500' }
+              : value === 'Aggressive'
+                ? { pill: 'bg-rose-50 text-rose-950 ring-1 ring-rose-200', dot: 'bg-rose-500' }
+                : { pill: 'bg-slate-100 text-slate-700 ring-1 ring-slate-200', dot: 'bg-slate-400' };
+
+    const barPct = percent != null && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+
     return (
-        <div className="rounded-lg border border-white/70 bg-white/90 px-3 py-2">
-            <p className="text-[11px] text-slate-500">{label}</p>
-            <p className="text-sm font-semibold text-slate-800">{value}</p>
+        <div
+            className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow ${border} border-l-4`}
+        >
+            <div className="flex items-start justify-between gap-2 px-3 pt-3 pb-1">
+                <div className="flex items-center gap-1 min-w-0">
+                    <div
+                        className={`h-2 w-2 rounded-full shrink-0 mt-0.5 ${
+                            variant === 'risk'
+                                ? riskVisual.dot
+                                : variant === 'budget'
+                                  ? 'bg-amber-500'
+                                  : variant === 'drift'
+                                    ? 'bg-teal-500'
+                                    : on
+                                      ? 'bg-emerald-500'
+                                      : 'bg-slate-300'
+                        }`}
+                        aria-hidden
+                    />
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 truncate">{label}</p>
+                </div>
+                <InfoHint text={hint} />
+            </div>
+            <div className="px-3 pb-3">
+                {variant === 'risk' ? (
+                    <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-sm font-bold ${riskVisual.pill}`}>{value}</span>
+                ) : variant === 'email' ? (
+                    <span
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-bold ${on ? 'bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200' : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'}`}
+                    >
+                        <span className={`h-2 w-2 rounded-full ${on ? 'bg-emerald-500' : 'bg-slate-400'}`} aria-hidden />
+                        {value}
+                    </span>
+                ) : (
+                    <>
+                        <p className="text-lg font-bold tabular-nums text-slate-900">{value}</p>
+                        <div className="mt-2 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all ${variant === 'budget' ? 'bg-gradient-to-r from-amber-400 to-amber-600' : 'bg-gradient-to-r from-teal-400 to-teal-600'}`}
+                                style={{ width: `${barPct}%` }}
+                            />
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">{variant === 'budget' ? 'Alert threshold' : 'Relative scale'}</p>
+                    </>
+                )}
+            </div>
         </div>
     );
 }

@@ -12,7 +12,7 @@ import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
+import { EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
@@ -20,20 +20,12 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
-import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from '../services/householdBudgetEngine';
-import { deriveCashflowStressSummary } from '../services/householdBudgetStress';
-import { computeRiskLaneFromData } from '../services/riskLaneEngine';
-import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
-import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
-import { computeDisciplineScore } from '../services/disciplineScoreEngine';
-import { runShockDrill, SHOCK_TEMPLATES } from '../services/shockDrillEngine';
-import { getPersonalWealthData } from '../utils/wealthScope';
-import { computeLiquidNetWorth } from '../services/liquidNetWorth';
+import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
+import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
@@ -85,7 +77,7 @@ interface SummaryProps {
 }
 
 const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
@@ -108,129 +100,11 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         loadRole();
     }, [auth?.user?.id]);
 
-    const { financialMetrics, investmentTreemapData } = useMemo(() => {
-        const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const transactions = (data?.personalTransactions ?? data?.transactions ?? []);
-        const recentTransactions = transactions.filter(t => new Date(t.date) >= firstDayOfMonth);
-
-        const monthlyIncome = recentTransactions.filter(t => countsAsIncomeForCashflowKpi(t)).reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
-        const monthlyExpenses = recentTransactions.filter(t => countsAsExpenseForCashflowKpi(t)).reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
-        const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
-        const monthlyPnL = monthlyIncome - monthlyExpenses;
-
-        const investments = data?.personalInvestments ?? data?.investments ?? [];
-        const { netWorth, totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(
-            data,
-            sarPerUsd
-        );
-        const grossAssets = totalAssets + totalReceivable;
-        const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
-        
-        const netWorthPrevMonth = netWorth - monthlyPnL;
-        const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
-        
-        const allHoldings = investments.flatMap(p => (p.holdings || []).map(h => ({ ...h, portfolioCurrency: p.currency })));
-        const investmentTreemapData = allHoldings.map(h => {
-             const totalCost = h.avgCost * h.quantity;
-             const gainLoss = h.currentValue - totalCost;
-             const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-             return { ...h, gainLoss, gainLossPercent };
-        });
-
-        const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
-        const individualStocksValue = investmentTreemapData
-            .filter(h => !['ETF', 'Index Fund', 'Bond'].some(type => h.name?.includes(type)))
-            .reduce((sum, h) => sum + toSAR(h.currentValue, h.portfolioCurrency, sarPerUsd), 0);
-        const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
-        let investmentStyle = 'Balanced';
-        if (investmentConcentration > 0.6) investmentStyle = 'Aggressive (High concentration in individual stocks)';
-        else if (investmentConcentration < 0.2) investmentStyle = 'Conservative (High concentration in funds/ETFs)';
-
-        return { 
-            financialMetrics: { netWorth, monthlyIncome, monthlyExpenses, savingsRate, debtToAssetRatio, investmentStyle, netWorthTrend },
-            investmentTreemapData
-        };
-    }, [data, sarPerUsd]);
-
-    const managedWealthTotal = useMemo(() => {
-        if (!data) return 0;
-        const fullAccounts = data.accounts ?? [];
-        const fullAssets = data.assets ?? [];
-        const fullLiabilities = data.liabilities ?? [];
-        const fullInvestments = data.investments ?? [];
-        const fullCommodities = data.commodityHoldings ?? [];
-        const {
-            personalAccounts,
-            personalAssets,
-            personalLiabilities,
-            personalInvestments,
-            personalCommodityHoldings: personalCommodities,
-        } = getPersonalWealthData(data);
-        const cash = (acc: { type?: string; balance?: number }[]) => acc.filter(a => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-        const cashNegative = (acc: { type?: string; balance?: number }[]) => acc.filter(a => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.abs(Math.min(0, a.balance ?? 0)), 0);
-        const debt = (acc: { type?: string; balance?: number }[], liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0) + cashNegative(acc);
-        const rec = (liab: { amount?: number }[]) => liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
-        const fullCash = cash(fullAccounts), fullDebt = debt(fullAccounts, fullLiabilities), fullRec = rec(fullLiabilities);
-        const fullAst = fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + fullCash + fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(fullInvestments, sarPerUsd);
-        const personalCash = cash(personalAccounts), personalDebt = debt(personalAccounts, personalLiabilities), personalRec = rec(personalLiabilities);
-        const personalAst = personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) + personalCash + personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) + getAllInvestmentsValueInSAR(personalInvestments, sarPerUsd);
-        const fullNW = fullAst - fullDebt + fullRec, personalNW = personalAst - personalDebt + personalRec;
-        return Math.round(fullNW - personalNW);
-    }, [data, sarPerUsd]);
-
-    const emergencyFund = useEmergencyFund(data);
-    const efStatus = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
-    const efTrend = emergencyFund.status === 'healthy' ? 'Healthy' : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Low' : 'Critical';
-    const financialMetricsWithEf = useMemo(() => ({
-        ...financialMetrics,
-        emergencyFundMonths: emergencyFund.monthsCovered,
-        efStatus,
-        efTrend,
-        emergencyShortfall: emergencyFund.shortfall,
-        emergencyTargetAmount: emergencyFund.targetAmount,
-    }), [financialMetrics, emergencyFund.monthsCovered, emergencyFund.shortfall, emergencyFund.targetAmount, efStatus, efTrend]);
-
-    const householdStress = useMemo(() => {
-        if (!data) return null;
-        const input = buildHouseholdEngineInputFromData(
-            (data?.personalTransactions ?? data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number }>,
-            (data?.personalAccounts ?? data?.accounts ?? []) as Array<{ type?: string; balance?: number }>,
-            (data?.goals ?? []) as any[],
-            {
-                year: new Date().getFullYear(),
-                expectedMonthlySalary: undefined,
-                adults: 2,
-                kids: 0,
-                profile: (data?.settings?.riskProfile as string) || 'Moderate',
-                monthlyOverrides: [],
-            }
-        );
-        const result = buildHouseholdBudgetPlan(input);
-        return deriveCashflowStressSummary(result);
-    }, [data]);
-
-    const riskLane = useMemo(
-        () => computeRiskLaneFromData(data, emergencyFund.monthsCovered),
-        [data, emergencyFund.monthsCovered]
+    const reportModel = useMemo(
+        () => (data ? computeWealthSummaryReportModel(data, sarPerUsd, getAvailableCashForAccount) : null),
+        [data, sarPerUsd, getAvailableCashForAccount]
     );
 
-    const liquidityRunway = useMemo(
-        () => computeLiquidityRunwayFromData(data),
-        [data]
-    );
-
-    const discipline = useMemo(
-        () => computeDisciplineScore(data),
-        [data]
-    );
-
-    const shockDrill = useMemo(
-        () => (data ? runShockDrill(data, 'job_loss') : null),
-        [data]
-    );
-
-    const liquidNw = useMemo(() => computeLiquidNetWorth(data), [data]);
     const { maskBalance } = usePrivacyMask();
 
     const nwSnapshotInsight = useMemo(() => {
@@ -251,72 +125,25 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, [data?.transactions, data?.personalTransactions]);
 
     const handleGenerateAnalysis = useCallback(async () => {
+        const fm = reportModel?.financialMetricsWithEf;
+        if (!fm) return;
         trackAction('generate-financial-persona', 'Summary');
         setIsLoading(true);
         setError(null);
         setAnalysis(null);
         try {
             const result = await getAIFinancialPersona(
-                Number(financialMetricsWithEf.savingsRate) || 0,
-                Number(financialMetricsWithEf.debtToAssetRatio) || 0,
-                Number(financialMetricsWithEf.emergencyFundMonths) || 0,
-                String(financialMetricsWithEf.investmentStyle ?? 'Balanced')
+                Number(fm.savingsRate) || 0,
+                Number(fm.debtToAssetRatio) || 0,
+                Number(fm.emergencyFundMonths) || 0,
+                String(fm.investmentStyle ?? 'Balanced')
             );
             setAnalysis(result ?? null);
         } catch (err) {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [financialMetricsWithEf, trackAction]);
-
-    const wealthSummaryReportPayload = useMemo(() => ({
-        generatedAtIso: new Date().toISOString(),
-        currency: 'SAR',
-        netWorth: Number(financialMetricsWithEf.netWorth) || 0,
-        netWorthTrendPct: Number(financialMetricsWithEf.netWorthTrend) || 0,
-        monthlyIncome: Number(financialMetricsWithEf.monthlyIncome) || 0,
-        monthlyExpenses: Number(financialMetricsWithEf.monthlyExpenses) || 0,
-        monthlyPnL: Number(financialMetricsWithEf.monthlyIncome) - Number(financialMetricsWithEf.monthlyExpenses),
-        savingsRatePct: (Number(financialMetricsWithEf.savingsRate) || 0) * 100,
-        debtToAssetRatioPct: (Number(financialMetricsWithEf.debtToAssetRatio) || 0) * 100,
-        emergencyFundMonths: Number(financialMetricsWithEf.emergencyFundMonths) || 0,
-        emergencyFundTargetAmount: Number(financialMetricsWithEf.emergencyTargetAmount) || 0,
-        emergencyFundShortfall: Number(financialMetricsWithEf.emergencyShortfall) || 0,
-        liquidNetWorth: Number(liquidNw?.liquidNetWorth) || 0,
-        managedWealthTotal: Number(managedWealthTotal) || 0,
-        riskLane: String(riskLane?.lane ?? 'Unknown'),
-        liquidityRunwayMonths: Number(liquidityRunway?.monthsOfRunway ?? 0),
-        disciplineScore: Number(discipline?.score ?? 0),
-        investmentStyle: String(financialMetricsWithEf.investmentStyle ?? 'Balanced'),
-        householdStressLabel: String(householdStress?.level ?? 'Not available'),
-        householdStressPressureMonths: Number(householdStress?.affordabilityPressureMonths ?? 0),
-        shockDrillSeverity: String(shockDrill?.template?.label ?? 'Not available'),
-        shockDrillEstimatedGap: Number(shockDrill?.householdProjectedYearEndDelta ?? 0),
-        holdings: investmentTreemapData.map((h) => ({
-            symbol: String(h.symbol ?? '').toUpperCase(),
-            name: String(h.name ?? h.symbol ?? ''),
-            quantity: Number(h.quantity ?? 0),
-            avgCost: Number(h.avgCost ?? 0),
-            currentValue: Number(h.currentValue ?? 0),
-            gainLoss: Number(h.gainLoss ?? 0),
-            gainLossPct: Number(h.gainLossPercent ?? 0),
-            currency: String(h.portfolioCurrency ?? 'USD'),
-            currentValueSar: toSAR(Number(h.currentValue ?? 0), h.portfolioCurrency, sarPerUsd),
-        })),
-    }), [
-        financialMetricsWithEf,
-        investmentTreemapData,
-        sarPerUsd,
-        liquidNw?.liquidNetWorth,
-        managedWealthTotal,
-        riskLane?.lane,
-        liquidityRunway?.monthsOfRunway,
-        discipline?.score,
-        householdStress?.level,
-        householdStress?.affordabilityPressureMonths,
-        shockDrill?.template?.label,
-        shockDrill?.householdProjectedYearEndDelta,
-    ]);
+    }, [reportModel?.financialMetricsWithEf, trackAction]);
 
     const downloadTextFile = useCallback((fileName: string, contents: string, mimeType: string) => {
         const blob = new Blob([contents], { type: mimeType });
@@ -329,27 +156,33 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, []);
 
     const handleExportWealthSummaryJson = useCallback(() => {
-        const json = generateWealthSummaryReportJson(wealthSummaryReportPayload);
+        const payload = reportModel?.wealthSummaryReportPayload;
+        if (!payload) return;
+        const json = generateWealthSummaryReportJson(payload);
         downloadTextFile(
             `finova-wealth-summary-${new Date().toISOString().slice(0, 10)}.json`,
             json,
             'application/json'
         );
-    }, [wealthSummaryReportPayload, downloadTextFile]);
+    }, [reportModel?.wealthSummaryReportPayload, downloadTextFile]);
 
     const handleExportWealthSummaryCsv = useCallback(() => {
-        const csv = generateWealthSummaryReportCsv(wealthSummaryReportPayload);
+        const payload = reportModel?.wealthSummaryReportPayload;
+        if (!payload) return;
+        const csv = generateWealthSummaryReportCsv(payload);
         downloadTextFile(
             `finova-wealth-summary-${new Date().toISOString().slice(0, 10)}.csv`,
             csv,
             'text/csv;charset=utf-8'
         );
-    }, [wealthSummaryReportPayload, downloadTextFile]);
+    }, [reportModel?.wealthSummaryReportPayload, downloadTextFile]);
 
     const handlePrintWealthSummary = useCallback(() => {
-        const html = generateWealthSummaryReportHtml(wealthSummaryReportPayload);
+        const payload = reportModel?.wealthSummaryReportPayload;
+        if (!payload) return;
+        const html = generateWealthSummaryReportHtml(payload);
         openHtmlForPrint(html);
-    }, [wealthSummaryReportPayload]);
+    }, [reportModel?.wealthSummaryReportPayload]);
 
     if (loading || !data) {
         return (
@@ -358,6 +191,27 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </div>
         );
     }
+
+    if (!reportModel) {
+        return (
+            <div className="flex justify-center items-center h-96" aria-busy="true">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading summary" />
+            </div>
+        );
+    }
+
+    const {
+        financialMetricsWithEf,
+        investmentTreemapData,
+        managedWealthTotal,
+        emergencyFund,
+        householdStress,
+        riskLane,
+        liquidityRunway,
+        discipline,
+        shockDrill,
+        liquidNw,
+    } = reportModel;
 
     return (
         <PageLayout 
@@ -395,11 +249,17 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     >
                         <h2 className="text-lg font-medium text-gray-500 flex items-center gap-1">
                             My Net Worth
-                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="top" hintId="summary-personal-wealth" hintPage="Summary" />
+                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="bottom" hintId="summary-personal-wealth" hintPage="Summary" />
                         </h2>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
-                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold`}>
-                            {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs last month
+                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold flex flex-wrap items-center justify-center gap-1`}>
+                            <span>{financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs implied prior net worth</span>
+                            <InfoHint
+                                text="Uses this month’s personal transactions (income vs expenses) vs current net worth—not a stored last-month snapshot. Same personal scope as Dashboard."
+                                placement="bottom"
+                                hintId="summary-nw-trend"
+                                hintPage="Summary"
+                            />
                         </p>
                         <p className="text-xs text-slate-500 mt-2">Personal wealth only · Click to manage assets</p>
                         {managedWealthTotal > 0 && (
@@ -427,7 +287,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             </div>
 
-            <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50 mt-4">
+            <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50">
                 <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600">
                     <span>Cash (checking/savings): {maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
@@ -441,7 +301,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </CollapsibleSection>
 
             {isAdmin && (
-                <CollapsibleSection title="Net worth change vs flows (local snapshots)" summary="Contribution vs market-style residual" className="border border-violet-100 bg-violet-50/40 mt-4">
+                <CollapsibleSection title="Net worth change vs flows (local snapshots)" summary="Contribution vs market-style residual" className="border border-violet-100 bg-violet-50/40">
                     {nwSnapshotInsight.attr ? (
                         <>
                             <ul className="text-sm text-slate-700 space-y-1 list-disc list-inside">
@@ -490,7 +350,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </div>
             
             {householdStress && (
-                <div className="section-card mt-6">
+                <div className="section-card">
                     <h3 className="section-title mb-2">Household Cashflow Stress</h3>
                     <p className="text-sm text-slate-700 mb-1">
                         Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
@@ -508,7 +368,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             )}
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="section-card">
                     <h3 className="section-title mb-2">Risk Lane</h3>
                     <p className="text-sm text-slate-700">
@@ -548,7 +408,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             </div>
 
-            <div className="section-card mt-6">
+            <div className="section-card">
                 <h3 className="section-title mb-2">Shock Drill (Auto)</h3>
                 <p className="text-xs text-slate-500 mb-2">
                     Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label}</span>

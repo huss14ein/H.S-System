@@ -493,7 +493,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }
 
   return (
-    <div className="page-container space-y-6 sm:space-y-8 mt-4 min-h-[40rem]">
+    <div className="page-container min-h-[40rem]">
       {/* Hero */}
       <section className="section-card p-6 sm:p-8">
         <div className="flex flex-col gap-6">

@@ -105,7 +105,7 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
@@ -113,7 +113,10 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
-  const netWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, sarPerUsd), [data, sarPerUsd]);
+  const netWorth = useMemo(
+    () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
+    [data, sarPerUsd, getAvailableCashForAccount]
+  );
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(() => computeLiquidityRunwayFromData(data ?? null), [data]);

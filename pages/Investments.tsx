@@ -22,6 +22,7 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
+import InvestmentPlanView from './InvestmentPlanView';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -406,19 +407,23 @@ const RecordTradeModal: React.FC<{
         }
     }, [amountToInvest, price, type, brokerConstraints?.allowFractionalShares, brokerConstraints?.minimumOrderSize, brokerConstraints?.roundingRule]);
 
-    // Auto-fill company name from API when user enters a symbol (new holding)
-    const holdingNameRef = React.useRef(holdingName);
-    holdingNameRef.current = holdingName;
+    // Auto-fill company name when symbol is set (new holding): debounced lookup; refresh when ticker changes
     useEffect(() => {
-        if (!isOpen || type !== 'buy' || !symbol.trim() || symbol.trim().length < 2) return;
+        if (!isOpen || type !== 'buy' || !isNewHolding) return;
         const sym = symbol.trim().toUpperCase();
+        if (sym.length < 2) return;
+        let cancelled = false;
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((name) => {
-                if (name && !holdingNameRef.current.trim()) setHoldingName(name);
+                if (cancelled || !name) return;
+                setHoldingName(name);
             });
-        }, 700);
-        return () => clearTimeout(t);
-    }, [symbol, isOpen, type]);
+        }, 500);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [symbol, isOpen, type, isNewHolding]);
 
     const nbboStub = useMemo(() => {
         if (isCashFlow || !symbol.trim()) return null;
@@ -3634,6 +3639,20 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         setActiveTab('Investment Plan');
         clearPageAction?.();
     }
+    if (pageAction?.startsWith('investment-tab:')) {
+        const raw = pageAction.slice('investment-tab:'.length);
+        const allowed = new Set<InvestmentSubPage>([
+            'Investment Plan',
+            'Recovery Plan',
+            'Dividend Tracker',
+            'AI Rebalancer',
+            'Watchlist',
+        ]);
+        if (allowed.has(raw as InvestmentSubPage)) {
+            setActiveTab(raw as InvestmentSubPage);
+        }
+        clearPageAction?.();
+    }
     if (pageAction === 'openRiskTradingHub') {
         triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
     }
@@ -3730,31 +3749,45 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             onEditHolding={handleOpenHoldingEditModal}
         />;
       case 'Investment Plan': return (
-                <InvestmentPlan
-                    onNavigateToTab={(tab) => setActiveTab(tab)}
-                    onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
-                    onOpenRecordTrade={(trade) => {
-                        trackAction('record-trade-from-plan', 'Investments');
-                        const normalizedSymbol = trade.ticker.trim().toUpperCase();
-                        const inv = data?.investments ?? [];
-                        const targetPortfolio = inv.find((portfolio) =>
-                            (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                        ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
-                        setTradeInitialData({
-                            symbol: trade.ticker,
-                            amount: trade.amount,
-                            tradeType: 'buy' as const,
-                            reason: trade.reason,
-                            price: trade.price,
-                            quantity: trade.quantity,
-                            tradeCurrency: trade.tradeCurrency,
-                            accountId: targetPortfolio?.accountId,
-                            portfolioId: targetPortfolio?.id,
-                            name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
-                        });
-                        setIsTradeModalOpen(true);
-                    }}
-                />
+                <div className="space-y-14 sm:space-y-16">
+                    <InvestmentPlanView
+                        embedded
+                        onExecutePlan={() => {}}
+                        setActivePage={setActivePage}
+                        triggerPageAction={triggerPageAction}
+                    />
+                    <section className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50/80 to-white p-4 sm:p-6 shadow-sm scroll-mt-6" aria-labelledby="monthly-allocation-heading">
+                        <div className="mb-4 border-b border-slate-200 pb-3">
+                            <h2 id="monthly-allocation-heading" className="text-base font-semibold text-slate-900">Monthly budget and sleeve strategy</h2>
+                            <p className="mt-1 text-sm text-slate-600">Set how much you invest each month and how it splits between stable vs growth names. This works together with the trade plans above.</p>
+                        </div>
+                        <InvestmentPlan
+                            onNavigateToTab={(tab) => setActiveTab(tab)}
+                            onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+                            onOpenRecordTrade={(trade) => {
+                                trackAction('record-trade-from-plan', 'Investments');
+                                const normalizedSymbol = trade.ticker.trim().toUpperCase();
+                                const inv = data?.investments ?? [];
+                                const targetPortfolio = inv.find((portfolio) =>
+                                    (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                                ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
+                                setTradeInitialData({
+                                    symbol: trade.ticker,
+                                    amount: trade.amount,
+                                    tradeType: 'buy' as const,
+                                    reason: trade.reason,
+                                    price: trade.price,
+                                    quantity: trade.quantity,
+                                    tradeCurrency: trade.tradeCurrency,
+                                    accountId: targetPortfolio?.accountId,
+                                    portfolioId: targetPortfolio?.id,
+                                    name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
+                                });
+                                setIsTradeModalOpen(true);
+                            }}
+                        />
+                    </section>
+                </div>
             );
       case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;

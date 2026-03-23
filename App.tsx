@@ -22,7 +22,7 @@ import { MultiBankProvider } from './context/MultiBankContext';
 import { PrivacyProvider } from './context/PrivacyContext';
 import { ToastProvider } from './context/ToastContext';
 import { SelfLearningProvider } from './context/SelfLearningContext';
-import { PAGE_DISPLAY_NAMES } from './constants';
+import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from './constants';
 
 // --- Lazy Load Pages for Code Splitting ---
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -40,11 +40,6 @@ const Settings = lazy(() => import('./pages/Settings'));
 
 // Investment & Strategy Pages
 const Investments = lazy(() => import('./pages/Investments'));
-const InvestmentPlanView = lazy(() => import('./pages/InvestmentPlanView'));
-const RecoveryPlanView = lazy(() => import('./pages/RecoveryPlanView'));
-const AIRebalancerView = lazy(() => import('./pages/AIRebalancerView'));
-const DividendTrackerView = lazy(() => import('./pages/DividendTrackerView'));
-const WatchlistView = lazy(() => import('./pages/WatchlistView'));
 
 // Financial Planning Pages
 const Plan = lazy(() => import('./pages/Plan'));
@@ -73,13 +68,27 @@ const VALID_PAGES: Page[] = [
   'Engines & Tools',
 ];
 
-function getPageFromHash(): Page | null {
-  if (typeof window === 'undefined') return null;
+function decodeHashPage(): string {
+  if (typeof window === 'undefined') return '';
   try {
     const hash = window.location.hash.slice(1);
-    const decoded = hash ? decodeURIComponent(hash) : '';
-    if (decoded && VALID_PAGES.includes(decoded as Page)) return decoded as Page;
-  } catch (_) {}
+    return hash ? decodeURIComponent(hash) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function getPageFromHash(): Page | null {
+  const decoded = decodeHashPage();
+  if (!decoded) return null;
+  if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) return 'Investments';
+  if (VALID_PAGES.includes(decoded as Page)) return decoded as Page;
+  return null;
+}
+
+function getInitialPageActionFromHash(): string | null {
+  const decoded = decodeHashPage();
+  if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) return `investment-tab:${decoded}`;
   return null;
 }
 
@@ -91,8 +100,20 @@ function getInitialPage(): Page {
 
 const App: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
+  const [pageAction, setPageAction] = useState<string | null>(getInitialPageActionFromHash);
+
   const setActivePage = useCallback((page: Page) => {
+    if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
+      setActivePageState('Investments');
+      setPageAction(`investment-tab:${page}`);
+      try {
+        const hash = '#' + encodeURIComponent('Investments');
+        if (window.location.hash !== hash) window.location.hash = hash;
+      } catch (_) {}
+      return;
+    }
     setActivePageState(page);
+    setPageAction(null);
     try {
       const hash = '#' + encodeURIComponent(page);
       if (window.location.hash !== hash) window.location.hash = hash;
@@ -111,6 +132,13 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
+      const decoded = decodeHashPage();
+      if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
+        setActivePageState('Investments');
+        setPageAction(`investment-tab:${decoded}`);
+        return;
+      }
+      setPageAction(null);
       const page = getPageFromHash();
       setActivePageState(page ?? 'Dashboard');
     };
@@ -118,8 +146,6 @@ const App: React.FC = () => {
     if (!window.location.hash) window.location.replace('#Dashboard');
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-
-  const [pageAction, setPageAction] = useState<string | null>(null);
   const auth = useContext(AuthContext);
 
   if (!auth) {
@@ -128,10 +154,14 @@ const App: React.FC = () => {
 
   const { isAuthenticated, isApproved } = auth;
 
-  const triggerPageAction = (page: Page, action: string) => {
-    setActivePage(page);
+  const triggerPageAction = useCallback((page: Page, action: string) => {
+    setActivePageState(page);
     setPageAction(action);
-  };
+    try {
+      const hash = '#' + encodeURIComponent(page);
+      if (window.location.hash !== hash) window.location.hash = hash;
+    } catch (_) {}
+  }, []);
   const clearPageAction = () => setPageAction(null);
 
   const renderPage = () => {
@@ -150,12 +180,7 @@ const App: React.FC = () => {
       case 'Notifications': return <Notifications setActivePage={setActivePage} />;
       case 'Settings': return <Settings setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
-      // Investment & Strategy Pages
-      case 'Investment Plan': return <InvestmentPlanView onExecutePlan={() => {}} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Recovery Plan': return <RecoveryPlanView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
-      case 'AI Rebalancer': return <AIRebalancerView setActivePage={setActivePage} onOpenWealthUltra={() => setActivePage('Wealth Ultra')} />;
-      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
-      case 'Watchlist': return <WatchlistView setActivePage={setActivePage} />;
+      // Investment & Strategy Pages (sub-views live inside Investments only)
       case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Financial Planning Pages

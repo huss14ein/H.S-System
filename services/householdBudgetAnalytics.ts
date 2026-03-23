@@ -5,6 +5,42 @@
 
 import type { HouseholdMonthPlan, HouseholdEngineResult } from './householdBudgetEngine';
 
+/** Bucket keys that are savings / investments — not consumption outflows. */
+const SAVINGS_BUCKET_KEYS = new Set([
+  'emergencySavings',
+  'reserveSavings',
+  'goalSavings',
+  'retirementSavings',
+  'investing',
+  'kidsFutureSavings',
+]);
+
+/** Sum modeled monthly spending from engine buckets (excludes savings allocations). */
+export function sumNonSavingsBucketOutflow(buckets: Record<string, unknown> | undefined | null): number {
+  if (!buckets || typeof buckets !== 'object') return 0;
+  let s = 0;
+  for (const [k, v] of Object.entries(buckets)) {
+    if (SAVINGS_BUCKET_KEYS.has(k)) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) s += n;
+  }
+  return Math.max(0, s);
+}
+
+/**
+ * Expense for analytics: prefer transaction-based actuals; otherwise planned; otherwise sum of non-savings buckets
+ * (household engine always fills buckets even when `expenseActual` is 0).
+ */
+export function effectiveMonthExpense(month: HouseholdMonthPlan): number {
+  const expAct = Number(month.expenseActual);
+  if (Number.isFinite(expAct) && expAct > 0) return expAct;
+  const totAct = Number(month.totalActualOutflow);
+  if (Number.isFinite(totAct) && totAct > 0) return totAct;
+  const planned = Number(month.expensePlanned);
+  if (Number.isFinite(planned) && planned > 0) return planned;
+  return sumNonSavingsBucketOutflow(month.buckets as Record<string, unknown>);
+}
+
 export interface SpendingTrend {
   month: number;
   category: string;
@@ -102,15 +138,13 @@ export function predictFutureMonths(
       const income = m.incomeActual > 0 ? m.incomeActual : m.incomePlanned;
       return sum + Math.max(0, income);
     }, 0) / recentMonths.length;
-    
-    const avgExpense = recentMonths.reduce((sum, m) => {
-      const expense = (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0);
-      return sum + Math.max(0, expense);
-    }, 0) / recentMonths.length;
-    
+
+    const avgExpense =
+      recentMonths.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / recentMonths.length;
+
     // Calculate trend (use actual if available)
-    const incomeValues = recentMonths.map(m => m.incomeActual > 0 ? m.incomeActual : m.incomePlanned);
-    const expenseValues = recentMonths.map(m => (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0));
+    const incomeValues = recentMonths.map((m) => (m.incomeActual > 0 ? m.incomeActual : m.incomePlanned));
+    const expenseValues = recentMonths.map((m) => effectiveMonthExpense(m));
     
     const incomeTrend = incomeValues.length >= 2
       ? (incomeValues[incomeValues.length - 1] - incomeValues[0]) / incomeValues.length
@@ -173,49 +207,64 @@ export function analyzeScenario(
 ): ScenarioAnalysis {
   const months = result.months ?? [];
   const balanceProjection = result.balanceProjection ?? {};
-  const currentYearEndBalance = balanceProjection.projectedYearEndLiquid ?? 0;
-  const numMonths = months.length || 1;
-  const avgMonthlySalary = months.reduce((sum, m) => sum + (m.incomePlanned ?? 0), 0) / numMonths;
-  const avgMonthlyExpense = months.reduce((sum, m) => sum + (m.totalPlannedOutflow ?? m.expensePlanned ?? 0), 0) / numMonths;
-  
+  const currentYearEndBalance = Number(balanceProjection.projectedYearEndLiquid ?? 0);
+  const numMonths = Math.max(1, months.length);
+  const openingLiquid = Number(balanceProjection.openingLiquid ?? 0);
+
+  const avgMonthlySalary =
+    months.reduce((sum, m) => sum + (m.incomeActual > 0 ? m.incomeActual : m.incomePlanned), 0) / numMonths;
+  const avgMonthlyExpense = months.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / numMonths;
+
   const newAvgSalary = avgMonthlySalary + monthlySalaryChange;
   const newAvgExpense = avgMonthlyExpense + monthlyExpenseChange;
   const newMonthlyNet = newAvgSalary - newAvgExpense;
-  
-  const openingLiquid = balanceProjection.openingLiquid ?? balanceProjection.projectedYearEndLiquid ?? 0;
-  const projectedYearEndBalance = openingLiquid + (newMonthlyNet * 12);
+
+  const isBaseline = monthlySalaryChange === 0 && monthlyExpenseChange === 0;
+
+  const projectedYearEndBalance = openingLiquid + newMonthlyNet * 12;
   const projectedYearEndBalanceChange = projectedYearEndBalance - currentYearEndBalance;
-  
-  // Calculate goal achievement impact
-  const goalAchievementImpact = (goals ?? []).map(goal => {
-    const currentSurplus = months.reduce((sum, m) => sum + (m.routedGoalAmount ?? 0) + (m.buckets?.goalSavings ?? 0), 0);
-    const newSurplus = Math.max(0, newMonthlyNet * 12);
-    const currentMonthsToGoal = currentSurplus > 0 ? goal.remaining / (currentSurplus / 12) : 999;
-    const newMonthsToGoal = newSurplus > 0 ? goal.remaining / (newSurplus / 12) : 999;
-    const delayMonths = newMonthsToGoal - currentMonthsToGoal;
-    
+
+  const avgGoalFunding =
+    months.reduce((sum, m) => sum + Number(m.buckets?.goalSavings ?? 0), 0) / numMonths;
+  const deltaNet = monthlySalaryChange - monthlyExpenseChange;
+  /** Share of incremental net assumed to flow to goal savings (heuristic). */
+  const goalMarginalShare = 0.35;
+
+  const goalAchievementImpact = (goals ?? []).map((goal) => {
+    if (isBaseline || !goal || (goal.remaining ?? 0) <= 0) {
+      return { goalName: goal?.name ?? '', achievementDelayMonths: 0 };
+    }
+    const rem = Math.max(0, goal.remaining);
+    const newGoalFunding = Math.max(0, avgGoalFunding + deltaNet * goalMarginalShare);
+    const oldMonths = avgGoalFunding > 1e-6 ? rem / avgGoalFunding : Infinity;
+    const newMonths = newGoalFunding > 1e-6 ? rem / newGoalFunding : Infinity;
+    let delayMonths = 0;
+    if (Number.isFinite(oldMonths) && Number.isFinite(newMonths)) {
+      delayMonths = newMonths - oldMonths;
+      delayMonths = Math.max(-240, Math.min(240, delayMonths));
+    }
     return {
-      goalName: goal?.name ?? '',
-      achievementDelayMonths: Number.isFinite(delayMonths) ? delayMonths : 0,
+      goalName: goal.name ?? '',
+      achievementDelayMonths: delayMonths,
     };
   });
-  
-  // Determine risk level
+
   let riskLevel: 'low' | 'medium' | 'high' = 'low';
   if (newMonthlyNet < 0) riskLevel = 'high';
   else if (newMonthlyNet < avgMonthlySalary * 0.1) riskLevel = 'medium';
-  
-  const description = monthlySalaryChange !== 0 || monthlyExpenseChange !== 0
-    ? `Scenario: ${monthlySalaryChange >= 0 ? '+' : ''}${monthlySalaryChange.toLocaleString()} salary change, ${monthlyExpenseChange >= 0 ? '+' : ''}${monthlyExpenseChange.toLocaleString()} expense change`
-    : 'Baseline scenario';
-  
+
+  const description =
+    monthlySalaryChange !== 0 || monthlyExpenseChange !== 0
+      ? `Scenario: ${monthlySalaryChange >= 0 ? '+' : ''}${monthlySalaryChange.toLocaleString()} salary change, ${monthlyExpenseChange >= 0 ? '+' : ''}${monthlyExpenseChange.toLocaleString()} expense change`
+      : 'Baseline scenario';
+
   return {
     name: `${monthlySalaryChange >= 0 ? '+' : ''}${monthlySalaryChange.toLocaleString()} Salary / ${monthlyExpenseChange >= 0 ? '+' : ''}${monthlyExpenseChange.toLocaleString()} Expense`,
     description,
     monthlySalaryChange,
     monthlyExpenseChange,
-    projectedYearEndBalance,
-    projectedYearEndBalanceChange,
+    projectedYearEndBalance: isBaseline ? currentYearEndBalance : projectedYearEndBalance,
+    projectedYearEndBalanceChange: isBaseline ? 0 : projectedYearEndBalanceChange,
     goalAchievementImpact,
     riskLevel,
   };
@@ -334,8 +383,8 @@ export function detectSeasonality(
     if (!byMonth[monthNum]) {
       byMonth[monthNum] = [];
     }
-    
-    const expense = (month.totalActualOutflow ?? 0) > 0 ? (month.totalActualOutflow ?? 0) : (month.totalPlannedOutflow ?? 0);
+
+    const expense = effectiveMonthExpense(month);
     byMonth[monthNum].push(expense);
     
     // Track by category
@@ -353,10 +402,8 @@ export function detectSeasonality(
   
   // Calculate overall monthly averages
   const monthlyAverages: Record<number, number> = {};
-  const overallAverage = months.reduce((sum, m) => {
-    const expense = (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0);
-    return sum + expense;
-  }, 0) / months.length;
+  const overallAverage =
+    months.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / months.length;
   
   Object.keys(byMonth).forEach(monthStr => {
     const monthNum = Number(monthStr);

@@ -104,11 +104,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       name: 'Strategy',
       items: [
         'Investments',
-        'Recovery Plan',
-        'Investment Plan',
-        'Dividend Tracker',
-        'AI Rebalancer',
-        'Watchlist',
         'Engines & Tools',
         'Market Events',
         'Plan',

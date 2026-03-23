@@ -222,6 +222,7 @@ export {
   validateWealthUltraConfig,
   getRiskWeight,
 } from './config';
+export { buildFinancialWealthUltraConfig, type FinancialWealthUltraConfigSource } from './buildEngineConfigFromData';
 export { buildWealthUltraPositions, tickerToSleeve, tickerToRiskTier } from './position';
 export type { PriceMap } from './position';
 export { getTotalPortfolioValue, computeSleeveAllocations, isDriftAlert, DRIFT_ALERT_PCT } from './allocationEngine';

@@ -69,6 +69,8 @@ const STATIC_SYMBOL_NAMES: Record<string, string> = {
   '1120.SA': 'Al Rajhi Bank',
   '1180.SA': 'Saudi National Bank',
   '2222.SA': 'Saudi Arabian Oil Company (Aramco)',
+  '7010.SR': 'Saudi Telecom Company',
+  'REITF.SR': 'Al Jazira REIT Fund',
   // Crypto (display)
   BTC: 'Bitcoin',
   'BTC-USD': 'Bitcoin',
@@ -83,6 +85,11 @@ function normalizeKey(symbol: string): string {
   const tadawulMatch = s.match(/^TADAWUL:([0-9]{4,6})$/);
   if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
   return s;
+}
+
+/** Canonical key for company-name cache, Finnhub, and static map (one listing per line). */
+export function normalizeSymbolKeyForCompanyLookup(symbol: string): string {
+  return normalizeKey(symbol);
 }
 
 /**

@@ -39,7 +39,7 @@ const toMonthlyRate = (annualPct: number) => {
 
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { formatCurrencyString } = useFormatCurrency();
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
@@ -124,10 +124,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const d = data as any;
         const investments = d?.personalInvestments ?? data?.investments ?? [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const netWorth = computePersonalNetWorthSAR(data, fx);
+        const netWorth = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
         const investmentValue = getAllInvestmentsValueInSAR(investments, fx);
         return { netWorth, investmentValue };
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {

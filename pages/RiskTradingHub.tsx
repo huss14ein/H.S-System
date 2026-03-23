@@ -39,7 +39,7 @@ const RiskTradingHub: React.FC<{
   /** When true, render without full-page chrome (e.g. inside Money Tools). */
   embedded?: boolean;
 }> = ({ setActivePage, triggerPageAction, embedded = false }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
@@ -81,7 +81,10 @@ const RiskTradingHub: React.FC<{
 
   const { exchangeRate } = useCurrency();
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-  const currentNetWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, sarPerUsd), [data, sarPerUsd]);
+  const currentNetWorth = useMemo(
+    () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
+    [data, sarPerUsd, getAvailableCashForAccount]
+  );
 
   const reviewInputs = useMemo(() => {
     const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];

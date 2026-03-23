@@ -216,6 +216,74 @@ export function groceryShareOfBaseExpense(
   return Math.max(0.07, Math.min(merged, 0.22));
 }
 
+/** Uplift for Core tier suggested limits (explicit +5% vs prior engine). */
+export const CORE_CATEGORY_LIMIT_MULTIPLIER = 1.05;
+
+/** +5% on bulk envelope bases (user request), before household scaling. */
+const ENVELOPE_BASE_BUMP = 1.05;
+
+/**
+ * Larger households need a larger spending envelope relative to the same income (realistic KSA cost pressure).
+ * Reference: 2 adults, 0 kids ≈ 1.0.
+ */
+export function householdConsumptionScale(adults: number, kids: number): number {
+  const a = Math.max(1, Math.floor(adults));
+  const k = Math.max(0, Math.floor(kids));
+  let m = 1;
+  if (a > 2) m += 0.048 * (a - 2);
+  if (a < 2) m -= 0.035 * (2 - a);
+  m += 0.042 * k;
+  return Math.max(0.94, Math.min(1.34, m));
+}
+
+/**
+ * Monthly expense pool used for category templates and engine buckets when actual spend is unknown.
+ * Scales with profile selection indirectly via category tilts; scales with headcount here.
+ */
+export function effectiveTemplateBaseExpense(monthlySalary: number, adults: number, kids: number): number {
+  const scale = householdConsumptionScale(adults, kids);
+  const heads = Math.max(1, adults + kids);
+  if (monthlySalary > 0) {
+    const incomeExpenseShare = Math.min(0.7, 0.6 + 0.012 * Math.max(0, heads - 2) + 0.008 * kids);
+    return Math.round(monthlySalary * incomeExpenseShare * scale);
+  }
+  const floor = Math.max(8200, 5400 + heads * 1850);
+  return Math.round(floor * scale);
+}
+
+function tierProfileTilt(profile: HouseholdEngineProfile, tier: 'Core' | 'Supporting' | 'Optional'): number {
+  if (profile === 'Conservative') {
+    if (tier === 'Core') return 1.035;
+    if (tier === 'Supporting') return 1.025;
+    return 0.965;
+  }
+  if (profile === 'Aggressive' || profile === 'Growth') {
+    if (tier === 'Core') return 0.985;
+    if (tier === 'Supporting') return 1.045;
+    return 1.065;
+  }
+  return 1;
+}
+
+/** Same factors as applyTierUplift but without rounding (for monthly bucket sums). */
+export function tierAdjustedAmount(
+  raw: number,
+  tier: 'Core' | 'Supporting' | 'Optional',
+  profile: HouseholdEngineProfile
+): number {
+  let v = raw * tierProfileTilt(profile, tier);
+  if (tier === 'Core') v *= CORE_CATEGORY_LIMIT_MULTIPLIER;
+  return Math.max(0, v);
+}
+
+function applyTierUplift(
+  raw: number,
+  tier: 'Core' | 'Supporting' | 'Optional',
+  profile: HouseholdEngineProfile
+): number {
+  return Math.round(tierAdjustedAmount(raw, tier, profile));
+}
+
 /** Household-engine budget categories with suggested limits from household size and salary.
  * Single source for bulk-add; covers monthly, yearly, weekly. */
 export function generateHouseholdBudgetCategories(
@@ -224,70 +292,228 @@ export function generateHouseholdBudgetCategories(
   monthlySalary: number,
   profile: HouseholdEngineProfile
 ): HouseholdBudgetCategorySuggestion[] {
-  const baseExpense = monthlySalary > 0 ? monthlySalary * 0.6 : 5000;
-  const income = monthlySalary > 0 ? monthlySalary * 12 : 60000;
-  const pct = (x: number) => Math.round(baseExpense * x);
+  const baseExpense = effectiveTemplateBaseExpense(monthlySalary, adults, kids);
+  const incomeAnnual =
+    monthlySalary > 0 ? monthlySalary * 12 : Math.max(72000, Math.round(effectiveTemplateBaseExpense(12000, adults, kids) * 12));
+  const income = incomeAnnual;
   const savingsMultiplier = profile === 'Conservative' ? 1.2 : profile === 'Aggressive' || profile === 'Growth' ? 0.85 : 1;
   const result: HouseholdBudgetCategorySuggestion[] = [];
 
+  const pct = (share: number, tier: 'Core' | 'Supporting' | 'Optional') =>
+    applyTierUplift(baseExpense * share, tier, profile);
+
   // ——— Monthly (recurring, every 30 days) ———
-  result.push({ category: 'Housing Rent (Monthly)', limit: pct(0.30), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'] });
-  // Groceries: Saudi baseline +10% vs prior; scaled by household size; profile adjusts envelope (Conservative higher, Aggressive leaner).
+  result.push({
+    category: 'Housing Rent (Monthly)',
+    limit: pct(0.3, 'Core'),
+    period: 'monthly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'],
+  });
   const groceriesPct = groceryShareOfBaseExpense(adults, kids, profile);
   result.push({
     category: 'Groceries & Supermarket',
-    limit: pct(groceriesPct),
+    limit: applyTierUplift(baseExpense * groceriesPct, 'Core', profile),
     period: 'monthly',
     tier: 'Core',
     hint: KSA_EXPENSE_CATEGORY_HINTS['Groceries & Supermarket'],
   });
-  result.push({ category: 'Utilities', limit: pct(0.08), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Utilities'] });
-  result.push({ category: 'Telecommunications', limit: pct(0.04), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Telecommunications'] });
-  result.push({ category: 'Transportation', limit: pct(0.10), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Transportation'] });
-  result.push({ category: 'Domestic Help', limit: pct(0.08), period: 'monthly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Domestic Help'] });
-  result.push({ category: 'Dining & Entertainment', limit: pct(0.06), period: 'monthly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Dining & Entertainment'] });
-  result.push({ category: 'Insurance Co-pay', limit: pct(0.02), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Insurance Co-pay'] });
-  result.push({ category: 'Debt/Loans', limit: pct(0.05), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Debt/Loans'] });
-  result.push({ category: 'Remittances', limit: pct(0.08), period: 'monthly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Remittances'] });
-  result.push({ category: 'Pocket Money', limit: pct(0.02), period: 'monthly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Pocket Money'] });
-  result.push({ category: 'Savings & Investments', limit: Math.round(pct(0.15) * savingsMultiplier), period: 'monthly', tier: 'Core' });
-  result.push({ category: 'Health', limit: pct(0.02), period: 'monthly', tier: 'Core' });
-  result.push({ category: 'Personal Care', limit: pct(0.03), period: 'monthly', tier: 'Supporting' });
-  result.push({ category: 'Shopping', limit: pct(0.03), period: 'monthly', tier: 'Optional' });
-  result.push({ category: 'Miscellaneous', limit: pct(0.02), period: 'monthly', tier: 'Optional' });
+  result.push({ category: 'Utilities', limit: pct(0.08, 'Core'), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Utilities'] });
+  result.push({
+    category: 'Telecommunications',
+    limit: pct(0.04, 'Core'),
+    period: 'monthly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Telecommunications'],
+  });
+  result.push({
+    category: 'Transportation',
+    limit: pct(0.1, 'Core'),
+    period: 'monthly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Transportation'],
+  });
+  result.push({
+    category: 'Domestic Help',
+    limit: pct(0.08, 'Supporting'),
+    period: 'monthly',
+    tier: 'Supporting',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Domestic Help'],
+  });
+  result.push({
+    category: 'Dining & Entertainment',
+    limit: pct(0.06, 'Optional'),
+    period: 'monthly',
+    tier: 'Optional',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Dining & Entertainment'],
+  });
+  result.push({
+    category: 'Insurance Co-pay',
+    limit: pct(0.02, 'Core'),
+    period: 'monthly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Insurance Co-pay'],
+  });
+  result.push({ category: 'Debt/Loans', limit: pct(0.05, 'Core'), period: 'monthly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Debt/Loans'] });
+  result.push({
+    category: 'Remittances',
+    limit: pct(0.08, 'Supporting'),
+    period: 'monthly',
+    tier: 'Supporting',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Remittances'],
+  });
+  result.push({
+    category: 'Pocket Money',
+    limit: pct(0.02, 'Optional'),
+    period: 'monthly',
+    tier: 'Optional',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Pocket Money'],
+  });
+  result.push({
+    category: 'Savings & Investments',
+    limit: Math.round(applyTierUplift(baseExpense * 0.15, 'Core', profile) * savingsMultiplier),
+    period: 'monthly',
+    tier: 'Core',
+  });
+  result.push({ category: 'Health', limit: pct(0.02, 'Core'), period: 'monthly', tier: 'Core' });
+  result.push({
+    category: 'Personal Care',
+    limit: pct(0.03, 'Supporting'),
+    period: 'monthly',
+    tier: 'Supporting',
+  });
+  result.push({ category: 'Shopping', limit: pct(0.03, 'Optional'), period: 'monthly', tier: 'Optional' });
+  result.push({
+    category: 'Miscellaneous',
+    limit: pct(0.02, 'Optional'),
+    period: 'monthly',
+    tier: 'Optional',
+  });
   if (kids > 0) {
-    result.push({ category: 'School & Children', limit: pct(0.10) + kids * 500, period: 'monthly', tier: 'Core' });
+    result.push({
+      category: 'School & Children',
+      limit: applyTierUplift(baseExpense * 0.1 + kids * 525, 'Core', profile),
+      period: 'monthly',
+      tier: 'Core',
+    });
   }
 
   // ——— 6-Month (semi-annual): store as yearly, limit = total per year (2 payments) ———
-  const semiAnnualRent = Math.round(baseExpense * 0.30 * 2);
-  result.push({ category: 'Housing Rent (Semi-Annual)', limit: semiAnnualRent, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Semi-Annual)'] });
-  result.push({ category: 'School Tuition (Semester)', limit: Math.round(baseExpense * 0.10 * 2), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['School Tuition (Semester)'] });
-  result.push({ category: 'Bulk Household Maintenance', limit: Math.round(baseExpense * 0.03 * 2), period: 'yearly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Bulk Household Maintenance'] });
+  const semiCore = (share: number) => applyTierUplift(baseExpense * share * 2, 'Core', profile);
+  const semiSup = (share: number) => applyTierUplift(baseExpense * share * 2, 'Supporting', profile);
+  result.push({
+    category: 'Housing Rent (Semi-Annual)',
+    limit: semiCore(0.3),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Semi-Annual)'],
+  });
+  result.push({
+    category: 'School Tuition (Semester)',
+    limit: semiCore(0.1),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['School Tuition (Semester)'],
+  });
+  result.push({
+    category: 'Bulk Household Maintenance',
+    limit: semiSup(0.03),
+    period: 'yearly',
+    tier: 'Supporting',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Bulk Household Maintenance'],
+  });
 
   // ——— Yearly (sinking fund: save a bit each month) ———
-  result.push({ category: 'Iqama Renewal', limit: Math.round(income * 0.02), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Iqama Renewal'] });
-  result.push({ category: 'Dependent Fees', limit: (adults + kids) * 4800, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Dependent Fees'] });
-  result.push({ category: 'Exit/Re-entry Visa', limit: Math.round(income * 0.01), period: 'yearly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Exit/Re-entry Visa'] });
-  result.push({ category: 'Vehicle Insurance', limit: Math.round(income * 0.03), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Vehicle Insurance'] });
-  result.push({ category: 'Istimara (Registration)', limit: Math.round(income * 0.01), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Istimara (Registration)'] });
-  result.push({ category: 'Fahas (MVPI)', limit: Math.round(income * 0.005), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Fahas (MVPI)'] });
+  result.push({
+    category: 'Iqama Renewal',
+    limit: applyTierUplift(income * 0.02, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Iqama Renewal'],
+  });
+  result.push({
+    category: 'Dependent Fees',
+    limit: applyTierUplift((adults + kids) * 4800, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Dependent Fees'],
+  });
+  result.push({
+    category: 'Exit/Re-entry Visa',
+    limit: applyTierUplift(income * 0.01, 'Supporting', profile),
+    period: 'yearly',
+    tier: 'Supporting',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Exit/Re-entry Visa'],
+  });
+  result.push({
+    category: 'Vehicle Insurance',
+    limit: applyTierUplift(income * 0.03, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Vehicle Insurance'],
+  });
+  result.push({
+    category: 'Istimara (Registration)',
+    limit: applyTierUplift(income * 0.01, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Istimara (Registration)'],
+  });
+  result.push({
+    category: 'Fahas (MVPI)',
+    limit: applyTierUplift(income * 0.005, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Fahas (MVPI)'],
+  });
   if (kids > 0) {
-    result.push({ category: 'School Uniforms & Books', limit: kids * 2000, period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['School Uniforms & Books'] });
+    result.push({
+      category: 'School Uniforms & Books',
+      limit: applyTierUplift(kids * 2100, 'Core', profile),
+      period: 'yearly',
+      tier: 'Core',
+      hint: KSA_EXPENSE_CATEGORY_HINTS['School Uniforms & Books'],
+    });
   }
-  result.push({ category: 'Zakat', limit: Math.round(income * 0.025), period: 'yearly', tier: 'Core', hint: KSA_EXPENSE_CATEGORY_HINTS['Zakat'] });
-  result.push({ category: 'Annual Vacation', limit: Math.round(income * 0.08), period: 'yearly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Annual Vacation'] });
+  result.push({
+    category: 'Zakat',
+    limit: applyTierUplift(income * 0.025, 'Core', profile),
+    period: 'yearly',
+    tier: 'Core',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Zakat'],
+  });
+  result.push({
+    category: 'Annual Vacation',
+    limit: applyTierUplift(income * 0.08, 'Optional', profile),
+    period: 'yearly',
+    tier: 'Optional',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Annual Vacation'],
+  });
 
   // ——— Weekly ——— (aligned with grocery bump + profile)
   result.push({
     category: 'Fresh Produce (Weekly)',
-    limit: Math.round((baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(profile)) / 4.33),
+    limit: Math.round(
+      tierAdjustedAmount(baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(profile), 'Core', profile) / 4.33
+    ),
     period: 'weekly',
     tier: 'Core',
     hint: KSA_EXPENSE_CATEGORY_HINTS['Fresh Produce (Weekly)'],
   });
-  result.push({ category: 'Household Help (Hourly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Supporting', hint: KSA_EXPENSE_CATEGORY_HINTS['Household Help (Hourly)'] });
-  result.push({ category: 'Leisure (Weekly)', limit: Math.round((baseExpense * 0.02) / 4.33), period: 'weekly', tier: 'Optional', hint: KSA_EXPENSE_CATEGORY_HINTS['Leisure (Weekly)'] });
+  result.push({
+    category: 'Household Help (Hourly)',
+    limit: Math.round(tierAdjustedAmount(baseExpense * 0.02, 'Supporting', profile) / 4.33),
+    period: 'weekly',
+    tier: 'Supporting',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Household Help (Hourly)'],
+  });
+  result.push({
+    category: 'Leisure (Weekly)',
+    limit: Math.round(tierAdjustedAmount(baseExpense * 0.02, 'Optional', profile) / 4.33),
+    period: 'weekly',
+    tier: 'Optional',
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Leisure (Weekly)'],
+  });
 
   return result;
 }
@@ -323,12 +549,13 @@ export function budgetLimitFromMonthlyEquivalent(
 /**
  * Share of monthly salary used as the “spending envelope” when splitting across a subset of categories.
  * Conservative = tighter envelope (more implied savings); Aggressive = wider envelope.
+ * Values include +5% uplift (ENVELOPE_BASE_BUMP) vs the legacy engine.
  */
 const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
-  Conservative: 0.52,
-  Moderate: 0.58,
-  Aggressive: 0.64,
-  Growth: 0.62,
+  Conservative: 0.52 * ENVELOPE_BASE_BUMP,
+  Moderate: 0.58 * ENVELOPE_BASE_BUMP,
+  Aggressive: 0.64 * ENVELOPE_BASE_BUMP,
+  Growth: 0.62 * ENVELOPE_BASE_BUMP,
 };
 
 /**
@@ -340,7 +567,9 @@ export function computeBulkAddLimitsForSelection(
   baseSuggestions: HouseholdBudgetCategorySuggestion[],
   selectedCategoryNames: string[],
   monthlySalary: number,
-  profile: HouseholdEngineProfile
+  profile: HouseholdEngineProfile,
+  adults: number = 2,
+  kids: number = 0
 ): HouseholdBudgetCategorySuggestion[] {
   if (!baseSuggestions.length) return [];
   const salary = Number(monthlySalary) || 0;
@@ -354,8 +583,9 @@ export function computeBulkAddLimitsForSelection(
   const selectedRows = baseSuggestions.filter((c) => selected.has(c.category));
   if (selectedRows.length === 0) return baseSuggestions.map((c) => ({ ...c }));
 
-  const envelopePct =
-    PROFILE_BULK_ENVELOPE_PCT[String(profile)] ?? PROFILE_BULK_ENVELOPE_PCT.Moderate ?? 0.58;
+  const basePct = PROFILE_BULK_ENVELOPE_PCT[String(profile)] ?? PROFILE_BULK_ENVELOPE_PCT.Moderate ?? 0.58 * ENVELOPE_BASE_BUMP;
+  const headScale = householdConsumptionScale(adults, kids);
+  const envelopePct = Math.min(0.74, basePct * Math.min(1.14, headScale / 1.02));
   const envelope = salary * envelopePct;
 
   const weights = selectedRows.map((c) => monthlyEquivalentFromBudgetLimit(c.limit, c.period));
@@ -419,7 +649,7 @@ export function buildHouseholdEngineInputFromPlanData(
     emergencyBalance: liquidBalance,
     reserveBalance: 0,
     goals: goalsMapped,
-    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, ...options?.config },
+    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, profile: options?.profile, ...options?.config },
   };
 }
 
@@ -467,7 +697,7 @@ export function buildHouseholdEngineInputFromData(
     emergencyBalance: liquidBalance,
     reserveBalance: 0,
     goals: goalsMapped,
-    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, ...options?.config },
+    config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, profile: options?.profile, ...options?.config },
   };
 }
 
@@ -532,61 +762,58 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
   // Calculate expense category allocations based on household size and income (KSA-specific)
   const getExpenseAllocations = (income: number, expense: number, monthIndex: number) => {
     const override = monthlyOverrides.find(o => (o.monthIndex === monthIndex || o.month === monthIndex + 1));
-    const baseExpense = expense || (income * 0.6); // Default 60% of income for expenses if no expense data
-    
-    // KSA-specific monthly expense allocations (as percentages of total monthly expenses)
-    const groceryShare = groceryShareOfBaseExpense(adults, kids, profile);
+    const engineProfile = profile as HouseholdEngineProfile;
+    const modeledBase = effectiveTemplateBaseExpense(income, adults, kids);
+    const baseExpense = expense > 0 ? expense : modeledBase;
+
+    const groceryShare = groceryShareOfBaseExpense(adults, kids, engineProfile);
     const allocations: Record<string, number> = {
-      // Monthly Recurring Expenses
-      housing: baseExpense * 0.30,      // 30% - Housing Rent (if paid monthly)
-      groceries: baseExpense * groceryShare, // +10% vs legacy; same formula as bulk-add; profile-aware
-      utilities: baseExpense * 0.08,     // 8% - Electricity (SEC), Water (NWC) - spikes in summer
-      telecommunications: baseExpense * 0.04, // 4% - Home Fiber/5G internet and Mobile data plans
-      transportation: baseExpense * 0.10, // 10% - Petrol/Fuel, Riyadh Metro, Uber/Careem
-      domesticHelp: baseExpense * 0.08,  // 8% - Salary for live-in housemaids or drivers
-      diningEntertainment: baseExpense * 0.06, // 6% - Restaurants, cafes, streaming (Netflix/Shahid)
-      insuranceCoPay: baseExpense * 0.02, // 2% - Small fees at clinics during doctor visits
-      debtLoans: baseExpense * 0.05,    // 5% - Personal loan installments or Credit Card minimums
-      remittances: baseExpense * 0.08,   // 8% - Funds sent to family outside KSA (for expats)
-      pocketMoney: baseExpense * 0.02,   // 2% - Cash for small daily needs (tea, snacks, parking)
-      
-      // Legacy category mappings for backward compatibility
-      food: baseExpense * groceryShare, // Alias for groceries
-      health: baseExpense * 0.02,        // Alias for insuranceCoPay
-      personalCare: baseExpense * 0.03,  // 3% - Grooming, hygiene (part of groceries)
-      entertainment: baseExpense * 0.06,  // Alias for diningEntertainment
-      shopping: baseExpense * 0.03,       // 3% - Clothing, household items
-      miscellaneous: baseExpense * 0.02,  // 2% - Other expenses
+      housing: tierAdjustedAmount(baseExpense * 0.3, 'Core', engineProfile),
+      groceries: tierAdjustedAmount(baseExpense * groceryShare, 'Core', engineProfile),
+      utilities: tierAdjustedAmount(baseExpense * 0.08, 'Core', engineProfile),
+      telecommunications: tierAdjustedAmount(baseExpense * 0.04, 'Core', engineProfile),
+      transportation: tierAdjustedAmount(baseExpense * 0.1, 'Core', engineProfile),
+      domesticHelp: tierAdjustedAmount(baseExpense * 0.08, 'Supporting', engineProfile),
+      diningEntertainment: tierAdjustedAmount(baseExpense * 0.06, 'Optional', engineProfile),
+      insuranceCoPay: tierAdjustedAmount(baseExpense * 0.02, 'Core', engineProfile),
+      debtLoans: tierAdjustedAmount(baseExpense * 0.05, 'Core', engineProfile),
+      remittances: tierAdjustedAmount(baseExpense * 0.08, 'Supporting', engineProfile),
+      pocketMoney: tierAdjustedAmount(baseExpense * 0.02, 'Optional', engineProfile),
+      food: tierAdjustedAmount(baseExpense * groceryShare, 'Core', engineProfile),
+      health: tierAdjustedAmount(baseExpense * 0.02, 'Core', engineProfile),
+      personalCare: tierAdjustedAmount(baseExpense * 0.03, 'Supporting', engineProfile),
+      entertainment: tierAdjustedAmount(baseExpense * 0.06, 'Optional', engineProfile),
+      shopping: tierAdjustedAmount(baseExpense * 0.03, 'Optional', engineProfile),
+      miscellaneous: tierAdjustedAmount(baseExpense * 0.02, 'Optional', engineProfile),
     };
 
-    // Semi-Annual Expenses (6-month) - allocate monthly sinking fund
-    // These are divided by 6 to get monthly allocation
     const semiAnnualExpenses = {
-      housingSemiAnnual: (baseExpense * 0.30) / 6, // Housing Rent (2 checks per year)
-      schoolTuition: (baseExpense * 0.10) / 6,     // School fees per semester (if applicable)
-      householdMaintenance: (baseExpense * 0.03) / 6, // AC cleaning/servicing before and after summer
+      housingSemiAnnual: tierAdjustedAmount(baseExpense * 0.3, 'Core', engineProfile) / 6,
+      schoolTuition: tierAdjustedAmount(baseExpense * 0.1, 'Core', engineProfile) / 6,
+      householdMaintenance: tierAdjustedAmount(baseExpense * 0.03, 'Supporting', engineProfile) / 6,
     };
     Object.assign(allocations, semiAnnualExpenses);
 
-    // Annual Expenses - allocate monthly sinking fund (divided by 12)
+    const heads = Math.max(1, adults + kids);
     const annualExpenses = {
-      iqamaRenewal: (income * 0.02) / 12,          // Government fee for residency (expats)
-      dependentFees: (kids * 4800) / 12,           // SAR 4,800 per person per year
-      exitReentryVisa: (income * 0.01) / 12,       // For vacations outside the Kingdom
-      vehicleInsurance: (income * 0.03) / 12,     // Mandatory TPL or Comprehensive insurance
-      istimara: (income * 0.01) / 12,              // Car registration renewal (every 3 years, budgeted yearly)
-      fahas: (income * 0.005) / 12,                // Annual periodic vehicle inspection fee
-      schoolUniformsBooks: (kids * 2000) / 12,     // Typically in August/September
-      zakat: (income * 0.025) / 12,                // Religious almsgiving (2.5% of annual savings)
-      annualVacation: (income * 0.08) / 12,         // Flights and travel expenses
+      iqamaRenewal: tierAdjustedAmount(income * 0.02, 'Core', engineProfile) / 12,
+      dependentFees: tierAdjustedAmount(heads * 4800, 'Core', engineProfile) / 12,
+      exitReentryVisa: tierAdjustedAmount(income * 0.01, 'Supporting', engineProfile) / 12,
+      vehicleInsurance: tierAdjustedAmount(income * 0.03, 'Core', engineProfile) / 12,
+      istimara: tierAdjustedAmount(income * 0.01, 'Core', engineProfile) / 12,
+      fahas: tierAdjustedAmount(income * 0.005, 'Core', engineProfile) / 12,
+      schoolUniformsBooks: (kids > 0 ? tierAdjustedAmount(kids * 2100, 'Core', engineProfile) : 0) / 12,
+      zakat: tierAdjustedAmount(income * 0.025, 'Core', engineProfile) / 12,
+      annualVacation: tierAdjustedAmount(income * 0.08, 'Optional', engineProfile) / 12,
     };
     Object.assign(allocations, annualExpenses);
 
-    // Weekly Expenses - convert to monthly (multiply by 4.33)
     const weeklyExpenses = {
-      freshProduce: baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(profile) * 4.33, // Aligned with grocery profile bump
-      householdHelpHourly: (baseExpense * 0.02) * 4.33, // Hourly cleaning services (Mudarri or Java)
-      leisureWeekly: (baseExpense * 0.02) * 4.33,  // Weekend outings, cinema, family gatherings
+      freshProduce:
+        tierAdjustedAmount(baseExpense * 0.03 * 1.1 * groceryProfileSpendingMultiplier(engineProfile), 'Core', engineProfile) *
+        4.33,
+      householdHelpHourly: tierAdjustedAmount(baseExpense * 0.02, 'Supporting', engineProfile) * 4.33,
+      leisureWeekly: tierAdjustedAmount(baseExpense * 0.02, 'Optional', engineProfile) * 4.33,
     };
     Object.assign(allocations, weeklyExpenses);
 
@@ -719,7 +946,23 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
     if (remainingReserveGap > 0 && i === 11) {
       warnings.push(`Reserve pool still ${Math.round(remainingReserveGap).toLocaleString()} short of target`);
     }
-    
+
+    const savingsBucketKeys = new Set([
+      'emergencySavings',
+      'reserveSavings',
+      'goalSavings',
+      'retirementSavings',
+      'investing',
+      'kidsFutureSavings',
+    ]);
+    const savingsTotal = Array.from(savingsBucketKeys).reduce((s, k) => s + (Number((buckets as Record<string, number>)[k]) || 0), 0);
+    const consumptionFromBuckets = Object.entries(buckets).reduce((sum, [k, v]) => {
+      if (savingsBucketKeys.has(k)) return sum;
+      return sum + (Number(v) || 0);
+    }, 0);
+    const txExpense = Number(monthlyActualExpense[i] ?? exp);
+    const consumptionOutflow = txExpense > 0 ? txExpense : consumptionFromBuckets;
+
     return {
       monthIndex: i,
       month: i + 1,
@@ -737,13 +980,8 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       baselineExpense: exp,
       cashflowStress,
       plannedNet: plannedNetMonth,
-      totalPlannedOutflow: exp + Object.values(buckets).filter(() => {
-        // Only count savings buckets, not expense buckets (expenses already in exp)
-        const bucketKeys = Object.keys(buckets);
-        const key = bucketKeys[Object.values(buckets).indexOf(_)];
-        return key && (key.includes('Savings') || key === 'investing' || key === 'retirementSavings' || key === 'kidsFutureSavings');
-      }).reduce((a, b) => a + (b as number), 0),
-      totalActualOutflow: Number(monthlyActualExpense[i] ?? exp),
+      totalPlannedOutflow: consumptionOutflow + savingsTotal,
+      totalActualOutflow: consumptionOutflow,
       buckets,
     };
   });

@@ -34,7 +34,7 @@ interface SectionCardProps {
   collapsible?: boolean;
   /** One-line summary shown when collapsed (use with collapsible) */
   collapsibleSummary?: string;
-  /** Start expanded when collapsible (default: false) */
+  /** Start expanded when collapsible (default: true — user can collapse via header) */
   defaultExpanded?: boolean;
 }
 
@@ -58,7 +58,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
   id,
   collapsible = false,
   collapsibleSummary,
-  defaultExpanded = false,
+  defaultExpanded = true,
 }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const cardClass = hover || onClick ? 'section-card-hover' : 'section-card';
@@ -102,7 +102,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
               <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {collapsibleSummary}</span>
             )}
           </button>
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0 relative z-20 pt-0.5">
             {resolvedHint ? <InfoHint text={resolvedHint} popoverAlign="right" /> : null}
             <button
               type="button"

@@ -247,7 +247,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
         </button>
       </SectionCard>
 
-      <SectionCard title="Your saved ideas" className="mt-6" collapsible collapsibleSummary={`${theses.length} ideas saved`} defaultExpanded>
+      <SectionCard title="Your saved ideas" collapsible collapsibleSummary={`${theses.length} ideas saved`} defaultExpanded>
         {theses.length === 0 ? (
           <p className="text-sm text-slate-500">No ideas saved yet. Add one above to get started.</p>
         ) : (
@@ -316,7 +316,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
           </div>
         )}
       </SectionCard>
-      <SectionCard title="Note history" className="mt-6" collapsible collapsibleSummary="Journal notes">
+      <SectionCard title="Note history" collapsible collapsibleSummary="Journal notes">
         {sorted.length === 0 ? (
           <p className="text-sm text-slate-500">No notes yet.</p>
         ) : (

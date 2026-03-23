@@ -32,5 +32,5 @@
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), camera=()"
-    # Content Security Policy - adjust based on your needs
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co https://*.googleapis.com https://generativelanguage.googleapis.com https://api.anthropic.com https://api.x.ai https://api.openai.com; frame-ancestors 'none';"
+    # CSP: include fonts (Inter), live market data (Finnhub, Stooq, Binance fallback), Supabase REST+Realtime, AI APIs, Netlify preview iframe + RUM
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.googleapis.com https://generativelanguage.googleapis.com https://api.anthropic.com https://api.x.ai https://api.openai.com https://finnhub.io https://stooq.com https://api.binance.com https://ingesteer.services-prod.nsvcs.net; frame-ancestors 'none'; frame-src 'self' https://app.netlify.com;"

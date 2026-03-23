@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  exportPortfolioReview,
+  generateMonthlyReport,
   generateWealthSummaryReportCsv,
   generateWealthSummaryReportHtml,
   generateWealthSummaryReportJson,
   type WealthSummaryReportInput,
 } from '../services/reportingEngine';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import type { FinancialData } from '../types';
 
 const sampleInput: WealthSummaryReportInput = {
   generatedAtIso: '2026-03-19T10:00:00.000Z',
@@ -84,5 +88,64 @@ describe('wealth summary report exports', () => {
     expect(html).toContain('AAPL');
     expect(html).toContain('MSFT');
     expect(html).toContain('Current Value (SAR)');
+  });
+});
+
+describe('monthly report and portfolio review export', () => {
+  it('includes net worth and cashflow fields in monthly JSON', () => {
+    const json = generateMonthlyReport({
+      periodLabel: '2026-03',
+      netWorth: 50000,
+      liquidNetWorth: 10000,
+      monthlyIncome: 15000,
+      monthlyExpenses: 12000,
+      monthlyPnL: 3000,
+      budgetVariance: 0,
+      roi: 0,
+    });
+    const parsed = JSON.parse(json);
+    expect(parsed.type).toBe('monthly_report');
+    expect(parsed.period).toBe('2026-03');
+    expect(parsed.netWorth).toBe(50000);
+    expect(parsed.liquidNetWorth).toBe(10000);
+    expect(parsed.monthlyIncome).toBe(15000);
+    expect(parsed.monthlyExpenses).toBe(12000);
+    expect(parsed.monthlyPnL).toBe(3000);
+    expect(parsed.budgetVariance).toBe(0);
+    expect(parsed.roi).toBe(0);
+  });
+
+  it('computeMonthlyReportFinancialKpis returns budget variance and roi', () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = `${y}-${m}-15`;
+    const data = {
+      budgets: [{ category: 'Food', limit: 3000, period: 'monthly' }],
+      transactions: [{ date: d, type: 'expense', category: 'Food', amount: -1000 }],
+      accounts: [{ id: 'a1', type: 'Checking', balance: 5000 }],
+      investments: [],
+      investmentTransactions: [],
+      settings: {},
+    } as unknown as FinancialData;
+    const k = computeMonthlyReportFinancialKpis(data, 3.75, () => ({ SAR: 0, USD: 0 }));
+    expect(k.budgetVariance).toBe(2000);
+    expect(typeof k.roi).toBe('number');
+  });
+
+  it('includes non-zero plPct in portfolio review CSV', () => {
+    const csv = exportPortfolioReview({
+      positions: [
+        {
+          symbol: 'TEST',
+          marketValue: 1100,
+          avgCost: 100,
+          plPct: 10,
+          sleeve: 'Core',
+        },
+      ],
+    });
+    expect(csv).toContain('TEST');
+    expect(csv).toContain('10');
   });
 });

@@ -13,6 +13,23 @@ const MarketSimulator: React.FC = () => {
     contextRef.current = { dataContext, marketContext };
 
     const previousPricesRef = useRef<Record<string, number>>({});
+    const didInitialPricePassRef = useRef(false);
+
+    /** When portfolio data first loads, run one price pass (live if API key present). */
+    useEffect(() => {
+        const { data } = dataContext ?? {};
+        if (!data || !marketContext?.bumpPriceRefresh) return;
+        const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const holdings = inv.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
+        const watch = data?.watchlist ?? [];
+        const planned = data?.plannedTrades ?? [];
+        const comm = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const hasSymbols =
+            holdings.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
+        if (!hasSymbols || didInitialPricePassRef.current) return;
+        didInitialPricePassRef.current = true;
+        marketContext.bumpPriceRefresh();
+    }, [dataContext?.data, marketContext?.bumpPriceRefresh]);
 
     useEffect(() => {
         if (!marketContext) return;
@@ -20,7 +37,10 @@ const MarketSimulator: React.FC = () => {
         
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
-            if (!dataContext || !marketContext || !dataContext.data) return;
+            if (!dataContext || !marketContext || !dataContext.data) {
+                marketContext?.setIsRefreshing(false);
+                return;
+            }
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
@@ -164,7 +184,15 @@ const MarketSimulator: React.FC = () => {
             }
         };
 
-        runSimulationTick(true);
+        void (async () => {
+            try {
+                await runSimulationTick(true);
+            } catch (e) {
+                console.error('MarketSimulator tick failed:', e);
+            } finally {
+                contextRef.current.marketContext?.setIsRefreshing(false);
+            }
+        })();
 
     }, [marketContext?.refreshTrigger]);
 

@@ -20,26 +20,46 @@ import { DocumentDuplicateIcon } from './icons/DocumentDuplicateIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { lookupHintForTitle } from '../content/sectionInfoHints';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
 
 const DEFAULT_EXPERT_RESULT_HINT =
     'Markdown from the AI for this expert. Review numbers and assumptions; tables are illustrative. Not financial advice.';
 const SALARY_ALLOCATION_RESULT_HINT =
     'Allocation percentages (e.g. Essentials %, Savings %, Investment %) show how to split your salary. Amounts are in SAR. Use as a guide; adjust to your situation. Not financial advice.';
 
-type ExpertParamKey = 'salary' | 'fixedExpenses' | 'currentSavings' | 'goal' | 'expenseBreakdown' | 'monthlyInvestment' | 'currentNetWorth' | 'debtList' | 'investmentAmountOrPct' | 'riskTolerance' | 'monthlyExpenses' | 'currentPortfolio' | 'currentExpenses';
+type ExpertParamKey =
+    | 'salary'
+    | 'fixedExpenses'
+    | 'currentSavings'
+    | 'goal'
+    | 'expenseBreakdown'
+    | 'monthlyInvestment'
+    | 'currentNetWorth'
+    | 'debtList'
+    | 'receivableList'
+    | 'investmentAmountOrPct'
+    | 'riskTolerance'
+    | 'monthlyExpenses'
+    | 'currentPortfolio'
+    | 'currentExpenses';
 
 const EXPERTS: { id: string; name: string; logic: string; run: (p: any) => Promise<string>; params: ExpertParamKey[] }[] = [
     { id: 'salary-allocation', name: 'Salary Allocation Expert', logic: 'Prioritize essentials → protect savings → enjoy responsibly → accelerate wealth', run: getSalaryAllocationExpert, params: ['salary', 'fixedExpenses', 'currentSavings', 'goal'] },
     { id: 'cash-flow', name: 'Cash Flow Analyst', logic: 'Track every riyal → find permanent structural improvements → raise savings rate without misery', run: getCashFlowAnalystExpert, params: ['salary', 'expenseBreakdown'] },
     { id: 'wealth-5y', name: '5-Year Wealth Growth Plan', logic: 'Realistic compounding → fixed monthly investment → milestone tracking → biggest lever identification', run: getWealth5YearExpert, params: ['salary', 'monthlyInvestment', 'currentNetWorth'] },
-    { id: 'debt-elimination', name: 'Debt Elimination Strategy', logic: 'Minimize total interest + time → choose avalanche or snowball → exact payoff calendar', run: getDebtEliminationExpert, params: ['salary', 'debtList'] },
+    { id: 'debt-elimination', name: 'Debt Elimination Strategy', logic: 'Minimize total interest + time → choose avalanche or snowball → exact payoff calendar', run: getDebtEliminationExpert, params: ['salary', 'debtList', 'receivableList'] },
     { id: 'investment-automation', name: 'Salary → Investment Automation', logic: 'Pay yourself first → match risk to personality → simple & boring long-term vehicles', run: getInvestmentAutomationExpert, params: ['salary', 'investmentAmountOrPct', 'riskTolerance'] },
     { id: 'financial-independence', name: 'Financial Freedom / Independence Timeline', logic: 'Portfolio = expenses × 25–28.6 → project contributions + growth → acceleration levers', run: getFinancialIndependenceExpert, params: ['monthlyExpenses', 'currentPortfolio', 'monthlyInvestment'] },
     { id: 'lifestyle-upgrade', name: 'Lifestyle Upgrade Without Slowing Wealth', logic: 'Swap low-joy for high-joy spending → small cost increase, big happiness gain → wealth velocity stays high', run: getLifestyleUpgradeExpert, params: ['salary', 'currentExpenses'] },
 ];
 
 const SalaryPlanningExperts: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
+    const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [formValues, setFormValues] = useState<Record<string, string>>({} as Record<string, string>);
@@ -65,13 +85,11 @@ const SalaryPlanningExperts: React.FC = () => {
         return cash;
     }, [data?.accounts, (data as any)?.personalAccounts]);
 
-    const suggestedNetWorth = React.useMemo(() => {
-        const assets = ((data as any)?.personalAssets ?? data?.assets ?? []).reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0);
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []).reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
-        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []).reduce((s: number, l: { amount?: number }) => s + Math.max(0, (l.amount ?? 0)), 0);
-        const commodities = ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []).reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0);
-        return assets + accounts - liabilities + commodities;
-    }, [data?.assets, data?.accounts, data?.liabilities, data?.commodityHoldings]);
+    /** Same formula as Summary / Dashboard (investments, brokerage cash, commodities, assets, liabilities). */
+    const liveNetWorthSAR = React.useMemo(() => {
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        return computePersonalNetWorthSAR(data ?? null, fx, { getAvailableCashForAccount });
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     // Fixed expenses: from Budgets (sum limits current month) or Transactions (fixed expenses, last 3 months avg)
     const { suggestedFixedExpenses, suggestedFixedExpensesSource } = React.useMemo(() => {
@@ -153,16 +171,38 @@ const SalaryPlanningExperts: React.FC = () => {
         const byMonth = new Set(recent.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
         const avg = byMonth > 0 ? total / byMonth : 0;
         if (avg > 0) return { suggestedMonthlyInvestment: Math.round(avg), suggestedMonthlyInvestmentSource: 'Investment transactions' };
+        if (suggestedSalary > 0) {
+            const v = Math.max(500, Math.round(suggestedSalary * 0.1));
+            return { suggestedMonthlyInvestment: v, suggestedMonthlyInvestmentSource: '10% of salary (suggested)' };
+        }
         return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
-    }, [data?.investmentPlan, data?.investmentTransactions, data?.accounts, (data as any)?.personalAccounts]);
+    }, [data?.investmentPlan, data?.investmentTransactions, data?.accounts, (data as any)?.personalAccounts, suggestedSalary]);
 
-    // Debt list: from Liabilities
-    const { suggestedDebtList, suggestedDebtListSource } = React.useMemo(() => {
-        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as { name?: string; amount?: number; type?: string; status?: string }[];
-        const active = liabilities.filter((l) => (l.status || 'Active') === 'Active' && Number(l.amount) > 0);
-        if (active.length === 0) return { suggestedDebtList: '', suggestedDebtListSource: '' };
-        const lines = active.map((l) => `${l.name || l.type || 'Debt'}: ${Math.round(Number(l.amount) || 0)} SAR`).join('; ');
-        return { suggestedDebtList: lines, suggestedDebtListSource: 'Liabilities' };
+    /** Finova: amount < 0 = debt you owe; amount > 0 = receivable (owed to you). */
+    const { suggestedDebtList, suggestedDebtListSource, suggestedReceivableList, suggestedReceivableListSource } = React.useMemo(() => {
+        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as {
+            name?: string;
+            amount?: number;
+            type?: string;
+            status?: string;
+        }[];
+        const active = liabilities.filter((l) => (l.status || 'Active') === 'Active');
+        const debts = active.filter((l) => Number(l.amount) < 0);
+        const receivables = active.filter((l) => Number(l.amount) > 0);
+        const debtLines =
+            debts.length === 0
+                ? ''
+                : debts.map((l) => `${l.name || l.type || 'Debt'}: ${Math.round(Math.abs(Number(l.amount) || 0))} SAR`).join('; ');
+        const recvLines =
+            receivables.length === 0
+                ? ''
+                : receivables.map((l) => `${l.name || l.type || 'Receivable'}: ${Math.round(Number(l.amount) || 0)} SAR`).join('; ');
+        return {
+            suggestedDebtList: debtLines,
+            suggestedDebtListSource: 'Liabilities (debts you owe)',
+            suggestedReceivableList: recvLines,
+            suggestedReceivableListSource: 'Liabilities (owed to you)',
+        };
     }, [data?.liabilities, (data as any)?.personalLiabilities]);
 
     // Primary goal: from Goals (first or highest priority)
@@ -195,9 +235,7 @@ const SalaryPlanningExperts: React.FC = () => {
         };
     }, [data?.transactions, (data as any)?.personalTransactions]);
 
-    // Current portfolio / investable: same as net worth for this context
-    const suggestedCurrentPortfolio = suggestedNetWorth;
-    const suggestedCurrentPortfolioSource = (suggestedNetWorth > 0 ? 'Accounts + Assets + Investments − Liabilities' : '') as string;
+    const suggestedCurrentPortfolioSource = 'Live (same as Summary / Dashboard)';
 
     // Investment amount or %: from Investment Plan monthly budget and salary
     const { suggestedInvestmentAmountOrPct, suggestedInvestmentAmountOrPctSource } = React.useMemo(() => {
@@ -218,20 +256,19 @@ const SalaryPlanningExperts: React.FC = () => {
         const f: Record<string, string> = {};
         if (suggestedSalary > 0) f.salary = String(suggestedSalary);
         if (suggestedSavings > 0) f.currentSavings = String(Math.round(suggestedSavings));
-        if (suggestedNetWorth !== 0) f.currentNetWorth = String(Math.round(suggestedNetWorth));
         if (suggestedFixedExpenses > 0) f.fixedExpenses = String(suggestedFixedExpenses);
         if (suggestedExpenseBreakdown) f.expenseBreakdown = suggestedExpenseBreakdown;
         if (suggestedMonthlyInvestment > 0) f.monthlyInvestment = String(suggestedMonthlyInvestment);
         if (suggestedDebtList) f.debtList = suggestedDebtList;
+        if (suggestedReceivableList) f.receivableList = suggestedReceivableList;
         if (suggestedGoal) f.goal = suggestedGoal;
         if (suggestedMonthlyExpenses > 0) {
             f.monthlyExpenses = String(suggestedMonthlyExpenses);
             f.currentExpenses = String(suggestedCurrentExpenses);
         }
-        if (suggestedCurrentPortfolio > 0) f.currentPortfolio = String(Math.round(suggestedCurrentPortfolio));
         if (suggestedInvestmentAmountOrPct) f.investmentAmountOrPct = suggestedInvestmentAmountOrPct;
         return f;
-    }, [suggestedSalary, suggestedSavings, suggestedNetWorth, suggestedFixedExpenses, suggestedExpenseBreakdown, suggestedMonthlyInvestment, suggestedDebtList, suggestedGoal, suggestedMonthlyExpenses, suggestedCurrentExpenses, suggestedCurrentPortfolio, suggestedInvestmentAmountOrPct]);
+    }, [suggestedSalary, suggestedSavings, suggestedFixedExpenses, suggestedExpenseBreakdown, suggestedMonthlyInvestment, suggestedDebtList, suggestedReceivableList, suggestedGoal, suggestedMonthlyExpenses, suggestedCurrentExpenses, suggestedInvestmentAmountOrPct]);
 
     React.useEffect(() => {
         setFormValues((prev) => {
@@ -254,14 +291,14 @@ const SalaryPlanningExperts: React.FC = () => {
         if (!v) return '';
         if (key === 'salary' && v === String(suggestedSalary)) return 'From Transactions';
         if (key === 'currentSavings' && v === String(Math.round(suggestedSavings))) return 'From Accounts';
-        if (key === 'currentNetWorth' && v === String(Math.round(suggestedNetWorth))) return 'From Assets & Accounts';
         if (key === 'fixedExpenses' && v === String(suggestedFixedExpenses)) return suggestedFixedExpensesSource ? `From ${suggestedFixedExpensesSource}` : '';
         if (key === 'expenseBreakdown' && suggestedExpenseBreakdown && v === suggestedExpenseBreakdown) return suggestedExpenseBreakdownSource ? `From ${suggestedExpenseBreakdownSource}` : '';
-        if (key === 'monthlyInvestment' && v === String(suggestedMonthlyInvestment)) return suggestedMonthlyInvestmentSource ? `From ${suggestedMonthlyInvestmentSource}` : '';
+        if (key === 'monthlyInvestment' && v === String(suggestedMonthlyInvestment))
+            return suggestedMonthlyInvestmentSource ? `From ${suggestedMonthlyInvestmentSource}` : '';
         if (key === 'debtList' && v === suggestedDebtList) return suggestedDebtListSource ? `From ${suggestedDebtListSource}` : '';
+        if (key === 'receivableList' && v === suggestedReceivableList) return suggestedReceivableListSource ? `From ${suggestedReceivableListSource}` : '';
         if (key === 'goal' && v === suggestedGoal) return suggestedGoalSource ? `From ${suggestedGoalSource}` : '';
         if ((key === 'monthlyExpenses' || key === 'currentExpenses') && v === String(suggestedMonthlyExpenses)) return suggestedCurrentExpensesSource ? `From ${suggestedCurrentExpensesSource}` : '';
-        if (key === 'currentPortfolio' && v === String(Math.round(suggestedCurrentPortfolio))) return suggestedCurrentPortfolioSource ? `From ${suggestedCurrentPortfolioSource}` : '';
         if (key === 'investmentAmountOrPct' && v === suggestedInvestmentAmountOrPct) return suggestedInvestmentAmountOrPctSource ? `From ${suggestedInvestmentAmountOrPctSource}` : '';
         return '';
     };
@@ -275,13 +312,13 @@ const SalaryPlanningExperts: React.FC = () => {
             case 'cash-flow':
                 return `My monthly take-home salary is ${sal()} SAR.\nHere is my current monthly expense breakdown: ${s('expenseBreakdown', suggestedExpenseBreakdown) || '[PASTE YOUR EXPENSE LIST e.g. Rent 3500, groceries 1800, fuel 600, dining out 1200, subscriptions 400, etc.]'}.\n\nAnalyze my cash flow.\nCalculate my current savings rate.\nShow me exactly where my money is leaking.\nPropose a restructured spending plan that permanently increases my savings rate by at least 10–20% without making life feel worse.`;
             case 'wealth-5y':
-                return `My current monthly salary is ${sal()} SAR.\nI can realistically invest ${s('monthlyInvestment', suggestedMonthlyInvestment) || '[MONTHLY INVESTMENT AMOUNT]'} SAR every month starting now.\nMy current total net worth (savings + investments – debts) is ${s('currentNetWorth', Math.round(suggestedNetWorth)) || '[CURRENT NET WORTH]'} SAR.\n\nBuild me a realistic 5-year wealth growth plan.\nAssume conservative to moderate annual returns (6–10%).\nShow projected net worth at year 1, 3 and 5.\nHighlight the single change that would have the biggest impact on the final number.`;
+                return `My current monthly salary is ${sal()} SAR.\nI can realistically invest ${s('monthlyInvestment', suggestedMonthlyInvestment) || '[MONTHLY INVESTMENT AMOUNT]'} SAR every month starting now.\nMy current total net worth (savings + investments – debts) is ${Math.round(liveNetWorthSAR)} SAR (from Finova live data).\n\nBuild me a realistic 5-year wealth growth plan.\nAssume conservative to moderate annual returns (6–10%).\nShow projected net worth at year 1, 3 and 5.\nHighlight the single change that would have the biggest impact on the final number.`;
             case 'debt-elimination':
-                return `My monthly take-home salary is ${sal()} SAR.\nI currently have the following debts:\n${s('debtList', suggestedDebtList) || '[LIST EACH DEBT like: Credit card A: 24,000 SAR at 2.5% monthly; Personal loan: 48,000 SAR at 1.8% monthly; Car loan: 85,000 SAR at 0.9% monthly]'}.\n\nCalculate the fastest and cheapest way to become completely debt-free.\nShow month-by-month payoff timeline, total interest paid, and how much faster/cheaper it is compared to minimum payments only.\nRecommend avalanche vs snowball and why.`;
+                return `My monthly take-home salary is ${sal()} SAR.\n\nDEBTS I OWE (pay down only):\n${s('debtList', suggestedDebtList) || '[LIST EACH DEBT YOU OWE e.g. Credit card A: 24,000 SAR at 2.5% monthly; Personal loan: 48,000 SAR]'}\n\nAMOUNTS OWED TO ME (receivables — not debts; context only):\n${s('receivableList', suggestedReceivableList) || '[Optional — e.g. personal loan you gave to someone]'}\n\nCalculate the fastest and cheapest way to become debt-free for amounts I owe. Do not treat receivables as debt to pay off.\nShow month-by-month payoff timeline, total interest paid, and how much faster/cheaper it is compared to minimum payments only.\nRecommend avalanche vs snowball and why.`;
             case 'investment-automation':
                 return `My monthly salary is ${sal()} SAR.\nI want to automatically invest ${s('investmentAmountOrPct', suggestedInvestmentAmountOrPct) || '[FIXED AMOUNT OR % e.g. 2000 SAR or 15%]'} every month.\nMy risk tolerance is ${s('riskTolerance', 'MEDIUM')}.\n\nDesign a simple, long-term investment system I can stick to for 10–30 years.\nSuggest asset allocation and specific investment types suitable for someone living in Saudi Arabia (Sukuk, local funds, global ETFs, etc.).\nExplain how to automate it and why this mix fits my risk level.`;
             case 'financial-independence':
-                return `My current monthly expenses (lifestyle I want to maintain forever) are ${s('monthlyExpenses', suggestedMonthlyExpenses) || '[YOUR MONTHLY EXPENSES]'} SAR.\nMy current investable savings / portfolio is ${s('currentPortfolio', Math.round(suggestedCurrentPortfolio)) || '[CURRENT PORTFOLIO]'} SAR.\nI can invest ${s('monthlyInvestment', suggestedMonthlyInvestment) || '[MONTHLY INVESTMENT]'} SAR every month going forward.\n\nUsing a 3.5–4% safe withdrawal rate, tell me:\n1. How big my portfolio needs to be to reach financial independence.\n2. Realistic years until I get there (assume 7–9% average annual return).\n3. 3–4 specific changes that would shorten the timeline the most.`;
+                return `My current monthly expenses (lifestyle I want to maintain forever) are ${s('monthlyExpenses', suggestedMonthlyExpenses) || '[YOUR MONTHLY EXPENSES]'} SAR.\nMy current investable savings / portfolio is ${Math.round(liveNetWorthSAR)} SAR (from Finova live net worth).\nI can invest ${s('monthlyInvestment', suggestedMonthlyInvestment) || '[MONTHLY INVESTMENT]'} SAR every month going forward.\n\nUsing a 3.5–4% safe withdrawal rate, tell me:\n1. How big my portfolio needs to be to reach financial independence.\n2. Realistic years until I get there (assume 7–9% average annual return).\n3. 3–4 specific changes that would shorten the timeline the most.`;
             case 'lifestyle-upgrade':
                 return `My current monthly take-home salary is ${sal()} SAR.\nMy current monthly expenses are roughly ${s('currentExpenses', suggestedCurrentExpenses) || '[CURRENT EXPENSES]'} SAR.\nI want to noticeably improve my daily quality of life but I refuse to slow down my wealth building speed.\n\nPropose specific upgrades and changes that:\n- Feel significantly better day-to-day\n- Keep my savings & investment rate the same or higher\n- Come mostly from cutting low-value spending and replacing it with high-value spending\nGive exact example swaps and new monthly budget if possible.`;
             default:
@@ -326,13 +363,17 @@ const SalaryPlanningExperts: React.FC = () => {
                     text = await getWealth5YearExpert({
                         salary: Number(formValues.salary) || suggestedSalary || 0,
                         monthlyInvestment: Number(formValues.monthlyInvestment) || suggestedMonthlyInvestment || 0,
-                        currentNetWorth: Number(formValues.currentNetWorth) || suggestedNetWorth || 0,
+                        currentNetWorth: liveNetWorthSAR,
                     });
                     break;
                 case 'debt-elimination':
                     text = await getDebtEliminationExpert({
                         salary: Number(formValues.salary) || suggestedSalary || 0,
-                        debtList: formValues.debtList || suggestedDebtList || 'No debts listed. Example: Credit card A: 24,000 SAR at 2.5% monthly; Personal loan: 48,000 SAR at 1.8% monthly.',
+                        debtList:
+                            formValues.debtList ||
+                            suggestedDebtList ||
+                            'No debts listed (amounts you owe). Example: Credit card A: 24,000 SAR at 2.5% monthly; Personal loan: 48,000 SAR.',
+                        receivablesContext: formValues.receivableList || suggestedReceivableList || '',
                     });
                     break;
                 case 'investment-automation':
@@ -345,7 +386,7 @@ const SalaryPlanningExperts: React.FC = () => {
                 case 'financial-independence':
                     text = await getFinancialIndependenceExpert({
                         monthlyExpenses: Number(formValues.monthlyExpenses) || suggestedMonthlyExpenses || 0,
-                        currentPortfolio: Number(formValues.currentPortfolio) || suggestedNetWorth || 0,
+                        currentPortfolio: liveNetWorthSAR,
                         monthlyInvestment: Number(formValues.monthlyInvestment) || suggestedMonthlyInvestment || 0,
                     });
                     break;
@@ -380,7 +421,7 @@ const SalaryPlanningExperts: React.FC = () => {
                     const isExpanded = expandedId === expert.id;
                     const expertTitleHint = lookupHintForTitle(expert.name);
                     return (
-                        <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden hover:border-slate-300 transition-colors">
+                        <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-visible hover:border-slate-300 transition-colors">
                             <div className="flex items-start justify-between gap-3 p-4 hover:bg-slate-50/80 transition-colors">
                                 <button
                                     type="button"
@@ -464,7 +505,7 @@ const SalaryPlanningExperts: React.FC = () => {
                                             <div className="space-y-1">
                                                 <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                                                     Monthly investment (SAR)
-                                                    <InfoHint text="Pre-filled from Investment Plan or recent buy history when available." />
+                                                    <InfoHint text="Pre-filled from Investment Plan, recent buys, or ~10% of detected salary when no plan/history — edit anytime." />
                                                 </label>
                                                 <input type="number" min={0} value={formValues.monthlyInvestment ?? ''} onChange={(e) => updateForm({ monthlyInvestment: e.target.value })} placeholder={suggestedMonthlyInvestment ? `From ${suggestedMonthlyInvestmentSource}: ${suggestedMonthlyInvestment}` : 'e.g. 2000'} className="input-base w-full rounded-lg border-slate-200" />
                                                 {sourceLabel('monthlyInvestment', formValues.monthlyInvestment) && <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('monthlyInvestment', formValues.monthlyInvestment)}</p>}
@@ -474,20 +515,48 @@ const SalaryPlanningExperts: React.FC = () => {
                                             <div className="space-y-1">
                                                 <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                                                     Current net worth (SAR)
-                                                    <InfoHint text="Assets + accounts + investments − liabilities. Pre-filled from Assets, Accounts, Liabilities, Commodities when available." />
+                                                    <InfoHint text="Always pulled from your live Finova data — same formula as Summary / Dashboard (cash, investments, assets, commodities, brokerage cash, minus debt, plus receivables). Not editable here." />
                                                 </label>
-                                                <input type="number" value={formValues.currentNetWorth ?? ''} onChange={(e) => updateForm({ currentNetWorth: e.target.value })} placeholder={suggestedNetWorth ? `From Assets & Accounts: ${Math.round(suggestedNetWorth)}` : 'e.g. 200000'} className="input-base w-full rounded-lg border-slate-200" />
-                                                {sourceLabel('currentNetWorth', formValues.currentNetWorth) && <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('currentNetWorth', formValues.currentNetWorth)}</p>}
+                                                <div className="input-base w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 tabular-nums font-medium">
+                                                    {formatCurrencyString(Math.round(liveNetWorthSAR))}
+                                                </div>
+                                                <p className="text-[11px] text-emerald-600 font-medium">{suggestedCurrentPortfolioSource}</p>
                                             </div>
                                         )}
                                         {expert.params.includes('debtList') && (
                                             <div className="sm:col-span-2 space-y-1">
                                                 <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
-                                                    Debts (name, amount SAR, rate)
-                                                    <InfoHint text="Pre-filled from Liabilities when available. Add rate manually if needed for payoff strategy." />
+                                                    Debts you owe (name, amount SAR, rate if known)
+                                                    <InfoHint text="Money you must repay. In Finova these are liabilities with a negative balance. Receivables (money owed to you) go in the field below — not here." />
                                                 </label>
-                                                <textarea rows={4} value={formValues.debtList ?? ''} onChange={(e) => updateForm({ debtList: e.target.value })} placeholder={suggestedDebtList || 'Credit card A: 24000 SAR at 2.5% monthly; Personal loan: 48000 SAR'} className="input-base w-full rounded-lg border-slate-200" />
-                                                {sourceLabel('debtList', formValues.debtList) && <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('debtList', formValues.debtList)}</p>}
+                                                <textarea
+                                                    rows={3}
+                                                    value={formValues.debtList ?? ''}
+                                                    onChange={(e) => updateForm({ debtList: e.target.value })}
+                                                    placeholder={suggestedDebtList || 'Credit card A: 24000 SAR at 2.5% monthly; Personal loan: 48000 SAR'}
+                                                    className="input-base w-full rounded-lg border-slate-200"
+                                                />
+                                                {sourceLabel('debtList', formValues.debtList) && (
+                                                    <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('debtList', formValues.debtList)}</p>
+                                                )}
+                                            </div>
+                                        )}
+                                        {expert.params.includes('receivableList') && (
+                                            <div className="sm:col-span-2 space-y-1">
+                                                <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                                                    Money owed to you — receivables (optional, context only)
+                                                    <InfoHint text="Amounts others owe you (positive liability balance or “Money Owed to Me” on the Liabilities page). The AI uses this only as context — it is not a debt to pay off." />
+                                                </label>
+                                                <textarea
+                                                    rows={3}
+                                                    value={formValues.receivableList ?? ''}
+                                                    onChange={(e) => updateForm({ receivableList: e.target.value })}
+                                                    placeholder={suggestedReceivableList || 'e.g. Mohammed Othman: 1800 SAR (they owe you)'}
+                                                    className="input-base w-full rounded-lg border-slate-200"
+                                                />
+                                                {sourceLabel('receivableList', formValues.receivableList) && (
+                                                    <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('receivableList', formValues.receivableList)}</p>
+                                                )}
                                             </div>
                                         )}
                                         {expert.params.includes('investmentAmountOrPct') && (
@@ -527,10 +596,12 @@ const SalaryPlanningExperts: React.FC = () => {
                                             <div className="space-y-1">
                                                 <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                                                     Current portfolio / investable savings (SAR)
-                                                    <InfoHint text="Pre-filled from net worth (Accounts + Assets + Investments − Liabilities) when available." />
+                                                    <InfoHint text="Uses your live Finova net worth (same as Summary / Dashboard), not a separate manual entry." />
                                                 </label>
-                                                <input type="number" min={0} value={formValues.currentPortfolio ?? ''} onChange={(e) => updateForm({ currentPortfolio: e.target.value })} placeholder={suggestedCurrentPortfolio ? `From net worth: ${Math.round(suggestedCurrentPortfolio)}` : 'e.g. 150000'} className="input-base w-full rounded-lg border-slate-200" />
-                                                {sourceLabel('currentPortfolio', formValues.currentPortfolio) && <p className="text-[11px] text-emerald-600 font-medium">{sourceLabel('currentPortfolio', formValues.currentPortfolio)}</p>}
+                                                <div className="input-base w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 tabular-nums font-medium">
+                                                    {formatCurrencyString(Math.round(liveNetWorthSAR))}
+                                                </div>
+                                                <p className="text-[11px] text-emerald-600 font-medium">{suggestedCurrentPortfolioSource}</p>
                                             </div>
                                         )}
                                         {expert.params.includes('currentExpenses') && (

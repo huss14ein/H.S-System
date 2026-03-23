@@ -30,6 +30,17 @@ export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
   'Engines & Tools': 'Money Tools',
 };
 
+/** Sub-views opened only inside Investments (not top-level nav / hash routes). */
+export const INVESTMENT_SUB_NAV_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
+  { name: 'Recovery Plan', icon: FlagIcon },
+  { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+  { name: 'Dividend Tracker', icon: BanknotesIcon },
+  { name: 'AI Rebalancer', icon: SparklesIcon },
+  { name: 'Watchlist', icon: EyeIcon },
+];
+
+export const INVESTMENT_SUB_NAV_PAGE_NAMES: readonly Page[] = INVESTMENT_SUB_NAV_ITEMS.map((i) => i.name);
+
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },
   { name: 'Wealth Ultra', icon: PresentationChartLineIcon },
@@ -38,11 +49,6 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Statement History', icon: DocumentTextIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },
   { name: 'Investments', icon: ArrowTrendingUpIcon },
-  { name: 'Recovery Plan', icon: FlagIcon },
-  { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
-  { name: 'Dividend Tracker', icon: BanknotesIcon },
-  { name: 'AI Rebalancer', icon: SparklesIcon },
-  { name: 'Watchlist', icon: EyeIcon },
   { name: 'Market Events', icon: ChartBarIcon },
   { name: 'Budgets', icon: PiggyBankIcon },
   { name: 'Goals', icon: TrophyIcon },

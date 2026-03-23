@@ -24,6 +24,7 @@ import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
+import { roundMoney, roundQuantity } from '../utils/money';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -252,7 +253,7 @@ function normalizeAccount(raw: any): Account {
     const id = raw.id ?? raw.account_id ?? (raw as any).uuid ?? '';
     const name = String(raw.name ?? '');
     const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
-    const balance = Number(raw.balance ?? 0);
+    const balance = roundMoney(Number(raw.balance ?? 0));
     const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
     const cur = raw.currency;
     const accountCurrency = cur === 'SAR' || cur === 'USD' ? cur : undefined;
@@ -270,6 +271,68 @@ function normalizeAccount(raw: any): Account {
     };
 }
 
+/** PostgREST when `public.accounts.currency` is missing (run `supabase/migrations/add_accounts_currency.sql`). */
+function isAccountsCurrencyColumnMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+    return (
+        error?.code === 'PGRST204' &&
+        String(error?.message ?? '').includes("'currency'") &&
+        String(error?.message ?? '').includes('accounts')
+    );
+}
+
+function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+        name: platform.name,
+        type: platform.type,
+        balance: roundMoney(Number(platform.balance) || 0),
+    };
+    if (platform.owner != null && String(platform.owner).trim() !== '') payload.owner = platform.owner;
+    if (platform.type === 'Investment') {
+        payload.linked_account_ids = Array.isArray(platform.linkedAccountIds) ? platform.linkedAccountIds : [];
+    }
+    if (platform.platformDetails) payload.platform_details = platform.platformDetails;
+    if (platform.currency === 'SAR' || platform.currency === 'USD') {
+        payload.currency = platform.currency;
+    }
+    return payload;
+}
+
+function normalizeAssetRow(raw: any): Asset {
+    if (!raw || typeof raw !== 'object') {
+        return { id: '', name: '', type: 'Property', value: 0 };
+    }
+    const pp = raw.purchase_price ?? raw.purchasePrice;
+    const mr = raw.monthly_rent ?? raw.monthlyRent;
+    return {
+        ...raw,
+        id: String(raw.id ?? ''),
+        name: String(raw.name ?? ''),
+        type: raw.type as Asset['type'],
+        value: roundMoney(Number(raw.value ?? 0)),
+        purchasePrice: pp != null && pp !== '' ? roundMoney(Number(pp)) : undefined,
+        isRental: raw.is_rental ?? raw.isRental,
+        monthlyRent: mr != null && mr !== '' ? roundMoney(Number(mr)) : undefined,
+        goalId: raw.goal_id ?? raw.goalId,
+        owner: raw.owner,
+    };
+}
+
+function normalizeGoalRow(raw: any): Goal {
+    if (!raw || typeof raw !== 'object') {
+        return { id: '', name: '', targetAmount: 0, currentAmount: 0, deadline: '' };
+    }
+    return {
+        ...raw,
+        id: String(raw.id ?? ''),
+        name: String(raw.name ?? ''),
+        targetAmount: roundMoney(Number(raw.target_amount ?? raw.targetAmount ?? 0)),
+        currentAmount: roundMoney(Number(raw.current_amount ?? raw.currentAmount ?? 0)),
+        deadline: String(raw.deadline ?? ''),
+        savingsAllocationPercent: raw.savings_allocation_percent ?? raw.savingsAllocationPercent,
+        priority: raw.priority,
+    };
+}
+
 function normalizePriceAlert(raw: any): PriceAlert {
     if (!raw) return {} as PriceAlert;
     const currency = raw.currency ?? raw.target_currency;
@@ -279,7 +342,7 @@ function normalizePriceAlert(raw: any): PriceAlert {
         id: String(raw.id ?? ''),
         user_id: raw.user_id,
         symbol: String(raw.symbol ?? ''),
-        targetPrice: Number.isFinite(targetPrice) ? targetPrice : 0,
+        targetPrice: roundMoney(Number.isFinite(targetPrice) ? targetPrice : 0),
         currency: currency === 'SAR' || currency === 'USD' ? currency : undefined,
         status: (raw.status === 'triggered' ? 'triggered' : 'active') as 'active' | 'triggered',
         createdAt: raw.created_at ?? raw.createdAt ?? new Date().toISOString(),
@@ -324,10 +387,10 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
         portfolio_id: holding.portfolio_id ?? (holding as any).portfolioId,
         symbol: holding.symbol ?? (holdingType === 'manual_fund' ? null : ''),
         name: holding.name ?? '',
-        quantity: Number(holding.quantity ?? 0),
-        avg_cost: Number(holding.avgCost ?? (holding as any).avg_cost ?? 0),
-        current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
-        realized_pnl: Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0),
+        quantity: roundQuantity(Number(holding.quantity ?? 0)),
+        avg_cost: roundMoney(Number(holding.avgCost ?? (holding as any).avg_cost ?? 0)),
+        current_value: roundMoney(Number(holding.currentValue ?? (holding as any).current_value ?? 0)),
+        realized_pnl: roundMoney(Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0)),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
         holding_type: holdingType,
     };
@@ -350,9 +413,10 @@ function normalizeHoldingFromRow(row: any): Holding {
         portfolio_id: row.portfolio_id ?? row.portfolioId,
         symbol: row.symbol ?? (holdingType === 'manual_fund' ? '' : ''),
         holdingType,
-        avgCost: row.avg_cost ?? row.avgCost ?? 0,
-        currentValue: row.current_value ?? row.currentValue ?? 0,
-        realizedPnL: row.realized_pnl ?? row.realizedPnL ?? 0,
+        quantity: roundQuantity(Number(row.quantity ?? 0)),
+        avgCost: roundMoney(Number(row.avg_cost ?? row.avgCost ?? 0)),
+        currentValue: roundMoney(Number(row.current_value ?? row.currentValue ?? 0)),
+        realizedPnL: roundMoney(Number(row.realized_pnl ?? row.realizedPnL ?? 0)),
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
         goalId: row.goal_id ?? row.goalId,
@@ -365,12 +429,12 @@ function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: st
     const name = (raw && String(raw).trim()) ? String(raw).trim() : 'Other';
     return {
         name,
-        quantity: Number(holding.quantity ?? 0),
+        quantity: roundQuantity(Number(holding.quantity ?? 0)),
         unit: holding.unit ?? 'unit',
         symbol: holding.symbol,
         owner: holding.owner ?? null,
-        purchase_value: Number(holding.purchaseValue ?? (holding as any).purchase_value ?? 0),
-        current_value: Number(holding.currentValue ?? (holding as any).current_value ?? 0),
+        purchase_value: roundMoney(Number(holding.purchaseValue ?? (holding as any).purchase_value ?? 0)),
+        current_value: roundMoney(Number(holding.currentValue ?? (holding as any).current_value ?? 0)),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
     };
 }
@@ -438,11 +502,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             portfolio_id: holding.portfolio_id || holding.portfolioId,
             symbol: holding.symbol ?? '',
             holdingType,
-            avgCost: holding.avgCost ?? holding.avg_cost ?? 0,
-            currentValue: holding.currentValue ?? holding.current_value ?? 0,
+            quantity: roundQuantity(Number(holding.quantity ?? 0)),
+            avgCost: roundMoney(Number(holding.avgCost ?? holding.avg_cost ?? 0)),
+            currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? 0)),
             goalId: holding.goalId ?? holding.goal_id,
             assetClass: holding.assetClass ?? holding.asset_class,
-            realizedPnL: holding.realizedPnL ?? holding.realized_pnl ?? 0,
+            realizedPnL: roundMoney(Number(holding.realizedPnL ?? holding.realized_pnl ?? 0)),
             dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
             dividendYield: holding.dividendYield ?? holding.dividend_yield,
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
@@ -467,8 +532,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return {
                 ...holding,
                 name: 'Other' as CommodityHolding['name'],
-                purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
-                currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+                quantity: roundQuantity(Number(holding.quantity ?? 0)),
+                purchaseValue: roundMoney(Number(holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0)),
+                currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0)),
                 goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
                 zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
                 goalId: holding.goalId ?? holding.goal_id,
@@ -479,8 +545,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return {
             ...holding,
             name: validName as CommodityHolding['name'],
-            purchaseValue: holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0,
-            currentValue: holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0,
+            quantity: roundQuantity(Number(holding.quantity ?? 0)),
+            purchaseValue: roundMoney(Number(holding.purchaseValue ?? holding.purchase_value ?? holding.purchasevalue ?? 0)),
+            currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? holding.currentvalue ?? 0)),
             goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
             goalId: holding.goalId ?? holding.goal_id,
@@ -489,9 +556,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const normalizeLiability = (raw: any): Liability => {
         const type = (raw.type === 'Receivable' ? 'Receivable' : raw.type) as Liability['type'];
-        const rawAmount = Number(raw.amount ?? 0);
+        const rawAmount = roundMoney(Number(raw.amount ?? 0));
         const amount = type === 'Receivable' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
-        return { ...raw, type, amount, goalId: raw.goalId ?? raw.goal_id };
+        return { ...raw, type, amount: roundMoney(amount), goalId: raw.goalId ?? raw.goal_id };
     };
 
     const normalizeTransaction = (transaction: any): Transaction => {
@@ -499,6 +566,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { cleanNote, splitLines } = parseSplitsFromNote(rawNote);
         return {
             ...transaction,
+            amount: roundMoney(Number(transaction.amount ?? 0)),
             accountId: transaction.accountId ?? transaction.account_id ?? '',
             budgetCategory: transaction.budgetCategory ?? transaction.budget_category,
             categoryId: transaction.categoryId ?? transaction.category_id,
@@ -513,7 +581,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         id: raw.id,
         user_id: raw.user_id,
         description: raw.description ?? '',
-        amount: Number(raw.amount ?? 0),
+        amount: roundMoney(Number(raw.amount ?? 0)),
         type: (raw.type === 'income' || raw.type === 'expense') ? raw.type : 'expense',
         accountId: resolvedAccountId ?? raw.accountId ?? raw.account_id ?? '',
         budgetCategory: raw.budgetCategory ?? raw.budget_category,
@@ -686,9 +754,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             setData({
                 accounts: filterOwnedRows(normalizedAccounts),
-                assets: filterOwnedRows(assets.data as any[]),
+                assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
                 liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
-                goals: filterOwnedRows(goals.data as any[]),
+                goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
                 transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
@@ -707,7 +775,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
                     return resolved ? { ...norm, accountId: resolved } : norm;
                 }),
-                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional', destinationAccountId: b.destination_account_id ?? undefined })),
+                budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
+                    ...b,
+                    period: b.period ?? 'monthly',
+                    tier: b.tier ?? b.budget_tier ?? 'Optional',
+                    destinationAccountId: b.destination_account_id ?? undefined,
+                    limit: roundMoney(Number(b.limit ?? 0)),
+                })),
                 commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
                 watchlist: filterOwnedRows(watchlist.data as any[]),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
@@ -729,7 +803,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
                     categoryId: r.category_id ?? r.categoryId,
                     categoryName: r.category_name ?? r.categoryName,
-                    amount: Number(r.amount ?? 0),
+                    amount: roundMoney(Number(r.amount ?? 0)),
                     note: r.note ?? r.request_note,
                     status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
                 })),
@@ -877,26 +951,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast("You must be logged in to add an asset.", 'error');
             return;
         }
-        const v = validateAsset({ name: asset.name, type: asset.type, value: asset.value });
+        const sanitized = normalizeAssetRow(asset);
+        const v = validateAsset({ name: sanitized.name, type: sanitized.type, value: sanitized.value });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { id, user_id, ...insertData } = asset;
+        const { id, user_id, ...insertData } = sanitized;
         const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
         if (error) { 
             console.error("Error adding asset:", error); 
             toast(`Failed to add asset: ${error.message}`, 'error');
             throw error; 
         }
-        if (newAsset) setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
+        if (newAsset) setData(prev => ({ ...prev, assets: [...prev.assets, normalizeAssetRow(newAsset)] }));
     };
     const updateAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) return;
-        const v = validateAsset({ name: asset.name, type: asset.type, value: asset.value });
+        const sanitized = normalizeAssetRow(asset);
+        const v = validateAsset({ name: sanitized.name, type: sanitized.type, value: sanitized.value });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { error } = await db.from('assets').update(asset).match({ id: asset.id, user_id: auth.user.id });
+        const { error } = await db.from('assets').update(sanitized).match({ id: sanitized.id, user_id: auth.user.id });
         if (error) console.error("Error updating asset:", error);
-        else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === asset.id ? asset : a) }));
+        else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === sanitized.id ? sanitized : a) }));
     };
     const deleteAsset = async (assetId: string) => {
         if(!supabase || !auth?.user) return;
@@ -1599,13 +1675,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        const payload: any = { ...platform, balance: Number(platform.balance) || 0 };
-        // Always persist linked_account_ids for Investment platforms (including empty array to clear links).
-        if (platform.type === 'Investment') {
-            payload.linked_account_ids = Array.isArray(platform.linkedAccountIds) ? platform.linkedAccountIds : [];
+        const payload = buildAccountInsertPayload(platform);
+        let { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
+        if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
+            const { currency: _omit, ...withoutCurrency } = payload;
+            ({ data: newPlatform, error } = await db.from('accounts').insert(withUser(withoutCurrency)).select().single());
+            if (!error) {
+                console.warn(
+                    '[accounts] Saved without currency column. Apply supabase/migrations/add_accounts_currency.sql to persist SAR/USD on accounts.',
+                );
+            }
         }
-        delete payload.linkedAccountIds;
-        const { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
         if(error) {
             console.error("Error adding platform:", error);
             toast(`Failed to add platform: ${error.message}`, 'error');
@@ -1651,7 +1731,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             payload.platform_details = platform.platformDetails;
         }
         
-        const { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
+        let { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
+        if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
+            const { currency: _omit, ...withoutCurrency } = payload;
+            ({ error } = await db.from('accounts').update(withoutCurrency).match({ id: platform.id, user_id: auth.user.id }));
+            if (!error) {
+                console.warn(
+                    '[accounts] Updated without currency column. Apply supabase/migrations/add_accounts_currency.sql to persist SAR/USD on accounts.',
+                );
+            }
+        }
         if(error) {
             console.error("Error updating platform:", error);
             toast(`Failed to update platform: ${error.message}`, 'error');

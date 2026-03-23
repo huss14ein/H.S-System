@@ -9,7 +9,7 @@ interface CollapsibleSectionProps {
   summary?: string;
   /** Content shown when expanded */
   children: ReactNode;
-  /** Start expanded (default: false) */
+  /** Start expanded (default: true — click header to collapse) */
   defaultExpanded?: boolean;
   /** Extra class for the container */
   className?: string;
@@ -27,7 +27,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   title,
   summary,
   children,
-  defaultExpanded = false,
+  defaultExpanded = true,
   className = '',
   icon,
   card = true,

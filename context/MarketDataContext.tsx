@@ -12,7 +12,10 @@ interface MarketDataContextType {
   simulatedPrices: SimulatedPrices;
   setSimulatedPrices: (prices: SimulatedPrices) => void;
   isRefreshing: boolean;
+  setIsRefreshing: (v: boolean) => void;
   refreshPrices: () => Promise<void>;
+  /** Increment refresh counter so MarketSimulator runs a live/simulated price pass. */
+  bumpPriceRefresh: () => void;
   lastUpdated: Date | null;
   /** Set last updated time (e.g. when live fetch completes). */
   setLastUpdated: (date: Date | null) => void;
@@ -54,20 +57,23 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-    const refreshPrices = async () => {
+    const bumpPriceRefresh = useCallback(() => {
+        setRefreshTrigger((prev) => prev + 1);
+    }, []);
+
+    const refreshPrices = useCallback(async () => {
         setIsRefreshing(true);
-        setRefreshTrigger(prev => prev + 1);
-        // The actual logic is in MarketSimulator which listens to refreshTrigger
-        await new Promise(resolve => setTimeout(resolve, 800)); 
-        setLastUpdated(new Date());
-        setIsRefreshing(false);
-    };
+        bumpPriceRefresh();
+        // MarketSimulator performs fetch + sets isRefreshing false when done
+    }, [bumpPriceRefresh]);
 
     const value: MarketDataContextType = {
         simulatedPrices,
         setSimulatedPrices,
         isRefreshing,
+        setIsRefreshing,
         refreshPrices,
+        bumpPriceRefresh,
         lastUpdated,
         setLastUpdated,
         isLive,

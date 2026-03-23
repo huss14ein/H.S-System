@@ -26,6 +26,8 @@ export interface EmergencyFundMetrics {
     targetAmount: number;
     /** 0–1+ coverage vs target months (e.g. 1 = fully funded). */
     emergencyFundCoverage: number;
+    /** False when we could not estimate monthly core expenses (avoid “target met” false positives). */
+    hasEssentialExpenseEstimate: boolean;
 }
 
 /**
@@ -44,6 +46,7 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         shortfall: 0,
         targetAmount: 0,
         emergencyFundCoverage: 0,
+        hasEssentialExpenseEstimate: false,
     };
 
     if (!data) return defaultResult;
@@ -98,14 +101,18 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
     }
 
     const targetMonths = EMERGENCY_FUND_TARGET_MONTHS;
-    const monthsCovered = monthlyCoreExpenses > 0 ? emergencyCash / monthlyCoreExpenses : (emergencyCash > 0 ? 99 : 0);
+    const hasEssentialExpenseEstimate = monthlyCoreExpenses > 0;
+    /** Only meaningful when `hasEssentialExpenseEstimate` (avoid fake “99 months” when essential spend is unknown). */
+    const monthsCovered = monthlyCoreExpenses > 0 ? emergencyCash / monthlyCoreExpenses : 0;
     const targetAmount = monthlyCoreExpenses * targetMonths;
     const shortfall = Math.max(0, targetAmount - emergencyCash);
 
     let status: EmergencyFundMetrics['status'] = 'critical';
-    if (monthsCovered >= targetMonths) status = 'healthy';
-    else if (monthsCovered >= 3) status = 'adequate';
-    else if (monthsCovered >= 1) status = 'low';
+    if (hasEssentialExpenseEstimate) {
+        if (monthsCovered >= targetMonths) status = 'healthy';
+        else if (monthsCovered >= 3) status = 'adequate';
+        else if (monthsCovered >= 1) status = 'low';
+    }
 
     const emergencyFundCoverage = targetMonths > 0 ? monthsCovered / targetMonths : 0;
     return {
@@ -117,6 +124,7 @@ export function computeEmergencyFundMetrics(data: FinancialData | null | undefin
         shortfall,
         targetAmount,
         emergencyFundCoverage,
+        hasEssentialExpenseEstimate,
     };
 }
 

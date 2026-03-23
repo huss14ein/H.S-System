@@ -421,7 +421,7 @@ const InvestmentPlanControlTower: React.FC = () => {
         )}
       </div>
       {hasAlerts && analysis && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
+        <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
           <p className="text-xs font-semibold text-amber-800 mb-2">Alerts</p>
           <ul className="space-y-1 text-sm text-amber-900">
             {analysis.alerts.slice(0, 3).map((a, i) => (
@@ -431,7 +431,7 @@ const InvestmentPlanControlTower: React.FC = () => {
         </div>
       )}
       {hasActions && (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+        <div className="mt-6 rounded-lg border border-slate-200 bg-white p-3">
           <p className="text-xs font-semibold text-slate-600 mb-2">Prioritized actions</p>
           <ul className="space-y-1 text-sm text-slate-700">
             {actionQueue.slice(0, 4).map((item, i) => (
@@ -444,7 +444,7 @@ const InvestmentPlanControlTower: React.FC = () => {
         </div>
       )}
       {hasNextBest && (
-        <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+        <div className="mt-6 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
           <p className="text-xs font-semibold text-indigo-800 mb-2">Suggested actions</p>
           <ul className="space-y-1 text-sm text-indigo-900">
             {nextBestActions.slice(0, 3).map((a) => (
@@ -462,7 +462,9 @@ const InvestmentPlanView: React.FC<{
     onExecutePlan: (plan?: PlannedTrade) => void;
     setActivePage?: (page: Page) => void;
     triggerPageAction?: (page: Page, action: string) => void;
-}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction }) => {
+    /** When true, skip PageLayout (e.g. inside Investments hub). */
+    embedded?: boolean;
+}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false }) => {
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices } = useMarketData();
@@ -470,17 +472,18 @@ const InvestmentPlanView: React.FC<{
     
     // Loading state
     if (loading || !data) {
-        return (
-            <PageLayout 
-                title="Investment Plan" 
-                description="Proactively plan your trades based on price or date targets with AI-powered alignment."
-            >
-                <div className="flex items-center justify-center py-12" aria-busy="true">
-                    <div className="text-center">
-                        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading investment plan" />
-                        <p className="text-sm text-slate-600">Loading investment plan data...</p>
-                    </div>
+        const loadingInner = (
+            <div className="flex items-center justify-center py-12" aria-busy="true">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading trade plans" />
+                    <p className="text-sm text-slate-600">Loading trade plans…</p>
                 </div>
+            </div>
+        );
+        if (embedded) return loadingInner;
+        return (
+            <PageLayout title="Trade plans" description="Schedule future buys or sells. We’ll flag when your rule is met.">
+                {loadingInner}
             </PageLayout>
         );
     }
@@ -795,48 +798,41 @@ const InvestmentPlanView: React.FC<{
         return false;
     }
 
-    return (
-        <PageLayout 
-            title="Investment Plan" 
-            description="Proactively plan your trades based on price or date targets with AI-powered alignment. Integrated with Household, Budget, and Wealth Ultra engines for shared cash and risk constraints."
-        >
-            <div className="max-w-7xl mx-auto space-y-8">
-                <PageIntro
-                    title={PAGE_INTROS['Investment Plan']?.title ?? 'Plan your trades ahead of time'}
-                    description={PAGE_INTROS['Investment Plan']?.description ?? 'Set buy or sell plans that trigger when a price or date is reached. The system suggests ideas and checks them against AI recommendations.'}
-                    tip="New here? Create a plan from an AI candidate below, or click Create Plan to add your own. When conditions are met, use the rocket icon to record the trade."
-                />
-                <InvestmentPlanControlTower />
-                {/* Enhanced Header Section */}
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-                    <div className="flex-1">
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg">
-                                <ClipboardDocumentListIcon className="h-8 w-8 text-white" />
-                            </div>
-                            <div>
-                                <h1 className="text-4xl lg:text-5xl font-bold text-slate-900">Investment Plan</h1>
-                                <p className="text-xl text-slate-600 mt-2">Strategic trade planning with AI-powered alignment</p>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-3">
-                            <div className="px-4 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-full">
-                                <span className="text-sm font-semibold text-blue-700">Smart Planning</span>
-                            </div>
-                            <div className="px-4 py-2 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-full">
-                                <span className="text-sm font-semibold text-purple-700">AI Alignment</span>
-                            </div>
-                            <div className="px-4 py-2 bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-full">
-                                <span className="text-sm font-semibold text-emerald-700">Risk Management</span>
-                            </div>
-                        </div>
+    const plannedCount = (data?.plannedTrades ?? []).length;
+    const triggeredCount = (data?.plannedTrades ?? []).filter(isTriggered).length;
+    const executedCount = (data?.plannedTrades ?? []).filter(p => p.status === 'Executed').length;
+
+    const planBody = (
+            <div className="max-w-7xl mx-auto space-y-14 sm:space-y-16">
+                {embedded ? (
+                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 px-4 py-3 sm:px-5">
+                        <p className="text-sm font-medium text-slate-900">Scheduled buy and sell rules</p>
+                        <p className="mt-1 text-sm text-slate-600 leading-relaxed">
+                            {PAGE_INTROS['Investment Plan']?.description ?? 'Pick a stock, set a price or date, and we’ll tell you when it’s time to act.'}{' '}
+                            <span className="text-slate-500">Tip: use “Create plan” or add from the AI list below.</span>
+                        </p>
                     </div>
+                ) : (
+                    <PageIntro
+                        title={PAGE_INTROS['Investment Plan']?.title ?? 'Plan your trades ahead of time'}
+                        description={PAGE_INTROS['Investment Plan']?.description ?? 'Set buy or sell plans that trigger when a price or date is reached. The system suggests ideas and checks them against AI recommendations.'}
+                        tip="Start with “Create plan” or pick a suggestion from the AI list below. You stay in control—we only prepare the trade when your rule is met."
+                    />
+                )}
+                <InvestmentPlanControlTower />
+                {/* Single clear action row — avoids duplicate page titles */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 sm:px-6 shadow-sm">
+                    <p className="text-sm text-slate-600 max-w-2xl leading-relaxed">
+                        <span className="font-semibold text-slate-800">What you do here: </span>
+                        Save instructions like “buy when price drops to X” or “sell after this date.” Finova tracks them and shows what stage each plan is in.
+                    </p>
                     <button 
+                        type="button"
                         onClick={() => handleOpenPlanModal(null)} 
-                        className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-2xl hover:from-primary/90 hover:to-secondary/90 transition-all duration-200 font-bold text-lg shadow-xl hover:shadow-2xl transform hover:scale-105"
+                        className="inline-flex shrink-0 items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 text-base font-semibold shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 motion-safe:transition-colors"
                     >
-                        <PlusIcon className="h-6 w-6"/>
-                        <span>Create Plan</span>
+                        <PlusIcon className="h-5 w-5" aria-hidden />
+                        Create plan
                     </button>
                 </div>
 
@@ -885,6 +881,45 @@ const InvestmentPlanView: React.FC<{
                         </div>
                     );
                 })()}
+
+                {/* Plan journey — aligned grid, plain-language labels */}
+                <section className="space-y-6" aria-labelledby="plan-pipeline-heading">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between gap-y-2">
+                        <div>
+                            <h2 id="plan-pipeline-heading" className="text-lg font-semibold tracking-tight text-slate-900">Your plan journey</h2>
+                            <p className="text-sm text-slate-600 max-w-xl">Each plan moves through three stages. The numbers below update automatically—no spreadsheet required.</p>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-5 items-stretch">
+                        <article className="flex h-full min-h-[168px] flex-col rounded-2xl border border-blue-200/80 bg-gradient-to-b from-blue-50/90 to-white p-5 shadow-sm ring-1 ring-blue-100/80">
+                            <div className="flex items-start justify-between gap-3">
+                                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white" aria-hidden>1</span>
+                                <ClipboardDocumentListIcon className="h-8 w-8 text-blue-500 shrink-0" aria-hidden />
+                            </div>
+                            <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-blue-800">Saved</p>
+                            <p className="mt-1 text-3xl font-bold tabular-nums text-blue-950">{plannedCount}</p>
+                            <p className="mt-auto pt-3 text-sm leading-snug text-blue-900/90">Plans you’ve written down and we’re watching.</p>
+                        </article>
+                        <article className="flex h-full min-h-[168px] flex-col rounded-2xl border border-amber-200/80 bg-gradient-to-b from-amber-50/90 to-white p-5 shadow-sm ring-1 ring-amber-100/80">
+                            <div className="flex items-start justify-between gap-3">
+                                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white" aria-hidden>2</span>
+                                <ClockIcon className="h-8 w-8 text-amber-600 shrink-0" aria-hidden />
+                            </div>
+                            <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-amber-900">Ready</p>
+                            <p className="mt-1 text-3xl font-bold tabular-nums text-amber-950">{triggeredCount}</p>
+                            <p className="mt-auto pt-3 text-sm leading-snug text-amber-900/90">Your price or date was hit—time to review and record the trade.</p>
+                        </article>
+                        <article className="flex h-full min-h-[168px] flex-col rounded-2xl border border-emerald-200/80 bg-gradient-to-b from-emerald-50/90 to-white p-5 shadow-sm ring-1 ring-emerald-100/80">
+                            <div className="flex items-start justify-between gap-3">
+                                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white" aria-hidden>3</span>
+                                <CheckCircleIcon className="h-8 w-8 text-emerald-600 shrink-0" aria-hidden />
+                            </div>
+                            <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-emerald-900">Done</p>
+                            <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-950">{executedCount}</p>
+                            <p className="mt-auto pt-3 text-sm leading-snug text-emerald-900/90">Trades you’ve already logged in your portfolio.</p>
+                        </article>
+                    </div>
+                </section>
 
                 {/* Enhanced Household Stress Indicator */}
                 {householdStress && (
@@ -1101,15 +1136,15 @@ const InvestmentPlanView: React.FC<{
                 </SectionCard>
 
                 {/* Enhanced Plan vs AI Alignment */}
-                <SectionCard title="Plan vs AI Alignment" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Aligned vs conflicts" defaultExpanded>
+                <SectionCard title="Do your plans match AI?" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Same direction or different" defaultExpanded>
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
                         <div className="flex items-center gap-4">
                             <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
                                 <ChartBarIcon className="h-7 w-7 text-white" />
                             </div>
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-900">Alignment Analysis</h3>
-                                <p className="text-slate-600 mt-1">Compare your plans with AI universe recommendations</p>
+                                <h3 className="text-xl font-semibold text-slate-900">Quick comparison</h3>
+                                <p className="text-slate-600 mt-1 text-sm max-w-xl">Finova checks each plan against its suggestions so you’re not accidentally betting the opposite way.</p>
                             </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-4">
@@ -1253,73 +1288,15 @@ const InvestmentPlanView: React.FC<{
                         {planAlignment.filteredRows.length === 0 && (
                             <EmptyState
                                 icon={<ChartBarIcon className="w-12 h-12" />}
-                                title={(data?.plannedTrades ?? []).length === 0 ? 'No plans yet' : 'No plans match the filter'}
-                                description={(data?.plannedTrades ?? []).length === 0 ? 'Create plans above to see how they align with AI recommendations.' : 'Try a different filter or create new plans.'}
-                                action={(data?.plannedTrades ?? []).length === 0 ? { label: 'Create plan', onClick: () => handleOpenPlanModal(null) } : undefined}
+                                title={(data?.plannedTrades ?? []).length === 0 ? EMPTY_STATE_MESSAGES.noPlannedTrades.title : 'No plans match this filter'}
+                                description={(data?.plannedTrades ?? []).length === 0
+                                    ? 'Add at least one plan (button above), then come back here to see if it lines up with AI suggestions.'
+                                    : 'Try another filter or clear filters to see all plans.'}
+                                action={(data?.plannedTrades ?? []).length === 0 ? { label: EMPTY_STATE_MESSAGES.noPlannedTrades.action ?? 'Create your first plan', onClick: () => handleOpenPlanModal(null) } : undefined}
                             />
                         )}
                     </div>
                 </SectionCard>
-
-                {/* Statistics Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Plans you've set up">
-                        <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                                <p className="text-sm font-bold text-blue-800 uppercase tracking-wide mb-2">Planned</p>
-                                <p className="text-4xl font-bold text-blue-900 mb-1">{(data?.plannedTrades ?? []).length}</p>
-                                <p className="text-sm text-blue-700 font-medium">Plans you&apos;ve set up</p>
-                            </div>
-                            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                <ClipboardDocumentListIcon className="h-8 w-8 text-white" />
-                            </div>
-                        </div>
-                        <div className="mt-6 pt-6 border-t border-blue-100">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-blue-600 font-medium">Active planning</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Conditions met—ready to record">
-                        <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                                <p className="text-sm font-bold text-amber-800 uppercase tracking-wide mb-2">Triggered</p>
-                                <p className="text-4xl font-bold text-amber-900 mb-1">{(data?.plannedTrades ?? []).filter(isTriggered).length}</p>
-                                <p className="text-sm text-amber-700 font-medium">Conditions met—ready to record</p>
-                            </div>
-                            <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                <ClockIcon className="h-8 w-8 text-white" />
-                            </div>
-                        </div>
-                        <div className="mt-6 pt-6 border-t border-amber-100">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-amber-600 font-medium">Conditions met</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 group" title="Already recorded in Investments">
-                        <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                                <p className="text-sm font-bold text-emerald-800 uppercase tracking-wide mb-2">Executed</p>
-                                <p className="text-4xl font-bold text-emerald-900 mb-1">{(data?.plannedTrades ?? []).filter(p => p.status === 'Executed').length}</p>
-                                <p className="text-sm text-emerald-700 font-medium">Recorded in Investments</p>
-                            </div>
-                            <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                <CheckCircleIcon className="h-8 w-8 text-white" />
-                            </div>
-                        </div>
-                        <div className="mt-6 pt-6 border-t border-emerald-100">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-emerald-600 font-medium">Successfully executed</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                 {/* Enhanced Symbol Focus Indicator */}
                 {symbolFocus && (
@@ -1348,19 +1325,19 @@ const InvestmentPlanView: React.FC<{
                 )}
 
                 {/* Plans Table */}
-                <SectionCard title="Investment Plans" className="min-h-[600px]" collapsible collapsibleSummary="Planned trades" defaultExpanded>
+                <SectionCard title="All your plans" className="min-h-[600px]" collapsible collapsibleSummary="Edit or record trades" defaultExpanded>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
-                                <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    <th className="px-6 py-3">Asset</th>
-                                    <th className="px-6 py-3">Action</th>
-                                    <th className="px-6 py-3">Trigger</th>
-                                    <th className="px-6 py-3" title="Price in the stock's traded currency (USD or SAR)">Planned Price</th>
-                                    <th className="px-6 py-3" title="Is the current price good for your plan? Favorable = time to act">Signal</th>
-                                    <th className="px-6 py-3">Priority</th>
-                                    <th className="px-6 py-3">Status</th>
-                                    <th className="px-6 py-3">Actions</th>
+                                <tr className="text-left text-xs font-semibold text-slate-600">
+                                    <th className="px-6 py-3.5">Stock</th>
+                                    <th className="px-6 py-3.5">Buy or sell</th>
+                                    <th className="px-6 py-3.5" title="The price or date you chose">Your rule</th>
+                                    <th className="px-6 py-3.5" title="In the stock’s trading currency (e.g. USD or SAR)">Target price</th>
+                                    <th className="px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
+                                    <th className="px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
+                                    <th className="px-6 py-3.5">Stage</th>
+                                    <th className="px-6 py-3.5">Next step</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
@@ -1407,12 +1384,14 @@ const InvestmentPlanView: React.FC<{
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-2">
                                                 <button 
+                                                    type="button"
                                                     onClick={() => (triggerPageAction ? handleExecutePlan(plan) : onExecutePlan(plan))} 
                                                     disabled={plan.status === 'Executed'} 
-                                                    title="Record this trade in Investments" 
-                                                    className="p-2 text-white bg-gradient-to-r from-primary to-secondary rounded-lg hover:from-primary/90 hover:to-secondary/90 disabled:from-gray-300 disabled:to-gray-400 transition-all"
+                                                    title="Open record trade and log this in your portfolio" 
+                                                    aria-label="Record trade in portfolio"
+                                                    className="p-2 text-white bg-gradient-to-r from-primary to-secondary rounded-lg hover:from-primary/90 hover:to-secondary/90 disabled:from-gray-300 disabled:to-gray-400 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                                                 >
-                                                    <RocketLaunchIcon className="h-4 w-4"/>
+                                                    <RocketLaunchIcon className="h-4 w-4" aria-hidden />
                                                 </button>
                                                 <button 
                                                     onClick={() => handleOpenPlanModal(plan)} 
@@ -1445,7 +1424,10 @@ const InvestmentPlanView: React.FC<{
                     </div>
                 </SectionCard>
             </div>
+    );
 
+    const modals = (
+        <>
             <PlanTradeModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
@@ -1464,6 +1446,25 @@ const InvestmentPlanView: React.FC<{
                 }} 
                 itemName={planToDelete?.name || ''} 
             />
+        </>
+    );
+
+    if (embedded) {
+        return (
+            <>
+                {planBody}
+                {modals}
+            </>
+        );
+    }
+
+    return (
+        <PageLayout 
+            title="Trade plans" 
+            description="Schedule future buys or sells. We notify you when your price or date is reached, then you confirm the trade in one tap."
+        >
+            {planBody}
+            {modals}
         </PageLayout>
     );
 };

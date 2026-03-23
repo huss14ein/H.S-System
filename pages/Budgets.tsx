@@ -56,6 +56,7 @@ import {
     generateCommonScenarios,
     detectAnomalies,
     detectSeasonality,
+    effectiveMonthExpense,
     type PredictiveForecast,
     type ScenarioAnalysis,
     type BudgetAnomaly,
@@ -959,9 +960,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             bulkAddSuggestedCategories,
             bulkAddSelectedCategories,
             monthlySalary,
-            engineProfile
+            engineProfile,
+            householdAdults,
+            householdKids
         );
-    }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile]);
+    }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile, householdAdults, householdKids]);
 
     // Default bulk-add selection to all suggested categories when list changes
     React.useEffect(() => {
@@ -2382,9 +2385,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                             <div className="pt-2 border-t border-slate-200">
                                                 <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
                                                 {scenario.goalAchievementImpact.map((impact, i) => (
-                                                    <p key={i} className="text-xs text-slate-600">
-                                                        {impact.goalName}: {impact.achievementDelayMonths >= 0 ? '+' : ''}{impact.achievementDelayMonths.toFixed(1)} months
-                                                    </p>
+                                                    <div key={i} className="flex justify-between gap-3 text-xs text-slate-600">
+                                                        <span className="truncate">{impact.goalName}</span>
+                                                        <span className="shrink-0 font-medium tabular-nums text-slate-800">
+                                                            {impact.achievementDelayMonths >= 0 ? '+' : ''}
+                                                            {impact.achievementDelayMonths.toFixed(1)} mo
+                                                        </span>
+                                                    </div>
                                                 ))}
                                             </div>
                                         )}
@@ -2431,11 +2438,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                             <div className="h-48 flex items-end justify-between gap-1">
                                 {householdBudgetEngine.months.slice(-6).map((month, idx) => {
-                                    const outflows = householdBudgetEngine.months.slice(-6).map(m => 
-                                        (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0)
-                                    );
+                                    const outflows = householdBudgetEngine.months.slice(-6).map((m) => effectiveMonthExpense(m));
                                     const maxExpense = outflows.length > 0 ? Math.max(...outflows) : 0;
-                                    const expense = (month.totalActualOutflow ?? 0) > 0 ? (month.totalActualOutflow ?? 0) : (month.totalPlannedOutflow ?? 0);
+                                    const expense = effectiveMonthExpense(month);
                                     const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
                                     const income = (month.incomeActual ?? 0) > 0 ? (month.incomeActual ?? 0) : (month.incomePlanned ?? 0);
                                     const net = income - expense;

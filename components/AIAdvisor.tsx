@@ -7,7 +7,7 @@ import { FinancialData } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 import { computeLiquidNetWorth } from '../services/liquidNetWorth';
 
@@ -22,16 +22,28 @@ interface AIAdvisorProps {
 }
 
 // This is a simplified router for demonstration. A real app might have more complex logic.
-const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData: any, sarPerUsd: number): Promise<string> => {
+const getAnalysisForPage = (
+    context: AIContext,
+    data: FinancialData,
+    contextData: any,
+    sarPerUsd: number,
+    getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number }
+): Promise<string> => {
+    const nwOpts = { getAvailableCashForAccount };
     switch (context) {
         case 'dashboard': {
-            const { netWorth, totalDebt } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
-            const { liquidNetWorth } = computeLiquidNetWorth(data);
+            const { netWorth, totalDebt } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
+            const { liquidNetWorth } = computeLiquidNetWorth(data, { getAvailableCashForAccount, exchangeRate: sarPerUsd });
             const d = data as any;
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
             const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
             const investments = d?.personalInvestments ?? data?.investments ?? [];
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
+            let totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
+            accounts.forEach((acc: { id: string; type?: string }) => {
+                if (acc.type === 'Investment') {
+                    totalInvestmentsValue += tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
+                }
+            });
             const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
             const totalInvested = invTx.filter((t: { type?: string }) => t.type === 'buy').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0);
             const totalWithdrawn = Math.abs(invTx.filter((t: { type?: string }) => t.type === 'sell').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0));
@@ -75,7 +87,7 @@ const getAnalysisForPage = (context: AIContext, data: FinancialData, contextData
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights' }) => {
     const [insight, setInsight] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { isAiAvailable } = useAI();
 
@@ -91,14 +103,14 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setInsight('');
         try {
             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-            const result = await getAnalysisForPage(pageContext, data, contextData, sarPerUsd);
+            const result = await getAnalysisForPage(pageContext, data, contextData, sarPerUsd, getAvailableCashForAccount);
             setInsight(result);
         } catch (error) {
             console.error("AI analysis failed:", error);
             setInsight(formatAiError(error));
         }
         setIsLoading(false);
-    }, [pageContext, data, contextData, exchangeRate]);
+    }, [pageContext, data, contextData, exchangeRate, getAvailableCashForAccount]);
 
 
 

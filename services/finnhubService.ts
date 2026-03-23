@@ -99,9 +99,12 @@ export function toFinnhubSymbol(symbol: string): string {
   if (!upper) return upper;
   if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
   if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
-  const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+  // Earnings/calendar often return Saudi listings as bare digits (e.g. 2222) — same Finnhub prefix as 2222.SR.
+  if (/^[0-9]{4,6}$/.test(upper)) return `TADAWUL:${upper}`;
+  // Tadawul: numeric (2222.SR) and letter tickers (REITF.SR) both use TADAWUL: prefix on Finnhub.
+  const tadawulMatch = upper.match(/^([A-Z0-9]{1,8})\.(SR|SA)$/);
   if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
-  // US class shares: Finnhub uses hyphen (e.g. BRK-B), not a dot.
+  // US class shares: Finnhub uses hyphen (e.g. BRK-B), not a dot — but not .SR/.SA (handled above).
   const usClass = upper.match(/^([A-Z]{1,5})\.([A-Z])$/);
   if (usClass) return `${usClass[1]}-${usClass[2]}`;
   return upper;
@@ -118,7 +121,7 @@ export function fromFinnhubSymbol(finnhubSymbol: string): string {
   if (!upper) return upper;
   if (upper === 'BINANCE:BTCUSDT') return 'BTC';
   if (upper === 'BINANCE:ETHUSDT') return 'ETH';
-  const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
+  const tadawulMatch = upper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
   if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
   return upper;
 }
@@ -294,12 +297,11 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile 
     const resolved = toFinnhubSymbol(symbol);
     const data = await get<CompanyProfile>('/stock/profile2', { symbol: resolved });
     if (!data?.name) return null;
-    // Reject mismatched security: profile2 occasionally returns wrong/empty ticker alignment
+    // Finnhub may return ticker as bare "2222" or "REITF" while we queried TADAWUL:… — still the same listing.
     if (data.ticker) {
       const apiResolved = toFinnhubSymbol(data.ticker);
-      if (apiResolved !== resolved) {
-        console.warn(`[Finnhub] profile2 ticker mismatch for "${symbol}": requested ${resolved}, profile ticker ${data.ticker}`);
-        return null;
+      if (apiResolved !== resolved && canonicalQuoteLookupKey(data.ticker) !== canonicalQuoteLookupKey(symbol)) {
+        console.warn(`[Finnhub] profile2 ticker may not match "${symbol}": requested ${resolved}, profile ticker ${data.ticker} (keeping profile if name is set)`);
       }
     }
     return data;

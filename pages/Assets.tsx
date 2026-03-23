@@ -25,6 +25,8 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
+import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -63,10 +65,10 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         e.preventDefault();
         const newAsset: Asset = {
             id: assetToEdit ? assetToEdit.id : `asset${Date.now()}`,
-            name, type, value: parseFloat(value) || 0,
-            purchasePrice: parseFloat(purchasePrice) || undefined,
+            name, type, value: parseMoneyInput(value),
+            purchasePrice: purchasePrice.trim() !== '' ? parseMoneyInput(purchasePrice) : undefined,
             isRental: type === 'Property' ? isRental : undefined,
-            monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
+            monthlyRent: type === 'Property' && isRental ? parseMoneyInput(monthlyRent) : undefined,
             goalId: assetToEdit?.goalId, owner: owner || undefined,
         };
         onSave(newAsset);
@@ -110,10 +112,10 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
             default: return <QuestionMarkCircleIcon className="h-8 w-8 text-slate-500" />;
         }
     };
-    const unrealizedGain = asset.purchasePrice != null ? asset.value - asset.purchasePrice : null;
-    const unrealizedGainPct = asset.purchasePrice != null && asset.purchasePrice > 0 && unrealizedGain !== null
-        ? (unrealizedGain / asset.purchasePrice) * 100
-        : null;
+    const v = roundMoney(asset.value);
+    const pp = asset.purchasePrice != null ? roundMoney(asset.purchasePrice) : null;
+    const unrealizedGain = pp != null ? roundMoney(v - pp) : null;
+    const unrealizedGainPct = pp != null && pp > 0 && unrealizedGain !== null ? (unrealizedGain / pp) * 100 : null;
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
@@ -155,12 +157,14 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
 
 // --- Commodity Components ---
 const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals }) => {
+    const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
     const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
     const [purchaseValue, setPurchaseValue] = useState('');
-    const [currentValue, setCurrentValue] = useState('');
+    /** Manual current value only when commodity is "Other" (no market symbol). */
+    const [otherCurrentValue, setOtherCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>(undefined);
@@ -173,10 +177,11 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         if (holdingToEdit) {
             setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
             setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
-            setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
+            setPurchaseValue(String(holdingToEdit.purchaseValue));
+            setOtherCurrentValue(holdingToEdit.name === 'Other' ? String(holdingToEdit.currentValue ?? '') : '');
             setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || ''); setGoalId(holdingToEdit.goalId);
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setOtherCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
         }
         setFormError(null);
         setDiagnosticReport(null);
@@ -205,9 +210,8 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         setDiagnosticReport(null);
         setCopied(false);
 
-        const parsedQuantity = parseFloat(quantity);
-        const parsedPurchaseValue = parseFloat(purchaseValue);
-        const parsedCurrentValue = parseFloat(currentValue);
+        const parsedQuantity = roundQuantity(parseFloat(quantity) || 0);
+        const parsedPurchaseValue = parseMoneyInput(purchaseValue);
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
             setFormError('Quantity must be a positive number.');
             return;
@@ -216,18 +220,24 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             setFormError('Purchase value must be greater than 0.');
             return;
         }
-        if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
-            setFormError('Current value cannot be negative.');
-            return;
+
+        const sym = getSymbol(name, unit, goldKarat);
+
+        let parsedCurrentValue = 0;
+        if (name === 'Other') {
+            parsedCurrentValue = parseMoneyInput(otherCurrentValue);
+            if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+                setFormError('Current value cannot be negative.');
+                return;
+            }
         }
 
-        const holdingData = {
+        const holdingDataBase = {
             name,
             quantity: parsedQuantity,
             unit,
             purchaseValue: parsedPurchaseValue,
-            currentValue: parsedCurrentValue,
-            symbol: getSymbol(name, unit, goldKarat),
+            symbol: sym,
             goldKarat: name === 'Gold' ? goldKarat : undefined,
             zakahClass,
             owner: owner || undefined,
@@ -236,6 +246,26 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 
         try {
             setIsSubmitting(true);
+            if (name !== 'Other') {
+                try {
+                    const live = await fetchLiveCommodityValueSar({
+                        symbol: sym,
+                        name,
+                        quantity: parsedQuantity,
+                        goldKarat: name === 'Gold' ? goldKarat : undefined,
+                    });
+                    if (!live.ok) {
+                        setFormError(live.message);
+                        return;
+                    }
+                    parsedCurrentValue = live.currentValue;
+                } catch (fetchErr) {
+                    setFormError(formatAiError(fetchErr));
+                    return;
+                }
+            }
+
+            const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -323,7 +353,28 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                         </select>
                     </div>
                 )}
-                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Value</label>
+                        <input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" />
+                    </div>
+                    {name === 'Other' ? (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text='No market quote for "Other"; enter an estimate or use a named commodity for live pricing.' /></label>
+                            <input type="number" placeholder="Current Value" value={otherCurrentValue} onChange={e => setOtherCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" />
+                        </div>
+                    ) : (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text="Computed when you save: live unit price (Finnhub for gold/silver, Binance for Bitcoin) × quantity, with gold karat applied." /></label>
+                            <div className="w-full p-2 border border-dashed border-slate-300 rounded-md bg-slate-50 text-sm text-slate-700">
+                                Live from market on save — not entered manually.
+                                {holdingToEdit && (
+                                    <span className="block mt-1 text-xs text-slate-500">Last saved: {formatCurrencyString(holdingToEdit.currentValue)}</span>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
                 <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <div><label className="block text-sm font-medium text-gray-700">Link to Goal <InfoHint text="Connect this commodity to a goal so goal progress includes it." /></label><select value={goalId || 'none'} onChange={(e) => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} className="mt-1 w-full p-2 border rounded-md"><option value="none">Not linked</option>{goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
@@ -499,7 +550,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
-            alert(`Failed to update commodity prices. Crypto/metals use Finnhub when AI is unavailable.\n\n${formatAiError(error)}`);
+            alert(`Failed to update commodity prices (Finnhub for metals, Binance for Bitcoin).\n\n${formatAiError(error)}`);
         } 
         finally { setIsUpdatingPrices(false); }
     };
@@ -589,7 +640,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI with deterministic fallback APIs (Finnhub/Stooq).
+                            Track gold, silver, bitcoin and other commodities. <strong>Save</strong> on a commodity fetches live unit prices (Finnhub for metals, Binance for Bitcoin). Use <strong>Update Prices</strong> to refresh all holdings without re-entering each one.
                         </p>
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>

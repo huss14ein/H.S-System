@@ -758,7 +758,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             <div className="section-card border-l-4 border-emerald-500/50 mt-4">
                 <h3 className="section-title text-base">Emergency fund (liquid cash)</h3>
                 <p className="text-lg font-semibold text-dark tabular-nums">{maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses</p>
-                <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{maskBalance(formatCurrencyString(emergencyFund.shortfall))}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.'}</p>
+                <p className="text-sm text-slate-600 mt-1">Target: {EMERGENCY_FUND_TARGET_MONTHS} months. {emergencyFund.hasEssentialExpenseEstimate ? (emergencyFund.shortfall > 0 ? <>Shortfall: <strong>{maskBalance(formatCurrencyString(emergencyFund.shortfall))}</strong>. Build savings in Checking/Savings to reach the target.</> : 'Target met. Your liquid cash is adequate for emergencies.') : 'Add essential expense categories or budgets to measure months covered.'}</p>
                 {setActivePage && <button type="button" onClick={() => setActivePage('Summary')} className="mt-2 text-sm text-primary font-medium hover:underline">View full breakdown on Summary →</button>}
             </div>
 
