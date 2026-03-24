@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { PlannedTrade, type Page } from '../types';
+import { PlannedTrade, type Page, type TradeCurrency } from '../types';
 import Modal from '../components/Modal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { PlusIcon } from '../components/icons/PlusIcon';
@@ -33,16 +33,26 @@ import { ChartBarIcon } from '../components/icons/ChartBarIcon';
 import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 
+const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 0–100 scores: one decimal max, no trailing “.0” for whole numbers. */
+function formatRiskPointsOn100(n: number): string {
+  const r = Math.round(Math.min(100, Math.max(0, Number(n) || 0)) * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
 
 const PlanTradeModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     onSave: (plan: Omit<PlannedTrade, 'id'|'user_id'> | PlannedTrade) => void;
     planToEdit: PlannedTrade | null;
-    universe?: { ticker?: string; name?: string }[];
+    universe?: { ticker?: string; name?: string; status?: string }[];
     simulatedPrices?: Record<string, { price?: number }>;
     monthlyBudget?: number;
-}> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget }) => {
+    /** Core sleeve fraction (0–1) from investment plan — improves default trade amount. */
+    coreAllocation?: number;
+    budgetCurrency?: TradeCurrency;
+}> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget, coreAllocation, budgetCurrency }) => {
     const [symbol, setSymbol] = useState('');
     const [name, setName] = useState('');
     const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -74,6 +84,28 @@ const PlanTradeModal: React.FC<{
             setTargetValue(''); setQuantity(''); setAmount(''); setPriority('Medium'); setNotes('');
         }
     }, [planToEdit, isOpen]);
+
+    // Auto-pick first actionable universe ticker when creating a new plan.
+    useEffect(() => {
+        if (!isOpen || planToEdit) return;
+        const first = universe.find((t) => {
+            const s = String(t.status ?? '');
+            return s === 'Core' || s === 'High-Upside';
+        });
+        if (first?.ticker) {
+            setSymbol(String(first.ticker).toUpperCase().trim());
+            if (first.name) setName(String(first.name));
+        }
+    }, [isOpen, planToEdit, universe]);
+
+    // Default date trigger to ~30 days ahead when in date mode on a new plan (or after switching from price).
+    useEffect(() => {
+        if (!isOpen || planToEdit || conditionType !== 'date') return;
+        if (targetValue && ISO_DATE_ONLY.test(targetValue.trim())) return;
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        setTargetValue(d.toISOString().split('T')[0]);
+    }, [isOpen, planToEdit, conditionType, targetValue]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -187,25 +219,40 @@ const PlanTradeModal: React.FC<{
         if (price && Number.isFinite(price)) setTargetValue(String(price));
     }, [isOpen, planToEdit, symbol, conditionType, simulatedPrices]);
 
-    // Suggest amount from monthly budget when creating a buy plan (10% of budget).
+    // Suggest amount from monthly budget when creating a buy plan (max of 10% budget vs ~20% of Core sleeve).
     // Omit amount/quantity from deps so clearing the field does not re-trigger fill.
     useEffect(() => {
         if (!isOpen || planToEdit || tradeType !== 'buy' || amount || quantity) return;
         if (monthlyBudget && monthlyBudget > 0) {
-            const suggested = Math.round(monthlyBudget * 0.1);
+            const core = typeof coreAllocation === 'number' && Number.isFinite(coreAllocation) && coreAllocation > 0 ? coreAllocation : 0.7;
+            const fromSleeve = monthlyBudget * core * 0.2;
+            const fromTenPct = monthlyBudget * 0.1;
+            const suggested = Math.round(Math.max(fromTenPct, fromSleeve, 100));
             if (suggested >= 100) setAmount(String(suggested));
         }
-    }, [isOpen, planToEdit, tradeType, monthlyBudget]);
+    }, [isOpen, planToEdit, tradeType, monthlyBudget, coreAllocation]);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={planToEdit ? 'Edit plan' : 'Create plan'}>
+            <p className="text-xs text-slate-600 -mt-2 mb-4">
+                {planToEdit ? 'Update trigger and size.' : 'Fields pre-fill from your universe, live prices, and monthly investment plan when possible. Adjust before saving.'}
+                {budgetCurrency ? ` Amounts are in plan currency (${budgetCurrency}) unless noted for the ticker.` : ''}
+            </p>
             <form onSubmit={handleSubmit} className="space-y-6">
+                {universe.length > 0 && (
+                    <datalist id="plan-trade-universe-symbols">
+                        {universe.map((t: any) => (
+                            <option key={String(t.ticker)} value={String(t.ticker ?? '').toUpperCase()} label={t.name ? `${t.name} (${t.status ?? ''})` : undefined} />
+                        ))}
+                    </datalist>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label htmlFor="symbol" className="block text-sm font-semibold text-gray-700 mb-2">Symbol</label>
                         <input 
                             type="text" 
                             id="symbol"
+                            list={universe.length > 0 ? 'plan-trade-universe-symbols' : undefined}
                             value={symbol} 
                             onChange={e => setSymbol(e.target.value)} 
                             required 
@@ -372,6 +419,7 @@ const PlanTradeModal: React.FC<{
 /** Control tower: cross-engine constraints, alerts, and prioritized actions for Investment Plan. */
 const InvestmentPlanControlTower: React.FC = () => {
   const { data } = useContext(DataContext)!;
+  const { formatCurrencyString } = useFormatCurrency();
   const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration();
   const emergencyFund = useEmergencyFund(data ?? null);
   const nextBestActions = useMemo(() => {
@@ -404,13 +452,23 @@ const InvestmentPlanControlTower: React.FC = () => {
         {cash && (
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Cash</p>
-            <p className="text-sm text-slate-800">Buffer: {cash.cashflowBuffer.toFixed(1)} mo · Discretionary: {cash.discretionaryBudget >= 0 ? Math.round(cash.discretionaryBudget).toLocaleString() : '—'}</p>
+            <p className="text-sm text-slate-800">
+              Buffer: {Number(cash.cashflowBuffer.toFixed(1))} mo ·
+              Discretionary:{' '}
+              {cash.discretionaryBudget >= 0
+                ? formatCurrencyString(cash.discretionaryBudget, { digits: 0 })
+                : '—'}
+            </p>
           </div>
         )}
         {risk && (
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk</p>
-            <p className="text-sm text-slate-800">Portfolio risk: {risk.currentPortfolioRisk}/100 · Budget left: {risk.riskBudgetRemaining.toFixed(0)}</p>
+            <p className="text-sm text-slate-800">
+              Portfolio risk score: {formatRiskPointsOn100(risk.currentPortfolioRisk)}/100 · Risk headroom:{' '}
+              {formatRiskPointsOn100(risk.riskBudgetRemaining)}/100
+            </p>
+            <p className="text-xs text-slate-500 mt-1">0–100 model score (not a cash balance).</p>
           </div>
         )}
         {household?.cashflowStressSignals && household.cashflowStressSignals.length > 0 && (
@@ -1436,6 +1494,8 @@ const InvestmentPlanView: React.FC<{
                 universe={data?.portfolioUniverse ?? []}
                 simulatedPrices={simulatedPrices}
                 monthlyBudget={data?.investmentPlan?.monthlyBudget}
+                coreAllocation={data?.investmentPlan?.coreAllocation}
+                budgetCurrency={(data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR'}
             />
             <DeleteConfirmationModal 
                 isOpen={!!planToDelete} 

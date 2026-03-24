@@ -3,6 +3,7 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
+import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -1514,12 +1515,46 @@ export const getAICategorySuggestion = async (description: string, categories: s
     }
 };
 
-const SAR_PER_USD = 3.75;
 const GRAMS_PER_TROY_OZ = 31.1035;
 const BINANCE_BASE = 'https://api.binance.com/api/v3';
 
+/**
+ * Finnhub free plans often return 403 for OANDA forex/metal symbols (XAU/XAG).
+ * PAX Gold (~1 troy oz per token) is a practical public spot proxy in USD/oz for the same math as OANDA:XAU_USD.
+ */
+async function getGoldSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
+    try {
+        const res = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd',
+            { headers: { Accept: 'application/json' } },
+        );
+        if (!res.ok) return null;
+        const j = (await res.json()) as { 'pax-gold'?: { usd?: number } };
+        const v = j?.['pax-gold']?.usd;
+        return Number.isFinite(v) && v! > 0 ? v! : null;
+    } catch {
+        return null;
+    }
+}
+
+/** ~1 troy oz silver proxy when OANDA:XAG_USD is 403 (same free-tier limitation as gold). */
+async function getSilverSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
+    try {
+        const res = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=kinesis-silver&vs_currencies=usd',
+            { headers: { Accept: 'application/json' } },
+        );
+        if (!res.ok) return null;
+        const j = (await res.json()) as { 'kinesis-silver'?: { usd?: number } };
+        const v = j?.['kinesis-silver']?.usd;
+        return Number.isFinite(v) && v! > 0 ? v! : null;
+    } catch {
+        return null;
+    }
+}
+
 /** Fetch BTC/ETH prices from Binance (no API key). Returns SAR. Used when Finnhub fails or is unavailable. */
-async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: string; price: number }[]> {
+async function getBinanceCryptoPrices(symbols: string[], sarPerUsd: number = DEFAULT_SAR_PER_USD): Promise<{ symbol: string; price: number }[]> {
     const out: { symbol: string; price: number }[] = [];
     const binancePairs: [string, string][] = []; // [requestSymbol, normalizedSymbol]
     for (const sym of symbols) {
@@ -1534,7 +1569,7 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
             const data = await res.json();
             const priceUsd = Number(data?.price);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: normalized, price: priceUsd * SAR_PER_USD });
+            out.push({ symbol: normalized, price: priceUsd * sarPerUsd });
         } catch {
             // skip
         }
@@ -1542,19 +1577,24 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
     return out;
 }
 
-/** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
-export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ symbol: string; price: number }[]> {
+/** Fetch commodity prices from Finnhub (crypto + metals). Returns unit prices in SAR. `sarPerUsd` should match app FX (e.g. from `resolveSarPerUsd`). */
+export async function getFinnhubCommodityPrices(
+    commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
+    sarPerUsd: number = DEFAULT_SAR_PER_USD,
+): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
-    if (!token) return [];
+    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
     const out: { symbol: string; price: number }[] = [];
+    let coinGeckoGoldUsd: number | null | undefined;
+    let coinGeckoSilverUsd: number | null | undefined;
     for (const c of commodities) {
         const sym = (c.symbol || '').toUpperCase().trim();
         let finnhubSym = '';
-        let priceMultiplier = SAR_PER_USD;
+        let priceMultiplier = fx;
         let normalizedSym = sym;
         const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
         const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
-        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0.5, normalizedKarat / 24)) : 1;
+        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
             finnhubSym = 'BINANCE:BTCUSDT';
             normalizedSym = 'BTC';
@@ -1563,28 +1603,43 @@ export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHoldi
             normalizedSym = 'ETH';
         } else if (sym.startsWith('XAU_OUNCE')) {
             finnhubSym = 'OANDA:XAU_USD';
-            priceMultiplier = SAR_PER_USD;
+            priceMultiplier = fx;
             normalizedSym = sym;
         } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
-            priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
+            priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
         } else if (sym.startsWith('XAG_OUNCE')) {
             finnhubSym = 'OANDA:XAG_USD';
-            priceMultiplier = SAR_PER_USD;
+            priceMultiplier = fx;
             normalizedSym = sym;
         } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
-            priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
+            priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
         }
         if (!finnhubSym) continue;
         try {
-            const res = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
-            if (!res.ok) continue;
-            const row = await res.json();
-            const priceUsd = Number(row?.c ?? row?.pc ?? row?.p);
-            if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+            let priceUsd: number | null = null;
+            if (token) {
+                const res = await finnhubFetch(
+                    `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`,
+                );
+                if (res.ok) {
+                    const row = await res.json();
+                    const v = Number(row?.c ?? row?.pc ?? row?.p);
+                    if (Number.isFinite(v) && v > 0) priceUsd = v;
+                }
+            }
+            if (priceUsd == null && finnhubSym === 'OANDA:XAU_USD') {
+                if (coinGeckoGoldUsd === undefined) coinGeckoGoldUsd = await getGoldSpotUsdPerTroyOzCoinGecko();
+                if (coinGeckoGoldUsd != null) priceUsd = coinGeckoGoldUsd;
+            }
+            if (priceUsd == null && finnhubSym === 'OANDA:XAG_USD') {
+                if (coinGeckoSilverUsd === undefined) coinGeckoSilverUsd = await getSilverSpotUsdPerTroyOzCoinGecko();
+                if (coinGeckoSilverUsd != null) priceUsd = coinGeckoSilverUsd;
+            }
+            if (priceUsd == null) continue;
             out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier * karatFactor });
         } catch {
             // skip
@@ -1601,16 +1656,23 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
     return s;
 }
 
+export type AICommodityPricesOptions = { sarPerUsd?: number };
+
 /** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
+export const getAICommodityPrices = async (
+    commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
+    options?: AICommodityPricesOptions,
+): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
-    let prices = await getFinnhubCommodityPrices(commodities);
+    const rawFx = options?.sarPerUsd;
+    const sarPerUsd = typeof rawFx === 'number' && Number.isFinite(rawFx) && rawFx > 0 ? rawFx : DEFAULT_SAR_PER_USD;
+    let prices = await getFinnhubCommodityPrices(commodities, sarPerUsd);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));
     const missingCrypto = commodities
         .map(c => (c.symbol || '').toUpperCase().trim())
         .filter(s => (s === 'BTC' || s === 'BTC_USD' || s === 'ETH' || s === 'ETH_USD') && !haveSymbol.has(normalizeCommoditySymbolForMatch(s)));
     if (missingCrypto.length > 0) {
-        const binancePrices = await getBinanceCryptoPrices([...new Set(missingCrypto)]);
+        const binancePrices = await getBinanceCryptoPrices([...new Set(missingCrypto)], sarPerUsd);
         for (const p of binancePrices) {
             if (!prices.some(x => normalizeCommoditySymbolForMatch(x.symbol) === p.symbol)) {
                 prices = [...prices, p];
@@ -1628,6 +1690,27 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
     // Always return result (keyed by original symbols); never raw prices (e.g. 'BTC') to avoid UI matching failures
     return { prices: result, groundingChunks: [] };
 };
+
+/** Translate an English financial insight to Modern Standard Arabic; keeps numbers and currency tokens. */
+export async function translateFinancialInsightToArabic(englishText: string): Promise<string> {
+    const src = (englishText || '').trim();
+    if (!src) return '';
+    const prompt = `You are a professional financial translator. Translate the following text into Modern Standard Arabic.
+
+Rules:
+- Preserve every number, percentage, date, and currency label (SAR, USD, etc.) exactly as in the source.
+- Use clear, direct Arabic suitable for a personal finance app.
+- Output plain text only: short paragraphs and/or lines starting with "- " for bullets. Do NOT use markdown headers (no ###).
+- Do not add disclaimers or meta-commentary.`;
+
+    const response = await invokeAI({
+        model: FAST_MODEL,
+        contents: `${prompt}\n\n---\n${src}\n---`,
+        config: { systemInstruction: DEFAULT_SYSTEM_INSTRUCTION },
+    });
+    const out = (response?.text ?? '').trim();
+    return out || src;
+}
 
 export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
     try {

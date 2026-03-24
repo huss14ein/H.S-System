@@ -5,6 +5,7 @@ import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
 import type { Page } from '../types';
+import { getPersonalInvestments } from '../utils/wealthScope';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -309,7 +310,9 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const trackedSymbols = useMemo((): string[] => {
     const fromWatchlist = (data?.watchlist ?? []).map((w: { symbol?: string }) => w.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s));
-    const fromHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: { symbol?: string }[] }) => (p.holdings ?? []).map((h: { symbol?: string }) => h.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s)));
+    const fromHoldings = getPersonalInvestments(data ?? null).flatMap((p: { holdings?: { symbol?: string }[] }) =>
+      (p.holdings ?? []).map((h: { symbol?: string }) => h.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s)),
+    );
     return Array.from(new Set([...fromWatchlist, ...fromHoldings]));
   }, [data]);
 
@@ -335,8 +338,9 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   useEffect(() => {
     const now = startOfDay(new Date());
     const end = new Date(now.getFullYear(), now.getMonth() + MONTHS_AHEAD, now.getDate());
-    const from = now.toISOString().slice(0, 10);
-    const to = end.toISOString().slice(0, 10);
+    /** Local calendar dates — avoid UTC `toISOString()` shifting the Finnhub range vs the on-screen month grid. */
+    const from = toLocalDateKey(now);
+    const to = toLocalDateKey(end);
     let alive = true;
 
     Promise.resolve()

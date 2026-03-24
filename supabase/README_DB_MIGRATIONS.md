@@ -25,6 +25,25 @@ This replaces running `run_these_for_app.sql` → `full_schema_for_app.sql` → 
 | 5 | `ensure_transactions_budget_category.sql` | Column `transactions.budget_category` for expense tracking. |
 | 6 | `budgets_period_weekly_daily.sql` | Allow `weekly` and `daily` in `budgets.period` (run after budgets have period column). |
 
+## Approve signups (Settings → admin pending users)
+
+If **Settings** fails to load **pending signups** (HTTP 400, unknown column `approved`, or PostgREST cannot apply `approved=eq.false`), run **`migrations/add_user_approval.sql`** in the Supabase SQL editor. It:
+
+- Adds **`approved boolean`** (and **`email`**) on **`public.users`**
+- Enables **RLS** with policies so each user reads their own row and **Admins** can `select` all users and `update` approvals
+- Defines **`is_admin_user()`**, **`approve_signup_user`**, **`reject_signup_user`**
+- Adds an **`auth.users` → `public.users`** trigger so new signups start with **`approved = false`**
+
+Then promote your admin once:
+
+```sql
+update public.users
+set role = 'Admin', approved = true
+where email = 'your-admin@example.com';
+```
+
+Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a column comment and a partial index on pending rows.
+
 ## Optional (features and fixes)
 
 | File | Purpose |
@@ -47,6 +66,9 @@ This replaces running `run_these_for_app.sql` → `full_schema_for_app.sql` → 
 | `migrations/add_optional_schema_extras.sql` | `budgets.destination_account_id`, `holdings.holding_type`. |
 | `migrations/add_investment_plan_fx_rate_updated_at.sql` | `investment_plan.fx_rate_updated_at`. |
 | `migrations/add_owner_column_wealth_segmentation.sql` | `owner` on accounts, assets, liabilities, commodities, portfolios. |
+| `migrations/add_user_approval.sql` | See **[Approve signups](#approve-signups-settings--admin-pending-users)** above. |
+| `migrations/add_users_approved_metadata.sql` | Comment + index for `users.approved` (after `add_user_approval.sql`). |
+| `migrations/add_assets_sukuk_dates.sql` | `assets.issue_date`, `assets.maturity_date` for Sukuk. |
 | `add_timestamps_all_tables.sql` | Add `created_at` and `updated_at` to all app tables; backfill existing rows. |
 
 ## One-time “run all required” (minimal)

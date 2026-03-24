@@ -5,6 +5,20 @@
 
 export const MONEY_DECIMALS = 2;
 
+/**
+ * Per-share / per-unit **average cost** (not a currency line total).
+ * Use 4 dp so weighted averages and DB round-trips stay aligned with the holdings UI;
+ * {@link roundMoney} (2 dp) was too coarse and made cost basis drift after buys.
+ */
+export const AVG_COST_DECIMALS = 4;
+
+export function roundAvgCostPerUnit(amount: number, decimals: number = AVG_COST_DECIMALS): number {
+  if (amount == null || !Number.isFinite(Number(amount))) return 0;
+  const n = Number(amount);
+  const f = 10 ** decimals;
+  return Math.round((n + Number.EPSILON) * f) / f;
+}
+
 export function roundMoney(amount: number, decimals: number = MONEY_DECIMALS): number {
   if (amount == null || !Number.isFinite(Number(amount))) return 0;
   const n = Number(amount);

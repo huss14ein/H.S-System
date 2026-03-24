@@ -14,6 +14,9 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
+import { summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
+import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities } from '../utils/wealthScope';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -68,6 +71,8 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const [localNisabAmount, setLocalNisabAmount] = useState(String(defaultNisab ?? (275 * 85)));
     const [otherDebts, setOtherDebts] = useState(0);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    const [isFetchingGold, setIsFetchingGold] = useState(false);
+    const [goldLiveNotice, setGoldLiveNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     
     useEffect(() => {
         const g = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
@@ -94,34 +99,59 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     }, [useNisabAmount, localNisabAmount, nisabAmountSetting, localGoldPrice, goldPrice]);
 
     const zakatableAssets = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const commodityHoldings = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
-        const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? '')).reduce((sum: number, acc: { balance?: number }) => sum + Math.max(0, acc.balance ?? 0), 0);
-        const invValue = investments
-            .flatMap((p: { holdings?: { zakahClass?: string; currentValue?: number }[]; currency?: string }) => (p.holdings || []).map((h: { zakahClass?: string; currentValue?: number; portfolioCurrency?: string }) => ({ ...h, portfolioCurrency: p.currency })))
-            .filter((h: { zakahClass?: string }) => h.zakahClass === 'Zakatable')
-            .reduce((sum: number, h: { currentValue?: number; portfolioCurrency?: string }) => sum + toSAR(h.currentValue ?? 0, h.portfolioCurrency as 'USD' | 'SAR' | undefined, sarPerUsd), 0);
-        const commodities = commodityHoldings.filter((c: { zakahClass?: string }) => c.zakahClass === 'Zakatable').reduce((sum: number, c: { currentValue?: number }) => sum + (c.currentValue ?? 0), 0);
+        const accounts = getPersonalAccounts(data);
+        const investments = getPersonalInvestments(data);
+        const commodityHoldings = getPersonalCommodityHoldings(data);
+        const cash = accounts
+            .filter((a) => ['Checking', 'Savings'].includes(a.type ?? ''))
+            .reduce((sum, acc) => sum + toSAR(Math.max(0, acc.balance ?? 0), acc.currency, sarPerUsd), 0);
+        const { totalSar: invValue, lines: investmentLines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd);
+        const commodities = commodityHoldings
+            .filter((c: { zakahClass?: string; zakah_class?: string }) => (c.zakahClass ?? c.zakah_class) !== 'Non-Zakatable')
+            .reduce((sum: number, c: { currentValue?: number }) => sum + (c.currentValue ?? 0), 0);
         const total = cash + invValue + commodities;
-        return { cash, investments: invValue, commodities, total };
-    }, [data?.accounts, data?.investments, data?.commodityHoldings, (data as any)?.personalAccounts, (data as any)?.personalInvestments, (data as any)?.personalCommodityHoldings, sarPerUsd]);
+        return { cash, investments: invValue, commodities, total, investmentLines };
+    }, [data, sarPerUsd]);
 
     const deductibleLiabilities = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
-        const shortTermDebts = accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+        const accounts = getPersonalAccounts(data);
+        const liabilities = getPersonalLiabilities(data);
+        const shortTermDebts = accounts
+            .filter((a) => a.type === 'Credit' && (a.balance ?? 0) < 0)
+            .reduce((sum: number, acc) => sum + toSAR(Math.abs(acc.balance ?? 0), acc.currency, sarPerUsd), 0);
         // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
         const trackedLiabilities = liabilities.filter((l: { status?: string; amount?: number }) => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum: number, liability: { amount?: number }) => sum + Math.abs(liability.amount ?? 0), 0);
         const total = shortTermDebts + trackedLiabilities + otherDebts;
         return { shortTermDebts, trackedLiabilities, otherDebts, total };
-    }, [otherDebts, data?.accounts, data?.liabilities, (data as any)?.personalAccounts, (data as any)?.personalLiabilities]);
+    }, [otherDebts, data, sarPerUsd]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
     const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
+
+    const handleFetchLiveGold = async () => {
+        setGoldLiveNotice(null);
+        setIsFetchingGold(true);
+        try {
+            const live = await fetchLiveGoldPriceSarPerGram(sarPerUsd);
+            if (!live.ok) {
+                setGoldLiveNotice({ type: 'error', text: live.message });
+                return;
+            }
+            setLocalGoldPrice(String(live.price));
+            await updateSettings({ goldPrice: live.price });
+            setGoldLiveNotice({
+                type: 'success',
+                text: `Updated to live spot (24K, SAR/gram) using your USD→SAR rate (${sarPerUsd.toFixed(4)}). You can still edit manually.`,
+            });
+        } catch (e) {
+            setGoldLiveNotice({ type: 'error', text: e instanceof Error ? e.message : 'Failed to fetch gold price.' });
+        } finally {
+            setIsFetchingGold(false);
+        }
+    };
 
     if (loading || !data) {
         return (
@@ -150,21 +180,47 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                 <div className="space-y-6">
                     <SectionCard title="Zakatable Assets" collapsible collapsibleSummary="Cash, investments, receivables" defaultExpanded>
                          <div className="space-y-3">
+                            <p className="text-xs text-slate-500 -mt-1 mb-2">Totals use <strong>SAR</strong> (same basis as Nisab / gold here): cash and card debt converted from each account&apos;s currency; investments use each portfolio&apos;s book currency (USD vs SAR), including Tadawul when portfolio currency was unset.</p>
                             <div className="flex justify-between text-sm pt-2">
                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Cash</span>
-                               <span>{formatCurrencyString(zakatableAssets.cash)}</span>
+                               <span>{formatCurrencyString(zakatableAssets.cash, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
-                            <div className="flex justify-between text-sm">
-                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Investments</span>
-                                <span>{formatCurrencyString(zakatableAssets.investments)}</span>
+                            <div className="flex justify-between text-sm items-start gap-2">
+                                <span className="text-gray-600 flex items-center shrink-0"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Investments</span>
+                                <span className="text-right font-medium tabular-nums">{formatCurrencyString(zakatableAssets.investments, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
+                            {zakatableAssets.investmentLines.length > 0 && (
+                                <div className="ml-6 rounded-lg border border-slate-200 bg-slate-50/80 overflow-hidden">
+                                    <div className="max-h-40 overflow-y-auto">
+                                        <table className="w-full text-xs text-left">
+                                            <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
+                                                <tr>
+                                                    <th className="py-1.5 px-2 font-semibold">Symbol</th>
+                                                    <th className="py-1.5 px-2 font-semibold">Portfolio</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">SAR</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {zakatableAssets.investmentLines.map((row, idx) => (
+                                                    <tr key={`${row.portfolioId}-${row.symbol}-${idx}`} className="text-slate-800">
+                                                        <td className="py-1.5 px-2 font-medium">{row.symbol}</td>
+                                                        <td className="py-1.5 px-2 text-slate-600 truncate max-w-[120px]" title={row.portfolioName}>{row.portfolioName}</td>
+                                                        <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrencyString(row.valueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 px-2 py-1.5 border-t border-slate-200">Value = market value when set; otherwise quantity × average cost. Non‑Zakatable positions excluded.</p>
+                                </div>
+                            )}
                              <div className="flex justify-between text-sm">
                                 <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Commodities</span>
-                                <span>{formatCurrencyString(zakatableAssets.commodities)}</span>
+                                <span>{formatCurrencyString(zakatableAssets.commodities, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
-                            <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total)}</span></div>
+                            <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
                              <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded-md mt-2">
-                                <p>Includes cash, &apos;Zakatable&apos; investments, and &apos;Zakatable&apos; commodities. You can change an asset&apos;s Zakat classification on the {setActivePage ? (
+                                <p>Includes cash, zakatable investments (default zakatable if unset), and commodities not marked Non‑Zakatable. You can change an asset&apos;s Zakat classification on the {setActivePage ? (
                                     <> <button type="button" onClick={() => setActivePage('Investments')} className="text-primary font-medium hover:underline">Investments</button> and <button type="button" onClick={() => setActivePage('Assets')} className="text-primary font-medium hover:underline">Assets</button> pages.</>
                                 ) : (
                                     <>Investments and Assets pages.</>
@@ -174,13 +230,13 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </SectionCard>
                     <SectionCard title="Deductible Liabilities" collapsible collapsibleSummary="Debts to deduct">
                         <div className="space-y-3">
-                            <div className="flex justify-between text-sm"><span className="text-gray-600">Credit Card Debt</span><span>{formatCurrencyString(deductibleLiabilities.shortTermDebts)}</span></div>
-                            <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities)}</span></div>
+                            <div className="flex justify-between text-sm"><span className="text-gray-600">Credit Card Debt</span><span>{formatCurrencyString(deductibleLiabilities.shortTermDebts, { inCurrency: 'SAR', digits: 0 })}</span></div>
+                            <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities, { inCurrency: 'SAR', digits: 0 })}</span></div>
                             <div>
                                 <label htmlFor="other-debts" className="block text-sm font-medium text-gray-700">Other Short-Term Debts</label>
                                 <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="input-base mt-1" />
                             </div>
-                            <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Liabilities</span><span>{formatCurrencyString(deductibleLiabilities.total)}</span></div>
+                            <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Liabilities</span><span>{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
                         </div>
                     </SectionCard>
                 </div>
@@ -197,21 +253,40 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 <input type="number" id="nisab-amount" value={localNisabAmount} onChange={(e) => setLocalNisabAmount(e.target.value)} onBlur={() => { const v = parseFloat(localNisabAmount); if (Number.isFinite(v) && v > 0) updateSettings({ nisabAmount: v }); }} className="input-base mt-1" min="0" step="1" />
                             </div>
                         ) : (
-                            <div>
+                            <div className="space-y-2">
                                 <label htmlFor="gold-price" className="block text-sm font-medium text-gray-700 flex items-center">Price of Gold (per gram) <InfoHint text="Used to compute the Nisab threshold: Nisab = price × 85 grams. If your net zakatable wealth is below that value, you do not owe Zakat." /></label>
-                                <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="input-base mt-1" />
+                                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                                    <input type="number" id="gold-price" value={localGoldPrice} onChange={(e) => setLocalGoldPrice(e.target.value)} onBlur={() => { const v = parseFloat(localGoldPrice) || 275; updateSettings({ goldPrice: v }); }} className="input-base mt-0 sm:flex-1" min={0} step={0.01} />
+                                    <button
+                                        type="button"
+                                        onClick={handleFetchLiveGold}
+                                        disabled={isFetchingGold}
+                                        className="shrink-0 px-3 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {isFetchingGold ? 'Fetching…' : 'Use live gold (24K / g)'}
+                                    </button>
+                                </div>
+                                <p className="text-xs text-gray-500">Live value uses Finnhub spot XAU/USD, converted with your app rate (USD→SAR from settings/header), then per gram (troy oz = 31.1035 g). For jewelry karats, adjust manually or use Assets commodities.</p>
+                                {goldLiveNotice && (
+                                    <div
+                                        role="status"
+                                        className={`text-sm rounded-lg px-3 py-2 border ${goldLiveNotice.type === 'success' ? 'bg-emerald-50 text-emerald-900 border-emerald-200' : 'bg-red-50 text-red-800 border-red-200'}`}
+                                    >
+                                        {goldLiveNotice.text}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab)}</span></div>
+                    <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab, { inCurrency: 'SAR', digits: 0 })}</span></div>
                     <hr/>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Total Zakatable Assets</span><span className="font-medium text-dark">{formatCurrencyString(zakatableAssets.total)}</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Deductible Liabilities</span><span className="font-medium text-dark">-{formatCurrencyString(deductibleLiabilities.total)}</span></div>
-                    <div className="flex justify-between text-base font-semibold p-2 bg-gray-100 rounded-md"><span className="text-gray-800">Net Zakatable Wealth</span><span className="text-dark">{formatCurrencyString(netZakatableWealth)}</span></div>
+                    <div className="flex justify-between text-sm"><span className="text-gray-600">Total Zakatable Assets</span><span className="font-medium text-dark">{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
+                    <div className="flex justify-between text-sm"><span className="text-gray-600">Deductible Liabilities</span><span className="font-medium text-dark">-{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
+                    <div className="flex justify-between text-base font-semibold p-2 bg-gray-100 rounded-md"><span className="text-gray-800">Net Zakatable Wealth</span><span className="text-dark">{formatCurrencyString(netZakatableWealth, { inCurrency: 'SAR', digits: 0 })}</span></div>
                      <div className="flex items-center justify-center space-x-2 pt-2">
                         {isNisabMet ? ( <><CheckCircleIcon className="h-6 w-6 text-green-500" /><span className="font-semibold text-green-600">Nisab Threshold Met</span></> ) : ( <><XCircleIcon className="h-6 w-6 text-red-500" /><span className="font-semibold text-red-500">Nisab Threshold Not Met</span></> )}
                     </div>
-                    <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue)} />
+                    <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue, { inCurrency: 'SAR', digits: 0 })} />
                 </SectionCard>
                 
                  {/* Column 3: Payment Ledger */}
@@ -225,7 +300,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                         <div>
                             <div className="flex justify-between items-baseline text-sm mb-1">
                                 <span className="font-medium">Paid</span>
-                                <span>{formatCurrencyString(totalPaid, {digits: 0})} / {formatCurrencyString(zakatDue, {digits: 0})}</span>
+                                <span>{formatCurrencyString(totalPaid, { inCurrency: 'SAR', digits: 0 })} / {formatCurrencyString(zakatDue, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
                             <ProgressBar value={totalPaid} max={zakatDue > 0 ? zakatDue : 1} />
                         </div>
@@ -242,7 +317,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 <div className="flex items-center gap-3">
                                     <BanknotesIcon className="h-6 w-6 text-green-500 flex-shrink-0" />
                                     <div>
-                                        <p className="font-semibold text-dark">{formatCurrencyString(p.amount)}</p>
+                                        <p className="font-semibold text-dark">{formatCurrencyString(p.amount, { inCurrency: 'SAR', digits: 0 })}</p>
                                         <p className="text-xs text-gray-500">{new Date(p.date).toLocaleDateString()}</p>
                                     </div>
                                 </div>

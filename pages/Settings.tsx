@@ -174,10 +174,15 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     .select('id, name, email, created_at')
                     .eq('approved', false)
                     .order('created_at', { ascending: false });
+                const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''}`.toLowerCase();
                 const missingApprovalColumn =
                     pendingErr &&
                     (pendingErr.code === '42703' ||
-                        (typeof pendingErr.message === 'string' && pendingErr.message.includes('approved')));
+                        (typeof pendingErr.message === 'string' &&
+                            /approved/i.test(pendingErr.message) &&
+                            /column|does not exist|schema/i.test(pendingErr.message)) ||
+                        (errText.includes('approved') &&
+                            (errText.includes('column') || errText.includes('does not exist') || errText.includes('schema'))));
                 if (missingApprovalColumn) {
                     setPendingUsers([]);
                 } else if (pendingErr) {

@@ -56,12 +56,16 @@ const EXPERTS: { id: string; name: string; logic: string; run: (p: any) => Promi
     { id: 'lifestyle-upgrade', name: 'Lifestyle Upgrade Without Slowing Wealth', logic: 'Swap low-joy for high-joy spending → small cost increase, big happiness gain → wealth velocity stays high', run: getLifestyleUpgradeExpert, params: ['salary', 'currentExpenses'] },
 ];
 
+function initialExpertsExpanded(): Record<string, boolean> {
+    return Object.fromEntries(EXPERTS.map((e) => [e.id, true]));
+}
+
 const SalaryPlanningExperts: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable } = useAI();
-    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(initialExpertsExpanded);
     const [formValues, setFormValues] = useState<Record<string, string>>({} as Record<string, string>);
     const [loadingId, setLoadingId] = useState<string | null>(null);
     const [result, setResult] = useState<{ expertId: string; markdown: string } | null>(null);
@@ -418,14 +422,14 @@ const SalaryPlanningExperts: React.FC = () => {
             )}
             <div className="space-y-3">
                 {EXPERTS.map((expert) => {
-                    const isExpanded = expandedId === expert.id;
+                    const isExpanded = expandedIds[expert.id] !== false;
                     const expertTitleHint = lookupHintForTitle(expert.name);
                     return (
                         <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-visible hover:border-slate-300 transition-colors">
                             <div className="flex items-start justify-between gap-3 p-4 hover:bg-slate-50/80 transition-colors">
                                 <button
                                     type="button"
-                                    onClick={() => setExpandedId(isExpanded ? null : expert.id)}
+                                    onClick={() => setExpandedIds((prev) => ({ ...prev, [expert.id]: !isExpanded }))}
                                     className="min-w-0 flex-1 text-left"
                                 >
                                     <span className="font-semibold text-slate-800 block">{expert.name}</span>
@@ -435,7 +439,7 @@ const SalaryPlanningExperts: React.FC = () => {
                                     {expertTitleHint ? <InfoHint text={expertTitleHint} popoverAlign="right" /> : null}
                                     <button
                                         type="button"
-                                        onClick={() => setExpandedId(isExpanded ? null : expert.id)}
+                                        onClick={() => setExpandedIds((prev) => ({ ...prev, [expert.id]: !isExpanded }))}
                                         className="p-1 rounded text-slate-400 hover:text-slate-600"
                                         aria-expanded={isExpanded}
                                         aria-label={isExpanded ? 'Collapse expert' : 'Expand expert'}

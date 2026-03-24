@@ -1,20 +1,25 @@
 import type { Holding } from '../types';
-import { roundMoney, roundQuantity } from '../utils/money';
+import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 
 export function applyBuyToHolding(
   holding: Pick<Holding, 'quantity' | 'avgCost' | 'currentValue'>,
   buyQuantity: number,
-  buyPrice: number
+  buyPrice: number,
+  opts?: { /** When set (e.g. manual_fund), adds this to current value instead of cost (qAdd × price). */ currentValueAdd?: number }
 ): { quantity: number; avgCost: number; currentValue: number } {
   const qOld = Number(holding.quantity) || 0;
   const qAdd = Math.max(0, Number(buyQuantity) || 0);
   const px = roundMoney(Math.max(0, Number(buyPrice) || 0));
   const quantity = roundQuantity(qOld + qAdd);
   const avgCostRaw = quantity > 0 ? (qOld * (Number(holding.avgCost) || 0) + qAdd * px) / quantity : px;
-  const currentValueRaw = (Number(holding.currentValue) || 0) + qAdd * px;
+  const addToValue =
+    opts?.currentValueAdd != null && Number.isFinite(opts.currentValueAdd)
+      ? Math.max(0, Number(opts.currentValueAdd))
+      : qAdd * px;
+  const currentValueRaw = (Number(holding.currentValue) || 0) + addToValue;
   return {
     quantity,
-    avgCost: roundMoney(avgCostRaw),
+    avgCost: roundAvgCostPerUnit(avgCostRaw),
     currentValue: roundMoney(currentValueRaw),
   };
 }
@@ -31,7 +36,7 @@ export function consolidateHoldingsBySymbol(holdings: Holding[]): Holding | null
   return {
     ...primary,
     quantity: roundQuantity(totalQuantity),
-    avgCost: roundMoney(avgCostRaw),
+    avgCost: roundAvgCostPerUnit(avgCostRaw),
     currentValue,
     realizedPnL,
   };

@@ -9,7 +9,7 @@ interface CollapsibleSectionProps {
   summary?: string;
   /** Content shown when expanded */
   children: ReactNode;
-  /** Start expanded (default: true — click header to collapse) */
+  /** Kept for API compatibility; sections always mount expanded (click header to collapse). */
   defaultExpanded?: boolean;
   /** Extra class for the container */
   className?: string;
@@ -27,12 +27,13 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   title,
   summary,
   children,
-  defaultExpanded = true,
+  defaultExpanded: _defaultExpanded,
   className = '',
   icon,
   card = true,
 }) => {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  void _defaultExpanded;
+  const [expanded, setExpanded] = useState(true);
 
   const baseClass = card ? 'section-card' : 'rounded-lg border border-slate-200 bg-white';
   const headerClass = 'flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer hover:bg-slate-50/80 rounded-lg transition-colors';

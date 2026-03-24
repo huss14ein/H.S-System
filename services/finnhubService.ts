@@ -615,12 +615,24 @@ interface MarketCalendarCachePayload {
 
 export type MarketCalendarLoadMode = 'fresh' | 'cache_fresh' | 'cache_stale' | 'none';
 
-const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v1:';
+const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v2:';
 const MARKET_CALENDAR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 function getMarketCalendarCacheKey(from: string, to: string, symbols: string[]): string {
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort().join(',');
   return `${MARKET_CALENDAR_CACHE_PREFIX}${from}:${to}:${normalizedSymbols}`;
+}
+
+/**
+ * Finnhub earnings rows may use bare tickers (e.g. `2222`) while the app stores `2222.SR`.
+ * Compare using the same Finnhub symbol mapping as quotes/calendar requests.
+ */
+export function earningsEventMatchesTrackedSymbols(trackedDisplaySymbols: string[], earningsApiSymbol: string): boolean {
+  const tracked = trackedDisplaySymbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (tracked.length === 0) return true;
+  const keys = new Set(tracked.map((s) => toFinnhubSymbol(s).toUpperCase()));
+  const k = toFinnhubSymbol((earningsApiSymbol || '').trim()).toUpperCase();
+  return keys.has(k);
 }
 
 function readMarketCalendarCache(cacheKey: string): { payload: MarketCalendarCachePayload; stale: boolean } | null {
@@ -697,8 +709,7 @@ export async function getMarketCalendarCached(from: string, to: string, trackedS
     }
     const earningsAll = await getEarningsCalendar(from, to);
 
-    const symbolSet = new Set(symbols);
-    const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+    const earnings = earningsAll.filter((e) => earningsEventMatchesTrackedSymbols(symbols, e.symbol || ''));
     const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
     writeMarketCalendarCache(cacheKey, payload);
     return { economic, earnings, mode: 'fresh', cachedAt: payload.cachedAt, warnings };
@@ -729,8 +740,7 @@ export async function getMarketCalendarFresh(from: string, to: string, trackedSy
     }
   }
   const earningsAll = await getEarningsCalendar(from, to);
-  const symbolSet = new Set(symbols);
-  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+  const earnings = earningsAll.filter((e) => earningsEventMatchesTrackedSymbols(symbols, e.symbol || ''));
   const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
   writeMarketCalendarCache(getMarketCalendarCacheKey(from, to, symbols), payload);
   return { economic, earnings, cachedAt: payload.cachedAt, warnings };

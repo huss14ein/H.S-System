@@ -259,7 +259,6 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
       <CollapsibleSection
         title="Quick guide"
         summary="What each colored tool does"
-        defaultExpanded={false}
         card={false}
         className="!rounded-xl border border-slate-200 bg-slate-50/50"
       >

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -225,7 +225,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [requestStatusFilter, setRequestStatusFilter] = useState<'All' | 'Pending' | 'Finalized' | 'Rejected'>('All');
     const [requestMonthFilter, setRequestMonthFilter] = useState<string>('');
     const [historyItemsToShow, setHistoryItemsToShow] = useState(10);
-    const [historyCollapsed, setHistoryCollapsed] = useState(true);
+    const [historyCollapsed, setHistoryCollapsed] = useState(false);
     const HISTORY_PAGE_SIZE = 15;
 
     const [currentDate, setCurrentDate] = useState(new Date());
@@ -364,6 +364,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [bulkAddTargetYear, setBulkAddTargetYear] = useState(currentYear);
     const [bulkAddSalary, setBulkAddSalary] = useState<number | ''>('');
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
+    /** Previous bulk-add template category order; used to merge user checkbox state when salary/family/profile/month updates. */
+    const bulkAddPrevSuggestionNamesRef = useRef<string[]>([]);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -392,7 +394,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
-                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
+                if (parsed?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, parsed.profile)) {
                     setEngineProfile(parsed.profile as HouseholdEngineProfile);
                 }
                 if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
@@ -426,7 +428,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
-                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
+                if (profile?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, profile.profile)) {
                     setEngineProfile(profile.profile as HouseholdEngineProfile);
                 }
                 if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
@@ -966,14 +968,54 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         );
     }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile, householdAdults, householdKids]);
 
-    // Default bulk-add selection to all suggested categories when list changes
+    // Keep checkbox selection stable when only limits change; add new template rows as selected; drop removed rows.
+    // (Old logic reset to “all selected” whenever length differed — that wiped unchecks on adults/kids/profile/salary/month changes.)
     React.useEffect(() => {
-        if (bulkAddSuggestedCategories.length === 0) return;
-        setBulkAddSelectedCategories((prev) => {
-            const names = bulkAddSuggestedCategories.map((c) => c.category);
-            const same = names.length === prev.length && names.every((n, i) => n === prev[i]);
-            return same ? prev : names;
+        const names = bulkAddSuggestedCategories.map((c) => c.category);
+        if (names.length === 0) {
+            bulkAddPrevSuggestionNamesRef.current = [];
+            setBulkAddSelectedCategories([]);
+            return;
+        }
+
+        const prevNames = bulkAddPrevSuggestionNamesRef.current;
+        const prevSet = new Set(prevNames);
+        const currSet = new Set(names);
+
+        const sameCategorySet =
+            prevNames.length > 0 &&
+            prevNames.length === names.length &&
+            names.every((n) => prevSet.has(n));
+
+        if (prevNames.length === 0) {
+            setBulkAddSelectedCategories(names);
+            bulkAddPrevSuggestionNamesRef.current = names;
+            return;
+        }
+
+        if (sameCategorySet) {
+            setBulkAddSelectedCategories((sel) => {
+                const selSet = new Set(sel);
+                return names.filter((n) => selSet.has(n));
+            });
+            bulkAddPrevSuggestionNamesRef.current = names;
+            return;
+        }
+
+        const added = names.filter((n) => !prevSet.has(n));
+        setBulkAddSelectedCategories((sel) => {
+            const kept = sel.filter((n) => currSet.has(n));
+            const keptSet = new Set(kept);
+            const withNew = [...kept];
+            for (const n of added) {
+                if (!keptSet.has(n)) {
+                    withNew.push(n);
+                    keptSet.add(n);
+                }
+            }
+            return names.filter((n) => keptSet.has(n));
         });
+        bulkAddPrevSuggestionNamesRef.current = names;
     }, [bulkAddSuggestedCategories]);
 
     React.useEffect(() => {

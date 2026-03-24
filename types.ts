@@ -107,6 +107,12 @@ export interface Asset {
   monthlyRent?: number;
   goalId?: string;
   owner?: string;
+  /** Sukuk / dated instruments: issue (or subscription) date, ISO `YYYY-MM-DD`. */
+  issueDate?: string;
+  /** Sukuk / dated instruments: maturity date, ISO `YYYY-MM-DD`. */
+  maturityDate?: string;
+  /** Free-form details (location, deed ref, insurance, condition, etc.). */
+  notes?: string;
 }
 
 export interface Liability {

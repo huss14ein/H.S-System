@@ -1,7 +1,7 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
@@ -24,7 +24,8 @@ import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
-import { roundMoney, roundQuantity } from '../utils/money';
+import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
+import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -104,7 +105,7 @@ interface DataContextType {
   applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
   applyRecurringDueToday: () => Promise<number>;
   /** `balance` optional for new accounts (defaults to 0). Investment platforms usually omit it. */
-  addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => Promise<void>;
+  addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => Promise<string | undefined>;
   updatePlatform: (platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>;
   deletePlatform: (platformId: string) => Promise<void>;
   addPortfolio: (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'>) => Promise<void>;
@@ -113,7 +114,7 @@ interface DataContextType {
   addHolding: (holding: Omit<Holding, 'id' | 'user_id'>) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: { portfolioId?: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<void>;
+  recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
@@ -200,6 +201,11 @@ function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
 function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
     if (!raw) return initialData.investmentPlan;
     const bc = raw.broker_constraints || raw.brokerConstraints || initialData.investmentPlan.brokerConstraints;
+    const { core, upside } = normalizeCoreUpsideAllocations(
+        raw.core_allocation ?? raw.coreAllocation,
+        raw.upside_allocation ?? raw.upsideAllocation,
+        { core: initialData.investmentPlan.coreAllocation, upside: initialData.investmentPlan.upsideAllocation },
+    );
     return {
         ...initialData.investmentPlan,
         user_id: raw.user_id,
@@ -207,8 +213,8 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
         budgetCurrency: (raw.budget_currency ?? raw.budgetCurrency ?? initialData.investmentPlan.budgetCurrency) as 'SAR',
         executionCurrency: (raw.execution_currency ?? raw.executionCurrency ?? initialData.investmentPlan.executionCurrency),
         fxRateSource: String(raw.fx_rate_source ?? raw.fxRateSource ?? initialData.investmentPlan.fxRateSource),
-        coreAllocation: Number(raw.core_allocation ?? raw.coreAllocation ?? initialData.investmentPlan.coreAllocation),
-        upsideAllocation: Number(raw.upside_allocation ?? raw.upsideAllocation ?? initialData.investmentPlan.upsideAllocation),
+        coreAllocation: core,
+        upsideAllocation: upside,
         minimumUpsidePercentage: Number(raw.minimum_upside_percentage ?? raw.minimumUpsidePercentage ?? initialData.investmentPlan.minimumUpsidePercentage),
         stale_days: Number(raw.stale_days ?? initialData.investmentPlan.stale_days),
         min_coverage_threshold: Number(raw.min_coverage_threshold ?? initialData.investmentPlan.min_coverage_threshold),
@@ -303,6 +309,19 @@ function normalizeAssetRow(raw: any): Asset {
     }
     const pp = raw.purchase_price ?? raw.purchasePrice;
     const mr = raw.monthly_rent ?? raw.monthlyRent;
+    const issueRaw = raw.issue_date ?? raw.issueDate;
+    const matRaw = raw.maturity_date ?? raw.maturityDate;
+    const issueDate =
+        issueRaw != null && String(issueRaw).trim() !== ''
+            ? String(issueRaw).trim().slice(0, 10)
+            : undefined;
+    const maturityDate =
+        matRaw != null && String(matRaw).trim() !== ''
+            ? String(matRaw).trim().slice(0, 10)
+            : undefined;
+    const notesRaw = raw.notes;
+    const notes =
+        notesRaw != null && String(notesRaw).trim() !== '' ? String(notesRaw) : undefined;
     return {
         ...raw,
         id: String(raw.id ?? ''),
@@ -314,7 +333,32 @@ function normalizeAssetRow(raw: any): Asset {
         monthlyRent: mr != null && mr !== '' ? roundMoney(Number(mr)) : undefined,
         goalId: raw.goal_id ?? raw.goalId,
         owner: raw.owner,
+        issueDate,
+        maturityDate,
+        notes,
     };
+}
+
+/** DB columns for Sukuk dates (snake_case). Stripped from spread so we do not send duplicate camelCase keys. */
+function assetDatesForDb(asset: Asset): { issue_date: string | null; maturity_date: string | null } {
+    const idt = asset.issueDate != null && String(asset.issueDate).trim() !== '' ? String(asset.issueDate).trim().slice(0, 10) : null;
+    const mdt =
+        asset.maturityDate != null && String(asset.maturityDate).trim() !== ''
+            ? String(asset.maturityDate).trim().slice(0, 10)
+            : null;
+    return { issue_date: idt, maturity_date: mdt };
+}
+
+/** Map DB / API priority values to Goal.priority (stable for sort + UI). */
+function normalizeGoalPriority(raw: unknown): 'High' | 'Medium' | 'Low' {
+    if (raw === 1 || raw === '1') return 'High';
+    if (raw === 3 || raw === '3') return 'Low';
+    if (raw === 2 || raw === '2') return 'Medium';
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (s === 'high' || s === 'h' || s === 'urgent' || s === 'critical') return 'High';
+    if (s === 'low' || s === 'l') return 'Low';
+    if (s === 'medium' || s === 'med' || s === 'm' || s === 'normal' || s === '') return 'Medium';
+    return 'Medium';
 }
 
 function normalizeGoalRow(raw: any): Goal {
@@ -329,7 +373,7 @@ function normalizeGoalRow(raw: any): Goal {
         currentAmount: roundMoney(Number(raw.current_amount ?? raw.currentAmount ?? 0)),
         deadline: String(raw.deadline ?? ''),
         savingsAllocationPercent: raw.savings_allocation_percent ?? raw.savingsAllocationPercent,
-        priority: raw.priority,
+        priority: normalizeGoalPriority(raw.priority ?? raw.goal_priority),
     };
 }
 
@@ -363,8 +407,9 @@ function investmentPortfolioToRow(portfolio: Partial<InvestmentPortfolio> & { na
     const row: Record<string, unknown> = {
         name: portfolio.name,
         account_id: portfolio.accountId,
+        // Always send goal_id so links persist and explicit unlink sets NULL in the DB.
+        goal_id: portfolio.goalId != null && String(portfolio.goalId).trim() !== '' ? portfolio.goalId : null,
     };
-    if (portfolio.goalId != null) row.goal_id = portfolio.goalId;
     if (portfolio.owner != null) row.owner = portfolio.owner;
     if (portfolio.currency != null) row.currency = portfolio.currency;
     return row;
@@ -388,7 +433,7 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
         symbol: holding.symbol ?? (holdingType === 'manual_fund' ? null : ''),
         name: holding.name ?? '',
         quantity: roundQuantity(Number(holding.quantity ?? 0)),
-        avg_cost: roundMoney(Number(holding.avgCost ?? (holding as any).avg_cost ?? 0)),
+        avg_cost: roundAvgCostPerUnit(Number(holding.avgCost ?? (holding as any).avg_cost ?? 0)),
         current_value: roundMoney(Number(holding.currentValue ?? (holding as any).current_value ?? 0)),
         realized_pnl: roundMoney(Number(holding.realizedPnL ?? (holding as any).realized_pnl ?? 0)),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
@@ -414,7 +459,7 @@ function normalizeHoldingFromRow(row: any): Holding {
         symbol: row.symbol ?? (holdingType === 'manual_fund' ? '' : ''),
         holdingType,
         quantity: roundQuantity(Number(row.quantity ?? 0)),
-        avgCost: roundMoney(Number(row.avg_cost ?? row.avgCost ?? 0)),
+        avgCost: roundAvgCostPerUnit(Number(row.avg_cost ?? row.avgCost ?? 0)),
         currentValue: roundMoney(Number(row.current_value ?? row.currentValue ?? 0)),
         realizedPnL: roundMoney(Number(row.realized_pnl ?? row.realizedPnL ?? 0)),
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
@@ -503,7 +548,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             symbol: holding.symbol ?? '',
             holdingType,
             quantity: roundQuantity(Number(holding.quantity ?? 0)),
-            avgCost: roundMoney(Number(holding.avgCost ?? holding.avg_cost ?? 0)),
+            avgCost: roundAvgCostPerUnit(Number(holding.avgCost ?? holding.avg_cost ?? 0)),
             currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? 0)),
             goalId: holding.goalId ?? holding.goal_id,
             assetClass: holding.assetClass ?? holding.asset_class,
@@ -597,16 +642,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const goalPayloadVariants = (goal: Goal) => {
-        const base = {
+        const p = normalizeGoalPriority(goal.priority);
+        const camel = {
             name: goal.name,
             targetAmount: goal.targetAmount,
             currentAmount: goal.currentAmount,
             deadline: goal.deadline,
             savingsAllocationPercent: goal.savingsAllocationPercent,
         };
+        const snake = {
+            name: goal.name,
+            target_amount: goal.targetAmount,
+            current_amount: goal.currentAmount,
+            deadline: goal.deadline,
+            savings_allocation_percent: goal.savingsAllocationPercent,
+        };
+        // Prefer snake_case + priority (typical Postgres); then camelCase + priority; legacy schemas without `priority` column last.
         return [
-            { ...base, priority: goal.priority ?? 'Medium' },
-            base,
+            { ...snake, priority: p },
+            { ...camel, priority: p },
+            snake,
+            camel,
         ];
     };
 
@@ -758,6 +814,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
                 goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
                 transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                // Portfolios: API uses goal_id / account_id; app + Portfolio modal use goalId / accountId (do not drop on refresh).
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
                     const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
@@ -766,6 +823,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     return {
                         ...portfolio,
                         accountId: resolved,
+                        goalId: portfolio.goal_id ?? portfolio.goalId,
                         currency,
                         holdings,
                     };
@@ -952,11 +1010,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const sanitized = normalizeAssetRow(asset);
-        const v = validateAsset({ name: sanitized.name, type: sanitized.type, value: sanitized.value });
+        const v = validateAsset({
+            name: sanitized.name,
+            type: sanitized.type,
+            value: sanitized.value,
+            issueDate: sanitized.issueDate,
+            maturityDate: sanitized.maturityDate,
+        });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { id, user_id, ...insertData } = sanitized;
-        const { data: newAsset, error } = await db.from('assets').insert(withUser(insertData)).select().single();
+        const { id: _omitId, user_id: _omitUid, issueDate, maturityDate, notes: notesForDb, ...insertRest } = sanitized;
+        const dates = assetDatesForDb(sanitized);
+        const notesPayload =
+            notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
+        const { data: newAsset, error } = await db
+            .from('assets')
+            .insert(withUser({ ...insertRest, ...dates, notes: notesPayload }))
+            .select()
+            .single();
         if (error) { 
             console.error("Error adding asset:", error); 
             toast(`Failed to add asset: ${error.message}`, 'error');
@@ -967,10 +1038,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateAsset = async (asset: Asset) => {
         if(!supabase || !auth?.user) return;
         const sanitized = normalizeAssetRow(asset);
-        const v = validateAsset({ name: sanitized.name, type: sanitized.type, value: sanitized.value });
+        const v = validateAsset({
+            name: sanitized.name,
+            type: sanitized.type,
+            value: sanitized.value,
+            issueDate: sanitized.issueDate,
+            maturityDate: sanitized.maturityDate,
+            notes: sanitized.notes,
+        });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { error } = await db.from('assets').update(sanitized).match({ id: sanitized.id, user_id: auth.user.id });
+        const { id: _assetId, user_id: _uid, issueDate, maturityDate, notes: notesForDb, ...updateRest } = sanitized;
+        const dates = assetDatesForDb(sanitized);
+        const notesPayload =
+            notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
+        const { error } = await db
+            .from('assets')
+            .update({ ...updateRest, ...dates, notes: notesPayload })
+            .match({ id: sanitized.id, user_id: auth.user.id });
         if (error) console.error("Error updating asset:", error);
         else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === sanitized.id ? sanitized : a) }));
     };
@@ -1008,7 +1093,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(`Failed to add goal: ${error.message}`, 'error');
             throw error;
         }
-        if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, { ...newGoal, priority: newGoal.priority ?? goal.priority ?? 'Medium' }] }));
+        if (newGoal) setData(prev => ({ ...prev, goals: [...prev.goals, normalizeGoalRow({ ...newGoal, priority: newGoal.priority ?? goal.priority })] }));
     };
     const updateGoal = async (goal: Goal) => {
       if(!supabase || !auth?.user) return;
@@ -1026,7 +1111,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!isMissingColumnError(error)) break;
       }
       if (error) console.error("Error updating goal:", error);
-      else setData(prev => ({ ...prev, goals: prev.goals.map(g => g.id === goal.id ? goal : g) }));
+      else setData(prev => ({
+          ...prev,
+          goals: prev.goals.map(g => (g.id === goal.id ? { ...goal, priority: normalizeGoalPriority(goal.priority) } : g)),
+      }));
     };
     const deleteGoal = async (goalId: string) => {
       if(!supabase || !auth?.user) return;
@@ -1042,10 +1130,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       }
       const db = supabase;
-      const upsertData = allocations.map(a => ({ ...a, user_id: auth.user!.id }));
-      const { error } = await db.from('goals').upsert(upsertData);
-      if(error) console.error("Error updating goal allocations:", error);
-      else setData(prev => ({ ...prev, goals: prev.goals.map(g => { const newAlloc = allocations.find(a => a.id === g.id); return newAlloc ? { ...g, ...newAlloc } : g; }) }));
+      for (const a of allocations) {
+        let lastErr: any = null;
+        for (const payload of [
+          { savings_allocation_percent: a.savingsAllocationPercent },
+          { savingsAllocationPercent: a.savingsAllocationPercent },
+        ]) {
+          const { error } = await db.from('goals').update(payload).match({ id: a.id, user_id: auth.user!.id });
+          lastErr = error;
+          if (!error) break;
+          if (!isMissingColumnError(error)) break;
+        }
+        if (lastErr) {
+          console.error("Error updating goal allocations:", lastErr);
+          toast(`Failed to save allocations: ${lastErr.message}`, 'error');
+          return;
+        }
+      }
+      setData(prev => ({
+          ...prev,
+          goals: prev.goals.map(g => {
+            const newAlloc = allocations.find(al => al.id === g.id);
+            return newAlloc ? { ...g, savingsAllocationPercent: newAlloc.savingsAllocationPercent } : g;
+          }),
+      }));
     };
 
     // --- Liabilities ---
@@ -1667,12 +1775,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a platform.", 'error');
-            return;
+            return undefined;
         }
         const v = validateAccount({ name: platform.name, type: platform.type, balance: platform.balance ?? 0 });
         if (!v.valid) {
             toast(v.errors.join('\n'), 'error');
-            return;
+            return undefined;
         }
         const db = supabase;
         const payload = buildAccountInsertPayload(platform);
@@ -1694,7 +1802,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (newPlatform) {
             const normalized = normalizeAccount(newPlatform);
             setData(prev => ({ ...prev, accounts: [...prev.accounts, normalized] }));
+            return normalized.id;
         }
+        return undefined;
     };
     const updatePlatform = async (platform: Account, opts?: { fromTransactionDelta?: boolean }) => {
         if(!supabase || !auth?.user) return;
@@ -1775,7 +1885,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(`Failed to add portfolio: ${error.message}`, 'error');
             throw error;
         }
-        if (newPortfolio) setData(prev => ({ ...prev, investments: [...prev.investments, { ...newPortfolio, accountId: (newPortfolio as any).account_id ?? (newPortfolio as any).accountId, holdings: [] }] }));
+        if (newPortfolio) {
+            const np = newPortfolio as any;
+            setData((prev) => ({
+                ...prev,
+                investments: [
+                    ...prev.investments,
+                    {
+                        ...np,
+                        accountId: np.account_id ?? np.accountId,
+                        goalId: np.goal_id ?? np.goalId,
+                        holdings: [],
+                    },
+                ],
+            }));
+        }
     };
     const updatePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'holdings'>) => {
         if(!supabase || !auth?.user) return;
@@ -1803,6 +1927,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             currentValue: holding.currentValue,
             portfolio_id: holding.portfolio_id,
             portfolioId: (holding as any).portfolioId,
+            holdingType: holding.holdingType,
         });
         if (!v.valid) {
             toast(v.errors.join('\n'), 'error');
@@ -1825,7 +1950,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateHolding = async (holding: Holding) => {
         if(!supabase || !auth?.user) return;
-        const v = validateHolding({ symbol: holding.symbol, quantity: holding.quantity, avgCost: holding.avgCost, currentValue: holding.currentValue, portfolio_id: holding.portfolio_id, portfolioId: (holding as any).portfolioId });
+        const v = validateHolding({
+            symbol: holding.symbol,
+            quantity: holding.quantity,
+            avgCost: holding.avgCost,
+            currentValue: holding.currentValue,
+            portfolio_id: holding.portfolio_id,
+            portfolioId: (holding as any).portfolioId,
+            holdingType: holding.holdingType,
+        });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
         const row = holdingToRow(holding);
@@ -1857,7 +1990,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             };
         });
     };
-    const recordTrade = async (trade: { portfolioId?: string, name?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => {
+    const recordTrade = async (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => {
         if (!supabase || !auth?.user) return;
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
@@ -1876,7 +2009,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         tradeSubmissionInFlightRef.current = true;
         try {
-            const { portfolioId, name, assetClass: tradeAssetClass, ...tradeData } = trade as typeof trade & { assetClass?: string };
+            const { portfolioId, name, assetClass: tradeAssetClass, manualCurrentValue: manualCvInput, holdingType: incomingHoldingType, ...tradeData } = trade as typeof trade & { assetClass?: string; manualCurrentValue?: number; holdingType?: string };
+            const manualCv =
+                typeof manualCvInput === 'number' && Number.isFinite(manualCvInput) && manualCvInput >= 0
+                    ? roundMoney(manualCvInput)
+                    : undefined;
 
         let accountIdForInsert: string;
         let portfolio: InvestmentPortfolio | undefined;
@@ -1934,8 +2071,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         }
 
-        // 2. Log the transaction to the database
+        // 2. Validate cash ledger limits before writing the transaction.
         const tradeTotal = isCashFlow ? (trade.total ?? 0) : (tradeData.quantity * tradeData.price);
+        /** Buys/sells are always booked in the portfolio base currency so SAR/USD buckets match holdings. */
+        let portfolioLedgerCurrency: TradeCurrency | undefined;
+        if (!isCashFlow && portfolio) {
+            const pc = portfolio.currency as string | undefined;
+            portfolioLedgerCurrency = pc === 'SAR' || pc === 'USD' ? (pc as TradeCurrency) : 'USD';
+        }
+        const txCurrency: TradeCurrency =
+            portfolioLedgerCurrency ??
+            ((trade.currency === 'SAR' || trade.currency === 'USD')
+                ? trade.currency
+                : inferInvestmentTransactionCurrency(
+                    { accountId: accountIdForInsert, currency: trade.currency as TradeCurrency | undefined },
+                    data?.accounts ?? [],
+                    data?.investments ?? [],
+                ));
+        const availableBefore = getAvailableCashForAccount(accountIdForInsert);
+        const availableInTxCurrency = txCurrency === 'SAR' ? availableBefore.SAR : availableBefore.USD;
+        if (tradeData.type === 'buy' && tradeTotal > availableInTxCurrency + 1e-9) {
+            throw new Error(
+                `Insufficient investment cash (${txCurrency}). Needed ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}, available ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency}. Transfer funds from Checking/Savings first.`,
+            );
+        }
+        if (tradeData.type === 'withdrawal' && tradeTotal > availableInTxCurrency + 1e-9) {
+            throw new Error(
+                `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency}.`,
+            );
+        }
+
+        // 3. Log the transaction to the database
         let newTransaction: any = null;
         let txError: any = null;
         const linkedCashAccountId = (trade as any).linkedCashAccountId;
@@ -1947,6 +2113,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             price: isCashFlow ? 0 : tradeData.price, 
             total: tradeTotal 
         };
+        if (portfolioLedgerCurrency) {
+            tradePayload.currency = portfolioLedgerCurrency;
+        }
         if (linkedCashAccountId) {
             tradePayload.linked_cash_account_id = linkedCashAccountId;
         }
@@ -2022,8 +2191,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (tradeData.type === 'buy') {
                 const qAdd = tradeData.quantity;
                 const px = tradeData.price;
+                const newManualFund = incomingHoldingType === 'manual_fund';
+                if (newManualFund && !existingHolding && (manualCv == null || manualCv <= 0)) {
+                    throw new Error('For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).');
+                }
                 if (existingHolding && qAdd > 0) {
-                    const merged = applyBuyToHolding(existingHolding, qAdd, px);
+                    const merged =
+                        existingHolding.holdingType === 'manual_fund'
+                            ? applyBuyToHolding(existingHolding, qAdd, px, {
+                                  currentValueAdd: manualCv ?? qAdd * px,
+                              })
+                            : applyBuyToHolding(existingHolding, qAdd, px);
                     await updateHolding({
                         ...existingHolding,
                         name: name || existingHolding.name || tradeData.symbol,
@@ -2033,16 +2211,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     });
                 } else {
                     const resolvedClass = (normalizeAssetClassForDb(tradeAssetClass) ?? 'Stock') as HoldingAssetClass;
-                    const newHoldingData = {
-                        portfolioId: portfolio.id,
+                    const newHoldingData: Omit<Holding, 'id' | 'user_id'> = {
+                        portfolio_id: portfolio.id,
                         symbol: tradeData.symbol,
                         name: name || tradeData.symbol,
                         quantity: qAdd,
                         avgCost: px,
-                        currentValue: px * qAdd,
+                        currentValue: newManualFund && manualCv != null ? manualCv : px * qAdd,
                         assetClass: resolvedClass,
                         zakahClass: 'Zakatable' as const,
                         realizedPnL: 0,
+                        holdingType: newManualFund ? 'manual_fund' : 'ticker',
                     };
                     await addHolding(newHoldingData);
                 }

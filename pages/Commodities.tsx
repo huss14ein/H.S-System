@@ -18,13 +18,16 @@ import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => void | Promise<void>;
     holdingToEdit: CommodityHolding | null;
-}> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
+    sarPerUsd: number;
+}> = ({ isOpen, onClose, onSave, holdingToEdit, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
@@ -113,6 +116,7 @@ const CommodityHoldingModal: React.FC<{
                         name,
                         quantity: parsedQuantity,
                         goldKarat: name === 'Gold' ? goldKarat : undefined,
+                        sarPerUsd,
                     });
                     if (!live.ok) {
                         setFormError(live.message);
@@ -169,7 +173,7 @@ const CommodityHoldingModal: React.FC<{
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Current Value <InfoHint text="Computed on save from live quotes (Finnhub for metals, Binance for Bitcoin)." /></label>
                             <div className="w-full p-2 border border-dashed border-slate-300 rounded-md bg-slate-50 text-sm text-slate-700">
-                                Live from market on save — not entered manually.
+                                Live from market on save — priced in SAR using your app USD→SAR rate (header/settings).
                                 {holdingToEdit && (
                                     <span className="block mt-1 text-xs text-slate-500">Last saved: {formatCurrencyString(holdingToEdit.currentValue)}</span>
                                 )}
@@ -228,6 +232,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
@@ -260,7 +266,10 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         if (!holdingsForPrices.length) return;
         setIsUpdatingPrices(true);
         try {
-            const { prices } = await getAICommodityPrices(holdingsForPrices.map((c: { symbol?: string; name?: string; goldKarat?: number }) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
+            const { prices } = await getAICommodityPrices(
+                holdingsForPrices.map((c: { symbol?: string; name?: string; goldKarat?: number }) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })),
+                { sarPerUsd },
+            );
             const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
                 const updates = holdingsForPrices
@@ -320,7 +329,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 </div>
             </div>
             
-            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
         )}

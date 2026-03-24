@@ -157,7 +157,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   );
   const activeGoals = useMemo(() => goals.filter(g => (g.targetAmount ?? 0) > (g.currentAmount ?? 0)), [goals]);
   return (
-    <CollapsibleSection title="Goal conflict & feasibility" summary={conflicts.length > 0 ? `${conflicts.length} conflict(s) detected` : 'No conflicts'} defaultExpanded={conflicts.length > 0} className="border border-amber-200 bg-amber-50/40">
+    <CollapsibleSection title="Goal conflict & feasibility" summary={conflicts.length > 0 ? `${conflicts.length} conflict(s) detected` : 'No conflicts'} className="border border-amber-200 bg-amber-50/40">
       <p className="text-xs text-slate-600 mb-3">
         Detects when the same cash is funding too many goals or target dates are not achievable with current surplus.
       </p>
@@ -415,12 +415,24 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
     const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
     const [allocations, setAllocations] = useState<Record<string, number>>({});
-    
+
+    const allocationSyncKey = useMemo(
+        () =>
+            JSON.stringify(
+                [...(data?.goals ?? [])]
+                    .map((g) => ({ id: g.id, pct: g.savingsAllocationPercent ?? 0 }))
+                    .sort((a, b) => a.id.localeCompare(b.id)),
+            ),
+        [data?.goals],
+    );
+
     useEffect(() => {
         const initialAllocations: Record<string, number> = {};
-        (data?.goals ?? []).forEach(g => { initialAllocations[g.id] = g.savingsAllocationPercent || 0; });
+        (data?.goals ?? []).forEach((g) => {
+            initialAllocations[g.id] = g.savingsAllocationPercent ?? 0;
+        });
         setAllocations(initialAllocations);
-    }, [data?.goals]);
+    }, [allocationSyncKey]);
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
